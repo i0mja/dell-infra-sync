@@ -1,7 +1,7 @@
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { Server, Database, Briefcase, Activity, LogOut, Menu } from "lucide-react";
+import { Server, Database, Briefcase, Activity, LogOut, Menu, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
 import {
@@ -31,6 +31,7 @@ const Layout = () => {
     { name: "Servers", href: "/servers", icon: Server },
     { name: "vCenter", href: "/vcenter", icon: Database },
     { name: "Jobs", href: "/jobs", icon: Briefcase },
+    { name: "Settings", href: "/settings", icon: Settings },
   ];
 
   const NavLinks = () => (

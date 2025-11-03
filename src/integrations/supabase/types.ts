@@ -157,6 +157,51 @@ export type Database = {
           },
         ]
       }
+      notification_settings: {
+        Row: {
+          created_at: string
+          id: string
+          notify_on_job_complete: boolean | null
+          notify_on_job_failed: boolean | null
+          notify_on_job_started: boolean | null
+          smtp_from_email: string | null
+          smtp_host: string | null
+          smtp_password: string | null
+          smtp_port: number | null
+          smtp_user: string | null
+          teams_webhook_url: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          notify_on_job_complete?: boolean | null
+          notify_on_job_failed?: boolean | null
+          notify_on_job_started?: boolean | null
+          smtp_from_email?: string | null
+          smtp_host?: string | null
+          smtp_password?: string | null
+          smtp_port?: number | null
+          smtp_user?: string | null
+          teams_webhook_url?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          notify_on_job_complete?: boolean | null
+          notify_on_job_failed?: boolean | null
+          notify_on_job_started?: boolean | null
+          smtp_from_email?: string | null
+          smtp_host?: string | null
+          smtp_password?: string | null
+          smtp_port?: number | null
+          smtp_user?: string | null
+          teams_webhook_url?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string

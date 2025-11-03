@@ -44,14 +44,39 @@ serve(async (req) => {
       if (job.completed_at) updateData.completed_at = job.completed_at;
       if (job.details) updateData.details = job.details;
 
-      const { error: jobError } = await supabase
+      const { data: jobData, error: jobError } = await supabase
         .from('jobs')
         .update(updateData)
-        .eq('id', job.job_id);
+        .eq('id', job.job_id)
+        .select()
+        .single();
 
       if (jobError) throw jobError;
 
       console.log(`Job updated: ${job.job_id} - status: ${job.status}`);
+
+      // Trigger notification if status changed to completed, failed, or running
+      if (job.status && ['completed', 'failed', 'running'].includes(job.status)) {
+        try {
+          const notificationResponse = await supabase.functions.invoke('send-notification', {
+            body: {
+              jobId: job.job_id,
+              jobType: jobData.job_type,
+              status: job.status,
+              details: job.details,
+            },
+          });
+          
+          if (notificationResponse.error) {
+            console.error('Notification error:', notificationResponse.error);
+          } else {
+            console.log('Notification sent:', notificationResponse.data);
+          }
+        } catch (notifError) {
+          // Don't fail the job update if notification fails
+          console.error('Failed to send notification:', notifError);
+        }
+      }
     }
 
     if (task) {
