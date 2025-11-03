@@ -56,8 +56,9 @@ const Auth = () => {
     } else {
       toast({
         title: "Account Created",
-        description: "Successfully registered. You can now sign in.",
+        description: "Successfully registered and logged in.",
       });
+      navigate("/");
     }
 
     setLoading(false);
