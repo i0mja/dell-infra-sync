@@ -24,12 +24,24 @@ const Auth = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Check if user arrived via password reset link
-    supabase.auth.onAuthStateChange((event) => {
+    // Show password update form if arriving from recovery link
+    const hash = window.location.hash;
+    if (hash) {
+      const params = new URLSearchParams(hash.slice(1));
+      if (params.get("type") === "recovery") {
+        setShowUpdatePassword(true);
+      }
+    }
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === "PASSWORD_RECOVERY") {
         setShowUpdatePassword(true);
       }
     });
+
+    return () => {
+      subscription?.unsubscribe();
+    };
   }, []);
 
   const handleSignIn = async (e: React.FormEvent) => {
