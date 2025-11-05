@@ -8,10 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useTheme } from "next-themes";
+import { Moon, Sun, Monitor } from "lucide-react";
 
 export default function Settings() {
   const { user, userRole } = useAuth();
   const { toast } = useToast();
+  const { theme, setTheme } = useTheme();
   const [loading, setLoading] = useState(false);
   const [settingsId, setSettingsId] = useState<string | null>(null);
 
@@ -147,12 +150,58 @@ export default function Settings() {
     <div className="container mx-auto py-8">
         <h1 className="text-3xl font-bold mb-6">Settings</h1>
 
-        <Tabs defaultValue="smtp" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
+        <Tabs defaultValue="appearance" className="w-full">
+          <TabsList className="grid w-full grid-cols-4">
+            <TabsTrigger value="appearance">Appearance</TabsTrigger>
             <TabsTrigger value="smtp">SMTP Email</TabsTrigger>
             <TabsTrigger value="teams">Microsoft Teams</TabsTrigger>
             <TabsTrigger value="preferences">Preferences</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="appearance">
+            <Card>
+              <CardHeader>
+                <CardTitle>Appearance</CardTitle>
+                <CardDescription>
+                  Customize how the application looks and feels
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="space-y-4">
+                  <Label>Theme</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Choose your preferred color scheme
+                  </p>
+                  <div className="grid grid-cols-3 gap-4">
+                    <Button
+                      variant={theme === "light" ? "default" : "outline"}
+                      onClick={() => setTheme("light")}
+                      className="flex items-center gap-2"
+                    >
+                      <Sun className="h-4 w-4" />
+                      Light
+                    </Button>
+                    <Button
+                      variant={theme === "dark" ? "default" : "outline"}
+                      onClick={() => setTheme("dark")}
+                      className="flex items-center gap-2"
+                    >
+                      <Moon className="h-4 w-4" />
+                      Dark
+                    </Button>
+                    <Button
+                      variant={theme === "system" ? "default" : "outline"}
+                      onClick={() => setTheme("system")}
+                      className="flex items-center gap-2"
+                    >
+                      <Monitor className="h-4 w-4" />
+                      System
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           <TabsContent value="smtp">
             <Card>
