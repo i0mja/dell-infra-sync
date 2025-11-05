@@ -259,7 +259,8 @@ npm run restore      # Restore database from backup
 
 ## 📚 Documentation
 
-- [Backup & Migration Guide](docs/BACKUP_GUIDE.md) - **Database backup and self-hosting migration**
+- **[Self-Hosting Guide](docs/SELF_HOSTING.md)** - One-command deployment for RHEL 9 & Windows Server 2022
+- [Backup & Migration Guide](docs/BACKUP_GUIDE.md) - Database backup and migration
 - [Job Executor Guide](docs/JOB_EXECUTOR_GUIDE.md)
 - [vCenter Sync Guide](docs/VCENTER_SYNC_GUIDE.md)
 - [Architecture Overview](ARCHITECTURE.md)
