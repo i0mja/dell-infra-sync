@@ -233,6 +233,8 @@ npm run dev          # Start development server
 npm run build        # Build for production
 npm run preview      # Preview production build
 npm run lint         # Run ESLint
+npm run backup       # Backup database to JSON files
+npm run restore      # Restore database from backup
 ```
 
 ### Code Editing Options
@@ -257,6 +259,7 @@ npm run lint         # Run ESLint
 
 ## 📚 Documentation
 
+- [Backup & Migration Guide](docs/BACKUP_GUIDE.md) - **Database backup and self-hosting migration**
 - [Job Executor Guide](docs/JOB_EXECUTOR_GUIDE.md)
 - [vCenter Sync Guide](docs/VCENTER_SYNC_GUIDE.md)
 - [Architecture Overview](ARCHITECTURE.md)
