@@ -8,7 +8,7 @@ Complete guide for deploying Dell Server Manager on your own infrastructure.
 
 ```bash
 # 1. Clone repository
-git clone <your-repo-url> ~/dell-server-manager
+git clone https://github.com/i0mja/dell-infra-sync ~/dell-server-manager
 cd ~/dell-server-manager
 
 # 2. Run deployment script
@@ -28,7 +28,7 @@ sudo bash scripts/deploy-rhel9.sh
 
 ```powershell
 # 1. Clone repository (run as Administrator)
-git clone <your-repo-url> C:\dell-server-manager
+git clone https://github.com/i0mja/dell-infra-sync C:\dell-server-manager
 cd C:\dell-server-manager
 
 # 2. Run deployment script
