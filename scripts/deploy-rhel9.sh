@@ -159,10 +159,95 @@ systemctl start dell-server-manager
 systemctl enable dell-server-manager
 
 # Open firewall ports
-echo "🔥 Opening firewall ports..."
-firewall-cmd --permanent --add-port=3000/tcp  # Application
-firewall-cmd --permanent --add-port=8000/tcp  # Supabase API
-firewall-cmd --reload
+# Step 8: Optional SSL/TLS Setup
+echo "🔒 Step 8/8: SSL/TLS Setup (Optional)..."
+read -p "Do you have a domain name for SSL/TLS? (y/n): " SETUP_SSL
+
+if [ "$SETUP_SSL" = "y" ] || [ "$SETUP_SSL" = "Y" ]; then
+    read -p "Enter your domain name (e.g., example.com): " DOMAIN_NAME
+    
+    # Install nginx and certbot
+    echo "📦 Installing nginx and certbot..."
+    dnf install -y nginx certbot python3-certbot-nginx
+    
+    # Create nginx configuration
+    cat > /etc/nginx/conf.d/dell-server-manager.conf << EOF
+server {
+    listen 80;
+    server_name $DOMAIN_NAME;
+    
+    # Redirect HTTP to HTTPS
+    return 301 https://\$server_name\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name $DOMAIN_NAME;
+    
+    # SSL certificates (will be configured by certbot)
+    ssl_certificate /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem;
+    
+    # SSL configuration
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    
+    # Application proxy
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    
+    # Supabase proxy
+    location /supabase/ {
+        proxy_pass http://localhost:8000/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+    }
+}
+EOF
+    
+    # Start and enable nginx
+    systemctl start nginx
+    systemctl enable nginx
+    
+    # Obtain SSL certificate
+    echo "📜 Obtaining SSL certificate from Let's Encrypt..."
+    certbot --nginx -d $DOMAIN_NAME --non-interactive --agree-tos --email $ADMIN_EMAIL --redirect
+    
+    # Setup auto-renewal
+    systemctl enable certbot-renew.timer
+    systemctl start certbot-renew.timer
+    
+    # Open firewall ports
+    echo "🔥 Opening firewall ports..."
+    firewall-cmd --permanent --add-service=http
+    firewall-cmd --permanent --add-service=https
+    firewall-cmd --permanent --add-port=8000/tcp  # Supabase API
+    firewall-cmd --reload
+    
+    SSL_URL="https://$DOMAIN_NAME"
+    echo "✅ SSL/TLS configured successfully!"
+else
+    # Open firewall ports without SSL
+    echo "🔥 Opening firewall ports..."
+    firewall-cmd --permanent --add-port=3000/tcp  # Application
+    firewall-cmd --permanent --add-port=8000/tcp  # Supabase API
+    firewall-cmd --reload
+    
+    SSL_URL="http://$SERVER_IP:3000"
+fi
 
 echo ""
 echo "✅ Deployment Complete!"
@@ -172,7 +257,7 @@ echo "📊 Supabase Studio: http://$SERVER_IP:8000"
 echo "   Username: supabase"
 echo "   Password: $(grep DASHBOARD_PASSWORD /opt/supabase/docker/.env | cut -d= -f2)"
 echo ""
-echo "🌐 Dell Server Manager: http://$SERVER_IP:3000"
+echo "🌐 Dell Server Manager: $SSL_URL"
 echo ""
 echo "🔑 Database Credentials:"
 echo "   Host: $SERVER_IP"
@@ -185,8 +270,11 @@ echo "🎉 You can now login with:"
 echo "   Email: $ADMIN_EMAIL"
 echo ""
 echo "📋 Next Steps:"
-echo "   1. Setup SSL/TLS (recommended for production)"
-echo "   2. Configure your DNS to point to $SERVER_IP"
+if [ "$SETUP_SSL" != "y" ] && [ "$SETUP_SSL" != "Y" ]; then
+    echo "   1. Setup SSL/TLS (recommended for production)"
+    echo "      Run: sudo certbot --nginx -d yourdomain.com"
+fi
+echo "   2. Configure regular backups (see docs/BACKUP_GUIDE.md)"
 echo ""
 echo "📝 Service Management:"
 echo "   sudo systemctl status dell-server-manager"

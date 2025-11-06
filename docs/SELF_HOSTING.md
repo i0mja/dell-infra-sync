@@ -21,6 +21,7 @@ sudo bash scripts/deploy-rhel9.sh
 - ✅ Create your admin user account
 - ✅ Build and deploy the application
 - ✅ Create systemd service
+- ✅ **Optionally setup SSL/TLS with Let's Encrypt** (if you have a domain)
 - ✅ Configure firewall
 
 **Total time: ~5 minutes**
@@ -42,6 +43,7 @@ cd C:\dell-server-manager
 - ✅ Create your admin user account
 - ✅ Build and deploy the application
 - ✅ Create Windows service
+- ✅ **Optionally setup SSL/TLS with Let's Encrypt** (if you have a domain)
 - ✅ Configure firewall
 
 **Total time: ~10 minutes** (includes Docker Desktop installation)
@@ -136,7 +138,15 @@ VALUES ('<your-user-id>', 'admin');
 
 ### SSL/TLS with Let's Encrypt
 
-#### RHEL 9
+**SSL/TLS is automatically configured during deployment** if you provide a domain name when prompted. The deployment scripts will:
+- Install and configure reverse proxy (nginx for RHEL, IIS for Windows)
+- Obtain SSL certificates from Let's Encrypt automatically
+- Setup automatic certificate renewal
+- Configure HTTPS redirects
+
+#### Manual Setup (if skipped during deployment)
+
+**RHEL 9:**
 
 ```bash
 # Install Nginx and Certbot
@@ -147,7 +157,13 @@ sudo tee /etc/nginx/conf.d/dell-server-manager.conf > /dev/null <<EOF
 server {
     listen 80;
     server_name your-domain.com;
+    return 301 https://\$server_name\$request_uri;
+}
 
+server {
+    listen 443 ssl http2;
+    server_name your-domain.com;
+    
     location / {
         proxy_pass http://localhost:3000;
         proxy_http_version 1.1;
@@ -155,9 +171,12 @@ server {
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host \$host;
         proxy_cache_bypass \$http_upgrade;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
-    location /api/ {
+    location /supabase/ {
         proxy_pass http://localhost:8000/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
@@ -173,25 +192,30 @@ sudo systemctl enable nginx
 sudo systemctl start nginx
 
 # Get SSL certificate
-sudo certbot --nginx -d your-domain.com
+sudo certbot --nginx -d your-domain.com --email your-email@example.com --agree-tos --redirect
 
 # Auto-renewal is configured automatically by certbot
+sudo systemctl enable certbot-renew.timer
 ```
 
-#### Windows Server 2022
+**Windows Server 2022:**
 
-Use IIS with SSL:
-
-1. Install IIS with URL Rewrite and ARR
 ```powershell
+# Install IIS and URL Rewrite
 Install-WindowsFeature -name Web-Server -IncludeManagementTools
-Install-WindowsFeature -name Web-App-Dev
+choco install urlrewrite -y
+
+# Install Win-ACME for Let's Encrypt
+choco install win-acme -y
+
+# Run Win-ACME to obtain certificate
+wacs.exe --target manual --host your-domain.com --emailaddress your-email@example.com --accepttos --installation iis
 ```
 
-2. Install [URL Rewrite](https://www.iis.net/downloads/microsoft/url-rewrite)
-3. Install [Application Request Routing](https://www.iis.net/downloads/microsoft/application-request-routing)
-4. Configure reverse proxy in IIS Manager
-5. Add SSL certificate via IIS Manager → Server Certificates
+Win-ACME will:
+- Automatically configure IIS bindings
+- Obtain SSL certificate from Let's Encrypt
+- Setup automatic renewal task
 
 ### Database Backups
 

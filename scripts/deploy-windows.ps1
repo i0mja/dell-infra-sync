@@ -166,10 +166,65 @@ nssm set DellServerManager Start SERVICE_AUTO_START
 # Start service
 nssm start DellServerManager
 
-# Configure Windows Firewall
-Write-Host "🔥 Configuring Windows Firewall..." -ForegroundColor Yellow
-New-NetFirewallRule -DisplayName "Dell Server Manager" -Direction Inbound -LocalPort 3000 -Protocol TCP -Action Allow
-New-NetFirewallRule -DisplayName "Supabase API" -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow
+# Step 8: Optional SSL/TLS Setup
+Write-Host "🔒 Step 8/8: SSL/TLS Setup (Optional)..." -ForegroundColor Yellow
+$SetupSSL = Read-Host "Do you have a domain name for SSL/TLS? (y/n)"
+
+if ($SetupSSL -eq "y" -or $SetupSSL -eq "Y") {
+    $DomainName = Read-Host "Enter your domain name (e.g., example.com)"
+    
+    # Install IIS and URL Rewrite
+    Write-Host "📦 Installing IIS and required features..." -ForegroundColor Yellow
+    Install-WindowsFeature -Name Web-Server -IncludeManagementTools
+    choco install urlrewrite -y
+    
+    # Install Win-ACME for Let's Encrypt
+    Write-Host "📦 Installing Win-ACME..." -ForegroundColor Yellow
+    choco install win-acme -y
+    
+    # Create IIS reverse proxy configuration
+    $webConfigPath = "C:\inetpub\wwwroot\web.config"
+    @"
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <system.webServer>
+        <rewrite>
+            <rules>
+                <rule name="DellServerManager" stopProcessing="true">
+                    <match url="(.*)" />
+                    <action type="Rewrite" url="http://localhost:3000/{R:1}" />
+                </rule>
+            </rules>
+        </rewrite>
+    </system.webServer>
+</configuration>
+"@ | Out-File -FilePath $webConfigPath -Encoding ASCII
+    
+    # Configure IIS site
+    Import-Module WebAdministration
+    Set-ItemProperty "IIS:\Sites\Default Web Site" -Name bindings -Value @{protocol="http";bindingInformation="*:80:$DomainName"}
+    
+    # Obtain SSL certificate using Win-ACME
+    Write-Host "📜 Obtaining SSL certificate from Let's Encrypt..." -ForegroundColor Yellow
+    Write-Host "⚠️  Follow the Win-ACME prompts to configure SSL for $DomainName" -ForegroundColor Yellow
+    & "C:\ProgramData\chocolatey\bin\wacs.exe" --target manual --host $DomainName --emailaddress $AdminEmail --accepttos --installation iis
+    
+    # Configure Windows Firewall
+    Write-Host "🔥 Configuring Windows Firewall..." -ForegroundColor Yellow
+    New-NetFirewallRule -DisplayName "HTTP" -Direction Inbound -LocalPort 80 -Protocol TCP -Action Allow
+    New-NetFirewallRule -DisplayName "HTTPS" -Direction Inbound -LocalPort 443 -Protocol TCP -Action Allow
+    New-NetFirewallRule -DisplayName "Supabase API" -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow
+    
+    $SslUrl = "https://$DomainName"
+    Write-Host "✅ SSL/TLS configured successfully!" -ForegroundColor Green
+} else {
+    # Configure Windows Firewall without SSL
+    Write-Host "🔥 Configuring Windows Firewall..." -ForegroundColor Yellow
+    New-NetFirewallRule -DisplayName "Dell Server Manager" -Direction Inbound -LocalPort 3000 -Protocol TCP -Action Allow
+    New-NetFirewallRule -DisplayName "Supabase API" -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow
+    
+    $SslUrl = "http://${ServerIP}:3000"
+}
 
 Write-Host ""
 Write-Host "✅ Deployment Complete!" -ForegroundColor Green
@@ -179,7 +234,7 @@ Write-Host "📊 Supabase Studio: http://${ServerIP}:8000" -ForegroundColor Cyan
 Write-Host "   Username: supabase" -ForegroundColor Gray
 Write-Host "   Password: $DashboardPassword" -ForegroundColor Gray
 Write-Host ""
-Write-Host "🌐 Dell Server Manager: http://${ServerIP}:3000" -ForegroundColor Cyan
+Write-Host "🌐 Dell Server Manager: $SslUrl" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "🔑 Database Credentials:" -ForegroundColor Yellow
 Write-Host "   Host: $ServerIP" -ForegroundColor Gray
@@ -192,8 +247,11 @@ Write-Host "🎉 You can now login with:" -ForegroundColor Green
 Write-Host "   Email: $AdminEmail" -ForegroundColor Gray
 Write-Host ""
 Write-Host "📋 Next Steps:" -ForegroundColor Yellow
-Write-Host "   1. Setup SSL/TLS (recommended for production)" -ForegroundColor Gray
-Write-Host "   2. Configure your DNS to point to $ServerIP" -ForegroundColor Gray
+if ($SetupSSL -ne "y" -and $SetupSSL -ne "Y") {
+    Write-Host "   1. Setup SSL/TLS (recommended for production)" -ForegroundColor Gray
+    Write-Host "      Run Win-ACME for your domain" -ForegroundColor Gray
+}
+Write-Host "   2. Configure regular backups (see docs\BACKUP_GUIDE.md)" -ForegroundColor Gray
 Write-Host ""
 Write-Host "📝 Service Management:" -ForegroundColor Yellow
 Write-Host "   nssm status DellServerManager" -ForegroundColor Gray
