@@ -208,13 +208,24 @@ Write-Host "[OK] Supabase CLI version: $supabaseVersion" -ForegroundColor Green
 
 # Create Supabase project directory
 $SupabaseProjectDir = "C:\dell-supabase"
-if (-not (Test-Path $SupabaseProjectDir)) {
-    New-Item -ItemType Directory -Path $SupabaseProjectDir | Out-Null
+
+# Remove existing directory to prevent interactive prompts
+if (Test-Path $SupabaseProjectDir) {
+    Write-Host "[CLEANUP] Removing existing Supabase project directory..." -ForegroundColor Yellow
+    try {
+        Remove-Item -Recurse -Force $SupabaseProjectDir -ErrorAction Stop
+        Write-Host "[OK] Cleanup complete" -ForegroundColor Green
+    } catch {
+        Write-Host "[WARN] Could not fully remove existing directory: $_" -ForegroundColor Yellow
+        Write-Host "[INFO] Attempting to continue anyway..." -ForegroundColor Cyan
+    }
 }
 
+# Create fresh directory
+New-Item -ItemType Directory -Path $SupabaseProjectDir | Out-Null
 Set-Location $SupabaseProjectDir
 
-# Initialize Supabase project
+# Initialize Supabase project (will run without prompts on clean directory)
 Write-Host "[CONFIG] Initializing Supabase project..." -ForegroundColor Yellow
 supabase init
 
