@@ -39,42 +39,56 @@ cd C:\dell-server-manager
 
 **That's it!** The script will:
 - ✅ Install Docker Desktop, Node.js, and dependencies
-- ✅ Setup and configure Supabase
+- ✅ Install Supabase CLI (handles all configuration automatically)
+- ✅ Initialize and start Supabase services
 - ✅ Create your admin user account
 - ✅ Build and deploy the application
 - ✅ Create Windows service
 - ✅ **Optionally setup SSL/TLS with Let's Encrypt** (if you have a domain)
 - ✅ Configure firewall
 
-**Total time: ~10 minutes** (includes Docker Desktop installation)
+**Total time: ~10 minutes** (includes Docker Desktop and Supabase CLI installation)
 
 ## What You Get
 
 Both deployment scripts provide a complete, production-ready setup:
 
-| Component | Description | Port |
-|-----------|-------------|------|
-| **Dell Server Manager** | Main application | 3000 |
-| **Supabase Studio** | Database admin UI | 8000 |
-| **PostgreSQL** | Database server | 5432 |
-| **PostgREST API** | RESTful API | 3000* |
-| **GoTrue Auth** | Authentication | 9999* |
-| **Realtime** | WebSocket server | 4000* |
-| **Storage API** | File storage | 5000* |
+| Component | Description | Port (RHEL) | Port (Windows CLI) |
+|-----------|-------------|-------------|---------------------|
+| **Dell Server Manager** | Main application | 3000 | 3000 |
+| **Supabase Studio** | Database admin UI | 8000 | 54323 |
+| **PostgreSQL** | Database server | 5432 | 54322 |
+| **PostgREST API** | RESTful API | 3000* | 54321* |
+| **GoTrue Auth** | Authentication | 9999* | 54324* |
+| **Realtime** | WebSocket server | 4000* | 54325* |
+| **Storage API** | File storage | 5000* | 54326* |
 
-*Internal services (accessed via Kong gateway on port 8000)
+*Internal services (accessed via Kong gateway)
+
+**Note:** Windows deployments using Supabase CLI use different default ports to avoid conflicts. All services are managed through the `supabase` CLI command.
 
 ## After Deployment
 
 ### 1. Access Your Services
 
-The deployment script will display:
+**RHEL Deployment:**
 ```
 📊 Supabase Studio: http://192.168.1.100:8000
    Username: supabase
    Password: [generated-password]
 
 🌐 Dell Server Manager: http://192.168.1.100:3000
+```
+
+**Windows Deployment (Supabase CLI):**
+```
+📊 Supabase Studio: http://localhost:54323
+   (Managed via Supabase CLI)
+
+🌐 Dell Server Manager: http://192.168.1.100:3000
+
+💡 Tip: Run 'supabase status' to view all service URLs and credentials
+💡 Tip: Run 'supabase db studio' to open Studio in your browser
 ```
 
 ### 2. Import Your Data (Optional)
@@ -98,12 +112,16 @@ npm run restore -- --backup-dir=./backups/backup-2025-01-05T12-30-00
 ### 3. Create Additional Users (Optional)
 
 If you need to create additional users:
-# Option A: Via Supabase Studio
-# 1. Open http://your-server:8000
-# 2. Go to Authentication → Users
-# 3. Click "Add User"
 
-# Option B: Via SQL
+**Option A: Via Supabase Studio**
+```bash
+# RHEL: Open http://your-server:8000
+# Windows: Run 'supabase db studio' to open in browser
+# Then: Go to Authentication → Users → Click "Add User"
+```
+
+**Option B: Via SQL (RHEL)**
+```bash
 docker exec -i supabase-db psql -U postgres -d postgres <<EOF
 INSERT INTO auth.users (
   instance_id, id, aud, role, email, 
@@ -123,15 +141,31 @@ INSERT INTO auth.users (
 EOF
 ```
 
+**Option B: Via SQL (Windows with Supabase CLI)**
+```powershell
+supabase db execute --sql "INSERT INTO auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000000000', gen_random_uuid(), 'authenticated', 'authenticated', 'admin@example.com', crypt('your-password', gen_salt('bf')), now(), now(), now());"
+```
+
 ### 4. Grant Additional Admin Access (Optional)
 
 To grant admin access to additional users:
+
+**RHEL:**
+```bash
+docker exec -i supabase-db psql -U postgres -d postgres <<EOF
 -- Find your user ID
 SELECT id, email FROM auth.users;
 
 -- Grant admin role
 INSERT INTO user_roles (user_id, role) 
 VALUES ('<your-user-id>', 'admin');
+EOF
+```
+
+**Windows (Supabase CLI):**
+```powershell
+supabase db execute --sql "SELECT id, email FROM auth.users;"
+supabase db execute --sql "INSERT INTO user_roles (user_id, role) VALUES ('<your-user-id>', 'admin');"
 ```
 
 ## Production Hardening
@@ -251,11 +285,13 @@ New-Item -ItemType Directory -Force -Path "C:\Scripts"
 New-Item -ItemType Directory -Force -Path "C:\Backups\dell-server-manager"
 
 @'
+Set-Location "C:\dell-supabase"
 $BackupDir = "C:\Backups\dell-server-manager"
 $Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $BackupFile = "$BackupDir\backup_$Timestamp.sql"
 
-docker exec supabase-db pg_dump -U postgres postgres | Out-File -FilePath $BackupFile
+# Use Supabase CLI to dump database
+supabase db dump -f $BackupFile
 
 # Compress
 Compress-Archive -Path $BackupFile -DestinationPath "$BackupFile.zip"
@@ -320,10 +356,21 @@ services:
 
 #### Windows Server 2022
 
-Configure resource limits in Docker Desktop:
-1. Settings → Resources
-2. Set CPU limit: 4 cores
-3. Set Memory limit: 8 GB
+The Supabase CLI manages Docker configuration automatically. To customize resource limits:
+
+1. **Docker Desktop Settings:**
+   - Settings → Resources
+   - Set CPU limit: 4 cores
+   - Set Memory limit: 8 GB
+
+2. **Advanced Configuration (Optional):**
+   ```powershell
+   # Edit the generated docker-compose.yml
+   cd C:\dell-supabase\supabase\docker
+   # Modify resource limits in docker-compose.yml as needed
+   supabase stop
+   supabase start
+   ```
 
 ## Service Management
 
@@ -352,12 +399,17 @@ nssm status DellServerManager
 nssm restart DellServerManager
 nssm stop DellServerManager
 
-# Supabase services
-cd C:\supabase\docker
-docker compose ps
-docker compose logs -f
-docker compose restart
-docker compose stop
+# Supabase services (via CLI)
+cd C:\dell-supabase
+supabase status                    # Check all services
+supabase stop                      # Stop all services
+supabase start                     # Start all services
+supabase db studio                 # Open Studio in browser
+supabase db execute --sql "..."   # Execute SQL query
+
+# View logs
+docker compose logs -f             # All service logs
+docker logs supabase-db -f         # Database logs only
 ```
 
 ## Troubleshooting
@@ -386,45 +438,82 @@ sudo journalctl -u dell-server-manager -n 100
 
 ### Database connection issues
 
+**RHEL:**
 ```bash
 # Test database connection
 docker exec -it supabase-db psql -U postgres -d postgres
 
 # If can't connect, restart Supabase
-cd /opt/supabase/docker  # or C:\supabase\docker on Windows
+cd /opt/supabase/docker
 docker compose restart
+```
+
+**Windows (Supabase CLI):**
+```powershell
+# Check Supabase status
+cd C:\dell-supabase
+supabase status
+
+# Test database connection
+supabase db execute --sql "SELECT version();"
+
+# If can't connect, restart Supabase
+supabase stop
+supabase start
 ```
 
 ### Port already in use
 
+**RHEL:**
 ```bash
-# RHEL - Find what's using the port
+# Find what's using the port
 sudo lsof -i :3000
 sudo lsof -i :8000
-
-# Windows - Find what's using the port
-netstat -ano | findstr :3000
-netstat -ano | findstr :8000
 
 # Kill the process or change ports in docker-compose.yml
 ```
 
+**Windows:**
+```powershell
+# Find what's using the port
+netstat -ano | findstr :3000
+netstat -ano | findstr :54323  # Supabase Studio (CLI default)
+
+# Kill the process if needed
+# taskkill /PID <process-id> /F
+
+# Or change Supabase CLI ports in config
+cd C:\dell-supabase
+# Edit supabase/config.toml to change ports
+supabase stop
+supabase start
+```
+
 ### Reset everything and start fresh
 
+**RHEL:**
 ```bash
-# RHEL
 sudo systemctl stop dell-server-manager
 cd /opt/supabase/docker
 docker compose down -v
 sudo rm -rf /opt/supabase
 # Run deploy script again
+```
 
-# Windows
+**Windows:**
+```powershell
+# Stop services
 nssm stop DellServerManager
-cd C:\supabase\docker
-docker compose down -v
-Remove-Item -Recurse -Force C:\supabase
+cd C:\dell-supabase
+supabase stop
+
+# Clean up
+docker system prune -a -f --volumes
+Remove-Item -Recurse -Force C:\dell-supabase
+
 # Run deploy script again
+cd C:\dell-server-manager
+.\scripts\deploy-windows.ps1
 ```
 
 ## Updating the Application
@@ -442,11 +531,19 @@ sudo systemctl restart dell-server-manager
 ### Windows Server 2022
 
 ```powershell
+# Update application code
 cd C:\dell-server-manager
 git pull
 npm install
 npm run build
 nssm restart DellServerManager
+
+# Update Supabase (if needed)
+cd C:\dell-supabase
+supabase stop
+supabase start
+# Run any database migrations if needed
+supabase db push
 ```
 
 ## Uninstall
@@ -481,17 +578,23 @@ sudo firewall-cmd --reload
 nssm stop DellServerManager
 nssm remove DellServerManager confirm
 
-# Remove Supabase
-cd C:\supabase\docker
-docker compose down -v
-Remove-Item -Recurse -Force C:\supabase
+# Stop and remove Supabase (CLI)
+cd C:\dell-supabase
+supabase stop
+docker system prune -a -f --volumes
+
+# Remove Supabase project directory
+Remove-Item -Recurse -Force C:\dell-supabase
 
 # Remove application
 Remove-Item -Recurse -Force C:\dell-server-manager
 
 # Remove firewall rules
 Remove-NetFirewallRule -DisplayName "Dell Server Manager"
-Remove-NetFirewallRule -DisplayName "Supabase API"
+Remove-NetFirewallRule -DisplayName "Supabase API" -ErrorAction SilentlyContinue
+
+# Uninstall Supabase CLI (optional)
+npm uninstall -g supabase
 ```
 
 ## Architecture Diagram
