@@ -93,6 +93,41 @@ Write-Host "⏳ Waiting for services to start (60 seconds)..." -ForegroundColor 
 Start-Sleep -Seconds 60
 Write-Host "✅ Supabase is running" -ForegroundColor Green
 
+# Create initial admin user
+Write-Host "👤 Step 5/7: Creating initial admin user..." -ForegroundColor Yellow
+$AdminEmail = Read-Host "Enter admin email"
+$AdminPassword = Read-Host "Enter admin password" -AsSecureString
+$AdminPasswordText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AdminPassword))
+
+$AdminUserId = docker exec supabase-db psql -U postgres -d postgres -t -c @"
+  INSERT INTO auth.users (
+    instance_id, id, aud, role, email, 
+    encrypted_password, email_confirmed_at, 
+    created_at, updated_at, confirmation_token
+  ) VALUES (
+    '00000000-0000-0000-0000-000000000000',
+    gen_random_uuid(),
+    'authenticated',
+    'authenticated',
+    '$AdminEmail',
+    crypt('$AdminPasswordText', gen_salt('bf')),
+    now(),
+    now(),
+    now(),
+    ''
+  ) RETURNING id;
+"@ | ForEach-Object { $_.Trim() }
+
+docker exec supabase-db psql -U postgres -d postgres -c @"
+  INSERT INTO public.profiles (id, email, full_name)
+  VALUES ('$AdminUserId', '$AdminEmail', 'Administrator');
+  
+  INSERT INTO public.user_roles (user_id, role)
+  VALUES ('$AdminUserId', 'admin');
+"@
+
+Write-Host "✅ Admin user created: $AdminEmail" -ForegroundColor Green
+
 # Step 6: Setup application
 Write-Host "📱 Step 6/7: Setting up Dell Server Manager..." -ForegroundColor Yellow
 $AppPath = "C:\dell-server-manager"
@@ -153,13 +188,12 @@ Write-Host "   Database: postgres" -ForegroundColor Gray
 Write-Host "   Username: postgres" -ForegroundColor Gray
 Write-Host "   Password: $PostgresPassword" -ForegroundColor Gray
 Write-Host ""
-Write-Host "📋 Next Steps:" -ForegroundColor Yellow
-Write-Host "   1. Import your database schema:" -ForegroundColor Gray
-Write-Host "      cd C:\dell-server-manager" -ForegroundColor Gray
-Write-Host "      npm run restore -- --backup-dir=.\backups\<your-backup>" -ForegroundColor Gray
+Write-Host "🎉 You can now login with:" -ForegroundColor Green
+Write-Host "   Email: $AdminEmail" -ForegroundColor Gray
 Write-Host ""
-Write-Host "   2. Setup SSL/TLS (recommended for production)" -ForegroundColor Gray
-Write-Host "   3. Configure your DNS to point to $ServerIP" -ForegroundColor Gray
+Write-Host "📋 Next Steps:" -ForegroundColor Yellow
+Write-Host "   1. Setup SSL/TLS (recommended for production)" -ForegroundColor Gray
+Write-Host "   2. Configure your DNS to point to $ServerIP" -ForegroundColor Gray
 Write-Host ""
 Write-Host "📝 Service Management:" -ForegroundColor Yellow
 Write-Host "   nssm status DellServerManager" -ForegroundColor Gray

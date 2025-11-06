@@ -76,11 +76,46 @@ echo "⏳ Waiting for services to start (60 seconds)..."
 sleep 60
 echo "✅ Supabase is running"
 
+# Create initial admin user
+echo "👤 Step 5/7: Creating initial admin user..."
+read -p "Enter admin email: " ADMIN_EMAIL
+read -s -p "Enter admin password: " ADMIN_PASSWORD
+echo ""
+
+ADMIN_USER_ID=$(docker exec supabase-db psql -U postgres -d postgres -t -c "
+  INSERT INTO auth.users (
+    instance_id, id, aud, role, email, 
+    encrypted_password, email_confirmed_at, 
+    created_at, updated_at, confirmation_token
+  ) VALUES (
+    '00000000-0000-0000-0000-000000000000',
+    gen_random_uuid(),
+    'authenticated',
+    'authenticated',
+    '$ADMIN_EMAIL',
+    crypt('$ADMIN_PASSWORD', gen_salt('bf')),
+    now(),
+    now(),
+    now(),
+    ''
+  ) RETURNING id;
+" | tr -d ' ')
+
+docker exec supabase-db psql -U postgres -d postgres -c "
+  INSERT INTO public.profiles (id, email, full_name)
+  VALUES ('$ADMIN_USER_ID', '$ADMIN_EMAIL', 'Administrator');
+  
+  INSERT INTO public.user_roles (user_id, role)
+  VALUES ('$ADMIN_USER_ID', 'admin');
+"
+
+echo "✅ Admin user created: $ADMIN_EMAIL"
+
 # Get server IP
 SERVER_IP=$(hostname -I | awk '{print $1}')
 
-# Step 5: Setup application
-echo "📱 Step 5/6: Setting up Dell Server Manager..."
+# Step 6: Setup application
+echo "📱 Step 6/7: Setting up Dell Server Manager..."
 cd ~
 if [ ! -d "dell-server-manager" ]; then
     echo "❌ Please clone the Dell Server Manager repository first"
@@ -101,8 +136,8 @@ EOF
 # Build application
 npm run build
 
-# Step 6: Setup systemd service
-echo "🔧 Step 6/6: Creating systemd service..."
+# Step 7: Setup systemd service
+echo "🔧 Step 7/7: Creating systemd service..."
 cat > /etc/systemd/system/dell-server-manager.service << EOF
 [Unit]
 Description=Dell Server Manager
@@ -146,13 +181,12 @@ echo "   Database: postgres"
 echo "   Username: postgres"
 echo "   Password: $(grep POSTGRES_PASSWORD /opt/supabase/docker/.env | cut -d= -f2)"
 echo ""
-echo "📋 Next Steps:"
-echo "   1. Import your database schema:"
-echo "      cd ~/dell-server-manager"
-echo "      npm run restore -- --backup-dir=./backups/<your-backup>"
+echo "🎉 You can now login with:"
+echo "   Email: $ADMIN_EMAIL"
 echo ""
-echo "   2. Setup SSL/TLS (recommended for production)"
-echo "   3. Configure your DNS to point to $SERVER_IP"
+echo "📋 Next Steps:"
+echo "   1. Setup SSL/TLS (recommended for production)"
+echo "   2. Configure your DNS to point to $SERVER_IP"
 echo ""
 echo "📝 Service Management:"
 echo "   sudo systemctl status dell-server-manager"

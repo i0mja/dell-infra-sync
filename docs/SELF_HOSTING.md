@@ -18,6 +18,7 @@ sudo bash scripts/deploy-rhel9.sh
 **That's it!** The script will:
 - ✅ Install Docker and Node.js
 - ✅ Setup and configure Supabase
+- ✅ Create your admin user account
 - ✅ Build and deploy the application
 - ✅ Create systemd service
 - ✅ Configure firewall
@@ -38,6 +39,7 @@ cd C:\dell-server-manager
 **That's it!** The script will:
 - ✅ Install Docker Desktop, Node.js, and dependencies
 - ✅ Setup and configure Supabase
+- ✅ Create your admin user account
 - ✅ Build and deploy the application
 - ✅ Create Windows service
 - ✅ Configure firewall
@@ -73,9 +75,9 @@ The deployment script will display:
 🌐 Dell Server Manager: http://192.168.1.100:3000
 ```
 
-### 2. Import Your Data
+### 2. Import Your Data (Optional)
 
-If you have an existing deployment, restore your backup:
+If you have an existing deployment, you can restore your backup:
 
 ```bash
 # Run backup on old system (Lovable Cloud)
@@ -89,9 +91,11 @@ cd ~/dell-server-manager
 npm run restore -- --backup-dir=./backups/backup-2025-01-05T12-30-00
 ```
 
-### 3. Create First User
+**Note:** An admin user is created automatically during deployment, so you can skip the "Create First User" and "Grant Admin Access" sections below unless you need additional users.
 
-```bash
+### 3. Create Additional Users (Optional)
+
+If you need to create additional users:
 # Option A: Via Supabase Studio
 # 1. Open http://your-server:8000
 # 2. Go to Authentication → Users
@@ -117,9 +121,9 @@ INSERT INTO auth.users (
 EOF
 ```
 
-### 4. Grant Admin Access
+### 4. Grant Additional Admin Access (Optional)
 
-```sql
+To grant admin access to additional users:
 -- Find your user ID
 SELECT id, email FROM auth.users;
 
