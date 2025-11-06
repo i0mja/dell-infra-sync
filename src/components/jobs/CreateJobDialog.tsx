@@ -34,8 +34,6 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDial
   const [notes, setNotes] = useState("");
   const [firmwareUri, setFirmwareUri] = useState("");
   const [component, setComponent] = useState("BIOS");
-  const [version, setVersion] = useState("latest");
-  const [applyTime, setApplyTime] = useState("OnReset");
   const { toast } = useToast();
 
   useEffect(() => {
@@ -68,8 +66,8 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDial
         target_scope = { server_ids: selectedServers };
         details.firmware_uri = firmwareUri || undefined;
         details.component = component;
-        details.version = version;
-        details.apply_time = applyTime;
+        details.version = "latest";
+        details.apply_time = "OnReset";
       } else if (jobType === 'discovery_scan') {
         if (!scanRange) {
           throw new Error('Please enter an IP range to scan');
@@ -102,8 +100,6 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDial
       setNotes("");
       setFirmwareUri("");
       setComponent("BIOS");
-      setVersion("latest");
-      setApplyTime("OnReset");
       onOpenChange(false);
       onSuccess();
     } catch (error: any) {
@@ -175,33 +171,24 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDial
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="component">Component</Label>
-                  <Select value={component} onValueChange={setComponent}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="BIOS">BIOS</SelectItem>
-                      <SelectItem value="iDRAC">iDRAC / Lifecycle Controller</SelectItem>
-                      <SelectItem value="RAID">RAID Controller</SelectItem>
-                      <SelectItem value="NIC">Network Adapter</SelectItem>
-                      <SelectItem value="CPLD">CPLD / FPGA</SelectItem>
-                      <SelectItem value="Backplane">Backplane</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="version">Version</Label>
-                  <Input
-                    id="version"
-                    placeholder="latest or 2.9.0"
-                    value={version}
-                    onChange={(e) => setVersion(e.target.value)}
-                  />
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="component">Component to Update</Label>
+                <Select value={component} onValueChange={setComponent}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="BIOS">BIOS</SelectItem>
+                    <SelectItem value="iDRAC">iDRAC / Lifecycle Controller</SelectItem>
+                    <SelectItem value="RAID">RAID Controller</SelectItem>
+                    <SelectItem value="NIC">Network Adapter</SelectItem>
+                    <SelectItem value="CPLD">CPLD / FPGA</SelectItem>
+                    <SelectItem value="Backplane">Backplane</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Will update to latest available version
+                </p>
               </div>
 
               {/* Best Practices Guidance */}
@@ -241,22 +228,6 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDial
                 />
                 <p className="text-xs text-muted-foreground">
                   Leave empty to use default repository path based on component and version
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="apply_time">Apply Time</Label>
-                <Select value={applyTime} onValueChange={setApplyTime}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="OnReset">On Next Reboot (Recommended)</SelectItem>
-                    <SelectItem value="Immediate">Immediate (May cause disruption)</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  OnReset: Firmware applied after reboot. Immediate: Applied now (not recommended for production)
                 </p>
               </div>
             </>
