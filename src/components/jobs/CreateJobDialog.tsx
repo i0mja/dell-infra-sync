@@ -30,6 +30,10 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDial
   const [scanRange, setScanRange] = useState("");
   const [scheduleAt, setScheduleAt] = useState("");
   const [notes, setNotes] = useState("");
+  const [firmwareUri, setFirmwareUri] = useState("");
+  const [component, setComponent] = useState("BIOS");
+  const [version, setVersion] = useState("latest");
+  const [applyTime, setApplyTime] = useState("OnReset");
   const { toast } = useToast();
 
   useEffect(() => {
@@ -60,7 +64,10 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDial
           throw new Error('Please select at least one server');
         }
         target_scope = { server_ids: selectedServers };
-        details.firmware_type = 'all'; // Could be expanded to specific firmware types
+        details.firmware_uri = firmwareUri || undefined;
+        details.component = component;
+        details.version = version;
+        details.apply_time = applyTime;
       } else if (jobType === 'discovery_scan') {
         if (!scanRange) {
           throw new Error('Please enter an IP range to scan');
@@ -91,6 +98,10 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDial
       setScanRange("");
       setScheduleAt("");
       setNotes("");
+      setFirmwareUri("");
+      setComponent("BIOS");
+      setVersion("latest");
+      setApplyTime("OnReset");
       onOpenChange(false);
       onSuccess();
     } catch (error: any) {
@@ -136,30 +147,89 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDial
           </div>
 
           {jobType === 'firmware_update' && (
-            <div className="space-y-2">
-              <Label>Target Servers * ({selectedServers.length} selected)</Label>
-              <div className="border rounded-lg p-4 max-h-64 overflow-y-auto space-y-2">
-                {servers.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No servers available</p>
-                ) : (
-                  servers.map((server) => (
-                    <div key={server.id} className="flex items-center space-x-2">
-                      <Checkbox
-                        id={server.id}
-                        checked={selectedServers.includes(server.id)}
-                        onCheckedChange={() => toggleServer(server.id)}
-                      />
-                      <label
-                        htmlFor={server.id}
-                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                      >
-                        {server.hostname || server.ip_address} ({server.model || 'Unknown model'})
-                      </label>
-                    </div>
-                  ))
-                )}
+            <>
+              <div className="space-y-2">
+                <Label>Target Servers * ({selectedServers.length} selected)</Label>
+                <div className="border rounded-lg p-4 max-h-64 overflow-y-auto space-y-2">
+                  {servers.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No servers available</p>
+                  ) : (
+                    servers.map((server) => (
+                      <div key={server.id} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={server.id}
+                          checked={selectedServers.includes(server.id)}
+                          onCheckedChange={() => toggleServer(server.id)}
+                        />
+                        <label
+                          htmlFor={server.id}
+                          className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                        >
+                          {server.hostname || server.ip_address} ({server.model || 'Unknown model'})
+                        </label>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
-            </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="component">Component</Label>
+                  <Select value={component} onValueChange={setComponent}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="BIOS">BIOS</SelectItem>
+                      <SelectItem value="iDRAC">iDRAC</SelectItem>
+                      <SelectItem value="RAID">RAID Controller</SelectItem>
+                      <SelectItem value="NIC">Network Adapter</SelectItem>
+                      <SelectItem value="Backplane">Backplane</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="version">Version</Label>
+                  <Input
+                    id="version"
+                    placeholder="latest or 2.9.0"
+                    value={version}
+                    onChange={(e) => setVersion(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="firmware_uri">Firmware URI (Optional)</Label>
+                <Input
+                  id="firmware_uri"
+                  placeholder="http://firmware.example.com/dell/BIOS_2.9.0.exe"
+                  value={firmwareUri}
+                  onChange={(e) => setFirmwareUri(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Leave empty to use default repository path based on component and version
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="apply_time">Apply Time</Label>
+                <Select value={applyTime} onValueChange={setApplyTime}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="OnReset">On Next Reboot (Recommended)</SelectItem>
+                    <SelectItem value="Immediate">Immediate (May cause disruption)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  OnReset: Firmware applied after reboot. Immediate: Applied now (not recommended for production)
+                </p>
+              </div>
+            </>
           )}
 
           {jobType === 'discovery_scan' && (

@@ -53,7 +53,13 @@ Cloud (Dell Server Manager)         Local Network (Your Infrastructure)
    - Connectivity to vCenter (if using maintenance mode)
    - Outbound HTTPS to your Dell Server Manager URL
 
-3. **Credentials**
+3. **Firmware Repository (Required for firmware updates)**
+   - HTTP/HTTPS server hosting Dell Update Packages (DUP files)
+   - Must be accessible from iDRAC management network
+   - Organized structure (e.g., `/dell/BIOS/`, `/dell/iDRAC/`, etc.)
+   - Example: `http://firmware.example.com/dell/BIOS_R720_2.9.0.exe`
+
+4. **Credentials**
    - Service Role Key from Supabase (for API access)
    - vCenter credentials
    - iDRAC default credentials
@@ -67,13 +73,49 @@ Cloud (Dell Server Manager)         Local Network (Your Infrastructure)
 3. Copy the `service_role` key (starts with `eyJ...`)
 4. **IMPORTANT**: This is a SECRET - do not commit to version control
 
-#### Step 2: Configure the Script
+#### Step 2: Set Up Firmware Repository
+
+**IMPORTANT**: Before running firmware updates, you must set up an HTTP server with Dell firmware packages:
+
+1. **Download Dell Update Packages (DUP files)**
+   - Visit Dell Support: https://www.dell.com/support
+   - Download `.EXE` files for your components (BIOS, iDRAC, RAID, etc.)
+   - Example: `iDRAC-with-Lifecycle-Controller_Firmware_ABC123_WN64_4.40.00.00_A00.EXE`
+
+2. **Set up HTTP Server**
+   ```bash
+   # Simple Python HTTP server (for testing only)
+   mkdir -p /opt/firmware-repo/dell
+   cd /opt/firmware-repo
+   python3 -m http.server 8080
+   
+   # For production, use Apache/Nginx with proper access controls
+   ```
+
+3. **Organize Firmware Files**
+   ```
+   /opt/firmware-repo/dell/
+   ├── BIOS_R720_2.9.0.exe
+   ├── BIOS_R730_2.11.0.exe
+   ├── iDRAC_4.40.00.00.exe
+   ├── RAID_H730_25.5.9.0001.exe
+   └── ...
+   ```
+
+4. **Verify Accessibility**
+   - Ensure iDRAC can reach the HTTP server
+   - Test: `curl http://your-server:8080/dell/BIOS_R720_2.9.0.exe -I`
+
+#### Step 3: Configure the Script
 
 Edit `job-executor.py` and update these settings:
 
 ```python
 # Your Dell Server Manager URL
 DSM_URL = "https://your-app.lovable.app"  # Change this
+
+# Firmware repository URL
+FIRMWARE_REPO_URL = "http://firmware.example.com:8080/dell"
 
 # vCenter connection
 VCENTER_HOST = "vcenter.example.com"
@@ -87,23 +129,25 @@ IDRAC_DEFAULT_PASSWORD = "calvin"
 POLL_INTERVAL = 10  # Check for jobs every 10 seconds
 ```
 
-#### Step 3: Set Environment Variables (Recommended)
+#### Step 4: Set Environment Variables (Recommended)
 
 For security, use environment variables:
 
 ```bash
 # Linux/Mac
 export SERVICE_ROLE_KEY="your-service-role-key-here"
+export FIRMWARE_REPO_URL="http://your-firmware-server:8080/dell"
 export VCENTER_PASSWORD="your-vcenter-password"
 export IDRAC_PASSWORD="your-idrac-password"
 
 # Windows PowerShell
 $env:SERVICE_ROLE_KEY="your-service-role-key-here"
+$env:FIRMWARE_REPO_URL="http://your-firmware-server:8080/dell"
 $env:VCENTER_PASSWORD="your-vcenter-password"
 $env:IDRAC_PASSWORD="your-idrac-password"
 ```
 
-#### Step 4: Run the Executor
+#### Step 5: Run the Executor
 
 ```bash
 python job-executor.py
@@ -331,14 +375,68 @@ response = requests.post(
 )
 ```
 
+### Firmware Update Details
+
+#### How Redfish Firmware Updates Work
+
+1. **SimpleUpdate Method**
+   - iDRAC downloads firmware from HTTP URI
+   - Stages firmware in iDRAC memory
+   - Applies firmware based on `apply_time` setting
+   - Handles job queuing and scheduling
+
+2. **Apply Time Options**
+   - **OnReset**: Firmware applied on next reboot (recommended)
+   - **Immediate**: Firmware applied immediately (may cause disruption)
+
+3. **Update Flow**
+   ```
+   Create Session → Get Inventory → Enter Maintenance (optional)
+   → Initiate Update → Monitor Progress (0-100%)
+   → Trigger Reboot → Wait for Online → Exit Maintenance
+   → Verify New Version → Close Session
+   ```
+
+#### Supported Components
+
+- **BIOS**: System firmware
+- **iDRAC**: Management controller firmware
+- **RAID**: Storage controller firmware
+- **NIC**: Network adapter firmware
+- **Backplane**: Storage backplane firmware
+- **PSU**: Power supply unit firmware
+
+#### Troubleshooting Firmware Updates
+
+**"Failed to initiate update: 400"**
+- Check firmware URI is correct and accessible from iDRAC
+- Verify firmware package matches server model
+- Ensure iDRAC has network access to firmware repo
+
+**"Update failed: Job already exists"**
+- Another update is in progress
+- Clear iDRAC job queue: iDRAC Web UI → Maintenance → Job Queue
+- Wait for existing jobs to complete
+
+**"System did not come back online"**
+- Some updates require multiple reboots
+- Check server physical console
+- Verify network connectivity
+- Increase `SYSTEM_REBOOT_WAIT` timeout
+
+**"Firmware update timed out"**
+- Large firmware files take longer to download
+- Increase `FIRMWARE_UPDATE_TIMEOUT`
+- Check network bandwidth to iDRAC
+
 ### Next Steps
 
-- Implement full Redfish firmware update
-- Add vCenter maintenance mode operations
+- Add vCenter maintenance mode operations (currently simulated)
 - Auto-insert discovered servers into database
 - Add retry logic for failed tasks
 - Implement job cancellation
 - Add email/Teams notifications on job completion
+- Add pre-update health checks (disk space, power redundancy)
 
 ### Support
 

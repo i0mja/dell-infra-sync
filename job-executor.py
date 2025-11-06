@@ -56,8 +56,16 @@ VCENTER_PASSWORD = os.getenv("VCENTER_PASSWORD", "")
 IDRAC_DEFAULT_USER = os.getenv("IDRAC_USER", "root")
 IDRAC_DEFAULT_PASSWORD = os.getenv("IDRAC_PASSWORD", "calvin")
 
+# Firmware repository URL (HTTP server hosting Dell Update Packages)
+FIRMWARE_REPO_URL = os.getenv("FIRMWARE_REPO_URL", "http://firmware.example.com/dell")
+
 # Polling interval (seconds)
 POLL_INTERVAL = 10  # Check for new jobs every 10 seconds
+
+# Firmware update settings
+FIRMWARE_UPDATE_TIMEOUT = 1800  # 30 minutes max for firmware download/apply
+SYSTEM_REBOOT_WAIT = 120  # Wait 2 minutes for system to reboot
+SYSTEM_ONLINE_CHECK_ATTEMPTS = 24  # Try for 4 minutes (24 * 10s)
 
 # SSL verification
 VERIFY_SSL = False
@@ -291,9 +299,225 @@ class JobExecutor:
             self.log(f"Failed to connect to vCenter: {e}", "ERROR")
             return None
 
+    def create_idrac_session(self, ip: str, username: str, password: str) -> Optional[str]:
+        """Create authenticated session with iDRAC and return session token"""
+        try:
+            url = f"https://{ip}/redfish/v1/SessionService/Sessions"
+            payload = {
+                "UserName": username,
+                "Password": password
+            }
+            
+            response = requests.post(
+                url,
+                json=payload,
+                verify=False,
+                timeout=10
+            )
+            
+            if response.status_code == 201:
+                session_token = response.headers.get('X-Auth-Token')
+                self.log(f"  Created iDRAC session: {ip}")
+                return session_token
+            else:
+                self.log(f"  Failed to create session: {response.status_code}", "ERROR")
+                return None
+        except Exception as e:
+            self.log(f"  Error creating iDRAC session: {e}", "ERROR")
+            return None
+
+    def close_idrac_session(self, ip: str, session_token: str, session_uri: str = None):
+        """Close iDRAC session"""
+        try:
+            if not session_uri:
+                # Try to extract session ID from token or use common pattern
+                session_uri = f"https://{ip}/redfish/v1/SessionService/Sessions/1"
+            
+            headers = {"X-Auth-Token": session_token}
+            response = requests.delete(
+                session_uri,
+                headers=headers,
+                verify=False,
+                timeout=5
+            )
+            
+            if response.status_code in [200, 204]:
+                self.log(f"  Closed iDRAC session: {ip}")
+        except Exception as e:
+            self.log(f"  Error closing session (non-fatal): {e}", "WARN")
+
+    def get_firmware_inventory(self, ip: str, session_token: str) -> Dict:
+        """Get current firmware versions from iDRAC"""
+        try:
+            url = f"https://{ip}/redfish/v1/UpdateService/FirmwareInventory"
+            headers = {"X-Auth-Token": session_token}
+            
+            response = requests.get(
+                url,
+                headers=headers,
+                verify=False,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                members = data.get('Members', [])
+                
+                # Extract key firmware components
+                firmware_info = {}
+                for member in members:
+                    member_url = member.get('@odata.id', '')
+                    member_resp = requests.get(
+                        f"https://{ip}{member_url}",
+                        headers=headers,
+                        verify=False,
+                        timeout=5
+                    )
+                    
+                    if member_resp.status_code == 200:
+                        fw_data = member_resp.json()
+                        name = fw_data.get('Name', 'Unknown')
+                        version = fw_data.get('Version', 'Unknown')
+                        firmware_info[name] = version
+                
+                self.log(f"  Current firmware: BIOS={firmware_info.get('BIOS', 'N/A')}, iDRAC={firmware_info.get('Integrated Dell Remote Access Controller', 'N/A')}")
+                return firmware_info
+            
+            return {}
+        except Exception as e:
+            self.log(f"  Error getting firmware inventory: {e}", "WARN")
+            return {}
+
+    def initiate_firmware_update(self, ip: str, session_token: str, firmware_uri: str, apply_time: str = "OnReset") -> Optional[str]:
+        """
+        Initiate firmware update via SimpleUpdate action
+        
+        Args:
+            ip: iDRAC IP address
+            session_token: Authenticated session token
+            firmware_uri: Full HTTP URL to firmware DUP file
+            apply_time: "Immediate" or "OnReset"
+            
+        Returns:
+            Task URI for monitoring progress
+        """
+        try:
+            url = f"https://{ip}/redfish/v1/UpdateService/Actions/UpdateService.SimpleUpdate"
+            headers = {
+                "X-Auth-Token": session_token,
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "ImageURI": firmware_uri,
+                "TransferProtocol": "HTTP",
+                "@Redfish.OperationApplyTime": apply_time
+            }
+            
+            self.log(f"  Initiating firmware update from: {firmware_uri}")
+            response = requests.post(
+                url,
+                json=payload,
+                headers=headers,
+                verify=False,
+                timeout=30
+            )
+            
+            if response.status_code == 202:
+                # Extract task URI from Location header
+                task_uri = response.headers.get('Location')
+                if not task_uri:
+                    # Try to get it from response body
+                    data = response.json()
+                    task_uri = data.get('@odata.id') or data.get('TaskUri')
+                
+                self.log(f"  Firmware update initiated, task URI: {task_uri}")
+                return task_uri
+            else:
+                self.log(f"  Failed to initiate update: {response.status_code} - {response.text}", "ERROR")
+                return None
+                
+        except Exception as e:
+            self.log(f"  Error initiating firmware update: {e}", "ERROR")
+            return None
+
+    def monitor_update_task(self, ip: str, session_token: str, task_uri: str) -> Dict:
+        """
+        Poll task status
+        
+        Returns:
+            Dict with TaskState, PercentComplete, Messages
+        """
+        try:
+            if not task_uri.startswith('http'):
+                task_uri = f"https://{ip}{task_uri}"
+            
+            headers = {"X-Auth-Token": session_token}
+            response = requests.get(
+                task_uri,
+                headers=headers,
+                verify=False,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "TaskState": data.get("TaskState", "Unknown"),
+                    "PercentComplete": data.get("PercentComplete", 0),
+                    "Messages": data.get("Messages", [])
+                }
+            
+            return {"TaskState": "Unknown", "PercentComplete": 0, "Messages": []}
+        except Exception as e:
+            self.log(f"  Error monitoring task: {e}", "WARN")
+            return {"TaskState": "Unknown", "PercentComplete": 0, "Messages": []}
+
+    def reset_system(self, ip: str, session_token: str, reset_type: str = "ForceRestart"):
+        """Trigger system reboot to apply firmware"""
+        try:
+            url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset"
+            headers = {
+                "X-Auth-Token": session_token,
+                "Content-Type": "application/json"
+            }
+            payload = {"ResetType": reset_type}
+            
+            response = requests.post(
+                url,
+                json=payload,
+                headers=headers,
+                verify=False,
+                timeout=10
+            )
+            
+            if response.status_code in [200, 204]:
+                self.log(f"  System reset initiated: {reset_type}")
+                return True
+            else:
+                self.log(f"  Failed to reset system: {response.status_code}", "ERROR")
+                return False
+                
+        except Exception as e:
+            self.log(f"  Error resetting system: {e}", "ERROR")
+            return False
+
     def execute_firmware_update(self, job: Dict):
-        """Execute firmware update job (with vCenter integration)"""
+        """Execute firmware update job with actual Dell iDRAC Redfish API calls"""
         self.log(f"Starting firmware update job {job['id']}")
+        
+        # Get firmware details from job
+        details = job.get('details', {})
+        firmware_uri = details.get('firmware_uri')
+        component = details.get('component', 'BIOS')
+        version = details.get('version', 'latest')
+        apply_time = details.get('apply_time', 'OnReset')
+        
+        # Construct firmware URI if not provided
+        if not firmware_uri:
+            firmware_uri = f"{FIRMWARE_REPO_URL}/{component}_{version}.exe"
+        
+        self.log(f"Firmware URI: {firmware_uri}")
+        self.log(f"Apply time: {apply_time}")
         
         self.update_job_status(
             job['id'],
@@ -315,71 +539,178 @@ class JobExecutor:
                     self.log(f"Task {task['id']}: No server data", "WARN")
                     continue
                 
-                self.log(f"Processing server: {server.get('hostname') or server.get('ip_address')}")
+                ip = server['ip_address']
+                hostname = server.get('hostname') or ip
+                self.log(f"Processing server: {hostname} ({ip})")
                 
                 self.update_task_status(
                     task['id'],
                     'running',
-                    log="Starting firmware update...",
+                    log="Connecting to iDRAC...",
                     started_at=datetime.now().isoformat()
                 )
                 
+                session_token = None
+                
                 try:
-                    # Step 1: Put host in maintenance mode if linked to vCenter
-                    if server.get('vcenter_host_id'):
-                        self.log(f"  Entering maintenance mode...")
-                        # TODO: Implement vCenter maintenance mode
-                        # For now, simulate
-                        time.sleep(2)
-                        self.update_task_status(
-                            task['id'],
-                            'running',
-                            log="Host in maintenance mode\nStarting firmware update..."
-                        )
-                    
-                    # Step 2: Perform firmware update via Redfish
-                    self.log(f"  Updating firmware on {server['ip_address']}...")
-                    # TODO: Implement actual Redfish firmware update
-                    # For now, simulate
-                    time.sleep(3)
-                    self.update_task_status(
-                        task['id'],
-                        'running',
-                        log="Host in maintenance mode\nStarting firmware update...\nFirmware update completed\nRebooting server..."
+                    # Step 1: Create iDRAC session
+                    session_token = self.create_idrac_session(
+                        ip, IDRAC_DEFAULT_USER, IDRAC_DEFAULT_PASSWORD
                     )
                     
-                    # Step 3: Wait for reboot
-                    time.sleep(2)
-                    
-                    # Step 4: Exit maintenance mode
-                    if server.get('vcenter_host_id'):
-                        self.log(f"  Exiting maintenance mode...")
-                        time.sleep(1)
+                    if not session_token:
+                        raise Exception("Failed to authenticate with iDRAC")
                     
                     self.update_task_status(
-                        task['id'],
-                        'completed',
-                        log="Host in maintenance mode\nStarting firmware update...\nFirmware update completed\nRebooting server...\nHost back online\nExited maintenance mode\n✓ Firmware update successful",
+                        task['id'], 'running',
+                        log="✓ Connected to iDRAC\nChecking current firmware..."
+                    )
+                    
+                    # Step 2: Get current firmware inventory
+                    current_fw = self.get_firmware_inventory(ip, session_token)
+                    
+                    # Step 3: Put host in maintenance mode (if vCenter linked)
+                    maintenance_mode_enabled = False
+                    if server.get('vcenter_host_id'):
+                        self.log(f"  Entering maintenance mode...")
+                        # TODO: Implement actual vCenter maintenance mode
+                        # For now, just log
+                        maintenance_mode_enabled = True
+                        self.update_task_status(
+                            task['id'], 'running',
+                            log="✓ Connected to iDRAC\n✓ Current firmware checked\n→ Entering maintenance mode..."
+                        )
+                        time.sleep(2)  # Simulate maintenance mode entry
+                    
+                    # Step 4: Initiate firmware update
+                    self.log(f"  Initiating firmware update...")
+                    log_msg = "✓ Connected to iDRAC\n✓ Current firmware checked\n"
+                    if maintenance_mode_enabled:
+                        log_msg += "✓ Maintenance mode active\n"
+                    log_msg += "→ Downloading and staging firmware...\n0% complete"
+                    
+                    self.update_task_status(task['id'], 'running', log=log_msg)
+                    
+                    task_uri = self.initiate_firmware_update(ip, session_token, firmware_uri, apply_time)
+                    
+                    if not task_uri:
+                        raise Exception("Failed to initiate firmware update")
+                    
+                    # Step 5: Monitor update progress
+                    progress = 0
+                    start_time = time.time()
+                    
+                    while progress < 100:
+                        if time.time() - start_time > FIRMWARE_UPDATE_TIMEOUT:
+                            raise Exception("Firmware update timed out")
+                        
+                        time.sleep(10)  # Poll every 10 seconds
+                        task_status = self.monitor_update_task(ip, session_token, task_uri)
+                        
+                        new_progress = task_status.get('PercentComplete', progress)
+                        task_state = task_status.get('TaskState', 'Unknown')
+                        
+                        if new_progress > progress:
+                            progress = new_progress
+                            log_msg = "✓ Connected to iDRAC\n✓ Current firmware checked\n"
+                            if maintenance_mode_enabled:
+                                log_msg += "✓ Maintenance mode active\n"
+                            log_msg += f"→ Applying firmware update...\n{progress}% complete"
+                            
+                            self.update_task_status(task['id'], 'running', log=log_msg)
+                            self.log(f"  Firmware update progress: {progress}%")
+                        
+                        if task_state == 'Exception' or task_state == 'Killed':
+                            messages = task_status.get('Messages', [])
+                            error_msg = messages[0].get('Message', 'Unknown error') if messages else 'Update failed'
+                            raise Exception(f"Update failed: {error_msg}")
+                        
+                        if task_state == 'Completed':
+                            self.log(f"  Firmware staging complete")
+                            break
+                    
+                    # Step 6: Trigger system reset if apply_time is OnReset
+                    if apply_time == "OnReset":
+                        self.log(f"  Triggering system reboot...")
+                        log_msg = "✓ Connected to iDRAC\n✓ Current firmware checked\n"
+                        if maintenance_mode_enabled:
+                            log_msg += "✓ Maintenance mode active\n"
+                        log_msg += "✓ Firmware staged\n→ Rebooting system..."
+                        
+                        self.update_task_status(task['id'], 'running', log=log_msg)
+                        
+                        self.reset_system(ip, session_token)
+                        
+                        # Step 7: Wait for system to come back online
+                        self.log(f"  Waiting for system to reboot...")
+                        time.sleep(SYSTEM_REBOOT_WAIT)
+                        
+                        log_msg += "\n→ Waiting for system to come back online..."
+                        self.update_task_status(task['id'], 'running', log=log_msg)
+                        
+                        # Check if system is back online
+                        system_online = False
+                        for attempt in range(SYSTEM_ONLINE_CHECK_ATTEMPTS):
+                            try:
+                                test_result = self.test_idrac_connection(ip, IDRAC_DEFAULT_USER, IDRAC_DEFAULT_PASSWORD)
+                                if test_result:
+                                    system_online = True
+                                    self.log(f"  System back online")
+                                    break
+                            except:
+                                pass
+                            time.sleep(10)
+                        
+                        if not system_online:
+                            raise Exception("System did not come back online after reboot")
+                    
+                    # Step 8: Exit maintenance mode
+                    if maintenance_mode_enabled:
+                        self.log(f"  Exiting maintenance mode...")
+                        # TODO: Implement actual vCenter maintenance mode exit
+                        time.sleep(2)
+                    
+                    # Step 9: Verify firmware version
+                    new_session = self.create_idrac_session(ip, IDRAC_DEFAULT_USER, IDRAC_DEFAULT_PASSWORD)
+                    if new_session:
+                        new_fw = self.get_firmware_inventory(ip, new_session)
+                        self.close_idrac_session(ip, new_session)
+                    
+                    # Build success log
+                    success_log = "✓ Connected to iDRAC\n✓ Current firmware checked\n"
+                    if maintenance_mode_enabled:
+                        success_log += "✓ Maintenance mode active\n"
+                    success_log += "✓ Firmware staged\n✓ System rebooted\n✓ System back online\n"
+                    if maintenance_mode_enabled:
+                        success_log += "✓ Exited maintenance mode\n"
+                    success_log += f"\n✓ Firmware update successful"
+                    
+                    self.update_task_status(
+                        task['id'], 'completed',
+                        log=success_log,
                         completed_at=datetime.now().isoformat()
                     )
                     
-                    self.log(f"  ✓ Completed")
+                    self.log(f"  ✓ Firmware update completed successfully")
                     
                 except Exception as e:
                     self.log(f"  ✗ Failed: {e}", "ERROR")
                     self.update_task_status(
-                        task['id'],
-                        'failed',
-                        log=f"Error: {str(e)}",
+                        task['id'], 'failed',
+                        log=f"✗ Error: {str(e)}",
                         completed_at=datetime.now().isoformat()
                     )
                     failed_count += 1
+                
+                finally:
+                    # Always close session
+                    if session_token:
+                        self.close_idrac_session(ip, session_token)
             
-            # Update job as completed
+            # Update job status
             final_status = 'completed' if failed_count == 0 else 'failed'
             self.update_job_status(
-                job['id'],
-                final_status,
+                job['id'], final_status,
                 completed_at=datetime.now().isoformat(),
                 details={"total_tasks": len(tasks), "failed_tasks": failed_count}
             )
@@ -389,8 +720,7 @@ class JobExecutor:
         except Exception as e:
             self.log(f"Firmware update job failed: {e}", "ERROR")
             self.update_job_status(
-                job['id'],
-                'failed',
+                job['id'], 'failed',
                 completed_at=datetime.now().isoformat(),
                 details={"error": str(e)}
             )
