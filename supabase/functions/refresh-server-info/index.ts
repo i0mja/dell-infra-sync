@@ -144,6 +144,9 @@ Deno.serve(async (req) => {
         bios_version,
         idrac_firmware: idracFirmware,
         last_seen: new Date().toISOString(),
+        connection_status: 'online',
+        last_connection_test: new Date().toISOString(),
+        connection_error: null,
       })
       .eq('id', server_id);
 

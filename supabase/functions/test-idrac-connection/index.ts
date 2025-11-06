@@ -72,20 +72,30 @@ Deno.serve(async (req) => {
       const responseTime = Date.now() - startTime;
 
       if (!response.ok) {
+        let errorMessage = '';
         if (response.status === 401) {
-          return new Response(JSON.stringify({ 
-            success: false,
-            error: 'Authentication failed - Invalid credentials',
-            response_time_ms: responseTime,
-          }), {
-            status: 200,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
+          errorMessage = 'Authentication failed - Invalid credentials';
+        } else {
+          errorMessage = `iDRAC returned status ${response.status}`;
         }
-        
+
+        // Update server connection status in database
+        const { error: updateError } = await supabaseClient
+          .from('servers')
+          .update({
+            last_connection_test: new Date().toISOString(),
+            connection_status: 'offline',
+            connection_error: errorMessage,
+          })
+          .eq('ip_address', ip_address);
+
+        if (updateError) {
+          console.error('Failed to update server connection status:', updateError);
+        }
+
         return new Response(JSON.stringify({ 
           success: false,
-          error: `iDRAC returned status ${response.status}`,
+          error: errorMessage,
           response_time_ms: responseTime,
         }), {
           status: 200,
@@ -97,6 +107,21 @@ Deno.serve(async (req) => {
       
       // Extract iDRAC version if available
       const idracVersion = data.RedfishVersion || 'Unknown';
+
+      // Update server connection status in database
+      const { error: updateError } = await supabaseClient
+        .from('servers')
+        .update({
+          last_connection_test: new Date().toISOString(),
+          connection_status: 'online',
+          connection_error: null,
+          last_seen: new Date().toISOString(),
+        })
+        .eq('ip_address', ip_address);
+
+      if (updateError) {
+        console.error('Failed to update server connection status:', updateError);
+      }
 
       return new Response(JSON.stringify({ 
         success: true,
@@ -118,6 +143,20 @@ Deno.serve(async (req) => {
         errorMessage = 'Network error - Unable to reach iDRAC';
       } else {
         errorMessage = error.message || 'Unknown connection error';
+      }
+
+      // Update server connection status in database
+      const { error: updateError } = await supabaseClient
+        .from('servers')
+        .update({
+          last_connection_test: new Date().toISOString(),
+          connection_status: 'offline',
+          connection_error: errorMessage,
+        })
+        .eq('ip_address', ip_address);
+
+      if (updateError) {
+        console.error('Failed to update server connection status:', updateError);
       }
 
       return new Response(JSON.stringify({ 

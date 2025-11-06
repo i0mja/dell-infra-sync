@@ -12,6 +12,7 @@ import { LinkVCenterDialog } from "@/components/servers/LinkVCenterDialog";
 import { EditServerDialog } from "@/components/servers/EditServerDialog";
 import { ServerAuditDialog } from "@/components/servers/ServerAuditDialog";
 import { CreateJobDialog } from "@/components/jobs/CreateJobDialog";
+import { ConnectionStatusBadge } from "@/components/servers/ConnectionStatusBadge";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -41,6 +42,9 @@ interface Server {
   last_seen: string | null;
   created_at: string;
   notes: string | null;
+  last_connection_test: string | null;
+  connection_status: 'online' | 'offline' | 'unknown' | null;
+  connection_error: string | null;
 }
 
 const Servers = () => {
@@ -66,7 +70,7 @@ const Servers = () => {
         .order("created_at", { ascending: false });
 
       if (error) throw error;
-      setServers(data || []);
+      setServers((data as Server[]) || []);
     } catch (error: any) {
       toast({
         title: "Error loading servers",
@@ -109,13 +113,16 @@ const Servers = () => {
           description: `${server.hostname || server.ip_address} is reachable (${data.response_time_ms}ms)`,
         });
       } else {
-        toast({
-          title: "Connection Failed",
-          description: data.error,
-          variant: "destructive",
-        });
-      }
-    } catch (error: any) {
+      toast({
+        title: "Connection Failed",
+        description: data.error,
+        variant: "destructive",
+      });
+    }
+    
+    // Refresh server list to show updated status
+    fetchServers();
+  } catch (error: any) {
       toast({
         title: "Error testing connection",
         description: error.message,
@@ -300,6 +307,11 @@ const Servers = () => {
                       <div className="flex-1">
                         <div className="flex items-center gap-3 mb-2">
                           <h3 className="text-lg font-semibold">{server.hostname || server.ip_address}</h3>
+                          <ConnectionStatusBadge 
+                            status={server.connection_status}
+                            lastTest={server.last_connection_test}
+                            error={server.connection_error}
+                          />
                           {server.vcenter_host_id ? (
                             <Badge variant="secondary">Linked</Badge>
                           ) : (

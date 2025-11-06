@@ -311,12 +311,15 @@ export type Database = {
       servers: {
         Row: {
           bios_version: string | null
+          connection_error: string | null
+          connection_status: string | null
           cpu_count: number | null
           created_at: string
           hostname: string | null
           id: string
           idrac_firmware: string | null
           ip_address: string
+          last_connection_test: string | null
           last_openmanage_sync: string | null
           last_seen: string | null
           memory_gb: number | null
@@ -329,12 +332,15 @@ export type Database = {
         }
         Insert: {
           bios_version?: string | null
+          connection_error?: string | null
+          connection_status?: string | null
           cpu_count?: number | null
           created_at?: string
           hostname?: string | null
           id?: string
           idrac_firmware?: string | null
           ip_address: string
+          last_connection_test?: string | null
           last_openmanage_sync?: string | null
           last_seen?: string | null
           memory_gb?: number | null
@@ -347,12 +353,15 @@ export type Database = {
         }
         Update: {
           bios_version?: string | null
+          connection_error?: string | null
+          connection_status?: string | null
           cpu_count?: number | null
           created_at?: string
           hostname?: string | null
           id?: string
           idrac_firmware?: string | null
           ip_address?: string
+          last_connection_test?: string | null
           last_openmanage_sync?: string | null
           last_seen?: string | null
           memory_gb?: number | null
