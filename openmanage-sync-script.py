@@ -54,8 +54,11 @@ OME_PASSWORD = os.getenv("OME_PASSWORD", "")
 OME_VERIFY_SSL = os.getenv("OME_VERIFY_SSL", "true").lower() == "true"
 
 # Dell Server Manager Settings
-DSM_URL = os.getenv("DSM_URL", "https://your-app.lovableproject.com")
-DSM_JWT_TOKEN = os.getenv("DSM_JWT_TOKEN", "")
+DSM_EDGE_FUNCTION_URL = os.getenv(
+    'DSM_EDGE_FUNCTION_URL',
+    'https://ylwkczjqvymshktuuqkx.supabase.co/functions/v1/openmanage-sync'
+)
+DSM_API_TOKEN = os.getenv('DSM_API_TOKEN', '')
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -90,8 +93,8 @@ class OpenManageSync:
         # Validate configuration
         if not OME_PASSWORD:
             raise ValueError("OME_PASSWORD environment variable must be set")
-        if not DSM_JWT_TOKEN:
-            raise ValueError("DSM_JWT_TOKEN environment variable must be set")
+        if not DSM_API_TOKEN:
+            raise ValueError("DSM_API_TOKEN environment variable must be set")
 
     def authenticate_ome(self):
         """Authenticate with OpenManage Enterprise and get x-auth-token"""
@@ -214,14 +217,9 @@ class OpenManageSync:
         """Send device data to Dell Server Manager edge function"""
         log(f"Syncing {len(devices)} devices to cloud...")
         
-        # Remove '/functions/v1/' if it's in DSM_URL (will be added below)
-        base_url = DSM_URL.rstrip('/')
-        if base_url.endswith('/functions/v1'):
-            base_url = base_url[:-len('/functions/v1')]
-        
-        url = f"{base_url}/functions/v1/openmanage-sync"
+        url = DSM_EDGE_FUNCTION_URL
         headers = {
-            "Authorization": f"Bearer {DSM_JWT_TOKEN}",
+            "X-API-Token": DSM_API_TOKEN,
             "Content-Type": "application/json"
         }
         
@@ -277,7 +275,7 @@ class OpenManageSync:
         log("Starting Dell OpenManage Enterprise Sync")
         log("=" * 60)
         log(f"OME Host: {OME_HOST}:{OME_PORT}")
-        log(f"DSM URL: {DSM_URL}")
+        log(f"DSM Edge Function: {DSM_EDGE_FUNCTION_URL}")
         log(f"Verify SSL: {OME_VERIFY_SSL}")
         log("")
         

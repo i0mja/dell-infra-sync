@@ -2,7 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.78.0';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-api-token',
 };
 
 interface OpenManageDevice {
@@ -48,31 +48,62 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Verify user authentication and role
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return new Response(
-        JSON.stringify({ error: 'Missing Authorization header' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    let userId: string;
+
+    // Check for API token first (for script authentication)
+    const apiToken = req.headers.get('X-API-Token');
+    
+    if (apiToken) {
+      console.log('Authenticating with API token');
+      
+      // Validate API token using database function
+      const { data: tokenUserId, error: tokenError } = await supabase.rpc('validate_api_token', {
+        token_input: apiToken
+      });
+
+      if (tokenError || !tokenUserId) {
+        console.error('Invalid API token:', tokenError);
+        return new Response(
+          JSON.stringify({ error: 'Invalid or expired API token' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      userId = tokenUserId;
+      console.log(`API token authenticated for user: ${userId}`);
+    } else {
+      // Fall back to JWT authentication (for UI calls)
+      const authHeader = req.headers.get('Authorization');
+      if (!authHeader) {
+        console.error('Missing authorization header');
+        return new Response(
+          JSON.stringify({ error: 'Missing authorization header or API token' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const token = authHeader.replace('Bearer ', '');
+      const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+
+      if (authError || !user) {
+        console.error('Invalid token:', authError);
+        return new Response(
+          JSON.stringify({ error: 'Invalid or expired token' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      userId = user.id;
+      console.log(`JWT authenticated for user: ${userId}`);
     }
 
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-
-    if (authError || !user) {
-      return new Response(
-        JSON.stringify({ error: 'Invalid or expired token' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Check if user has admin or operator role
+    // Check user role
     const { data: roleData, error: roleError } = await supabase.rpc('get_user_role', {
-      _user_id: user.id
+      _user_id: userId
     });
 
     if (roleError || !roleData || !['admin', 'operator'].includes(roleData)) {
+      console.error(`Unauthorized role: ${roleData}`);
       return new Response(
         JSON.stringify({ error: 'Insufficient permissions. Admin or operator role required.' }),
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -194,7 +225,7 @@ Deno.serve(async (req) => {
 
     // Log audit trail
     await supabase.from('audit_logs').insert({
-      user_id: user.id,
+      user_id: userId,
       action: 'openmanage_sync',
       details: {
         total_devices: devices.length,

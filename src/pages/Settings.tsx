@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTheme } from "next-themes";
 import { Moon, Sun, Monitor } from "lucide-react";
 
@@ -43,10 +44,106 @@ export default function Settings() {
   const [omeSyncEnabled, setOmeSyncEnabled] = useState(false);
   const [omeLastSync, setOmeLastSync] = useState<string | null>(null);
   const [omeSyncing, setOmeSyncing] = useState(false);
+  
+  // API Token state
+  const [apiTokens, setApiTokens] = useState<any[]>([]);
+  const [newTokenName, setNewTokenName] = useState("");
+  const [generatedToken, setGeneratedToken] = useState<string | null>(null);
+  const [showTokenDialog, setShowTokenDialog] = useState(false);
 
   useEffect(() => {
     loadSettings();
+    loadApiTokens();
   }, []);
+
+  const loadApiTokens = async () => {
+    const { data, error } = await supabase
+      .from('api_tokens')
+      .select('*')
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      toast({
+        title: "Error loading API tokens",
+        description: error.message,
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setApiTokens(data || []);
+  };
+
+  const generateApiToken = async () => {
+    if (!newTokenName.trim()) {
+      toast({
+        title: "Token name required",
+        description: "Please enter a name for your API token",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Generate a random token (32 bytes = 64 hex chars)
+    const tokenBytes = new Uint8Array(32);
+    crypto.getRandomValues(tokenBytes);
+    const token = Array.from(tokenBytes, byte => byte.toString(16).padStart(2, '0')).join('');
+    
+    // Hash the token for storage
+    const encoder = new TextEncoder();
+    const data = encoder.encode(token);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const tokenHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+    const { error } = await supabase
+      .from('api_tokens')
+      .insert([{
+        name: newTokenName,
+        token_hash: tokenHash,
+      }] as any);
+
+    if (error) {
+      toast({
+        title: "Error generating token",
+        description: error.message,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setGeneratedToken(token);
+    setShowTokenDialog(true);
+    setNewTokenName("");
+    loadApiTokens();
+    
+    toast({
+      title: "API token generated",
+      description: "Make sure to copy it now, you won't be able to see it again",
+    });
+  };
+
+  const deleteApiToken = async (tokenId: string) => {
+    const { error } = await supabase
+      .from('api_tokens')
+      .delete()
+      .eq('id', tokenId);
+
+    if (error) {
+      toast({
+        title: "Error deleting token",
+        description: error.message,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    loadApiTokens();
+    toast({
+      title: "Token deleted",
+      description: "The API token has been revoked",
+    });
+  };
 
   const loadSettings = async () => {
     try {
@@ -534,6 +631,59 @@ export default function Settings() {
                   </Button>
                 </div>
 
+                <div className="mt-6 border-t pt-6">
+                  <h3 className="text-lg font-medium mb-2">API Tokens</h3>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Generate API tokens for authenticating the Python sync script
+                  </p>
+                  
+                  <div className="flex gap-2 mb-4">
+                    <Input
+                      placeholder="Token name (e.g., 'Production Sync')"
+                      value={newTokenName}
+                      onChange={(e) => setNewTokenName(e.target.value)}
+                    />
+                    <Button onClick={generateApiToken}>Generate Token</Button>
+                  </div>
+
+                  {apiTokens.length > 0 && (
+                    <div className="border rounded-lg">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="border-b">
+                            <th className="text-left p-3 text-sm font-medium">Name</th>
+                            <th className="text-left p-3 text-sm font-medium">Created</th>
+                            <th className="text-left p-3 text-sm font-medium">Last Used</th>
+                            <th className="text-right p-3 text-sm font-medium">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {apiTokens.map((token) => (
+                            <tr key={token.id} className="border-b last:border-0">
+                              <td className="p-3">{token.name}</td>
+                              <td className="p-3 text-sm text-muted-foreground">
+                                {new Date(token.created_at).toLocaleDateString()}
+                              </td>
+                              <td className="p-3 text-sm text-muted-foreground">
+                                {token.last_used_at ? new Date(token.last_used_at).toLocaleString() : 'Never'}
+                              </td>
+                              <td className="p-3 text-right">
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  onClick={() => deleteApiToken(token.id)}
+                                >
+                                  Revoke
+                                </Button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
                 <div className="mt-4 p-4 bg-muted rounded-lg">
                   <p className="text-sm">
                     <strong>Note:</strong> To perform automated syncs, you need to run the <code>openmanage-sync-script.py</code> on your on-premise server. 
@@ -602,6 +752,44 @@ export default function Settings() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        {/* Token Generation Dialog */}
+        <Dialog open={showTokenDialog} onOpenChange={setShowTokenDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>API Token Generated</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="p-4 bg-muted rounded-lg">
+                <p className="text-sm font-mono break-all">{generatedToken}</p>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  className="flex-1"
+                  onClick={() => {
+                    navigator.clipboard.writeText(generatedToken || '');
+                    toast({ title: "Copied to clipboard" });
+                  }}
+                >
+                  Copy Token
+                </Button>
+                <Button
+                  className="flex-1"
+                  variant="outline"
+                  onClick={() => {
+                    setShowTokenDialog(false);
+                    setGeneratedToken(null);
+                  }}
+                >
+                  Close
+                </Button>
+              </div>
+              <p className="text-sm text-destructive">
+                ⚠️ Save this token now. You won't be able to see it again!
+              </p>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
   );
 }
