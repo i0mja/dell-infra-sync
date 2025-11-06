@@ -99,6 +99,7 @@ export default function Settings() {
     const { error } = await supabase
       .from('api_tokens')
       .insert([{
+        user_id: user?.id,
         name: newTokenName,
         token_hash: tokenHash,
       }] as any);
