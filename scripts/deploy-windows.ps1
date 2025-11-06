@@ -225,10 +225,36 @@ if (Test-Path $SupabaseProjectDir) {
 New-Item -ItemType Directory -Path $SupabaseProjectDir | Out-Null
 Set-Location $SupabaseProjectDir
 
-# Initialize Supabase project (will run without prompts on clean directory)
-Write-Host "[CONFIG] Initializing Supabase project..." -ForegroundColor Yellow
-supabase init
+# Use repository Supabase config if available; fallback to timed 'supabase init'
+$RepoSupabasePath = Join-Path $PSScriptRoot "..\supabase"
 
+if (Test-Path $RepoSupabasePath) {
+    Write-Host "[CONFIG] Using repository Supabase config (skipping 'supabase init')..." -ForegroundColor Yellow
+    try {
+        Copy-Item -Recurse -Force $RepoSupabasePath (Join-Path $SupabaseProjectDir "supabase")
+        Write-Host "[OK] Supabase configuration copied" -ForegroundColor Green
+    } catch {
+        Write-Host "[ERROR] Failed to copy repository Supabase config: $_" -ForegroundColor Red
+        exit 1
+    }
+} else {
+    Write-Host "[CONFIG] Repository 'supabase' folder not found; attempting 'supabase init' (60s timeout)..." -ForegroundColor Yellow
+    try {
+        $initProc = Start-Process -FilePath "supabase" -ArgumentList "init" -WorkingDirectory $SupabaseProjectDir -PassThru -NoNewWindow
+        try {
+            Wait-Process -Id $initProc.Id -Timeout 60 -ErrorAction Stop
+            Write-Host "[OK] 'supabase init' completed" -ForegroundColor Green
+        } catch {
+            Write-Host "[ERROR] 'supabase init' timed out after 60s. Stopping process..." -ForegroundColor Red
+            try { Stop-Process -Id $initProc.Id -Force -ErrorAction SilentlyContinue } catch {}
+            Write-Host "[HINT] Ensure network connectivity and interactive prompts are not required in this environment." -ForegroundColor Yellow
+            exit 1
+        }
+    } catch {
+        Write-Host "[ERROR] Failed to start 'supabase init': $_" -ForegroundColor Red
+        exit 1
+    }
+}
 # Start Supabase services
 Write-Host "[*] Step 7/8: Starting Supabase services..." -ForegroundColor Yellow
 Write-Host "[WAIT] This may take several minutes on first run..." -ForegroundColor Yellow
