@@ -441,18 +441,17 @@ if (!(Test-Path $AppPath)) {
 Set-Location $AppPath
 npm install
 
-# Create production .env
+# Create production .env with Lovable Cloud credentials
 @"
-VITE_SUPABASE_URL=$SupabaseUrl
-VITE_SUPABASE_PUBLISHABLE_KEY=$AnonKey
-VITE_SUPABASE_PROJECT_ID=default
+VITE_SUPABASE_PROJECT_ID=ylwkczjqvymshktuuqkx
+VITE_SUPABASE_PUBLISHABLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlsd2tjempxdnltc2hrdHV1cWt4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjIxODQ0OTMsImV4cCI6MjA3Nzc2MDQ5M30.hIkDV2AAos-Z9hvQLfZmiQ7UvGCpGqwG5kzd1VBRx0w
+VITE_SUPABASE_URL=https://ylwkczjqvymshktuuqkx.supabase.co
 "@ | Out-File -FilePath ".env" -Encoding ASCII
 
 # Build application
 npm run build
 
-Write-Host "[CONFIG] Installing serve package globally..." -ForegroundColor Yellow
-npm install -g serve
+# Serve package not needed - using Vite preview instead
 
 # Step 8: Setup Windows Service
 Write-Host "[CONFIG] Step 8/8: Creating Windows Service..." -ForegroundColor Yellow
@@ -460,15 +459,52 @@ Write-Host "[CONFIG] Step 8/8: Creating Windows Service..." -ForegroundColor Yel
 # Install NSSM (Non-Sucking Service Manager)
 choco install nssm -y
 
-# Create service
-nssm install DellServerManager "C:\Program Files\nodejs\npx.cmd" "serve dist -l 3000"
+# Create service using Vite preview
+$NodePath = "C:\Program Files\nodejs\node.exe"
+$VitePreviewArgs = "node_modules\vite\bin\vite.js preview --port 3000 --host 0.0.0.0 --strictPort"
+
+nssm install DellServerManager $NodePath $VitePreviewArgs
 nssm set DellServerManager AppDirectory $AppPath
 nssm set DellServerManager DisplayName "Dell Server Manager"
 nssm set DellServerManager Description "Enterprise datacenter infrastructure management platform"
 nssm set DellServerManager Start SERVICE_AUTO_START
 
+# Enable logging
+nssm set DellServerManager AppStdout "$AppPath\service-output.log"
+nssm set DellServerManager AppStderr "$AppPath\service-error.log"
+
 # Start service
 nssm start DellServerManager
+
+# Wait for service to start and verify port 3000 is listening
+Write-Host "[CHECK] Waiting for service to start on port 3000..." -ForegroundColor Yellow
+$maxWaitSeconds = 30
+$waited = 0
+$portOpen = $false
+
+while ($waited -lt $maxWaitSeconds) {
+    Start-Sleep -Seconds 2
+    $waited += 2
+    $listening = netstat -ano | findstr ":3000"
+    if ($listening) {
+        $portOpen = $true
+        Write-Host "[SUCCESS] Service is listening on port 3000!" -ForegroundColor Green
+        break
+    }
+    Write-Host "  Waiting... ($waited/$maxWaitSeconds seconds)" -ForegroundColor Gray
+}
+
+if (-not $portOpen) {
+    Write-Host "[ERROR] Service failed to start on port 3000 within $maxWaitSeconds seconds" -ForegroundColor Red
+    Write-Host "[ERROR] Last 20 lines of service output log:" -ForegroundColor Red
+    Get-Content "$AppPath\service-output.log" -Tail 20 -ErrorAction SilentlyContinue
+    Write-Host "[ERROR] Last 20 lines of service error log:" -ForegroundColor Red
+    Get-Content "$AppPath\service-error.log" -Tail 20 -ErrorAction SilentlyContinue
+    Write-Host "[ERROR] Service may need manual troubleshooting. Check logs at:" -ForegroundColor Red
+    Write-Host "  $AppPath\service-output.log" -ForegroundColor Yellow
+    Write-Host "  $AppPath\service-error.log" -ForegroundColor Yellow
+    exit 1
+}
 
 # Step 9: Optional SSL/TLS Setup
 Write-Host "[SSL] Step 9/9: SSL/TLS Setup (Optional)..." -ForegroundColor Yellow
