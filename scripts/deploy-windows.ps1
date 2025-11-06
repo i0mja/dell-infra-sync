@@ -404,17 +404,22 @@ if ($AdminUserId -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
 
 Write-Host "[OK] Created user with ID: $AdminUserId" -ForegroundColor Green
 
-# Create profile and assign admin role
-Write-Host "[SQL] Creating profile and assigning admin role..." -ForegroundColor Yellow
-$SqlCreateProfile = @"
+# Update profile and assign admin role (trigger already created profile with viewer role)
+Write-Host "[SQL] Updating profile and assigning admin role..." -ForegroundColor Yellow
+$SqlUpdateProfile = @"
+-- Update profile if it exists, create if it doesn't (idempotent)
 INSERT INTO public.profiles (id, email, full_name)
-VALUES ('$AdminUserId', '$AdminEmail', 'Administrator');
+VALUES ('$AdminUserId', '$AdminEmail', 'Administrator')
+ON CONFLICT (id) DO UPDATE 
+SET full_name = EXCLUDED.full_name;
 
-INSERT INTO public.user_roles (user_id, role)
-VALUES ('$AdminUserId', 'admin');
+-- Update role from viewer to admin (idempotent)
+UPDATE public.user_roles 
+SET role = 'admin'
+WHERE user_id = '$AdminUserId';
 "@
 
-$ProfileResult = docker exec $ContainerName psql -U postgres -d postgres -c "$SqlCreateProfile" 2>&1
+$ProfileResult = docker exec $ContainerName psql -U postgres -d postgres -c "$SqlUpdateProfile" 2>&1
 
 if ($ProfileResult -match "ERROR") {
     Write-Host "[ERROR] Failed to create profile/role" -ForegroundColor Red
