@@ -26,7 +26,7 @@ function Refresh-Path {
 }
 
 # Step 1: Install Chocolatey
-Write-Host "[INSTALL] Step 1/7: Installing Chocolatey..." -ForegroundColor Yellow
+Write-Host "[INSTALL] Step 1/8: Installing Chocolatey..." -ForegroundColor Yellow
 if (!(Get-Command choco -ErrorAction SilentlyContinue)) {
     Set-ExecutionPolicy Bypass -Scope Process -Force
     [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
@@ -37,7 +37,7 @@ if (!(Get-Command choco -ErrorAction SilentlyContinue)) {
 }
 
 # Step 2: Install Docker Desktop
-Write-Host "[INSTALL] Step 2/7: Installing Docker Desktop..." -ForegroundColor Yellow
+Write-Host "[INSTALL] Step 2/8: Installing Docker Desktop..." -ForegroundColor Yellow
 if (!(Get-Command docker -ErrorAction SilentlyContinue)) {
     choco install docker-desktop -y
     Write-Host "[WARN] Docker Desktop installed - Please restart your computer and run this script again" -ForegroundColor Red
@@ -47,7 +47,7 @@ if (!(Get-Command docker -ErrorAction SilentlyContinue)) {
 }
 
 # Step 3: Install Node.js
-Write-Host "[INSTALL] Step 3/7: Installing Node.js 18..." -ForegroundColor Yellow
+Write-Host "[INSTALL] Step 3/8: Installing Node.js 18..." -ForegroundColor Yellow
 if (!(Get-Command node -ErrorAction SilentlyContinue)) {
     choco install nodejs-lts -y
     Refresh-Path
@@ -65,7 +65,7 @@ if (!(Get-Command node -ErrorAction SilentlyContinue)) {
 }
 
 # Step 4: Install Git
-Write-Host "[INSTALL] Step 4/7: Installing Git..." -ForegroundColor Yellow
+Write-Host "[INSTALL] Step 4/8: Installing Git..." -ForegroundColor Yellow
 if (!(Get-Command git -ErrorAction SilentlyContinue)) {
     choco install git -y
     Refresh-Path
@@ -75,24 +75,64 @@ if (!(Get-Command git -ErrorAction SilentlyContinue)) {
     Write-Host "[OK] Git already installed" -ForegroundColor Green
 }
 
-# Step 5: Setup Supabase CLI
-Write-Host "[DATABASE] Step 5/7: Setting up Supabase CLI..." -ForegroundColor Yellow
-
-# Verify npm is available
-Write-Host "[INFO] Verifying npm is available..." -ForegroundColor Cyan
-$npmVersion = npm --version 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[ERROR] npm is not available. Please restart PowerShell and run the script again." -ForegroundColor Red
-    exit 1
+# Step 5: Install Scoop (Package Manager for Supabase CLI)
+Write-Host "[INSTALL] Step 5/8: Installing Scoop package manager..." -ForegroundColor Yellow
+if (!(Get-Command scoop -ErrorAction SilentlyContinue)) {
+    # Install Scoop
+    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+    Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
+    Refresh-Path
+    Start-Sleep -Seconds 2
+    
+    # Verify Scoop is now available
+    if (!(Get-Command scoop -ErrorAction SilentlyContinue)) {
+        Write-Host "[ERROR] Scoop installation failed" -ForegroundColor Red
+        Write-Host "[ERROR] Please install Scoop manually from https://scoop.sh" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "[OK] Scoop installed" -ForegroundColor Green
+} else {
+    Write-Host "[OK] Scoop already installed" -ForegroundColor Green
 }
-Write-Host "[OK] npm version: $npmVersion" -ForegroundColor Green
 
-# Install Supabase CLI globally
-Write-Host "[INSTALL] Installing Supabase CLI..." -ForegroundColor Yellow
-npm install -g supabase
-Refresh-Path
-Start-Sleep -Seconds 2
-Write-Host "[OK] Supabase CLI installed" -ForegroundColor Green
+# Step 6: Setup Supabase CLI
+Write-Host "[DATABASE] Step 6/8: Setting up Supabase CLI..." -ForegroundColor Yellow
+
+# Add Supabase bucket to Scoop
+Write-Host "[CONFIG] Adding Supabase bucket to Scoop..." -ForegroundColor Yellow
+$scoopBuckets = scoop bucket list 2>&1
+if ($scoopBuckets -notmatch "supabase") {
+    scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] Failed to add Supabase bucket" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "[OK] Supabase bucket added" -ForegroundColor Green
+} else {
+    Write-Host "[OK] Supabase bucket already added" -ForegroundColor Green
+}
+
+# Install Supabase CLI via Scoop
+Write-Host "[INSTALL] Installing Supabase CLI via Scoop..." -ForegroundColor Yellow
+if (!(Get-Command supabase -ErrorAction SilentlyContinue)) {
+    scoop install supabase
+    Refresh-Path
+    Start-Sleep -Seconds 2
+    
+    # Verify Supabase CLI is now available
+    if (!(Get-Command supabase -ErrorAction SilentlyContinue)) {
+        Write-Host "[ERROR] Supabase CLI installation failed" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "[OK] Supabase CLI installed" -ForegroundColor Green
+} else {
+    Write-Host "[OK] Supabase CLI already installed" -ForegroundColor Green
+}
+
+# Verify Supabase CLI version
+Write-Host "[INFO] Verifying Supabase CLI..." -ForegroundColor Cyan
+$supabaseVersion = supabase --version 2>&1
+Write-Host "[OK] Supabase CLI version: $supabaseVersion" -ForegroundColor Green
 
 # Create Supabase project directory
 $SupabaseProjectDir = "C:\dell-supabase"
@@ -107,9 +147,16 @@ Write-Host "[CONFIG] Initializing Supabase project..." -ForegroundColor Yellow
 supabase init
 
 # Start Supabase services
-Write-Host "[*] Step 6/7: Starting Supabase services..." -ForegroundColor Yellow
+Write-Host "[*] Step 7/8: Starting Supabase services..." -ForegroundColor Yellow
 Write-Host "[WAIT] This may take several minutes on first run..." -ForegroundColor Yellow
 supabase start
+
+# Verify services started
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[ERROR] Supabase services failed to start" -ForegroundColor Red
+    Write-Host "[ERROR] Check Docker Desktop is running and try again" -ForegroundColor Red
+    exit 1
+}
 
 Write-Host "[OK] Supabase services started" -ForegroundColor Green
 
@@ -168,8 +215,8 @@ supabase db execute --sql @"
 
 Write-Host "[OK] Admin user created: $AdminEmail" -ForegroundColor Green
 
-# Step 6: Setup application
-Write-Host "[APP] Step 6/7: Setting up Dell Server Manager..." -ForegroundColor Yellow
+# Step 7: Setup application
+Write-Host "[APP] Step 7/8: Setting up Dell Server Manager..." -ForegroundColor Yellow
 $AppPath = "C:\dell-server-manager"
 if (!(Test-Path $AppPath)) {
     Write-Host "[ERROR] Please clone the Dell Server Manager repository first:" -ForegroundColor Red
@@ -190,8 +237,8 @@ VITE_SUPABASE_PROJECT_ID=default
 # Build application
 npm run build
 
-# Step 7: Setup Windows Service
-Write-Host "[CONFIG] Step 7/7: Creating Windows Service..." -ForegroundColor Yellow
+# Step 8: Setup Windows Service
+Write-Host "[CONFIG] Step 8/8: Creating Windows Service..." -ForegroundColor Yellow
 
 # Install NSSM (Non-Sucking Service Manager)
 choco install nssm -y
@@ -206,8 +253,8 @@ nssm set DellServerManager Start SERVICE_AUTO_START
 # Start service
 nssm start DellServerManager
 
-# Step 8: Optional SSL/TLS Setup
-Write-Host "[SSL] Step 8/8: SSL/TLS Setup (Optional)..." -ForegroundColor Yellow
+# Step 9: Optional SSL/TLS Setup
+Write-Host "[SSL] Step 9/9: SSL/TLS Setup (Optional)..." -ForegroundColor Yellow
 $SetupSSL = Read-Host "Do you have a domain name for SSL/TLS? (y/n)"
 
 if ($SetupSSL -eq "y" -or $SetupSSL -eq "Y") {
