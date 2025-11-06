@@ -49,6 +49,103 @@ cd C:\dell-server-manager
 
 **Total time: ~10 minutes** (includes Docker Desktop and Supabase CLI installation)
 
+## Deployment Modes: Local vs Cloud-Connected
+
+Dell Server Manager supports two deployment modes to accommodate different infrastructure requirements:
+
+### 🔒 Local/Air-Gapped Mode
+
+**What it is:** Fully self-contained deployment with a local Supabase instance. No internet connectivity required after initial installation.
+
+**Best for:**
+- **Air-gapped environments** (secure networks with no internet access)
+- **Compliance requirements** mandating on-premises data storage
+- **Maximum data sovereignty** - all data stays within your infrastructure
+- **High-security environments** (government, defense, healthcare)
+- **Remote sites** with unreliable or no internet connectivity
+
+**How it works:**
+- Deploys complete Supabase stack locally via Docker
+- Database, authentication, and storage all run on your server
+- Data never leaves your infrastructure
+- Requires local Supabase maintenance and backups
+
+**Trade-offs:**
+- ✅ **Pros:**
+  - Complete data isolation
+  - No internet dependency after deployment
+  - Full control over all components
+  - Compliance-friendly for regulated industries
+  - Predictable performance (no external API calls)
+
+- ❌ **Cons:**
+  - Requires more local resources (CPU, RAM, disk for database)
+  - You manage Supabase updates and maintenance
+  - Need to configure local backups
+  - More complex troubleshooting (multiple services to monitor)
+  - Initial setup is more involved
+
+**Resource Requirements:**
+- **Minimum:** 4 CPU cores, 8GB RAM, 50GB disk
+- **Recommended:** 8 CPU cores, 16GB RAM, 100GB SSD
+
+---
+
+### ☁️ Cloud-Connected Mode
+
+**What it is:** Application connects to Lovable Cloud's managed Supabase backend. Only the frontend runs locally.
+
+**Best for:**
+- **Connected environments** with reliable internet access
+- **Simplified operations** - no database maintenance
+- **Reduced local resource usage** - only runs the frontend
+- **Centralized management** - access backend from anywhere
+- **Quick deployments** - faster setup, fewer services to manage
+
+**How it works:**
+- Only the React application runs on your server
+- Database, authentication, and storage hosted on Lovable Cloud
+- Data synchronized via secure HTTPS APIs
+- Automatic backend updates and maintenance
+
+**Trade-offs:**
+- ✅ **Pros:**
+  - Minimal local resource requirements
+  - No database maintenance required
+  - Automatic backend updates and scaling
+  - Built-in redundancy and backups
+  - Easier troubleshooting (fewer moving parts)
+  - Centralized backend management via web UI
+
+- ❌ **Cons:**
+  - Requires internet connectivity for operation
+  - Data stored in cloud infrastructure
+  - Dependent on Lovable Cloud availability
+  - API latency (minimal but present)
+  - May not meet air-gap compliance requirements
+
+**Resource Requirements:**
+- **Minimum:** 2 CPU cores, 4GB RAM, 10GB disk
+- **Recommended:** 4 CPU cores, 8GB RAM, 20GB SSD
+
+---
+
+### Choosing the Right Mode
+
+| Requirement | Local/Air-Gapped | Cloud-Connected |
+|-------------|------------------|-----------------|
+| No internet required | ✅ Yes | ❌ No |
+| Data stays on-premises | ✅ Yes | ❌ No (cloud-hosted) |
+| Minimal resource usage | ❌ No (runs DB locally) | ✅ Yes |
+| Zero backend maintenance | ❌ No (you maintain) | ✅ Yes |
+| Air-gap compliance | ✅ Yes | ❌ No |
+| Simplest operation | ❌ No (more services) | ✅ Yes |
+| Works in secure enclaves | ✅ Yes | ❌ No |
+
+**During deployment**, both Windows and RHEL scripts will prompt you to choose your deployment mode. Select based on your specific infrastructure and compliance requirements.
+
+**Migration:** You can migrate data between modes using the backup/restore tools. See [docs/BACKUP_GUIDE.md](BACKUP_GUIDE.md) for details.
+
 ## What You Get
 
 Both deployment scripts provide a complete, production-ready setup:
