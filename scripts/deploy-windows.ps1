@@ -20,6 +20,17 @@ if ($PSVersionTable.PSVersion.Major -lt 5) {
 
 Write-Host "[*] Dell Server Manager - Windows Server 2022 Self-Hosted Deployment" -ForegroundColor Cyan
 Write-Host "=======================================================================" -ForegroundColor Cyan
+Write-Host "[INFO] PowerShell Version: $($PSVersionTable.PSVersion)" -ForegroundColor Cyan
+Write-Host ""
+
+# Start transcript logging
+$LogPath = "C:\dell-server-manager"
+if (!(Test-Path $LogPath)) {
+    New-Item -ItemType Directory -Path $LogPath -Force | Out-Null
+}
+$TranscriptFile = Join-Path $LogPath "deploy-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
+Start-Transcript -Path $TranscriptFile -Force
+Write-Host "[LOG] Deployment log: $TranscriptFile" -ForegroundColor Cyan
 Write-Host ""
 
 # Function to refresh PATH from registry
@@ -225,35 +236,29 @@ if (Test-Path $SupabaseProjectDir) {
 New-Item -ItemType Directory -Path $SupabaseProjectDir | Out-Null
 Set-Location $SupabaseProjectDir
 
-# Use repository Supabase config if available; fallback to timed 'supabase init'
-$RepoSupabasePath = Join-Path $PSScriptRoot "..\supabase"
+# Use repository Supabase config (non-interactive deployment)
+Write-Host "[CONFIG] Using repository Supabase config (no interactive 'supabase init')..." -ForegroundColor Yellow
 
-if (Test-Path $RepoSupabasePath) {
-    Write-Host "[CONFIG] Using repository Supabase config (skipping 'supabase init')..." -ForegroundColor Yellow
-    try {
-        Copy-Item -Recurse -Force $RepoSupabasePath (Join-Path $SupabaseProjectDir "supabase")
-        Write-Host "[OK] Supabase configuration copied" -ForegroundColor Green
-    } catch {
-        Write-Host "[ERROR] Failed to copy repository Supabase config: $_" -ForegroundColor Red
-        exit 1
-    }
-} else {
-    Write-Host "[CONFIG] Repository 'supabase' folder not found; attempting 'supabase init' (60s timeout)..." -ForegroundColor Yellow
-    try {
-        $initProc = Start-Process -FilePath "supabase" -ArgumentList "init" -WorkingDirectory $SupabaseProjectDir -PassThru -NoNewWindow
-        try {
-            Wait-Process -Id $initProc.Id -Timeout 60 -ErrorAction Stop
-            Write-Host "[OK] 'supabase init' completed" -ForegroundColor Green
-        } catch {
-            Write-Host "[ERROR] 'supabase init' timed out after 60s. Stopping process..." -ForegroundColor Red
-            try { Stop-Process -Id $initProc.Id -Force -ErrorAction SilentlyContinue } catch {}
-            Write-Host "[HINT] Ensure network connectivity and interactive prompts are not required in this environment." -ForegroundColor Yellow
-            exit 1
-        }
-    } catch {
-        Write-Host "[ERROR] Failed to start 'supabase init': $_" -ForegroundColor Red
-        exit 1
-    }
+# Resolve repository supabase path
+$RepoSupabasePath = Resolve-Path (Join-Path $PSScriptRoot "..\supabase") -ErrorAction SilentlyContinue
+
+if (-not $RepoSupabasePath) {
+    Write-Host "[ERROR] Repository 'supabase' folder not found" -ForegroundColor Red
+    Write-Host "[ERROR] Expected location: $(Join-Path $PSScriptRoot '..\supabase')" -ForegroundColor Red
+    Write-Host "[HINT] Ensure you're running this script from the repository's 'scripts' directory" -ForegroundColor Yellow
+    Stop-Transcript
+    exit 1
+}
+
+Write-Host "[INFO] Resolved repository config: $RepoSupabasePath" -ForegroundColor Cyan
+
+try {
+    Copy-Item -Recurse -Force $RepoSupabasePath (Join-Path $SupabaseProjectDir "supabase")
+    Write-Host "[OK] Supabase configuration copied from repository" -ForegroundColor Green
+} catch {
+    Write-Host "[ERROR] Failed to copy repository Supabase config: $_" -ForegroundColor Red
+    Stop-Transcript
+    exit 1
 }
 # Start Supabase services
 Write-Host "[*] Step 7/8: Starting Supabase services..." -ForegroundColor Yellow
@@ -489,3 +494,7 @@ Supabase CLI Commands:
 
 Write-Host "[SAVED] Credentials saved to: $CredsPath" -ForegroundColor Green
 Write-Host ""
+
+# Stop transcript logging
+Stop-Transcript
+Write-Host "[LOG] Deployment log saved to: $TranscriptFile" -ForegroundColor Green
