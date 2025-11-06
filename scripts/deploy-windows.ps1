@@ -25,6 +25,63 @@ function Refresh-Path {
                 [System.Environment]::GetEnvironmentVariable("Path","User")
 }
 
+# Function to ensure Docker Desktop is running with Linux containers
+function Wait-Docker {
+    Write-Host "[DOCKER] Ensuring Docker Desktop is running with Linux containers..." -ForegroundColor Yellow
+    
+    # Check if Docker Desktop is installed
+    $dockerDesktopPath = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+    $dockerCliPath = "C:\Program Files\Docker\Docker\DockerCli.exe"
+    
+    if (!(Test-Path $dockerDesktopPath)) {
+        Write-Host "[ERROR] Docker Desktop not found at $dockerDesktopPath" -ForegroundColor Red
+        exit 1
+    }
+    
+    # Start Docker Desktop if not running
+    $dockerProcess = Get-Process "Docker Desktop" -ErrorAction SilentlyContinue
+    if (!$dockerProcess) {
+        Write-Host "[INFO] Starting Docker Desktop..." -ForegroundColor Cyan
+        Start-Process $dockerDesktopPath
+        Start-Sleep -Seconds 10
+    } else {
+        Write-Host "[OK] Docker Desktop is already running" -ForegroundColor Green
+    }
+    
+    # Switch to Linux containers
+    Write-Host "[INFO] Switching to Linux containers..." -ForegroundColor Cyan
+    if (Test-Path $dockerCliPath) {
+        & $dockerCliPath -SwitchLinuxEngine 2>&1 | Out-Null
+    }
+    
+    # Wait for Docker engine to be ready (max 3 minutes)
+    Write-Host "[WAIT] Waiting for Docker engine to be ready..." -ForegroundColor Yellow
+    $deadline = (Get-Date).AddMinutes(3)
+    $ready = $false
+    
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $null = docker info 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $ready = $true
+                break
+            }
+        } catch {
+            # Docker not ready yet
+        }
+        Start-Sleep -Seconds 3
+    }
+    
+    if (!$ready) {
+        Write-Host "[ERROR] Docker engine did not start within 3 minutes" -ForegroundColor Red
+        Write-Host "[ERROR] Please ensure Docker Desktop is installed and running" -ForegroundColor Red
+        Write-Host "[ERROR] Make sure it's set to Linux containers mode" -ForegroundColor Red
+        exit 1
+    }
+    
+    Write-Host "[OK] Docker engine is ready" -ForegroundColor Green
+}
+
 # Step 1: Install Chocolatey
 Write-Host "[INSTALL] Step 1/8: Installing Chocolatey..." -ForegroundColor Yellow
 if (!(Get-Command choco -ErrorAction SilentlyContinue)) {
@@ -94,6 +151,9 @@ if (!(Get-Command scoop -ErrorAction SilentlyContinue)) {
 } else {
     Write-Host "[OK] Scoop already installed" -ForegroundColor Green
 }
+
+# Ensure Docker is ready before continuing
+Wait-Docker
 
 # Step 6: Setup Supabase CLI
 Write-Host "[DATABASE] Step 6/8: Setting up Supabase CLI..." -ForegroundColor Yellow
@@ -173,6 +233,19 @@ $SupabaseUrl = ($ApiUrlLine -split "API URL:")[1].Trim()
 $AnonKey = ($AnonKeyLine -split "anon key:")[1].Trim()
 $ServiceRoleKey = ($ServiceKeyLine -split "service_role key:")[1].Trim()
 $DbUrl = ($DbUrlLine -split "DB URL:")[1].Trim()
+
+# Validate credentials were parsed successfully
+if ([string]::IsNullOrWhiteSpace($SupabaseUrl) -or [string]::IsNullOrWhiteSpace($AnonKey)) {
+    Write-Host "[ERROR] Failed to retrieve Supabase credentials" -ForegroundColor Red
+    Write-Host "[ERROR] This usually means Supabase services didn't start properly" -ForegroundColor Red
+    Write-Host "" -ForegroundColor Red
+    Write-Host "[FIX] Try the following:" -ForegroundColor Yellow
+    Write-Host "   1. Ensure Docker Desktop is running in Linux containers mode" -ForegroundColor Gray
+    Write-Host "   2. Run: docker ps (should show Supabase containers)" -ForegroundColor Gray
+    Write-Host "   3. If no containers, run the cleanup script and try again" -ForegroundColor Gray
+    Write-Host "   4. Check: supabase status" -ForegroundColor Gray
+    exit 1
+}
 
 # Get server IP for external access
 $ServerIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.InterfaceAlias -notlike "*Loopback*"} | Select-Object -First 1).IPAddress

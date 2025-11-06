@@ -497,7 +497,158 @@ sudo systemctl stop dell-server-manager
 cd /opt/supabase/docker
 docker compose down -v
 sudo rm -rf /opt/supabase
+sudo rm -rf /opt/dell-server-manager
 # Run deploy script again
+cd ~/dell-server-manager
+sudo bash scripts/deploy-rhel9.sh
+```
+
+**Windows (Supabase CLI):**
+```powershell
+# Use the automated cleanup script
+cd C:\dell-server-manager
+.\scripts\cleanup-windows.ps1
+
+# Then run deployment script
+.\scripts\deploy-windows.ps1
+```
+
+## Recovery & Reset
+
+### Windows - Complete Cleanup and Redeploy
+
+If you encounter issues with your Windows deployment (locked files, docker errors, incomplete installation), follow these steps for a clean recovery:
+
+#### Quick Recovery (Automated)
+
+```powershell
+# Run as Administrator in PowerShell
+cd C:\dell-server-manager
+.\scripts\cleanup-windows.ps1
+```
+
+The cleanup script will:
+- ✅ Stop and remove the Dell Server Manager Windows service
+- ✅ Stop and remove all Docker containers and volumes
+- ✅ Prune Docker images
+- ✅ Remove all installation directories (C:\supabase, C:\dell-supabase, C:\dell-server-manager)
+- ✅ Remove firewall rules
+- ✅ Handle locked files gracefully
+
+After cleanup completes, run the deployment script:
+
+```powershell
+# Clone repository (if removed by cleanup)
+git clone https://github.com/i0mja/dell-infra-sync C:\dell-server-manager
+cd C:\dell-server-manager
+
+# Run deployment
+.\scripts\deploy-windows.ps1
+```
+
+#### Manual Recovery (If Cleanup Script Fails)
+
+If the automated script fails, use these manual steps:
+
+**1. Leave target directories and ensure Docker is ready:**
+```powershell
+# Navigate away from any Supabase/app folders
+Set-Location $env:TEMP
+
+# Start Docker Desktop and wait for it to be ready
+Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+& "C:\Program Files\Docker\Docker\DockerCli.exe" -SwitchLinuxEngine
+
+# Wait for Docker engine (max 3 minutes)
+$deadline = (Get-Date).AddMinutes(3)
+while ($true) {
+  docker info *> $null
+  if ($LASTEXITCODE -eq 0) { break }
+  if ((Get-Date) -gt $deadline) { 
+    Write-Host "Docker not ready. Please start Docker Desktop manually."
+    break
+  }
+  Start-Sleep 3
+}
+```
+
+**2. Clean up Docker containers and volumes:**
+```powershell
+# Stop/remove all containers
+$ids = docker ps -aq
+if ($ids) { docker stop $ids; docker rm -f $ids }
+
+# Remove all volumes
+$vols = docker volume ls -q
+if ($vols) { docker volume rm -f $vols }
+
+# Prune images
+docker image prune -a -f
+```
+
+**3. Remove directories:**
+```powershell
+# Stop Docker processes if folders are locked
+Stop-Process -Name "com.docker.backend","Docker Desktop" -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 5
+
+# Remove directories
+Remove-Item -Recurse -Force C:\supabase -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force C:\dell-supabase -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force C:\dell-server-manager -ErrorAction SilentlyContinue
+```
+
+**4. Fresh deployment:**
+```powershell
+# Re-clone the application
+git clone https://github.com/i0mja/dell-infra-sync C:\dell-server-manager
+Set-Location C:\dell-server-manager
+
+# Run deployment script
+.\scripts\deploy-windows.ps1
+```
+
+### Common Recovery Scenarios
+
+#### Scenario 1: "Cannot find file specified" Docker errors
+
+**Cause:** Docker Desktop is not running or not in Linux containers mode.
+
+**Solution:**
+```powershell
+# The deploy script now includes automatic Docker preflight checks
+# It will start Docker Desktop and switch to Linux containers automatically
+.\scripts\deploy-windows.ps1
+```
+
+#### Scenario 2: "Cannot remove the item at 'C:\supabase' because it is in use"
+
+**Cause:** PowerShell terminal is inside the directory being deleted, or Docker has file locks.
+
+**Solution:**
+```powershell
+# Use the cleanup script (it handles this automatically)
+cd C:\dell-server-manager
+.\scripts\cleanup-windows.ps1
+```
+
+#### Scenario 3: Empty Supabase credentials after deployment
+
+**Cause:** Supabase services failed to start, usually due to Docker not being ready.
+
+**Solution:**
+```powershell
+# The deploy script now validates credentials and provides clear error messages
+# If this occurs, ensure Docker Desktop is running and retry:
+cd C:\dell-supabase
+supabase stop
+supabase start
+supabase status  # Should show all services running
+```
+
+### RHEL - Recovery
+
+For RHEL systems, recovery is simpler:
 ```
 
 **Windows:**
