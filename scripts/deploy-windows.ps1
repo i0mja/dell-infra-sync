@@ -18,6 +18,13 @@ Write-Host "[*] Dell Server Manager - Windows Server 2022 Self-Hosted Deployment
 Write-Host "=======================================================================" -ForegroundColor Cyan
 Write-Host ""
 
+# Function to refresh PATH from registry
+function Refresh-Path {
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + 
+                ";" + 
+                [System.Environment]::GetEnvironmentVariable("Path","User")
+}
+
 # Step 1: Install Chocolatey
 Write-Host "[INSTALL] Step 1/7: Installing Chocolatey..." -ForegroundColor Yellow
 if (!(Get-Command choco -ErrorAction SilentlyContinue)) {
@@ -43,7 +50,15 @@ if (!(Get-Command docker -ErrorAction SilentlyContinue)) {
 Write-Host "[INSTALL] Step 3/7: Installing Node.js 18..." -ForegroundColor Yellow
 if (!(Get-Command node -ErrorAction SilentlyContinue)) {
     choco install nodejs-lts -y
-    refreshenv
+    Refresh-Path
+    Start-Sleep -Seconds 2
+    
+    # Verify npm is now available
+    if (!(Get-Command npm -ErrorAction SilentlyContinue)) {
+        Write-Host "[ERROR] npm command not found after Node.js installation" -ForegroundColor Red
+        Write-Host "[ERROR] Please close this PowerShell window and run the script again" -ForegroundColor Red
+        exit 1
+    }
     Write-Host "[OK] Node.js installed" -ForegroundColor Green
 } else {
     Write-Host "[OK] Node.js already installed" -ForegroundColor Green
@@ -53,7 +68,8 @@ if (!(Get-Command node -ErrorAction SilentlyContinue)) {
 Write-Host "[INSTALL] Step 4/7: Installing Git..." -ForegroundColor Yellow
 if (!(Get-Command git -ErrorAction SilentlyContinue)) {
     choco install git -y
-    refreshenv
+    Refresh-Path
+    Start-Sleep -Seconds 2
     Write-Host "[OK] Git installed" -ForegroundColor Green
 } else {
     Write-Host "[OK] Git already installed" -ForegroundColor Green
@@ -62,9 +78,20 @@ if (!(Get-Command git -ErrorAction SilentlyContinue)) {
 # Step 5: Setup Supabase CLI
 Write-Host "[DATABASE] Step 5/7: Setting up Supabase CLI..." -ForegroundColor Yellow
 
+# Verify npm is available
+Write-Host "[INFO] Verifying npm is available..." -ForegroundColor Cyan
+$npmVersion = npm --version 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[ERROR] npm is not available. Please restart PowerShell and run the script again." -ForegroundColor Red
+    exit 1
+}
+Write-Host "[OK] npm version: $npmVersion" -ForegroundColor Green
+
 # Install Supabase CLI globally
 Write-Host "[INSTALL] Installing Supabase CLI..." -ForegroundColor Yellow
 npm install -g supabase
+Refresh-Path
+Start-Sleep -Seconds 2
 Write-Host "[OK] Supabase CLI installed" -ForegroundColor Green
 
 # Create Supabase project directory
