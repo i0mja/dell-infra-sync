@@ -390,12 +390,15 @@ INSERT INTO auth.users (
 ) RETURNING id;
 "@
 
-$AdminUserId = docker exec $ContainerName psql -U postgres -d postgres -t -c "$SqlCreateUser" 2>&1 | Select-Object -Last 1
+# Use -A (unaligned), -t (tuples only), -q (quiet) for clean UUID output
+$AdminUserId = docker exec $ContainerName psql -U postgres -d postgres -A -t -q -c "$SqlCreateUser" 2>&1
 $AdminUserId = $AdminUserId.Trim()
 
-if ([string]::IsNullOrWhiteSpace($AdminUserId) -or $AdminUserId -match "ERROR") {
-    Write-Host "[ERROR] Failed to create admin user" -ForegroundColor Red
-    Write-Host "[DEBUG] Output: $AdminUserId" -ForegroundColor Yellow
+# Validate that we got a valid UUID format
+if ($AdminUserId -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
+    Write-Host "[ERROR] Failed to capture valid user ID" -ForegroundColor Red
+    Write-Host "[DEBUG] Got: $AdminUserId" -ForegroundColor Yellow
+    Write-Host "[INFO] This might be due to an empty email address or invalid SQL output" -ForegroundColor Yellow
     exit 1
 }
 
