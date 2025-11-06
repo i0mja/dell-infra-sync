@@ -202,6 +202,45 @@ export type Database = {
         }
         Relationships: []
       }
+      openmanage_settings: {
+        Row: {
+          created_at: string
+          host: string
+          id: string
+          last_sync: string | null
+          password: string
+          port: number
+          sync_enabled: boolean
+          updated_at: string
+          username: string
+          verify_ssl: boolean
+        }
+        Insert: {
+          created_at?: string
+          host: string
+          id?: string
+          last_sync?: string | null
+          password: string
+          port?: number
+          sync_enabled?: boolean
+          updated_at?: string
+          username: string
+          verify_ssl?: boolean
+        }
+        Update: {
+          created_at?: string
+          host?: string
+          id?: string
+          last_sync?: string | null
+          password?: string
+          port?: number
+          sync_enabled?: boolean
+          updated_at?: string
+          username?: string
+          verify_ssl?: boolean
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
@@ -235,10 +274,12 @@ export type Database = {
           id: string
           idrac_firmware: string | null
           ip_address: string
+          last_openmanage_sync: string | null
           last_seen: string | null
           memory_gb: number | null
           model: string | null
           notes: string | null
+          openmanage_device_id: string | null
           service_tag: string | null
           updated_at: string
           vcenter_host_id: string | null
@@ -251,10 +292,12 @@ export type Database = {
           id?: string
           idrac_firmware?: string | null
           ip_address: string
+          last_openmanage_sync?: string | null
           last_seen?: string | null
           memory_gb?: number | null
           model?: string | null
           notes?: string | null
+          openmanage_device_id?: string | null
           service_tag?: string | null
           updated_at?: string
           vcenter_host_id?: string | null
@@ -267,10 +310,12 @@ export type Database = {
           id?: string
           idrac_firmware?: string | null
           ip_address?: string
+          last_openmanage_sync?: string | null
           last_seen?: string | null
           memory_gb?: number | null
           model?: string | null
           notes?: string | null
+          openmanage_device_id?: string | null
           service_tag?: string | null
           updated_at?: string
           vcenter_host_id?: string | null

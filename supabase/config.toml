@@ -5,3 +5,6 @@ verify_jwt = false  # Called by local job executor with service role key
 
 [functions.send-notification]
 verify_jwt = false  # Internal function called by update-job
+
+[functions.openmanage-sync]
+verify_jwt = true  # Requires admin/operator authentication

@@ -33,6 +33,17 @@ export default function Settings() {
   const [notifyOnJobFailed, setNotifyOnJobFailed] = useState(true);
   const [notifyOnJobStarted, setNotifyOnJobStarted] = useState(false);
 
+  // OpenManage Settings
+  const [omeSettingsId, setOmeSettingsId] = useState<string | null>(null);
+  const [omeHost, setOmeHost] = useState("");
+  const [omePort, setOmePort] = useState(443);
+  const [omeUsername, setOmeUsername] = useState("");
+  const [omePassword, setOmePassword] = useState("");
+  const [omeVerifySSL, setOmeVerifySSL] = useState(true);
+  const [omeSyncEnabled, setOmeSyncEnabled] = useState(false);
+  const [omeLastSync, setOmeLastSync] = useState<string | null>(null);
+  const [omeSyncing, setOmeSyncing] = useState(false);
+
   useEffect(() => {
     loadSettings();
   }, []);
@@ -66,6 +77,30 @@ export default function Settings() {
         description: "Failed to load notification settings",
         variant: "destructive",
       });
+    }
+
+    // Load OpenManage settings
+    try {
+      const { data: omeData, error: omeError } = await supabase
+        .from("openmanage_settings")
+        .select("*")
+        .limit(1)
+        .maybeSingle();
+
+      if (omeError) throw omeError;
+
+      if (omeData) {
+        setOmeSettingsId(omeData.id);
+        setOmeHost(omeData.host || "");
+        setOmePort(omeData.port || 443);
+        setOmeUsername(omeData.username || "");
+        setOmePassword(omeData.password || "");
+        setOmeVerifySSL(omeData.verify_ssl ?? true);
+        setOmeSyncEnabled(omeData.sync_enabled ?? false);
+        setOmeLastSync(omeData.last_sync);
+      }
+    } catch (error: any) {
+      console.error("Error loading OpenManage settings:", error);
     }
   };
 
@@ -127,6 +162,105 @@ export default function Settings() {
     }
   };
 
+  const handleSaveOmeSettings = async () => {
+    if (userRole !== "admin") {
+      toast({
+        title: "Permission Denied",
+        description: "Only admins can modify OpenManage settings",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const omeData = {
+        host: omeHost,
+        port: omePort,
+        username: omeUsername,
+        password: omePassword,
+        verify_ssl: omeVerifySSL,
+        sync_enabled: omeSyncEnabled,
+      };
+
+      if (omeSettingsId) {
+        const { error } = await supabase
+          .from("openmanage_settings")
+          .update(omeData)
+          .eq("id", omeSettingsId);
+
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase
+          .from("openmanage_settings")
+          .insert(omeData)
+          .select()
+          .single();
+
+        if (error) throw error;
+        setOmeSettingsId(data.id);
+      }
+
+      toast({
+        title: "Success",
+        description: "OpenManage settings saved successfully",
+      });
+    } catch (error: any) {
+      console.error("Error saving OpenManage settings:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to save OpenManage settings",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSyncNow = async () => {
+    if (userRole !== "admin" && userRole !== "operator") {
+      toast({
+        title: "Permission Denied",
+        description: "Only admins and operators can trigger sync",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!omeHost || !omeUsername || !omePassword) {
+      toast({
+        title: "Configuration Required",
+        description: "Please configure OpenManage settings first",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setOmeSyncing(true);
+    try {
+      toast({
+        title: "Sync Started",
+        description: "OpenManage sync initiated. This may take a few moments...",
+      });
+
+      // Note: This requires the openmanage-sync-script.py to be run
+      // The edge function expects devices array from the script
+      toast({
+        title: "Manual Sync Required",
+        description: "Please run the openmanage-sync-script.py on your on-premise server to perform the sync. See documentation for details.",
+      });
+    } catch (error: any) {
+      console.error("Error triggering sync:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to trigger sync",
+        variant: "destructive",
+      });
+    } finally {
+      setOmeSyncing(false);
+    }
+  };
+
   if (!user) {
     return null;
   }
@@ -151,10 +285,11 @@ export default function Settings() {
         <h1 className="text-3xl font-bold mb-6">Settings</h1>
 
         <Tabs defaultValue="appearance" className="w-full">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="appearance">Appearance</TabsTrigger>
             <TabsTrigger value="smtp">SMTP Email</TabsTrigger>
             <TabsTrigger value="teams">Microsoft Teams</TabsTrigger>
+            <TabsTrigger value="openmanage">OpenManage</TabsTrigger>
             <TabsTrigger value="preferences">Preferences</TabsTrigger>
           </TabsList>
 
@@ -297,6 +432,114 @@ export default function Settings() {
                 <Button onClick={handleSaveSettings} disabled={loading}>
                   {loading ? "Saving..." : "Save Teams Settings"}
                 </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="openmanage">
+            <Card>
+              <CardHeader>
+                <CardTitle>Dell OpenManage Enterprise</CardTitle>
+                <CardDescription>
+                  Configure automatic server discovery from OpenManage Enterprise
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="ome-host">OpenManage Host</Label>
+                  <Input
+                    id="ome-host"
+                    placeholder="openmanage.example.com"
+                    value={omeHost}
+                    onChange={(e) => setOmeHost(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="ome-port">Port</Label>
+                  <Input
+                    id="ome-port"
+                    type="number"
+                    placeholder="443"
+                    value={omePort}
+                    onChange={(e) => setOmePort(parseInt(e.target.value) || 443)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="ome-username">Username</Label>
+                  <Input
+                    id="ome-username"
+                    placeholder="admin"
+                    value={omeUsername}
+                    onChange={(e) => setOmeUsername(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="ome-password">Password</Label>
+                  <Input
+                    id="ome-password"
+                    type="password"
+                    placeholder="••••••••"
+                    value={omePassword}
+                    onChange={(e) => setOmePassword(e.target.value)}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="ome-verify-ssl">Verify SSL Certificate</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Disable for self-signed certificates
+                    </p>
+                  </div>
+                  <Switch
+                    id="ome-verify-ssl"
+                    checked={omeVerifySSL}
+                    onCheckedChange={setOmeVerifySSL}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="ome-sync-enabled">Enable Daily Sync</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Automatically sync servers daily
+                    </p>
+                  </div>
+                  <Switch
+                    id="ome-sync-enabled"
+                    checked={omeSyncEnabled}
+                    onCheckedChange={setOmeSyncEnabled}
+                  />
+                </div>
+
+                {omeLastSync && (
+                  <div className="text-sm text-muted-foreground">
+                    Last sync: {new Date(omeLastSync).toLocaleString()}
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <Button onClick={handleSaveOmeSettings} disabled={loading}>
+                    {loading ? "Saving..." : "Save Settings"}
+                  </Button>
+                  <Button 
+                    onClick={handleSyncNow} 
+                    disabled={omeSyncing}
+                    variant="outline"
+                  >
+                    {omeSyncing ? "Syncing..." : "Sync Now"}
+                  </Button>
+                </div>
+
+                <div className="mt-4 p-4 bg-muted rounded-lg">
+                  <p className="text-sm">
+                    <strong>Note:</strong> To perform automated syncs, you need to run the <code>openmanage-sync-script.py</code> on your on-premise server. 
+                    See the <a href="/docs/OPENMANAGE_SYNC_GUIDE.md" className="text-primary underline">OpenManage Sync Guide</a> for setup instructions.
+                  </p>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
