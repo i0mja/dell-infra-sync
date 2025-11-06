@@ -127,7 +127,7 @@ const Layout = () => {
 
         {/* Main Content */}
         <main className="flex-1 overflow-auto">
-          <Outlet />
+          <Outlet key={location.pathname} />
         </main>
       </div>
     </div>
