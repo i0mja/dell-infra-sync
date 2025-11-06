@@ -725,6 +725,123 @@ class JobExecutor:
                 details={"error": str(e)}
             )
 
+    def execute_full_server_update(self, job: Dict):
+        """Execute full server update by orchestrating sub-jobs in order"""
+        self.log(f"Starting full server update job {job['id']}")
+        
+        self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+        
+        try:
+            # Get all sub-jobs ordered by component_order
+            url = f"{DSM_URL}/rest/v1/jobs"
+            headers = {
+                "apikey": SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+            }
+            params = {
+                'parent_job_id': f"eq.{job['id']}",
+                'select': '*',
+                'order': 'component_order.asc'
+            }
+            
+            response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
+            response.raise_for_status()
+            sub_jobs = response.json()
+            
+            if not sub_jobs:
+                raise Exception("No sub-jobs found for full server update")
+            
+            self.log(f"Found {len(sub_jobs)} component updates to execute")
+            
+            failed_components = []
+            
+            # Execute sub-jobs sequentially in order
+            for sub_job in sub_jobs:
+                component = sub_job['details'].get('component', 'Unknown')
+                self.log(f"  Starting {component} update (order {sub_job.get('component_order')})...")
+                
+                # Execute the firmware update for this component
+                try:
+                    self.execute_firmware_update(sub_job)
+                    
+                    # Wait for sub-job to complete
+                    timeout = 900  # 15 minutes per component
+                    start_time = time.time()
+                    
+                    while time.time() - start_time < timeout:
+                        # Check sub-job status
+                        status_response = requests.get(
+                            f"{DSM_URL}/rest/v1/jobs",
+                            params={'id': f"eq.{sub_job['id']}", 'select': 'status'},
+                            headers=headers,
+                            verify=VERIFY_SSL
+                        )
+                        status_response.raise_for_status()
+                        status_data = status_response.json()
+                        
+                        if status_data and len(status_data) > 0:
+                            current_status = status_data[0]['status']
+                            
+                            if current_status == 'completed':
+                                self.log(f"  ✓ {component} update completed successfully")
+                                break
+                            elif current_status == 'failed':
+                                raise Exception(f"{component} update failed")
+                            elif current_status in ['pending', 'running']:
+                                time.sleep(10)  # Poll every 10 seconds
+                                continue
+                        else:
+                            raise Exception(f"Could not fetch status for {component} update")
+                    else:
+                        # Timeout reached
+                        raise Exception(f"{component} update timed out after {timeout} seconds")
+                        
+                except Exception as e:
+                    self.log(f"  ✗ {component} update failed: {e}", "ERROR")
+                    failed_components.append(component)
+                    
+                    # Critical components (iDRAC, BIOS) should stop the entire job
+                    if component in ['iDRAC', 'BIOS']:
+                        self.log(f"Critical component {component} failed. Stopping full server update.", "ERROR")
+                        raise Exception(f"Critical component {component} failed: {e}")
+                    else:
+                        # Non-critical components: log and continue
+                        self.log(f"Non-critical component {component} failed. Continuing with remaining updates.", "WARNING")
+                        continue
+            
+            # Update parent job status
+            if failed_components:
+                final_status = 'completed' if len(failed_components) < len(sub_jobs) else 'failed'
+                self.update_job_status(
+                    job['id'], final_status,
+                    completed_at=datetime.now().isoformat(),
+                    details={
+                        "total_components": len(sub_jobs),
+                        "failed_components": failed_components,
+                        "completed_components": len(sub_jobs) - len(failed_components)
+                    }
+                )
+            else:
+                self.update_job_status(
+                    job['id'], 'completed',
+                    completed_at=datetime.now().isoformat(),
+                    details={
+                        "total_components": len(sub_jobs),
+                        "failed_components": [],
+                        "message": "All components updated successfully"
+                    }
+                )
+            
+            self.log(f"Full server update job {job['id']} completed")
+            
+        except Exception as e:
+            self.log(f"Full server update job failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'], 'failed',
+                completed_at=datetime.now().isoformat(),
+                details={"error": str(e)}
+            )
+
     def execute_job(self, job: Dict):
         """Execute a job based on its type"""
         job_type = job['job_type']
@@ -733,6 +850,8 @@ class JobExecutor:
             self.execute_discovery_scan(job)
         elif job_type == 'firmware_update':
             self.execute_firmware_update(job)
+        elif job_type == 'full_server_update':
+            self.execute_full_server_update(job)
         else:
             self.log(f"Unknown job type: {job_type}", "ERROR")
             self.update_job_status(

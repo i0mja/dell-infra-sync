@@ -26,7 +26,7 @@ interface Server {
 
 export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDialogProps) => {
   const [loading, setLoading] = useState(false);
-  const [jobType, setJobType] = useState<string>("");
+  const [jobType, setJobType] = useState<'firmware_update' | 'discovery_scan' | 'full_server_update' | ''>("");
   const [servers, setServers] = useState<Server[]>([]);
   const [selectedServers, setSelectedServers] = useState<string[]>([]);
   const [scanRange, setScanRange] = useState("");
@@ -59,15 +59,19 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDial
       let target_scope: any = {};
       let details: any = { notes };
 
-      if (jobType === 'firmware_update') {
+      if (jobType === 'firmware_update' || jobType === 'full_server_update') {
         if (selectedServers.length === 0) {
           throw new Error('Please select at least one server');
         }
         target_scope = { server_ids: selectedServers };
         details.firmware_uri = firmwareUri || undefined;
-        details.component = component;
-        details.version = "latest";
-        details.apply_time = "OnReset";
+        
+        // Only set component for single firmware updates
+        if (jobType === 'firmware_update') {
+          details.component = component;
+          details.version = "latest";
+          details.apply_time = "OnReset";
+        }
       } else if (jobType === 'discovery_scan') {
         if (!scanRange) {
           throw new Error('Please enter an IP range to scan');
@@ -93,7 +97,7 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDial
       });
 
       // Reset form
-      setJobType("");
+      setJobType('');
       setSelectedServers([]);
       setScanRange("");
       setScheduleAt("");
@@ -133,18 +137,19 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDial
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="job_type">Job Type *</Label>
-            <Select value={jobType} onValueChange={setJobType} required>
+            <Select value={jobType} onValueChange={(value) => setJobType(value as any)} required>
               <SelectTrigger>
                 <SelectValue placeholder="Select job type" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="firmware_update">Firmware Update</SelectItem>
+                <SelectItem value="firmware_update">Firmware Update (Single Component)</SelectItem>
+                <SelectItem value="full_server_update">Full Server Update (All Components)</SelectItem>
                 <SelectItem value="discovery_scan">IP Discovery Scan</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
-          {jobType === 'firmware_update' && (
+          {(jobType === 'firmware_update' || jobType === 'full_server_update') && (
             <>
               <div className="space-y-2">
                 <Label>Target Servers * ({selectedServers.length} selected)</Label>
@@ -171,25 +176,50 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDial
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="component">Component to Update</Label>
-                <Select value={component} onValueChange={setComponent}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="BIOS">BIOS</SelectItem>
-                    <SelectItem value="iDRAC">iDRAC / Lifecycle Controller</SelectItem>
-                    <SelectItem value="RAID">RAID Controller</SelectItem>
-                    <SelectItem value="NIC">Network Adapter</SelectItem>
-                    <SelectItem value="CPLD">CPLD / FPGA</SelectItem>
-                    <SelectItem value="Backplane">Backplane</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Will update to latest available version
-                </p>
-              </div>
+              {/* Component selection only for single firmware update */}
+              {jobType === 'firmware_update' && (
+                <div className="space-y-2">
+                  <Label htmlFor="component">Component to Update</Label>
+                  <Select value={component} onValueChange={setComponent}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="BIOS">BIOS</SelectItem>
+                      <SelectItem value="iDRAC">iDRAC / Lifecycle Controller</SelectItem>
+                      <SelectItem value="RAID">RAID Controller</SelectItem>
+                      <SelectItem value="NIC">Network Adapter</SelectItem>
+                      <SelectItem value="CPLD">CPLD / FPGA</SelectItem>
+                      <SelectItem value="Backplane">Backplane</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Will update to latest available version
+                  </p>
+                </div>
+              )}
+
+              {/* Full Server Update Info */}
+              {jobType === 'full_server_update' && (
+                <Alert>
+                  <Info className="h-4 w-4" />
+                  <AlertTitle>Full Server Update</AlertTitle>
+                  <AlertDescription>
+                    <p className="mb-2">This will update all firmware components in the Dell-recommended order:</p>
+                    <ol className="list-decimal ml-6 space-y-1 text-sm">
+                      <li><strong>iDRAC</strong> / Lifecycle Controller</li>
+                      <li><strong>BIOS</strong></li>
+                      <li>CPLD / FPGA</li>
+                      <li>RAID Controller</li>
+                      <li>Network Adapter</li>
+                      <li>Backplane</li>
+                    </ol>
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      Each component will be updated sequentially. If a critical component (iDRAC or BIOS) fails, the entire process will stop.
+                    </p>
+                  </AlertDescription>
+                </Alert>
+              )}
 
               {/* Best Practices Guidance */}
               <Alert>

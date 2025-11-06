@@ -8,7 +8,7 @@ const corsHeaders = {
 };
 
 interface CreateJobRequest {
-  job_type: 'firmware_update' | 'discovery_scan' | 'vcenter_sync';
+  job_type: 'firmware_update' | 'discovery_scan' | 'vcenter_sync' | 'full_server_update';
   target_scope: any;
   details?: any;
   schedule_at?: string;
@@ -73,8 +73,50 @@ serve(async (req) => {
 
     if (insertError) throw insertError;
 
-    // Create job tasks based on target scope
-    if (jobRequest.target_scope.server_ids && Array.isArray(jobRequest.target_scope.server_ids)) {
+    // Handle full_server_update: create sub-jobs for each component
+    if (jobRequest.job_type === 'full_server_update') {
+      // Define component update order (Dell best practice)
+      const updateSequence = [
+        { component: 'iDRAC', order: 1 },
+        { component: 'BIOS', order: 2 },
+        { component: 'CPLD', order: 3 },
+        { component: 'RAID', order: 4 },
+        { component: 'NIC', order: 5 },
+        { component: 'Backplane', order: 6 }
+      ];
+
+      // Create sub-jobs for each component
+      const subJobs = updateSequence.map(({ component, order }) => ({
+        job_type: 'firmware_update',
+        status: 'pending',
+        target_scope: jobRequest.target_scope,
+        details: {
+          component: component,
+          version: 'latest',
+          apply_time: 'OnReset',
+          firmware_uri: jobRequest.details?.firmware_uri || undefined
+        },
+        created_by: user.id,
+        parent_job_id: newJob.id,
+        component_order: order
+      }));
+
+      const { error: subJobsError } = await supabase
+        .from('jobs')
+        .insert(subJobs);
+
+      if (subJobsError) {
+        console.error('Error creating sub-jobs:', subJobsError);
+        throw new Error('Failed to create component update sub-jobs');
+      }
+
+      console.log(`Created ${subJobs.length} sub-jobs for full server update ${newJob.id}`);
+    }
+
+    // Create job tasks based on target scope (for non-full_server_update jobs)
+    if (jobRequest.job_type !== 'full_server_update' && 
+        jobRequest.target_scope.server_ids && 
+        Array.isArray(jobRequest.target_scope.server_ids)) {
       const tasks = jobRequest.target_scope.server_ids.map((server_id: string) => ({
         job_id: newJob.id,
         server_id,

@@ -38,7 +38,15 @@ Cloud (Dell Server Manager)         Local Network (Your Infrastructure)
    - Tests connectivity and extracts hardware info
    - Reports discovered servers to cloud
 
-3. **vCenter Sync** (handled by separate script)
+3. **Full Server Update**
+   - Updates all firmware components automatically in Dell-recommended order
+   - Orchestrates sequential component updates: iDRAC → BIOS → CPLD → RAID → NIC → Backplane
+   - Critical component failures (iDRAC, BIOS) stop the entire job
+   - Non-critical component failures are logged but don't stop remaining updates
+   - Each server gets one parent job with multiple sub-jobs (one per component)
+   - All firmware updates use latest available versions with OnReset apply time
+
+4. **vCenter Sync** (handled by separate script)
    - See `VCENTER_SYNC_GUIDE.md`
 
 ### Prerequisites
@@ -212,6 +220,56 @@ The script will:
    - Discovered servers logged
    - TODO: Auto-insert into database
    - Job marked complete
+
+#### Full Server Update Job Flow
+
+1. **User creates full server update job in UI**
+   - Selects target servers
+   - Optionally provides custom firmware repository URI
+   - One parent job created with status = "pending"
+
+2. **Edge function creates sub-jobs**
+   - Automatically creates 6 sub-jobs (one per component) linked to parent job
+   - Sub-jobs ordered by Dell best practice sequence:
+     1. iDRAC / Lifecycle Controller (order: 1)
+     2. BIOS (order: 2)
+     3. CPLD / FPGA (order: 3)
+     4. RAID Controller (order: 4)
+     5. Network Adapter (order: 5)
+     6. Backplane (order: 6)
+
+3. **Job Executor orchestrates updates**
+   - Fetches all sub-jobs ordered by component_order
+   - Executes each sub-job sequentially using `execute_firmware_update()`
+   - Polls sub-job status until completion (15-minute timeout per component)
+   - **Critical component failure handling:**
+     - If iDRAC or BIOS fails: Stop entire job immediately
+     - If other components fail: Log and continue with remaining updates
+   - Updates parent job with:
+     - Total components attempted
+     - Failed components list
+     - Completed components count
+
+4. **Real-time monitoring**
+   - UI shows parent job with expandable sub-jobs list
+   - Each sub-job shows individual component status and progress
+   - Parent job status reflects overall completion
+
+**Benefits:**
+- ✅ One-click to update everything
+- ✅ Always follows Dell-recommended order
+- ✅ Smart failure handling (critical vs non-critical)
+- ✅ Clear visibility into which components succeeded/failed
+- ✅ Suitable for scheduled maintenance windows
+
+**Time Estimate:**
+- Approximately 60-90 minutes per server
+- Depends on number of components requiring updates
+
+**Recommended Use:**
+- Ideal for scheduled maintenance windows
+- Best for servers requiring comprehensive updates
+- Ensures proper update order automatically without manual intervention
 
 ### Running as a Service
 

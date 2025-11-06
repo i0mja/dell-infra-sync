@@ -16,6 +16,7 @@ interface Job {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+  component_order?: number | null;
 }
 
 interface JobTask {
@@ -39,11 +40,17 @@ interface JobDetailDialogProps {
 
 export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProps) => {
   const [tasks, setTasks] = useState<JobTask[]>([]);
+  const [subJobs, setSubJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (open && job) {
       fetchTasks();
+      
+      // Fetch sub-jobs for full_server_update jobs
+      if (job.job_type === 'full_server_update') {
+        fetchSubJobs();
+      }
 
       // Set up realtime subscription for tasks
       const channel = supabase
@@ -62,9 +69,32 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
           }
         )
         .subscribe();
+      
+      // Subscribe to sub-jobs updates if this is a full server update
+      const jobsChannel = job.job_type === 'full_server_update' 
+        ? supabase
+            .channel(`sub-jobs-${job.id}`)
+            .on(
+              'postgres_changes',
+              {
+                event: '*',
+                schema: 'public',
+                table: 'jobs',
+                filter: `parent_job_id=eq.${job.id}`
+              },
+              () => {
+                console.log('Sub-jobs updated');
+                fetchSubJobs();
+              }
+            )
+            .subscribe()
+        : null;
 
       return () => {
         supabase.removeChannel(channel);
+        if (jobsChannel) {
+          supabase.removeChannel(jobsChannel);
+        }
       };
     }
   }, [open, job]);
@@ -89,6 +119,23 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
       console.error("Error fetching tasks:", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchSubJobs = async () => {
+    if (!job) return;
+
+    try {
+      const { data, error } = await supabase
+        .from("jobs")
+        .select("*")
+        .eq("parent_job_id", job.id)
+        .order("component_order", { ascending: true });
+
+      if (error) throw error;
+      setSubJobs(data || []);
+    } catch (error) {
+      console.error("Error fetching sub-jobs:", error);
     }
   };
 
@@ -189,13 +236,41 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
             </Card>
           )}
 
+          {/* Sub-Jobs List (for full_server_update) */}
+          {job.job_type === 'full_server_update' && subJobs.length > 0 && (
+            <Card>
+              <CardContent className="pt-6">
+                <h3 className="font-semibold mb-4">Component Updates ({subJobs.length})</h3>
+                <div className="space-y-2">
+                  {subJobs.map((subJob) => (
+                    <div key={subJob.id} className="flex items-center justify-between p-3 border rounded-lg">
+                      <div className="flex items-center gap-3">
+                        {getStatusIcon(subJob.status)}
+                        <div>
+                          <p className="font-medium text-sm">
+                            {subJob.details?.component || 'Unknown Component'}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Order: {subJob.component_order || 'N/A'}
+                          </p>
+                        </div>
+                      </div>
+                      {getStatusBadge(subJob.status)}
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Tasks List */}
-          <Card>
-            <CardContent className="pt-6">
-              <h3 className="font-semibold mb-4 flex items-center gap-2">
-                <Server className="h-4 w-4" />
-                Tasks ({tasks.length})
-              </h3>
+          {job.job_type !== 'full_server_update' && (
+            <Card>
+              <CardContent className="pt-6">
+                <h3 className="font-semibold mb-4 flex items-center gap-2">
+                  <Server className="h-4 w-4" />
+                  Tasks ({tasks.length})
+                </h3>
               {loading ? (
                 <div className="space-y-2">
                   {[1, 2, 3].map((i) => (
@@ -239,6 +314,7 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
               )}
             </CardContent>
           </Card>
+          )}
         </div>
       </DialogContent>
     </Dialog>

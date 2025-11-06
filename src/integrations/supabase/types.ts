@@ -143,11 +143,13 @@ export type Database = {
       jobs: {
         Row: {
           completed_at: string | null
+          component_order: number | null
           created_at: string
           created_by: string
           details: Json | null
           id: string
           job_type: Database["public"]["Enums"]["job_type"]
+          parent_job_id: string | null
           schedule_at: string | null
           started_at: string | null
           status: Database["public"]["Enums"]["job_status"]
@@ -155,11 +157,13 @@ export type Database = {
         }
         Insert: {
           completed_at?: string | null
+          component_order?: number | null
           created_at?: string
           created_by: string
           details?: Json | null
           id?: string
           job_type: Database["public"]["Enums"]["job_type"]
+          parent_job_id?: string | null
           schedule_at?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["job_status"]
@@ -167,11 +171,13 @@ export type Database = {
         }
         Update: {
           completed_at?: string | null
+          component_order?: number | null
           created_at?: string
           created_by?: string
           details?: Json | null
           id?: string
           job_type?: Database["public"]["Enums"]["job_type"]
+          parent_job_id?: string | null
           schedule_at?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["job_status"]
@@ -183,6 +189,13 @@ export type Database = {
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "jobs_parent_job_id_fkey"
+            columns: ["parent_job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
             referencedColumns: ["id"]
           },
         ]
@@ -463,7 +476,11 @@ export type Database = {
     Enums: {
       app_role: "admin" | "operator" | "viewer"
       job_status: "pending" | "running" | "completed" | "failed" | "cancelled"
-      job_type: "firmware_update" | "discovery_scan" | "vcenter_sync"
+      job_type:
+        | "firmware_update"
+        | "discovery_scan"
+        | "vcenter_sync"
+        | "full_server_update"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -593,7 +610,12 @@ export const Constants = {
     Enums: {
       app_role: ["admin", "operator", "viewer"],
       job_status: ["pending", "running", "completed", "failed", "cancelled"],
-      job_type: ["firmware_update", "discovery_scan", "vcenter_sync"],
+      job_type: [
+        "firmware_update",
+        "discovery_scan",
+        "vcenter_sync",
+        "full_server_update",
+      ],
     },
   },
 } as const
