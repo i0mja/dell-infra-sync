@@ -59,58 +59,60 @@ if (!(Get-Command git -ErrorAction SilentlyContinue)) {
     Write-Host "[OK] Git already installed" -ForegroundColor Green
 }
 
-# Step 5: Setup Supabase
-Write-Host "[DATABASE] Step 5/7: Setting up Supabase..." -ForegroundColor Yellow
-$SupabasePath = "C:\supabase"
-if (!(Test-Path $SupabasePath)) {
-    git clone --depth 1 https://github.com/supabase/supabase $SupabasePath
+# Step 5: Setup Supabase CLI
+Write-Host "[DATABASE] Step 5/7: Setting up Supabase CLI..." -ForegroundColor Yellow
+
+# Install Supabase CLI globally
+Write-Host "[INSTALL] Installing Supabase CLI..." -ForegroundColor Yellow
+npm install -g supabase
+Write-Host "[OK] Supabase CLI installed" -ForegroundColor Green
+
+# Create Supabase project directory
+$SupabaseProjectDir = "C:\dell-supabase"
+if (-not (Test-Path $SupabaseProjectDir)) {
+    New-Item -ItemType Directory -Path $SupabaseProjectDir | Out-Null
 }
-Set-Location "$SupabasePath\docker"
 
-# Generate secure credentials
-$PostgresPassword = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 32 | ForEach-Object {[char]$_})
-$JwtSecret = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 64 | ForEach-Object {[char]$_})
-$DashboardPassword = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 16 | ForEach-Object {[char]$_})
-$AnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
-$ServiceRoleKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
+Set-Location $SupabaseProjectDir
 
-# Get server IP
+# Initialize Supabase project
+Write-Host "[CONFIG] Initializing Supabase project..." -ForegroundColor Yellow
+supabase init
+
+# Start Supabase services
+Write-Host "[*] Step 6/7: Starting Supabase services..." -ForegroundColor Yellow
+Write-Host "[WAIT] This may take several minutes on first run..." -ForegroundColor Yellow
+supabase start
+
+Write-Host "[OK] Supabase services started" -ForegroundColor Green
+
+# Get Supabase credentials from CLI
+Write-Host "[INFO] Retrieving Supabase credentials..." -ForegroundColor Yellow
+$StatusOutput = supabase status | Out-String
+$ApiUrlLine = ($StatusOutput -split "`n" | Select-String "API URL:").ToString()
+$AnonKeyLine = ($StatusOutput -split "`n" | Select-String "anon key:").ToString()
+$ServiceKeyLine = ($StatusOutput -split "`n" | Select-String "service_role key:").ToString()
+$DbUrlLine = ($StatusOutput -split "`n" | Select-String "DB URL:").ToString()
+
+# Parse credentials
+$SupabaseUrl = ($ApiUrlLine -split "API URL:")[1].Trim()
+$AnonKey = ($AnonKeyLine -split "anon key:")[1].Trim()
+$ServiceRoleKey = ($ServiceKeyLine -split "service_role key:")[1].Trim()
+$DbUrl = ($DbUrlLine -split "DB URL:")[1].Trim()
+
+# Get server IP for external access
 $ServerIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.InterfaceAlias -notlike "*Loopback*"} | Select-Object -First 1).IPAddress
 
-# Create .env file
-@"
-POSTGRES_PASSWORD=$PostgresPassword
-JWT_SECRET=$JwtSecret
-ANON_KEY=$AnonKey
-SERVICE_ROLE_KEY=$ServiceRoleKey
-DASHBOARD_USERNAME=supabase
-DASHBOARD_PASSWORD=$DashboardPassword
-
-# Studio configuration
-STUDIO_DEFAULT_ORGANIZATION=Default Organization
-STUDIO_DEFAULT_PROJECT=Default Project
-
-# API configuration
-API_EXTERNAL_URL=http://${ServerIP}:8000
-SUPABASE_PUBLIC_URL=http://${ServerIP}:8000
-"@ | Out-File -FilePath ".env" -Encoding ASCII
-
-Write-Host "[OK] Supabase configuration created" -ForegroundColor Green
-
-# Start Supabase
-Write-Host "[*] Step 6/7: Starting Supabase services..." -ForegroundColor Yellow
-docker compose up -d
-Write-Host "[WAIT] Waiting for services to start (60 seconds)..." -ForegroundColor Yellow
-Start-Sleep -Seconds 60
-Write-Host "[OK] Supabase is running" -ForegroundColor Green
+Write-Host "[OK] Supabase is running at $SupabaseUrl" -ForegroundColor Green
 
 # Create initial admin user
-Write-Host "[USER] Step 5/7: Creating initial admin user..." -ForegroundColor Yellow
+Write-Host "[USER] Creating initial admin user..." -ForegroundColor Yellow
 $AdminEmail = Read-Host "Enter admin email"
 $AdminPassword = Read-Host "Enter admin password" -AsSecureString
 $AdminPasswordText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AdminPassword))
 
-$AdminUserId = docker exec supabase-db psql -U postgres -d postgres -t -c @"
+# Use Supabase CLI to execute SQL
+$AdminUserId = supabase db execute --sql @"
   INSERT INTO auth.users (
     instance_id, id, aud, role, email, 
     encrypted_password, email_confirmed_at, 
@@ -127,9 +129,9 @@ $AdminUserId = docker exec supabase-db psql -U postgres -d postgres -t -c @"
     now(),
     ''
   ) RETURNING id;
-"@ | ForEach-Object { $_.Trim() }
+"@ | Select-Object -Last 1 | ForEach-Object { $_.Trim() }
 
-docker exec supabase-db psql -U postgres -d postgres -c @"
+supabase db execute --sql @"
   INSERT INTO public.profiles (id, email, full_name)
   VALUES ('$AdminUserId', '$AdminEmail', 'Administrator');
   
@@ -153,7 +155,7 @@ npm install
 
 # Create production .env
 @"
-VITE_SUPABASE_URL=http://${ServerIP}:8000
+VITE_SUPABASE_URL=$SupabaseUrl
 VITE_SUPABASE_PUBLISHABLE_KEY=$AnonKey
 VITE_SUPABASE_PROJECT_ID=default
 "@ | Out-File -FilePath ".env" -Encoding ASCII
@@ -241,18 +243,14 @@ Write-Host ""
 Write-Host "[SUCCESS] Deployment Complete!" -ForegroundColor Green
 Write-Host "=======================================================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "[INFO] Supabase Studio: http://${ServerIP}:8000" -ForegroundColor Cyan
-Write-Host "   Username: supabase" -ForegroundColor Gray
-Write-Host "   Password: $DashboardPassword" -ForegroundColor Gray
+Write-Host "[INFO] Supabase Studio: $SupabaseUrl" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "[WEB] Dell Server Manager: $SslUrl" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "[CREDS] Database Credentials:" -ForegroundColor Yellow
-Write-Host "   Host: $ServerIP" -ForegroundColor Gray
-Write-Host "   Port: 5432" -ForegroundColor Gray
-Write-Host "   Database: postgres" -ForegroundColor Gray
-Write-Host "   Username: postgres" -ForegroundColor Gray
-Write-Host "   Password: $PostgresPassword" -ForegroundColor Gray
+Write-Host "[CREDS] Supabase Credentials:" -ForegroundColor Yellow
+Write-Host "   API URL: $SupabaseUrl" -ForegroundColor Gray
+Write-Host "   Anon Key: $AnonKey" -ForegroundColor Gray
+Write-Host "   Service Role Key: $ServiceRoleKey" -ForegroundColor Gray
 Write-Host ""
 Write-Host "[SUCCESS] You can now login with:" -ForegroundColor Green
 Write-Host "   Email: $AdminEmail" -ForegroundColor Gray
@@ -263,11 +261,11 @@ if ($SetupSSL -ne "y" -and $SetupSSL -ne "Y") {
     Write-Host "      Run Win-ACME for your domain" -ForegroundColor Gray
 }
 Write-Host "   2. Configure regular backups (see docs\BACKUP_GUIDE.md)" -ForegroundColor Gray
+Write-Host "   3. View database: supabase db studio" -ForegroundColor Gray
 Write-Host ""
 Write-Host "[SERVICE] Service Management:" -ForegroundColor Yellow
-Write-Host "   nssm status DellServerManager" -ForegroundColor Gray
-Write-Host "   nssm restart DellServerManager" -ForegroundColor Gray
-Write-Host "   nssm stop DellServerManager" -ForegroundColor Gray
+Write-Host "   Supabase: supabase status, supabase stop, supabase restart" -ForegroundColor Gray
+Write-Host "   App: nssm status/restart/stop DellServerManager" -ForegroundColor Gray
 Write-Host ""
 
 # Save credentials to file
@@ -277,18 +275,20 @@ Dell Server Manager Deployment Credentials
 ==========================================
 Generated: $(Get-Date)
 
-Supabase Studio: http://${ServerIP}:8000
-Username: supabase
-Password: $DashboardPassword
+Supabase Studio: $SupabaseUrl
+Anon Key: $AnonKey
+Service Role Key: $ServiceRoleKey
 
-Database Credentials:
-Host: $ServerIP
-Port: 5432
-Database: postgres
-Username: postgres
-Password: $PostgresPassword
+Admin Login:
+Email: $AdminEmail
 
-Application URL: http://${ServerIP}:3000
+Application URL: $SslUrl
+
+Supabase CLI Commands:
+- supabase status (check status)
+- supabase stop (stop services)
+- supabase start (start services)
+- supabase db studio (open Studio in browser)
 "@ | Out-File -FilePath $CredsPath -Encoding ASCII
 
 Write-Host "[SAVED] Credentials saved to: $CredsPath" -ForegroundColor Green
