@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Search, RefreshCw, Link2, Wrench, RotateCw, Edit, History, Trash2 } from "lucide-react";
+import { Plus, Search, RefreshCw, Link2, Wrench, RotateCw, Edit, History, Trash2, CheckCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -90,6 +90,40 @@ const Servers = () => {
   const handleCreateJob = (server: Server) => {
     setSelectedServer(server);
     setJobDialogOpen(true);
+  };
+
+  const handleTestConnection = async (server: Server) => {
+    try {
+      setRefreshing(server.id);
+      const { data, error } = await supabase.functions.invoke('test-idrac-connection', {
+        body: {
+          ip_address: server.ip_address,
+        },
+      });
+
+      if (error) throw error;
+
+      if (data.success) {
+        toast({
+          title: "Connection Successful",
+          description: `${server.hostname || server.ip_address} is reachable (${data.response_time_ms}ms)`,
+        });
+      } else {
+        toast({
+          title: "Connection Failed",
+          description: data.error,
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error testing connection",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setRefreshing(null);
+    }
   };
 
   const handleRefreshInfo = async (server: Server) => {
@@ -306,6 +340,14 @@ const Servers = () => {
                 <ContextMenuItem onClick={() => handleCreateJob(server)}>
                   <Wrench className="mr-2 h-4 w-4" />
                   Create Firmware Update Job
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem 
+                  onClick={() => handleTestConnection(server)}
+                  disabled={refreshing === server.id}
+                >
+                  <CheckCircle className="mr-2 h-4 w-4" />
+                  Test iDRAC Connection
                 </ContextMenuItem>
                 <ContextMenuItem 
                   onClick={() => handleRefreshInfo(server)}
