@@ -357,13 +357,26 @@ $AdminEmail = Read-Host "Enter admin email"
 $AdminPassword = Read-Host "Enter admin password" -AsSecureString
 $AdminPasswordText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AdminPassword))
 
-# Use Supabase CLI to execute SQL
-$AdminUserId = supabase db execute --sql @"
-  INSERT INTO auth.users (
+# Find the Supabase Postgres container
+$ContainerName = docker ps --filter "name=supabase_db" --format "{{.Names}}" | Select-Object -First 1
+
+if ([string]::IsNullOrWhiteSpace($ContainerName)) {
+    Write-Host "[ERROR] Could not find Supabase Postgres container" -ForegroundColor Red
+    Write-Host "[INFO] Available containers:" -ForegroundColor Yellow
+    docker ps --format "table {{.Names}}\t{{.Status}}"
+    exit 1
+}
+
+Write-Host "[INFO] Using Postgres container: $ContainerName" -ForegroundColor Cyan
+
+# Create admin user in auth.users and capture the user ID
+Write-Host "[SQL] Creating admin user in auth.users..." -ForegroundColor Yellow
+$SqlCreateUser = @"
+INSERT INTO auth.users (
     instance_id, id, aud, role, email, 
     encrypted_password, email_confirmed_at, 
     created_at, updated_at, confirmation_token
-  ) VALUES (
+) VALUES (
     '00000000-0000-0000-0000-000000000000',
     gen_random_uuid(),
     'authenticated',
@@ -374,16 +387,37 @@ $AdminUserId = supabase db execute --sql @"
     now(),
     now(),
     ''
-  ) RETURNING id;
-"@ | Select-Object -Last 1 | ForEach-Object { $_.Trim() }
-
-supabase db execute --sql @"
-  INSERT INTO public.profiles (id, email, full_name)
-  VALUES ('$AdminUserId', '$AdminEmail', 'Administrator');
-  
-  INSERT INTO public.user_roles (user_id, role)
-  VALUES ('$AdminUserId', 'admin');
+) RETURNING id;
 "@
+
+$AdminUserId = docker exec $ContainerName psql -U postgres -d postgres -t -c "$SqlCreateUser" 2>&1 | Select-Object -Last 1
+$AdminUserId = $AdminUserId.Trim()
+
+if ([string]::IsNullOrWhiteSpace($AdminUserId) -or $AdminUserId -match "ERROR") {
+    Write-Host "[ERROR] Failed to create admin user" -ForegroundColor Red
+    Write-Host "[DEBUG] Output: $AdminUserId" -ForegroundColor Yellow
+    exit 1
+}
+
+Write-Host "[OK] Created user with ID: $AdminUserId" -ForegroundColor Green
+
+# Create profile and assign admin role
+Write-Host "[SQL] Creating profile and assigning admin role..." -ForegroundColor Yellow
+$SqlCreateProfile = @"
+INSERT INTO public.profiles (id, email, full_name)
+VALUES ('$AdminUserId', '$AdminEmail', 'Administrator');
+
+INSERT INTO public.user_roles (user_id, role)
+VALUES ('$AdminUserId', 'admin');
+"@
+
+$ProfileResult = docker exec $ContainerName psql -U postgres -d postgres -c "$SqlCreateProfile" 2>&1
+
+if ($ProfileResult -match "ERROR") {
+    Write-Host "[ERROR] Failed to create profile/role" -ForegroundColor Red
+    Write-Host "[DEBUG] Output: $ProfileResult" -ForegroundColor Yellow
+    exit 1
+}
 
 Write-Host "[OK] Admin user created: $AdminEmail" -ForegroundColor Green
 
