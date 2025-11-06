@@ -263,12 +263,16 @@ try {
 # Start Supabase services
 Write-Host "[*] Step 7/8: Starting Supabase services..." -ForegroundColor Yellow
 Write-Host "[WAIT] This may take several minutes on first run..." -ForegroundColor Yellow
-supabase start
+$StartOutput = supabase start 2>&1 | Out-String
 
 # Verify services started
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[ERROR] Supabase services failed to start" -ForegroundColor Red
     Write-Host "[ERROR] Check Docker Desktop is running and try again" -ForegroundColor Red
+    $StartOutPath = Join-Path $LogPath "supabase-start-output.txt"
+    $StartOutput | Out-File -FilePath $StartOutPath -Encoding UTF8
+    Write-Host "[DEBUG] Saved supabase start output to: $StartOutPath" -ForegroundColor Yellow
+    Stop-Transcript
     exit 1
 }
 
@@ -276,30 +280,71 @@ Write-Host "[OK] Supabase services started" -ForegroundColor Green
 
 # Get Supabase credentials from CLI
 Write-Host "[INFO] Retrieving Supabase credentials..." -ForegroundColor Yellow
-$StatusOutput = supabase status | Out-String
-$ApiUrlLine = ($StatusOutput -split "`n" | Select-String "API URL:").ToString()
-$AnonKeyLine = ($StatusOutput -split "`n" | Select-String "anon key:").ToString()
-$ServiceKeyLine = ($StatusOutput -split "`n" | Select-String "service_role key:").ToString()
-$DbUrlLine = ($StatusOutput -split "`n" | Select-String "DB URL:").ToString()
 
-# Parse credentials
-$SupabaseUrl = ($ApiUrlLine -split "API URL:")[1].Trim()
-$AnonKey = ($AnonKeyLine -split "anon key:")[1].Trim()
-$ServiceRoleKey = ($ServiceKeyLine -split "service_role key:")[1].Trim()
-$DbUrl = ($DbUrlLine -split "DB URL:")[1].Trim()
+# Helper function to extract values using regex (supports both old and new label formats)
+function Get-MatchValue {
+    param(
+        [string]$Text,
+        [string]$Pattern
+    )
+    $m = [regex]::Match($Text, $Pattern, 'IgnoreCase, Multiline')
+    if ($m.Success) { return $m.Groups[1].Value.Trim() }
+    return $null
+}
 
-# Validate credentials were parsed successfully
+# Define regex patterns for both old and new Supabase CLI output formats
+$ApiPattern = '^\s*API URL:\s*(.+)$'
+$DbPattern  = '^\s*(?:Database URL|DB URL):\s*(.+)$'
+$AnonPattern = '^\s*(?:Publishable key|anon key):\s*(.+)$'
+$ServicePattern = '^\s*(?:Secret key|service_role key):\s*(.+)$'
+
+# 1) Try parsing from 'supabase start' output first
+$SupabaseUrl = Get-MatchValue -Text $StartOutput -Pattern $ApiPattern
+$AnonKey = Get-MatchValue -Text $StartOutput -Pattern $AnonPattern
+$ServiceRoleKey = Get-MatchValue -Text $StartOutput -Pattern $ServicePattern
+$DbUrl = Get-MatchValue -Text $StartOutput -Pattern $DbPattern
+
+# 2) If any values are missing, fall back to 'supabase status'
+if ([string]::IsNullOrWhiteSpace($SupabaseUrl) -or
+    [string]::IsNullOrWhiteSpace($AnonKey) -or
+    [string]::IsNullOrWhiteSpace($ServiceRoleKey) -or
+    [string]::IsNullOrWhiteSpace($DbUrl)) {
+
+    Write-Host "[INFO] Some credentials missing from start output, checking status..." -ForegroundColor Yellow
+    $StatusOutput = supabase status 2>&1 | Out-String
+    $SupabaseUrl = if ([string]::IsNullOrWhiteSpace($SupabaseUrl)) { Get-MatchValue -Text $StatusOutput -Pattern $ApiPattern } else { $SupabaseUrl }
+    $AnonKey = if ([string]::IsNullOrWhiteSpace($AnonKey)) { Get-MatchValue -Text $StatusOutput -Pattern $AnonPattern } else { $AnonKey }
+    $ServiceRoleKey = if ([string]::IsNullOrWhiteSpace($ServiceRoleKey)) { Get-MatchValue -Text $StatusOutput -Pattern $ServicePattern } else { $ServiceRoleKey }
+    $DbUrl = if ([string]::IsNullOrWhiteSpace($DbUrl)) { Get-MatchValue -Text $StatusOutput -Pattern $DbPattern } else { $DbUrl }
+}
+
+# 3) If still missing critical values, dump outputs for debugging
 if ([string]::IsNullOrWhiteSpace($SupabaseUrl) -or [string]::IsNullOrWhiteSpace($AnonKey)) {
     Write-Host "[ERROR] Failed to retrieve Supabase credentials" -ForegroundColor Red
-    Write-Host "[ERROR] This usually means Supabase services didn't start properly" -ForegroundColor Red
+    
+    # Save start output for debugging
+    $StartOutPath = Join-Path $LogPath "supabase-start-output.txt"
+    $StartOutput | Out-File -FilePath $StartOutPath -Encoding UTF8
+    Write-Host "[DEBUG] Saved supabase start output to: $StartOutPath" -ForegroundColor Yellow
+    
+    # Save status output for debugging
+    if (-not $StatusOutput) {
+        $StatusOutput = supabase status 2>&1 | Out-String
+    }
+    $StatusOutPath = Join-Path $LogPath "supabase-status-output.txt"
+    $StatusOutput | Out-File -FilePath $StatusOutPath -Encoding UTF8
+    Write-Host "[DEBUG] Saved supabase status output to: $StatusOutPath" -ForegroundColor Yellow
+    
     Write-Host "" -ForegroundColor Red
-    Write-Host "[FIX] Try the following:" -ForegroundColor Yellow
-    Write-Host "   1. Ensure Docker Desktop is running in Linux containers mode" -ForegroundColor Gray
-    Write-Host "   2. Run: docker ps (should show Supabase containers)" -ForegroundColor Gray
-    Write-Host "   3. If no containers, run the cleanup script and try again" -ForegroundColor Gray
-    Write-Host "   4. Check: supabase status" -ForegroundColor Gray
+    Write-Host "[FIX] Review the output files above for credential details." -ForegroundColor Yellow
+    Write-Host "      If you see 'Publishable key' and 'Secret key', copy them to .env manually:" -ForegroundColor Yellow
+    Write-Host "      VITE_SUPABASE_URL=<API URL>" -ForegroundColor Gray
+    Write-Host "      VITE_SUPABASE_PUBLISHABLE_KEY=<Publishable key>" -ForegroundColor Gray
+    Stop-Transcript
     exit 1
 }
+
+Write-Host "[OK] Retrieved credentials successfully" -ForegroundColor Green
 
 # Get server IP for external access
 $ServerIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.InterfaceAlias -notlike "*Loopback*"} | Select-Object -First 1).IPAddress
