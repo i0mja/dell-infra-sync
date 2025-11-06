@@ -1,55 +1,66 @@
 # Dell Server Manager - Windows Server 2022 Deployment Script
 # Automates complete self-hosted setup on Windows Server 2022
+# Requires: PowerShell 5.1 or higher
 
 #Requires -RunAsAdministrator
 
-Write-Host "🚀 Dell Server Manager - Windows Server 2022 Self-Hosted Deployment" -ForegroundColor Cyan
+# Ensure proper console encoding
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
+# Check PowerShell version
+if ($PSVersionTable.PSVersion.Major -lt 5) {
+    Write-Host "[ERROR] This script requires PowerShell 5.1 or higher" -ForegroundColor Red
+    exit 1
+}
+
+Write-Host "[*] Dell Server Manager - Windows Server 2022 Self-Hosted Deployment" -ForegroundColor Cyan
 Write-Host "=======================================================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Step 1: Install Chocolatey
-Write-Host "📦 Step 1/7: Installing Chocolatey..." -ForegroundColor Yellow
+Write-Host "[INSTALL] Step 1/7: Installing Chocolatey..." -ForegroundColor Yellow
 if (!(Get-Command choco -ErrorAction SilentlyContinue)) {
     Set-ExecutionPolicy Bypass -Scope Process -Force
     [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
     Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-    Write-Host "✅ Chocolatey installed" -ForegroundColor Green
+    Write-Host "[OK] Chocolatey installed" -ForegroundColor Green
 } else {
-    Write-Host "✅ Chocolatey already installed" -ForegroundColor Green
+    Write-Host "[OK] Chocolatey already installed" -ForegroundColor Green
 }
 
 # Step 2: Install Docker Desktop
-Write-Host "📦 Step 2/7: Installing Docker Desktop..." -ForegroundColor Yellow
+Write-Host "[INSTALL] Step 2/7: Installing Docker Desktop..." -ForegroundColor Yellow
 if (!(Get-Command docker -ErrorAction SilentlyContinue)) {
     choco install docker-desktop -y
-    Write-Host "⚠️  Docker Desktop installed - Please restart your computer and run this script again" -ForegroundColor Red
+    Write-Host "[WARN] Docker Desktop installed - Please restart your computer and run this script again" -ForegroundColor Red
     exit 0
 } else {
-    Write-Host "✅ Docker Desktop already installed" -ForegroundColor Green
+    Write-Host "[OK] Docker Desktop already installed" -ForegroundColor Green
 }
 
 # Step 3: Install Node.js
-Write-Host "📦 Step 3/7: Installing Node.js 18..." -ForegroundColor Yellow
+Write-Host "[INSTALL] Step 3/7: Installing Node.js 18..." -ForegroundColor Yellow
 if (!(Get-Command node -ErrorAction SilentlyContinue)) {
     choco install nodejs-lts -y
     refreshenv
-    Write-Host "✅ Node.js installed" -ForegroundColor Green
+    Write-Host "[OK] Node.js installed" -ForegroundColor Green
 } else {
-    Write-Host "✅ Node.js already installed" -ForegroundColor Green
+    Write-Host "[OK] Node.js already installed" -ForegroundColor Green
 }
 
 # Step 4: Install Git
-Write-Host "📦 Step 4/7: Installing Git..." -ForegroundColor Yellow
+Write-Host "[INSTALL] Step 4/7: Installing Git..." -ForegroundColor Yellow
 if (!(Get-Command git -ErrorAction SilentlyContinue)) {
     choco install git -y
     refreshenv
-    Write-Host "✅ Git installed" -ForegroundColor Green
+    Write-Host "[OK] Git installed" -ForegroundColor Green
 } else {
-    Write-Host "✅ Git already installed" -ForegroundColor Green
+    Write-Host "[OK] Git already installed" -ForegroundColor Green
 }
 
 # Step 5: Setup Supabase
-Write-Host "🗄️  Step 5/7: Setting up Supabase..." -ForegroundColor Yellow
+Write-Host "[DATABASE] Step 5/7: Setting up Supabase..." -ForegroundColor Yellow
 $SupabasePath = "C:\supabase"
 if (!(Test-Path $SupabasePath)) {
     git clone --depth 1 https://github.com/supabase/supabase $SupabasePath
@@ -84,17 +95,17 @@ API_EXTERNAL_URL=http://${ServerIP}:8000
 SUPABASE_PUBLIC_URL=http://${ServerIP}:8000
 "@ | Out-File -FilePath ".env" -Encoding ASCII
 
-Write-Host "✅ Supabase configuration created" -ForegroundColor Green
+Write-Host "[OK] Supabase configuration created" -ForegroundColor Green
 
 # Start Supabase
-Write-Host "🚀 Step 6/7: Starting Supabase services..." -ForegroundColor Yellow
+Write-Host "[*] Step 6/7: Starting Supabase services..." -ForegroundColor Yellow
 docker compose up -d
-Write-Host "⏳ Waiting for services to start (60 seconds)..." -ForegroundColor Yellow
+Write-Host "[WAIT] Waiting for services to start (60 seconds)..." -ForegroundColor Yellow
 Start-Sleep -Seconds 60
-Write-Host "✅ Supabase is running" -ForegroundColor Green
+Write-Host "[OK] Supabase is running" -ForegroundColor Green
 
 # Create initial admin user
-Write-Host "👤 Step 5/7: Creating initial admin user..." -ForegroundColor Yellow
+Write-Host "[USER] Step 5/7: Creating initial admin user..." -ForegroundColor Yellow
 $AdminEmail = Read-Host "Enter admin email"
 $AdminPassword = Read-Host "Enter admin password" -AsSecureString
 $AdminPasswordText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AdminPassword))
@@ -126,13 +137,13 @@ docker exec supabase-db psql -U postgres -d postgres -c @"
   VALUES ('$AdminUserId', 'admin');
 "@
 
-Write-Host "✅ Admin user created: $AdminEmail" -ForegroundColor Green
+Write-Host "[OK] Admin user created: $AdminEmail" -ForegroundColor Green
 
 # Step 6: Setup application
-Write-Host "📱 Step 6/7: Setting up Dell Server Manager..." -ForegroundColor Yellow
+Write-Host "[APP] Step 6/7: Setting up Dell Server Manager..." -ForegroundColor Yellow
 $AppPath = "C:\dell-server-manager"
 if (!(Test-Path $AppPath)) {
-    Write-Host "❌ Please clone the Dell Server Manager repository first:" -ForegroundColor Red
+    Write-Host "[ERROR] Please clone the Dell Server Manager repository first:" -ForegroundColor Red
     Write-Host "   git clone <your-repo-url> C:\dell-server-manager" -ForegroundColor Yellow
     exit 1
 }
@@ -151,7 +162,7 @@ VITE_SUPABASE_PROJECT_ID=default
 npm run build
 
 # Step 7: Setup Windows Service
-Write-Host "🔧 Step 7/7: Creating Windows Service..." -ForegroundColor Yellow
+Write-Host "[CONFIG] Step 7/7: Creating Windows Service..." -ForegroundColor Yellow
 
 # Install NSSM (Non-Sucking Service Manager)
 choco install nssm -y
@@ -167,19 +178,19 @@ nssm set DellServerManager Start SERVICE_AUTO_START
 nssm start DellServerManager
 
 # Step 8: Optional SSL/TLS Setup
-Write-Host "🔒 Step 8/8: SSL/TLS Setup (Optional)..." -ForegroundColor Yellow
+Write-Host "[SSL] Step 8/8: SSL/TLS Setup (Optional)..." -ForegroundColor Yellow
 $SetupSSL = Read-Host "Do you have a domain name for SSL/TLS? (y/n)"
 
 if ($SetupSSL -eq "y" -or $SetupSSL -eq "Y") {
     $DomainName = Read-Host "Enter your domain name (e.g., example.com)"
     
     # Install IIS and URL Rewrite
-    Write-Host "📦 Installing IIS and required features..." -ForegroundColor Yellow
+    Write-Host "[INSTALL] Installing IIS and required features..." -ForegroundColor Yellow
     Install-WindowsFeature -Name Web-Server -IncludeManagementTools
     choco install urlrewrite -y
     
     # Install Win-ACME for Let's Encrypt
-    Write-Host "📦 Installing Win-ACME..." -ForegroundColor Yellow
+    Write-Host "[INSTALL] Installing Win-ACME..." -ForegroundColor Yellow
     choco install win-acme -y
     
     # Create IIS reverse proxy configuration
@@ -205,21 +216,21 @@ if ($SetupSSL -eq "y" -or $SetupSSL -eq "Y") {
     Set-ItemProperty "IIS:\Sites\Default Web Site" -Name bindings -Value @{protocol="http";bindingInformation="*:80:$DomainName"}
     
     # Obtain SSL certificate using Win-ACME
-    Write-Host "📜 Obtaining SSL certificate from Let's Encrypt..." -ForegroundColor Yellow
-    Write-Host "⚠️  Follow the Win-ACME prompts to configure SSL for $DomainName" -ForegroundColor Yellow
+    Write-Host "[CERT] Obtaining SSL certificate from Let's Encrypt..." -ForegroundColor Yellow
+    Write-Host "[WARN] Follow the Win-ACME prompts to configure SSL for $DomainName" -ForegroundColor Yellow
     & "C:\ProgramData\chocolatey\bin\wacs.exe" --target manual --host $DomainName --emailaddress $AdminEmail --accepttos --installation iis
     
     # Configure Windows Firewall
-    Write-Host "🔥 Configuring Windows Firewall..." -ForegroundColor Yellow
+    Write-Host "[FIREWALL] Configuring Windows Firewall..." -ForegroundColor Yellow
     New-NetFirewallRule -DisplayName "HTTP" -Direction Inbound -LocalPort 80 -Protocol TCP -Action Allow
     New-NetFirewallRule -DisplayName "HTTPS" -Direction Inbound -LocalPort 443 -Protocol TCP -Action Allow
     New-NetFirewallRule -DisplayName "Supabase API" -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow
     
     $SslUrl = "https://$DomainName"
-    Write-Host "✅ SSL/TLS configured successfully!" -ForegroundColor Green
+    Write-Host "[OK] SSL/TLS configured successfully!" -ForegroundColor Green
 } else {
     # Configure Windows Firewall without SSL
-    Write-Host "🔥 Configuring Windows Firewall..." -ForegroundColor Yellow
+    Write-Host "[FIREWALL] Configuring Windows Firewall..." -ForegroundColor Yellow
     New-NetFirewallRule -DisplayName "Dell Server Manager" -Direction Inbound -LocalPort 3000 -Protocol TCP -Action Allow
     New-NetFirewallRule -DisplayName "Supabase API" -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow
     
@@ -227,33 +238,33 @@ if ($SetupSSL -eq "y" -or $SetupSSL -eq "Y") {
 }
 
 Write-Host ""
-Write-Host "✅ Deployment Complete!" -ForegroundColor Green
+Write-Host "[SUCCESS] Deployment Complete!" -ForegroundColor Green
 Write-Host "=======================================================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "📊 Supabase Studio: http://${ServerIP}:8000" -ForegroundColor Cyan
+Write-Host "[INFO] Supabase Studio: http://${ServerIP}:8000" -ForegroundColor Cyan
 Write-Host "   Username: supabase" -ForegroundColor Gray
 Write-Host "   Password: $DashboardPassword" -ForegroundColor Gray
 Write-Host ""
-Write-Host "🌐 Dell Server Manager: $SslUrl" -ForegroundColor Cyan
+Write-Host "[WEB] Dell Server Manager: $SslUrl" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "🔑 Database Credentials:" -ForegroundColor Yellow
+Write-Host "[CREDS] Database Credentials:" -ForegroundColor Yellow
 Write-Host "   Host: $ServerIP" -ForegroundColor Gray
 Write-Host "   Port: 5432" -ForegroundColor Gray
 Write-Host "   Database: postgres" -ForegroundColor Gray
 Write-Host "   Username: postgres" -ForegroundColor Gray
 Write-Host "   Password: $PostgresPassword" -ForegroundColor Gray
 Write-Host ""
-Write-Host "🎉 You can now login with:" -ForegroundColor Green
+Write-Host "[SUCCESS] You can now login with:" -ForegroundColor Green
 Write-Host "   Email: $AdminEmail" -ForegroundColor Gray
 Write-Host ""
-Write-Host "📋 Next Steps:" -ForegroundColor Yellow
+Write-Host "[NEXT] Next Steps:" -ForegroundColor Yellow
 if ($SetupSSL -ne "y" -and $SetupSSL -ne "Y") {
     Write-Host "   1. Setup SSL/TLS (recommended for production)" -ForegroundColor Gray
     Write-Host "      Run Win-ACME for your domain" -ForegroundColor Gray
 }
 Write-Host "   2. Configure regular backups (see docs\BACKUP_GUIDE.md)" -ForegroundColor Gray
 Write-Host ""
-Write-Host "📝 Service Management:" -ForegroundColor Yellow
+Write-Host "[SERVICE] Service Management:" -ForegroundColor Yellow
 Write-Host "   nssm status DellServerManager" -ForegroundColor Gray
 Write-Host "   nssm restart DellServerManager" -ForegroundColor Gray
 Write-Host "   nssm stop DellServerManager" -ForegroundColor Gray
@@ -280,5 +291,5 @@ Password: $PostgresPassword
 Application URL: http://${ServerIP}:3000
 "@ | Out-File -FilePath $CredsPath -Encoding ASCII
 
-Write-Host "💾 Credentials saved to: $CredsPath" -ForegroundColor Green
+Write-Host "[SAVED] Credentials saved to: $CredsPath" -ForegroundColor Green
 Write-Host ""
