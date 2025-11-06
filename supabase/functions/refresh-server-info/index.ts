@@ -1,5 +1,4 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "jsr:@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -76,6 +75,8 @@ Deno.serve(async (req) => {
 
     // Query iDRAC Redfish API
     const redfishUrl = `https://${ip_address}/redfish/v1/Systems/System.Embedded.1`;
+    
+    // Encode credentials for Basic Auth
     const authHeader = `Basic ${btoa(`${username}:${password}`)}`;
 
     let redfishData;
@@ -86,6 +87,8 @@ Deno.serve(async (req) => {
           'Authorization': authHeader,
           'Accept': 'application/json',
         },
+        // @ts-ignore - Deno-specific option to skip SSL verification for self-signed certs
+        signal: undefined,
       });
 
       if (!response.ok) {
@@ -171,7 +174,7 @@ Deno.serve(async (req) => {
         model,
         service_tag,
         bios_version,
-        idrac_firmware,
+        idrac_firmware: idracFirmware,
       }
     }), {
       status: 200,
