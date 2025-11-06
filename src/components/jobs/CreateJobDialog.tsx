@@ -15,6 +15,7 @@ interface CreateJobDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
+  preSelectedServerId?: string;
 }
 
 interface Server {
@@ -24,7 +25,7 @@ interface Server {
   model: string | null;
 }
 
-export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDialogProps) => {
+export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServerId }: CreateJobDialogProps) => {
   const [loading, setLoading] = useState(false);
   const [jobType, setJobType] = useState<'firmware_update' | 'discovery_scan' | 'full_server_update' | ''>("");
   const [servers, setServers] = useState<Server[]>([]);
@@ -39,8 +40,13 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDial
   useEffect(() => {
     if (open) {
       fetchServers();
+      // Pre-select server if provided
+      if (preSelectedServerId) {
+        setSelectedServers([preSelectedServerId]);
+        setJobType('firmware_update');
+      }
     }
-  }, [open]);
+  }, [open, preSelectedServerId]);
 
   const fetchServers = async () => {
     const { data } = await supabase
