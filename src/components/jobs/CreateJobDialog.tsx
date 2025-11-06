@@ -8,6 +8,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { AlertCircle, Info } from "lucide-react";
 
 interface CreateJobDialogProps {
   open: boolean;
@@ -182,9 +184,10 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDial
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="BIOS">BIOS</SelectItem>
-                      <SelectItem value="iDRAC">iDRAC</SelectItem>
+                      <SelectItem value="iDRAC">iDRAC / Lifecycle Controller</SelectItem>
                       <SelectItem value="RAID">RAID Controller</SelectItem>
                       <SelectItem value="NIC">Network Adapter</SelectItem>
+                      <SelectItem value="CPLD">CPLD / FPGA</SelectItem>
                       <SelectItem value="Backplane">Backplane</SelectItem>
                     </SelectContent>
                   </Select>
@@ -200,6 +203,33 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDial
                   />
                 </div>
               </div>
+
+              {/* Best Practices Guidance */}
+              <Alert>
+                <Info className="h-4 w-4" />
+                <AlertTitle>Dell Firmware Update Best Practices</AlertTitle>
+                <AlertDescription className="text-sm space-y-1">
+                  <div>Recommended update order:</div>
+                  <ol className="list-decimal list-inside space-y-0.5 ml-2">
+                    <li>iDRAC / Lifecycle Controller (first)</li>
+                    <li>BIOS / System Firmware</li>
+                    <li>CPLD / FPGA</li>
+                    <li>RAID, Network, and other components</li>
+                  </ol>
+                </AlertDescription>
+              </Alert>
+
+              {/* BIOS Warning */}
+              {component === "BIOS" && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Warning: BIOS Update</AlertTitle>
+                  <AlertDescription>
+                    Before updating BIOS, ensure iDRAC/Lifecycle Controller is already up to date. 
+                    Updating BIOS before iDRAC may cause compatibility issues or update failures.
+                  </AlertDescription>
+                </Alert>
+              )}
 
               <div className="space-y-2">
                 <Label htmlFor="firmware_uri">Firmware URI (Optional)</Label>
