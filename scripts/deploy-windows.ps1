@@ -451,6 +451,9 @@ VITE_SUPABASE_PROJECT_ID=default
 # Build application
 npm run build
 
+Write-Host "[CONFIG] Installing serve package globally..." -ForegroundColor Yellow
+npm install -g serve
+
 # Step 8: Setup Windows Service
 Write-Host "[CONFIG] Step 8/8: Creating Windows Service..." -ForegroundColor Yellow
 
