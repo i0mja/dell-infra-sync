@@ -146,6 +146,155 @@ Dell Server Manager supports two deployment modes to accommodate different infra
 
 **Migration:** You can migrate data between modes using the backup/restore tools. See [docs/BACKUP_GUIDE.md](BACKUP_GUIDE.md) for details.
 
+## Health Checks and Monitoring
+
+After deployment, you can validate your installation and monitor ongoing health using the provided health check scripts.
+
+### Running Health Checks
+
+**Windows:**
+```powershell
+# Basic health check
+.\scripts\health-check.ps1
+
+# Detailed output
+.\scripts\health-check.ps1 -Detailed
+
+# Export results to JSON
+.\scripts\health-check.ps1 -ExportJson health-report.json
+
+# Quiet mode (exit codes only, for automation)
+.\scripts\health-check.ps1 -Quiet
+```
+
+**RHEL/CentOS/Rocky Linux:**
+```bash
+# Basic health check
+sudo ./scripts/health-check.sh
+
+# Detailed output
+sudo ./scripts/health-check.sh --detailed
+
+# Export results to JSON
+sudo ./scripts/health-check.sh --json health-report.json
+
+# Quiet mode (for automation)
+sudo ./scripts/health-check.sh --quiet
+```
+
+### What Gets Checked
+
+The health check script validates:
+
+1. **Configuration**
+   - ✅ Deployment mode detection (Local/Cloud)
+   - ✅ .env file exists and contains required variables
+   - ✅ Supabase URL, API keys, and project ID are set
+
+2. **Services**
+   - ✅ Application service is running (DellServerManager/dell-server-manager)
+   - ✅ Application is listening on port 3000
+   - ✅ **Local mode only:** Docker is running
+   - ✅ **Local mode only:** Supabase containers are healthy
+
+3. **Network Connectivity**
+   - ✅ Application responds to HTTP requests
+   - ✅ Backend REST API is accessible
+   - ✅ Authentication API is accessible
+   - ✅ Response time measurements
+
+4. **Database (Local mode only)**
+   - ✅ PostgreSQL container is running
+   - ✅ Database connection is working
+   - ✅ Required tables exist (profiles, user_roles, servers, jobs, job_tasks)
+   - ✅ Row-Level Security policies are enabled
+
+### Understanding Health Check Output
+
+**Success Example:**
+```
+🏥 Dell Server Manager - Health Check
+=====================================
+
+[CONFIG] Deployment Mode: Local/Air-gapped
+✅ [CONFIG] Configuration File: Found
+✅ [SERVICE] DellServerManager: Running
+✅ [SERVICE] Application Port 3000: Listening
+✅ [NETWORK] Application (port 3000): Responding (45ms)
+✅ [DATABASE] PostgreSQL Container: Running
+
+Overall Health: ✅ HEALTHY (100%)
+Checks: 15/15 passed
+```
+
+**Failure Example with Remediation:**
+```
+❌ [SERVICE] DellServerManager: Not running (Status: stopped)
+    💡 Fix: Start service: Start-Service DellServerManager
+
+❌ [DATABASE] PostgreSQL Container: Not running
+    💡 Fix: Start Supabase: cd C:\dell-supabase; supabase start
+
+Overall Health: ❌ UNHEALTHY (60%)
+```
+
+### Automated Monitoring
+
+You can schedule health checks to run automatically:
+
+**Windows (Task Scheduler):**
+```powershell
+# Create scheduled task to run every hour
+$action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-File C:\dell-server-manager\scripts\health-check.ps1 -Quiet -ExportJson C:\logs\health-check.json"
+$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Hours 1)
+Register-ScheduledTask -TaskName "DellServerManagerHealthCheck" -Action $action -Trigger $trigger -RunLevel Highest
+```
+
+**RHEL (Cron):**
+```bash
+# Add to crontab - run every hour
+sudo crontab -e
+
+# Add this line:
+0 * * * * /opt/dell-server-manager/scripts/health-check.sh --quiet --json /var/log/dell-health-check.json
+```
+
+### Troubleshooting with Health Checks
+
+The health check script provides specific remediation steps for common issues:
+
+| Issue | Remediation |
+|-------|-------------|
+| Service not running | Start service: `Start-Service DellServerManager` (Windows) or `sudo systemctl start dell-server-manager` (RHEL) |
+| Docker not running | Start Docker Desktop (Windows) or `sudo systemctl start docker` (RHEL) |
+| Supabase containers down | `cd C:\dell-supabase && supabase start` (Windows) or `cd /opt/dell-supabase && supabase start` (RHEL) |
+| Configuration missing | Re-run deployment script to regenerate .env |
+| Database connection failed | Check PostgreSQL logs: `docker logs supabase-db` |
+| Port 3000 not listening | Check application logs and verify service is running |
+
+### Health Check Exit Codes
+
+The scripts return exit codes suitable for automation:
+- `0` - Healthy (≥70% checks passed)
+- `1` - Unhealthy (<70% checks passed)
+
+Use in monitoring tools:
+```bash
+# Example monitoring script
+if ! ./scripts/health-check.sh --quiet; then
+    echo "Health check failed!" | mail -s "Dell Server Manager Alert" admin@company.com
+fi
+```
+
+### Performance Monitoring
+
+Health checks measure response times for:
+- Application response time (port 3000)
+- Backend API response time
+- Database query execution time (local mode)
+
+Track these metrics over time to identify performance degradation trends.
+
 ## What You Get
 
 Both deployment scripts provide a complete, production-ready setup:
