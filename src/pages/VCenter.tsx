@@ -133,10 +133,10 @@ const VCenter = () => {
 
       <Alert className="mb-6">
         <InfoIcon className="h-4 w-4" />
-        <AlertTitle>Sync from Local Network</AlertTitle>
+        <AlertTitle>Sync from vCenter</AlertTitle>
         <AlertDescription>
-          Your vCenter is on a private network. Use the Python sync script to push host data from your network to the cloud.
-          Download the script and instructions from the documentation.
+          Your vCenter runs on a private network. Use the Python sync script to push ESXi host data from vCenter to this Dell Server Manager instance.
+          The script runs on your network and connects to this server to synchronize host information. See <code className="text-xs bg-muted px-1 py-0.5 rounded">docs/VCENTER_SYNC_GUIDE.md</code> for setup instructions.
         </AlertDescription>
       </Alert>
 
@@ -229,7 +229,7 @@ const VCenter = () => {
             <p className="text-muted-foreground mb-4">
               {searchTerm
                 ? "Try a different search term"
-                : "Sync your vCenter data using the local Python script to see ESXi hosts here"}
+                : "Sync your vCenter data using the Python sync script to see ESXi hosts here"}
             </p>
           </CardContent>
         </Card>
