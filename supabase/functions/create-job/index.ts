@@ -86,6 +86,7 @@ serve(async (req) => {
       ];
 
       // Create sub-jobs for each component
+      // Note: firmware_uri is intentionally omitted to allow auto-construction per component
       const subJobs = updateSequence.map(({ component, order }) => ({
         job_type: 'firmware_update',
         status: 'pending',
@@ -94,7 +95,8 @@ serve(async (req) => {
           component: component,
           version: 'latest',
           apply_time: 'OnReset',
-          firmware_uri: jobRequest.details?.firmware_uri || undefined
+          // firmware_uri omitted - each sub-job will auto-construct its own URI
+          // e.g., {FIRMWARE_REPO_URL}/iDRAC_latest.exe, {FIRMWARE_REPO_URL}/BIOS_latest.exe
         },
         created_by: user.id,
         parent_job_id: newJob.id,

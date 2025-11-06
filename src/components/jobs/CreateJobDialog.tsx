@@ -176,27 +176,54 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDial
                 </div>
               </div>
 
-              {/* Component selection only for single firmware update */}
+              {/* Component selection and firmware URI only for single firmware update */}
               {jobType === 'firmware_update' && (
-                <div className="space-y-2">
-                  <Label htmlFor="component">Component to Update</Label>
-                  <Select value={component} onValueChange={setComponent}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="BIOS">BIOS</SelectItem>
-                      <SelectItem value="iDRAC">iDRAC / Lifecycle Controller</SelectItem>
-                      <SelectItem value="RAID">RAID Controller</SelectItem>
-                      <SelectItem value="NIC">Network Adapter</SelectItem>
-                      <SelectItem value="CPLD">CPLD / FPGA</SelectItem>
-                      <SelectItem value="Backplane">Backplane</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    Will update to latest available version
-                  </p>
-                </div>
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="component">Component to Update</Label>
+                    <Select value={component} onValueChange={setComponent}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="BIOS">BIOS</SelectItem>
+                        <SelectItem value="iDRAC">iDRAC / Lifecycle Controller</SelectItem>
+                        <SelectItem value="RAID">RAID Controller</SelectItem>
+                        <SelectItem value="NIC">Network Adapter</SelectItem>
+                        <SelectItem value="CPLD">CPLD / FPGA</SelectItem>
+                        <SelectItem value="Backplane">Backplane</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Will update to latest available version
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="firmware_uri">Firmware URI (Optional)</Label>
+                    <Input
+                      id="firmware_uri"
+                      placeholder="http://firmware.example.com/dell/BIOS_2.9.0.exe"
+                      value={firmwareUri}
+                      onChange={(e) => setFirmwareUri(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Leave empty to use default repository path based on component and version
+                    </p>
+                  </div>
+
+                  {/* BIOS Warning */}
+                  {component === "BIOS" && (
+                    <Alert variant="destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertTitle>Warning: BIOS Update</AlertTitle>
+                      <AlertDescription>
+                        Before updating BIOS, ensure iDRAC/Lifecycle Controller is already up to date. 
+                        Updating BIOS before iDRAC may cause compatibility issues or update failures.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </>
               )}
 
               {/* Full Server Update Info */}
@@ -217,49 +244,30 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess }: CreateJobDial
                     <p className="mt-3 text-xs text-muted-foreground">
                       Each component will be updated sequentially. If a critical component (iDRAC or BIOS) fails, the entire process will stop.
                     </p>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Firmware will be automatically downloaded from the configured repository server. 
+                      Each component uses its corresponding firmware file (e.g., iDRAC_latest.exe, BIOS_latest.exe).
+                    </p>
                   </AlertDescription>
                 </Alert>
               )}
 
-              {/* Best Practices Guidance */}
-              <Alert>
-                <Info className="h-4 w-4" />
-                <AlertTitle>Dell Firmware Update Best Practices</AlertTitle>
-                <AlertDescription className="text-sm space-y-1">
-                  <div>Recommended update order:</div>
-                  <ol className="list-decimal list-inside space-y-0.5 ml-2">
-                    <li>iDRAC / Lifecycle Controller (first)</li>
-                    <li>BIOS / System Firmware</li>
-                    <li>CPLD / FPGA</li>
-                    <li>RAID, Network, and other components</li>
-                  </ol>
-                </AlertDescription>
-              </Alert>
-
-              {/* BIOS Warning */}
-              {component === "BIOS" && (
-                <Alert variant="destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>Warning: BIOS Update</AlertTitle>
-                  <AlertDescription>
-                    Before updating BIOS, ensure iDRAC/Lifecycle Controller is already up to date. 
-                    Updating BIOS before iDRAC may cause compatibility issues or update failures.
+              {/* Best Practices Guidance - only show for single component updates */}
+              {jobType === 'firmware_update' && (
+                <Alert>
+                  <Info className="h-4 w-4" />
+                  <AlertTitle>Dell Firmware Update Best Practices</AlertTitle>
+                  <AlertDescription className="text-sm space-y-1">
+                    <div>Recommended update order:</div>
+                    <ol className="list-decimal list-inside space-y-0.5 ml-2">
+                      <li>iDRAC / Lifecycle Controller (first)</li>
+                      <li>BIOS / System Firmware</li>
+                      <li>CPLD / FPGA</li>
+                      <li>RAID, Network, and other components</li>
+                    </ol>
                   </AlertDescription>
                 </Alert>
               )}
-
-              <div className="space-y-2">
-                <Label htmlFor="firmware_uri">Firmware URI (Optional)</Label>
-                <Input
-                  id="firmware_uri"
-                  placeholder="http://firmware.example.com/dell/BIOS_2.9.0.exe"
-                  value={firmwareUri}
-                  onChange={(e) => setFirmwareUri(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Leave empty to use default repository path based on component and version
-                </p>
-              </div>
             </>
           )}
 
