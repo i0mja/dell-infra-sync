@@ -33,6 +33,25 @@ Start-Transcript -Path $TranscriptFile -Force
 Write-Host "[LOG] Deployment log: $TranscriptFile" -ForegroundColor Cyan
 Write-Host ""
 
+# Prompt for deployment mode
+Write-Host "[CONFIG] Choose deployment mode:" -ForegroundColor Yellow
+Write-Host "  1) Local/Air-gapped (no internet required, local Supabase)" -ForegroundColor Cyan
+Write-Host "  2) Cloud-connected (uses Lovable Cloud backend)" -ForegroundColor Cyan
+$DeployMode = Read-Host "Enter choice (1 or 2)"
+
+if ($DeployMode -ne "1" -and $DeployMode -ne "2") {
+    Write-Host "[ERROR] Invalid choice. Please enter 1 or 2" -ForegroundColor Red
+    Stop-Transcript
+    exit 1
+}
+
+if ($DeployMode -eq "1") {
+    Write-Host "[INFO] Selected: Local/Air-gapped deployment" -ForegroundColor Green
+} else {
+    Write-Host "[INFO] Selected: Cloud-connected deployment" -ForegroundColor Green
+}
+Write-Host ""
+
 # Function to refresh PATH from registry
 function Refresh-Path {
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + 
@@ -175,203 +194,206 @@ if (!(Get-Command scoop -ErrorAction SilentlyContinue)) {
     Write-Host "[OK] Scoop already installed" -ForegroundColor Green
 }
 
-# Ensure Docker is ready before continuing
-Wait-Docker
-
-# Step 6: Setup Supabase CLI
-Write-Host "[DATABASE] Step 6/8: Setting up Supabase CLI..." -ForegroundColor Yellow
-
-# Add Supabase bucket to Scoop
-Write-Host "[CONFIG] Adding Supabase bucket to Scoop..." -ForegroundColor Yellow
-$scoopBuckets = scoop bucket list 2>&1
-if ($scoopBuckets -notmatch "supabase") {
-    scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[ERROR] Failed to add Supabase bucket" -ForegroundColor Red
-        exit 1
-    }
-    Write-Host "[OK] Supabase bucket added" -ForegroundColor Green
-} else {
-    Write-Host "[OK] Supabase bucket already added" -ForegroundColor Green
+# Ensure Docker is ready before continuing (only for local mode)
+if ($DeployMode -eq "1") {
+    Wait-Docker
 }
 
-# Install Supabase CLI via Scoop
-Write-Host "[INSTALL] Installing Supabase CLI via Scoop..." -ForegroundColor Yellow
-if (!(Get-Command supabase -ErrorAction SilentlyContinue)) {
-    scoop install supabase
-    Refresh-Path
-    Start-Sleep -Seconds 2
-    
-    # Verify Supabase CLI is now available
+# Step 6: Setup Supabase CLI (only for local mode)
+if ($DeployMode -eq "1") {
+    Write-Host "[DATABASE] Step 6/8: Setting up Supabase CLI..." -ForegroundColor Yellow
+
+    # Add Supabase bucket to Scoop
+    Write-Host "[CONFIG] Adding Supabase bucket to Scoop..." -ForegroundColor Yellow
+    $scoopBuckets = scoop bucket list 2>&1
+    if ($scoopBuckets -notmatch "supabase") {
+        scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[ERROR] Failed to add Supabase bucket" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "[OK] Supabase bucket added" -ForegroundColor Green
+    } else {
+        Write-Host "[OK] Supabase bucket already added" -ForegroundColor Green
+    }
+
+    # Install Supabase CLI via Scoop
+    Write-Host "[INSTALL] Installing Supabase CLI via Scoop..." -ForegroundColor Yellow
     if (!(Get-Command supabase -ErrorAction SilentlyContinue)) {
-        Write-Host "[ERROR] Supabase CLI installation failed" -ForegroundColor Red
+        scoop install supabase
+        Refresh-Path
+        Start-Sleep -Seconds 2
+        
+        # Verify Supabase CLI is now available
+        if (!(Get-Command supabase -ErrorAction SilentlyContinue)) {
+            Write-Host "[ERROR] Supabase CLI installation failed" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "[OK] Supabase CLI installed" -ForegroundColor Green
+    } else {
+        Write-Host "[OK] Supabase CLI already installed" -ForegroundColor Green
+    }
+
+    # Verify Supabase CLI version
+    Write-Host "[INFO] Verifying Supabase CLI..." -ForegroundColor Cyan
+    $supabaseVersion = supabase --version 2>&1
+    Write-Host "[OK] Supabase CLI version: $supabaseVersion" -ForegroundColor Green
+
+    # Create Supabase project directory
+    $SupabaseProjectDir = "C:\dell-supabase"
+
+    # Remove existing directory to prevent interactive prompts
+    if (Test-Path $SupabaseProjectDir) {
+        Write-Host "[CLEANUP] Removing existing Supabase project directory..." -ForegroundColor Yellow
+        try {
+            Remove-Item -Recurse -Force $SupabaseProjectDir -ErrorAction Stop
+            Write-Host "[OK] Cleanup complete" -ForegroundColor Green
+        } catch {
+            Write-Host "[WARN] Could not fully remove existing directory: $_" -ForegroundColor Yellow
+            Write-Host "[INFO] Attempting to continue anyway..." -ForegroundColor Cyan
+        }
+    }
+
+    # Create fresh directory
+    New-Item -ItemType Directory -Path $SupabaseProjectDir | Out-Null
+    Set-Location $SupabaseProjectDir
+
+    # Use repository Supabase config (non-interactive deployment)
+    Write-Host "[CONFIG] Using repository Supabase config (no interactive 'supabase init')..." -ForegroundColor Yellow
+
+    # Resolve repository supabase path
+    $RepoSupabasePath = Resolve-Path (Join-Path $PSScriptRoot "..\supabase") -ErrorAction SilentlyContinue
+
+    if (-not $RepoSupabasePath) {
+        Write-Host "[ERROR] Repository 'supabase' folder not found" -ForegroundColor Red
+        Write-Host "[ERROR] Expected location: $(Join-Path $PSScriptRoot '..\supabase')" -ForegroundColor Red
+        Write-Host "[HINT] Ensure you're running this script from the repository's 'scripts' directory" -ForegroundColor Yellow
+        Stop-Transcript
         exit 1
     }
-    Write-Host "[OK] Supabase CLI installed" -ForegroundColor Green
-} else {
-    Write-Host "[OK] Supabase CLI already installed" -ForegroundColor Green
-}
 
-# Verify Supabase CLI version
-Write-Host "[INFO] Verifying Supabase CLI..." -ForegroundColor Cyan
-$supabaseVersion = supabase --version 2>&1
-Write-Host "[OK] Supabase CLI version: $supabaseVersion" -ForegroundColor Green
+    Write-Host "[INFO] Resolved repository config: $RepoSupabasePath" -ForegroundColor Cyan
 
-# Create Supabase project directory
-$SupabaseProjectDir = "C:\dell-supabase"
-
-# Remove existing directory to prevent interactive prompts
-if (Test-Path $SupabaseProjectDir) {
-    Write-Host "[CLEANUP] Removing existing Supabase project directory..." -ForegroundColor Yellow
     try {
-        Remove-Item -Recurse -Force $SupabaseProjectDir -ErrorAction Stop
-        Write-Host "[OK] Cleanup complete" -ForegroundColor Green
+        Copy-Item -Recurse -Force $RepoSupabasePath (Join-Path $SupabaseProjectDir "supabase")
+        Write-Host "[OK] Supabase configuration copied from repository" -ForegroundColor Green
     } catch {
-        Write-Host "[WARN] Could not fully remove existing directory: $_" -ForegroundColor Yellow
-        Write-Host "[INFO] Attempting to continue anyway..." -ForegroundColor Cyan
+        Write-Host "[ERROR] Failed to copy repository Supabase config: $_" -ForegroundColor Red
+        Stop-Transcript
+        exit 1
     }
-}
+    # Start Supabase services
+    Write-Host "[*] Step 7/8: Starting Supabase services..." -ForegroundColor Yellow
+    Write-Host "[WAIT] This may take several minutes on first run..." -ForegroundColor Yellow
+    $StartOutput = supabase start 2>&1 | Out-String
 
-# Create fresh directory
-New-Item -ItemType Directory -Path $SupabaseProjectDir | Out-Null
-Set-Location $SupabaseProjectDir
+    # Verify services started
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] Supabase services failed to start" -ForegroundColor Red
+        Write-Host "[ERROR] Check Docker Desktop is running and try again" -ForegroundColor Red
+        $StartOutPath = Join-Path $LogPath "supabase-start-output.txt"
+        $StartOutput | Out-File -FilePath $StartOutPath -Encoding UTF8
+        Write-Host "[DEBUG] Saved supabase start output to: $StartOutPath" -ForegroundColor Yellow
+        Stop-Transcript
+        exit 1
+    }
 
-# Use repository Supabase config (non-interactive deployment)
-Write-Host "[CONFIG] Using repository Supabase config (no interactive 'supabase init')..." -ForegroundColor Yellow
+    Write-Host "[OK] Supabase services started" -ForegroundColor Green
 
-# Resolve repository supabase path
-$RepoSupabasePath = Resolve-Path (Join-Path $PSScriptRoot "..\supabase") -ErrorAction SilentlyContinue
+    # Get Supabase credentials from CLI
+    Write-Host "[INFO] Retrieving Supabase credentials..." -ForegroundColor Yellow
 
-if (-not $RepoSupabasePath) {
-    Write-Host "[ERROR] Repository 'supabase' folder not found" -ForegroundColor Red
-    Write-Host "[ERROR] Expected location: $(Join-Path $PSScriptRoot '..\supabase')" -ForegroundColor Red
-    Write-Host "[HINT] Ensure you're running this script from the repository's 'scripts' directory" -ForegroundColor Yellow
-    Stop-Transcript
-    exit 1
-}
+    # Helper function to extract values using regex (supports both old and new label formats)
+    function Get-MatchValue {
+        param(
+            [string]$Text,
+            [string]$Pattern
+        )
+        $m = [regex]::Match($Text, $Pattern, 'IgnoreCase, Multiline')
+        if ($m.Success) { return $m.Groups[1].Value.Trim() }
+        return $null
+    }
 
-Write-Host "[INFO] Resolved repository config: $RepoSupabasePath" -ForegroundColor Cyan
+    # Define regex patterns for both old and new Supabase CLI output formats
+    $ApiPattern = '^\s*API URL:\s*(.+)$'
+    $DbPattern  = '^\s*(?:Database URL|DB URL):\s*(.+)$'
+    $AnonPattern = '^\s*(?:Publishable key|anon key):\s*(.+)$'
+    $ServicePattern = '^\s*(?:Secret key|service_role key):\s*(.+)$'
 
-try {
-    Copy-Item -Recurse -Force $RepoSupabasePath (Join-Path $SupabaseProjectDir "supabase")
-    Write-Host "[OK] Supabase configuration copied from repository" -ForegroundColor Green
-} catch {
-    Write-Host "[ERROR] Failed to copy repository Supabase config: $_" -ForegroundColor Red
-    Stop-Transcript
-    exit 1
-}
-# Start Supabase services
-Write-Host "[*] Step 7/8: Starting Supabase services..." -ForegroundColor Yellow
-Write-Host "[WAIT] This may take several minutes on first run..." -ForegroundColor Yellow
-$StartOutput = supabase start 2>&1 | Out-String
+    # 1) Try parsing from 'supabase start' output first
+    $SupabaseUrl = Get-MatchValue -Text $StartOutput -Pattern $ApiPattern
+    $AnonKey = Get-MatchValue -Text $StartOutput -Pattern $AnonPattern
+    $ServiceRoleKey = Get-MatchValue -Text $StartOutput -Pattern $ServicePattern
+    $DbUrl = Get-MatchValue -Text $StartOutput -Pattern $DbPattern
 
-# Verify services started
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[ERROR] Supabase services failed to start" -ForegroundColor Red
-    Write-Host "[ERROR] Check Docker Desktop is running and try again" -ForegroundColor Red
-    $StartOutPath = Join-Path $LogPath "supabase-start-output.txt"
-    $StartOutput | Out-File -FilePath $StartOutPath -Encoding UTF8
-    Write-Host "[DEBUG] Saved supabase start output to: $StartOutPath" -ForegroundColor Yellow
-    Stop-Transcript
-    exit 1
-}
+    # 2) If any values are missing, fall back to 'supabase status'
+    if ([string]::IsNullOrWhiteSpace($SupabaseUrl) -or
+        [string]::IsNullOrWhiteSpace($AnonKey) -or
+        [string]::IsNullOrWhiteSpace($ServiceRoleKey) -or
+        [string]::IsNullOrWhiteSpace($DbUrl)) {
 
-Write-Host "[OK] Supabase services started" -ForegroundColor Green
-
-# Get Supabase credentials from CLI
-Write-Host "[INFO] Retrieving Supabase credentials..." -ForegroundColor Yellow
-
-# Helper function to extract values using regex (supports both old and new label formats)
-function Get-MatchValue {
-    param(
-        [string]$Text,
-        [string]$Pattern
-    )
-    $m = [regex]::Match($Text, $Pattern, 'IgnoreCase, Multiline')
-    if ($m.Success) { return $m.Groups[1].Value.Trim() }
-    return $null
-}
-
-# Define regex patterns for both old and new Supabase CLI output formats
-$ApiPattern = '^\s*API URL:\s*(.+)$'
-$DbPattern  = '^\s*(?:Database URL|DB URL):\s*(.+)$'
-$AnonPattern = '^\s*(?:Publishable key|anon key):\s*(.+)$'
-$ServicePattern = '^\s*(?:Secret key|service_role key):\s*(.+)$'
-
-# 1) Try parsing from 'supabase start' output first
-$SupabaseUrl = Get-MatchValue -Text $StartOutput -Pattern $ApiPattern
-$AnonKey = Get-MatchValue -Text $StartOutput -Pattern $AnonPattern
-$ServiceRoleKey = Get-MatchValue -Text $StartOutput -Pattern $ServicePattern
-$DbUrl = Get-MatchValue -Text $StartOutput -Pattern $DbPattern
-
-# 2) If any values are missing, fall back to 'supabase status'
-if ([string]::IsNullOrWhiteSpace($SupabaseUrl) -or
-    [string]::IsNullOrWhiteSpace($AnonKey) -or
-    [string]::IsNullOrWhiteSpace($ServiceRoleKey) -or
-    [string]::IsNullOrWhiteSpace($DbUrl)) {
-
-    Write-Host "[INFO] Some credentials missing from start output, checking status..." -ForegroundColor Yellow
-    $StatusOutput = supabase status 2>&1 | Out-String
-    $SupabaseUrl = if ([string]::IsNullOrWhiteSpace($SupabaseUrl)) { Get-MatchValue -Text $StatusOutput -Pattern $ApiPattern } else { $SupabaseUrl }
-    $AnonKey = if ([string]::IsNullOrWhiteSpace($AnonKey)) { Get-MatchValue -Text $StatusOutput -Pattern $AnonPattern } else { $AnonKey }
-    $ServiceRoleKey = if ([string]::IsNullOrWhiteSpace($ServiceRoleKey)) { Get-MatchValue -Text $StatusOutput -Pattern $ServicePattern } else { $ServiceRoleKey }
-    $DbUrl = if ([string]::IsNullOrWhiteSpace($DbUrl)) { Get-MatchValue -Text $StatusOutput -Pattern $DbPattern } else { $DbUrl }
-}
-
-# 3) If still missing critical values, dump outputs for debugging
-if ([string]::IsNullOrWhiteSpace($SupabaseUrl) -or [string]::IsNullOrWhiteSpace($AnonKey)) {
-    Write-Host "[ERROR] Failed to retrieve Supabase credentials" -ForegroundColor Red
-    
-    # Save start output for debugging
-    $StartOutPath = Join-Path $LogPath "supabase-start-output.txt"
-    $StartOutput | Out-File -FilePath $StartOutPath -Encoding UTF8
-    Write-Host "[DEBUG] Saved supabase start output to: $StartOutPath" -ForegroundColor Yellow
-    
-    # Save status output for debugging
-    if (-not $StatusOutput) {
+        Write-Host "[INFO] Some credentials missing from start output, checking status..." -ForegroundColor Yellow
         $StatusOutput = supabase status 2>&1 | Out-String
+        $SupabaseUrl = if ([string]::IsNullOrWhiteSpace($SupabaseUrl)) { Get-MatchValue -Text $StatusOutput -Pattern $ApiPattern } else { $SupabaseUrl }
+        $AnonKey = if ([string]::IsNullOrWhiteSpace($AnonKey)) { Get-MatchValue -Text $StatusOutput -Pattern $AnonPattern } else { $AnonKey }
+        $ServiceRoleKey = if ([string]::IsNullOrWhiteSpace($ServiceRoleKey)) { Get-MatchValue -Text $StatusOutput -Pattern $ServicePattern } else { $ServiceRoleKey }
+        $DbUrl = if ([string]::IsNullOrWhiteSpace($DbUrl)) { Get-MatchValue -Text $StatusOutput -Pattern $DbPattern } else { $DbUrl }
     }
-    $StatusOutPath = Join-Path $LogPath "supabase-status-output.txt"
-    $StatusOutput | Out-File -FilePath $StatusOutPath -Encoding UTF8
-    Write-Host "[DEBUG] Saved supabase status output to: $StatusOutPath" -ForegroundColor Yellow
-    
-    Write-Host "" -ForegroundColor Red
-    Write-Host "[FIX] Review the output files above for credential details." -ForegroundColor Yellow
-    Write-Host "      If you see 'Publishable key' and 'Secret key', copy them to .env manually:" -ForegroundColor Yellow
-    Write-Host "      VITE_SUPABASE_URL=<API URL>" -ForegroundColor Gray
-    Write-Host "      VITE_SUPABASE_PUBLISHABLE_KEY=<Publishable key>" -ForegroundColor Gray
-    Stop-Transcript
-    exit 1
-}
 
-Write-Host "[OK] Retrieved credentials successfully" -ForegroundColor Green
+    # 3) If still missing critical values, dump outputs for debugging
+    if ([string]::IsNullOrWhiteSpace($SupabaseUrl) -or [string]::IsNullOrWhiteSpace($AnonKey)) {
+        Write-Host "[ERROR] Failed to retrieve Supabase credentials" -ForegroundColor Red
+        
+        # Save start output for debugging
+        $StartOutPath = Join-Path $LogPath "supabase-start-output.txt"
+        $StartOutput | Out-File -FilePath $StartOutPath -Encoding UTF8
+        Write-Host "[DEBUG] Saved supabase start output to: $StartOutPath" -ForegroundColor Yellow
+        
+        # Save status output for debugging
+        if (-not $StatusOutput) {
+            $StatusOutput = supabase status 2>&1 | Out-String
+        }
+        $StatusOutPath = Join-Path $LogPath "supabase-status-output.txt"
+        $StatusOutput | Out-File -FilePath $StatusOutPath -Encoding UTF8
+        Write-Host "[DEBUG] Saved supabase status output to: $StatusOutPath" -ForegroundColor Yellow
+        
+        Write-Host "" -ForegroundColor Red
+        Write-Host "[FIX] Review the output files above for credential details." -ForegroundColor Yellow
+        Write-Host "      If you see 'Publishable key' and 'Secret key', copy them to .env manually:" -ForegroundColor Yellow
+        Write-Host "      VITE_SUPABASE_URL=<API URL>" -ForegroundColor Gray
+        Write-Host "      VITE_SUPABASE_PUBLISHABLE_KEY=<Publishable key>" -ForegroundColor Gray
+        Stop-Transcript
+        exit 1
+    }
 
-# Get server IP for external access
-$ServerIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.InterfaceAlias -notlike "*Loopback*"} | Select-Object -First 1).IPAddress
+    Write-Host "[OK] Retrieved credentials successfully" -ForegroundColor Green
 
-Write-Host "[OK] Supabase is running at $SupabaseUrl" -ForegroundColor Green
+    # Get server IP for external access
+    $ServerIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.InterfaceAlias -notlike "*Loopback*"} | Select-Object -First 1).IPAddress
 
-# Create initial admin user
-Write-Host "[USER] Creating initial admin user..." -ForegroundColor Yellow
-$AdminEmail = Read-Host "Enter admin email"
-$AdminPassword = Read-Host "Enter admin password" -AsSecureString
-$AdminPasswordText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AdminPassword))
+    Write-Host "[OK] Supabase is running at $SupabaseUrl" -ForegroundColor Green
 
-# Find the Supabase Postgres container
-$ContainerName = docker ps --filter "name=supabase_db" --format "{{.Names}}" | Select-Object -First 1
+    # Create initial admin user
+    Write-Host "[USER] Creating initial admin user..." -ForegroundColor Yellow
+    $AdminEmail = Read-Host "Enter admin email"
+    $AdminPassword = Read-Host "Enter admin password" -AsSecureString
+    $AdminPasswordText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AdminPassword))
 
-if ([string]::IsNullOrWhiteSpace($ContainerName)) {
-    Write-Host "[ERROR] Could not find Supabase Postgres container" -ForegroundColor Red
-    Write-Host "[INFO] Available containers:" -ForegroundColor Yellow
-    docker ps --format "table {{.Names}}\t{{.Status}}"
-    exit 1
-}
+    # Find the Supabase Postgres container
+    $ContainerName = docker ps --filter "name=supabase_db" --format "{{.Names}}" | Select-Object -First 1
 
-Write-Host "[INFO] Using Postgres container: $ContainerName" -ForegroundColor Cyan
+    if ([string]::IsNullOrWhiteSpace($ContainerName)) {
+        Write-Host "[ERROR] Could not find Supabase Postgres container" -ForegroundColor Red
+        Write-Host "[INFO] Available containers:" -ForegroundColor Yellow
+        docker ps --format "table {{.Names}}\t{{.Status}}"
+        exit 1
+    }
 
-# Create admin user in auth.users and capture the user ID
-Write-Host "[SQL] Creating admin user in auth.users..." -ForegroundColor Yellow
-$SqlCreateUser = @"
+    Write-Host "[INFO] Using Postgres container: $ContainerName" -ForegroundColor Cyan
+
+    # Create admin user in auth.users and capture the user ID
+    Write-Host "[SQL] Creating admin user in auth.users..." -ForegroundColor Yellow
+    $SqlCreateUser = @"
 INSERT INTO auth.users (
     instance_id, id, aud, role, email, 
     encrypted_password, email_confirmed_at, 
@@ -390,23 +412,23 @@ INSERT INTO auth.users (
 ) RETURNING id;
 "@
 
-# Use -A (unaligned), -t (tuples only), -q (quiet) for clean UUID output
-$AdminUserId = docker exec $ContainerName psql -U postgres -d postgres -A -t -q -c "$SqlCreateUser" 2>&1
-$AdminUserId = $AdminUserId.Trim()
+    # Use -A (unaligned), -t (tuples only), -q (quiet) for clean UUID output
+    $AdminUserId = docker exec $ContainerName psql -U postgres -d postgres -A -t -q -c "$SqlCreateUser" 2>&1
+    $AdminUserId = $AdminUserId.Trim()
 
-# Validate that we got a valid UUID format
-if ($AdminUserId -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
-    Write-Host "[ERROR] Failed to capture valid user ID" -ForegroundColor Red
-    Write-Host "[DEBUG] Got: $AdminUserId" -ForegroundColor Yellow
-    Write-Host "[INFO] This might be due to an empty email address or invalid SQL output" -ForegroundColor Yellow
-    exit 1
-}
+    # Validate that we got a valid UUID format
+    if ($AdminUserId -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
+        Write-Host "[ERROR] Failed to capture valid user ID" -ForegroundColor Red
+        Write-Host "[DEBUG] Got: $AdminUserId" -ForegroundColor Yellow
+        Write-Host "[INFO] This might be due to an empty email address or invalid SQL output" -ForegroundColor Yellow
+        exit 1
+    }
 
-Write-Host "[OK] Created user with ID: $AdminUserId" -ForegroundColor Green
+    Write-Host "[OK] Created user with ID: $AdminUserId" -ForegroundColor Green
 
-# Update profile and assign admin role (trigger already created profile with viewer role)
-Write-Host "[SQL] Updating profile and assigning admin role..." -ForegroundColor Yellow
-$SqlUpdateProfile = @"
+    # Update profile and assign admin role (trigger already created profile with viewer role)
+    Write-Host "[SQL] Updating profile and assigning admin role..." -ForegroundColor Yellow
+    $SqlUpdateProfile = @"
 -- Update profile if it exists, create if it doesn't (idempotent)
 INSERT INTO public.profiles (id, email, full_name)
 VALUES ('$AdminUserId', '$AdminEmail', 'Administrator')
@@ -419,15 +441,27 @@ SET role = 'admin'
 WHERE user_id = '$AdminUserId';
 "@
 
-$ProfileResult = docker exec $ContainerName psql -U postgres -d postgres -c "$SqlUpdateProfile" 2>&1
+    $ProfileResult = docker exec $ContainerName psql -U postgres -d postgres -c "$SqlUpdateProfile" 2>&1
 
-if ($ProfileResult -match "ERROR") {
-    Write-Host "[ERROR] Failed to create profile/role" -ForegroundColor Red
-    Write-Host "[DEBUG] Output: $ProfileResult" -ForegroundColor Yellow
-    exit 1
+    if ($ProfileResult -match "ERROR") {
+        Write-Host "[ERROR] Failed to create profile/role" -ForegroundColor Red
+        Write-Host "[DEBUG] Output: $ProfileResult" -ForegroundColor Yellow
+        exit 1
+    }
+
+    Write-Host "[OK] Admin user created: $AdminEmail" -ForegroundColor Green
+} else {
+    Write-Host "[SKIP] Step 6/8: Skipping local Supabase setup (using Lovable Cloud)" -ForegroundColor Yellow
+    
+    # Set variables for cloud mode
+    $SupabaseUrl = "https://ylwkczjqvymshktuuqkx.supabase.co"
+    $AnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlsd2tjempxdnltc2hrdHV1cWt4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjIxODQ0OTMsImV4cCI6MjA3Nzc2MDQ5M30.hIkDV2AAos-Z9hvQLfZmiQ7UvGCpGqwG5kzd1VBRx0w"
+    $ServiceRoleKey = "[Service role key managed in Lovable Cloud]"
+    $ServerIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.InterfaceAlias -notlike "*Loopback*"} | Select-Object -First 1).IPAddress
+    
+    Write-Host "[INFO] Using Lovable Cloud backend" -ForegroundColor Green
+    Write-Host "[INFO] Database management available through Lovable Cloud interface" -ForegroundColor Cyan
 }
-
-Write-Host "[OK] Admin user created: $AdminEmail" -ForegroundColor Green
 
 # Step 7: Setup application
 Write-Host "[APP] Step 7/8: Setting up Dell Server Manager..." -ForegroundColor Yellow
@@ -441,12 +475,24 @@ if (!(Test-Path $AppPath)) {
 Set-Location $AppPath
 npm install
 
-# Create production .env with Lovable Cloud credentials
-@"
+# Create production .env based on deployment mode
+if ($DeployMode -eq "1") {
+    # Local/Air-gapped mode - use extracted local Supabase credentials
+    Write-Host "[CONFIG] Creating .env for local Supabase..." -ForegroundColor Yellow
+    @"
+VITE_SUPABASE_URL=$SupabaseUrl
+VITE_SUPABASE_PUBLISHABLE_KEY=$AnonKey
+VITE_SUPABASE_PROJECT_ID=local
+"@ | Out-File -FilePath ".env" -Encoding ASCII
+} else {
+    # Cloud mode - use Lovable Cloud credentials
+    Write-Host "[CONFIG] Creating .env for Lovable Cloud..." -ForegroundColor Yellow
+    @"
 VITE_SUPABASE_PROJECT_ID=ylwkczjqvymshktuuqkx
 VITE_SUPABASE_PUBLISHABLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlsd2tjempxdnltc2hrdHV1cWt4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjIxODQ0OTMsImV4cCI6MjA3Nzc2MDQ5M30.hIkDV2AAos-Z9hvQLfZmiQ7UvGCpGqwG5kzd1VBRx0w
 VITE_SUPABASE_URL=https://ylwkczjqvymshktuuqkx.supabase.co
 "@ | Out-File -FilePath ".env" -Encoding ASCII
+}
 
 # Build application
 npm run build
@@ -570,17 +616,31 @@ Write-Host ""
 Write-Host "[SUCCESS] Deployment Complete!" -ForegroundColor Green
 Write-Host "=======================================================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "[INFO] Supabase Studio: $SupabaseUrl" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "[WEB] Dell Server Manager: $SslUrl" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "[CREDS] Supabase Credentials:" -ForegroundColor Yellow
-Write-Host "   API URL: $SupabaseUrl" -ForegroundColor Gray
-Write-Host "   Anon Key: $AnonKey" -ForegroundColor Gray
-Write-Host "   Service Role Key: $ServiceRoleKey" -ForegroundColor Gray
-Write-Host ""
-Write-Host "[SUCCESS] You can now login with:" -ForegroundColor Green
-Write-Host "   Email: $AdminEmail" -ForegroundColor Gray
+
+if ($DeployMode -eq "1") {
+    # Local/Air-gapped deployment info
+    Write-Host "[INFO] Deployment Mode: Local/Air-gapped" -ForegroundColor Cyan
+    Write-Host "[INFO] Supabase Studio: $SupabaseUrl" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "[WEB] Dell Server Manager: $SslUrl" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "[CREDS] Local Supabase Credentials:" -ForegroundColor Yellow
+    Write-Host "   API URL: $SupabaseUrl" -ForegroundColor Gray
+    Write-Host "   Anon Key: $AnonKey" -ForegroundColor Gray
+    Write-Host "   Service Role Key: $ServiceRoleKey" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "[SUCCESS] You can now login with:" -ForegroundColor Green
+    Write-Host "   Email: $AdminEmail" -ForegroundColor Gray
+} else {
+    # Cloud-connected deployment info
+    Write-Host "[INFO] Deployment Mode: Cloud-connected" -ForegroundColor Cyan
+    Write-Host "[INFO] Backend: Lovable Cloud (centrally managed)" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "[WEB] Dell Server Manager: $SslUrl" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "[INFO] Database and authentication managed through Lovable Cloud" -ForegroundColor Yellow
+    Write-Host "[INFO] Create users and manage data through the Lovable Cloud interface" -ForegroundColor Yellow
+}
 Write-Host ""
 Write-Host "[NEXT] Next Steps:" -ForegroundColor Yellow
 if ($SetupSSL -ne "y" -and $SetupSSL -ne "Y") {
@@ -597,10 +657,14 @@ Write-Host ""
 
 # Save credentials to file
 $CredsPath = "$AppPath\deployment-credentials.txt"
-@"
+
+if ($DeployMode -eq "1") {
+    # Local mode credentials
+    @"
 Dell Server Manager Deployment Credentials
 ==========================================
 Generated: $(Get-Date)
+Deployment Mode: Local/Air-gapped
 
 Supabase Studio: $SupabaseUrl
 Anon Key: $AnonKey
@@ -617,6 +681,23 @@ Supabase CLI Commands:
 - supabase start (start services)
 - supabase db studio (open Studio in browser)
 "@ | Out-File -FilePath $CredsPath -Encoding ASCII
+} else {
+    # Cloud mode credentials
+    @"
+Dell Server Manager Deployment Credentials
+==========================================
+Generated: $(Get-Date)
+Deployment Mode: Cloud-connected
+
+Backend: Lovable Cloud
+API URL: $SupabaseUrl
+
+Application URL: $SslUrl
+
+Note: Database and user management handled through Lovable Cloud interface.
+Create and manage users through the Lovable Cloud backend dashboard.
+"@ | Out-File -FilePath $CredsPath -Encoding ASCII
+}
 
 Write-Host "[SAVED] Credentials saved to: $CredsPath" -ForegroundColor Green
 Write-Host ""
