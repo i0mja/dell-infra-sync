@@ -4,9 +4,13 @@
 
 #Requires -RunAsAdministrator
 
-# Ensure proper console encoding
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$OutputEncoding = [System.Text.Encoding]::UTF8
+# Set UTF-8 encoding (suppress errors in some admin contexts)
+try {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+} catch {
+    # Ignore encoding errors - they're non-critical
+}
 
 # Check PowerShell version
 if ($PSVersionTable.PSVersion.Major -lt 5) {
@@ -135,16 +139,24 @@ if (!(Get-Command git -ErrorAction SilentlyContinue)) {
 # Step 5: Install Scoop (Package Manager for Supabase CLI)
 Write-Host "[INSTALL] Step 5/8: Installing Scoop package manager..." -ForegroundColor Yellow
 if (!(Get-Command scoop -ErrorAction SilentlyContinue)) {
-    # Install Scoop
+    # Install Scoop with admin privileges
+    Write-Host "[INFO] Installing Scoop with administrator privileges..." -ForegroundColor Cyan
     Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
-    Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
+    iex "& {$(irm get.scoop.sh)} -RunAsAdmin"
     Refresh-Path
     Start-Sleep -Seconds 2
     
     # Verify Scoop is now available
     if (!(Get-Command scoop -ErrorAction SilentlyContinue)) {
         Write-Host "[ERROR] Scoop installation failed" -ForegroundColor Red
-        Write-Host "[ERROR] Please install Scoop manually from https://scoop.sh" -ForegroundColor Red
+        Write-Host "[INFO] This may happen if:" -ForegroundColor Yellow
+        Write-Host "   1. Internet connection is unstable" -ForegroundColor Gray
+        Write-Host "   2. PowerShell execution policy is too restrictive" -ForegroundColor Gray
+        Write-Host "   3. Antivirus is blocking the installation" -ForegroundColor Gray
+        Write-Host "" -ForegroundColor Gray
+        Write-Host "[FIX] Try running these commands manually:" -ForegroundColor Yellow
+        Write-Host "   Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force" -ForegroundColor Cyan
+        Write-Host '   iex "& {$(irm get.scoop.sh)} -RunAsAdmin"' -ForegroundColor Cyan
         exit 1
     }
     Write-Host "[OK] Scoop installed" -ForegroundColor Green
