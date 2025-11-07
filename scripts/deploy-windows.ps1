@@ -335,7 +335,7 @@ if ($DeployMode -eq "1") {
         Write-Host "[MIGRATE] Applying $($file.Name)..." -ForegroundColor Cyan
         
         try {
-            $result = docker exec -i supabase-db psql -U postgres -d postgres 2>&1 < $file.FullName
+            $result = Get-Content $file.FullName | docker exec -i supabase-db psql -U postgres -d postgres 2>&1
             
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "[OK] $($file.Name) applied successfully" -ForegroundColor Green
