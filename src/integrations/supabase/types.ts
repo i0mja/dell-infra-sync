@@ -464,6 +464,45 @@ export type Database = {
           },
         ]
       }
+      vcenter_settings: {
+        Row: {
+          created_at: string
+          host: string
+          id: string
+          last_sync: string | null
+          password: string
+          port: number
+          sync_enabled: boolean
+          updated_at: string
+          username: string
+          verify_ssl: boolean
+        }
+        Insert: {
+          created_at?: string
+          host: string
+          id?: string
+          last_sync?: string | null
+          password: string
+          port?: number
+          sync_enabled?: boolean
+          updated_at?: string
+          username: string
+          verify_ssl?: boolean
+        }
+        Update: {
+          created_at?: string
+          host?: string
+          id?: string
+          last_sync?: string | null
+          password?: string
+          port?: number
+          sync_enabled?: boolean
+          updated_at?: string
+          username?: string
+          verify_ssl?: boolean
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

@@ -2,13 +2,14 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Database, RefreshCw, Link as LinkIcon, Search } from "lucide-react";
+import { Database, RefreshCw, Link as LinkIcon, Search, Settings, RefreshCcw } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { InfoIcon } from "lucide-react";
+import { InfoIcon, Loader2 } from "lucide-react";
+import { VCenterSettingsDialog } from "@/components/vcenter/VCenterSettingsDialog";
 
 interface VCenterHost {
   id: string;
@@ -33,6 +34,8 @@ const VCenter = () => {
   const [hosts, setHosts] = useState<VCenterHost[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const { toast } = useToast();
 
   const fetchHosts = async () => {
@@ -106,6 +109,36 @@ const VCenter = () => {
   const linkedHosts = hosts.filter(h => h.server_id).length;
   const unlinkedHosts = totalHosts - linkedHosts;
 
+  const handleSyncNow = async () => {
+    setSyncing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('sync-vcenter-direct', {
+        method: 'POST',
+      });
+
+      if (error) throw error;
+
+      if (data?.success) {
+        toast({
+          title: "Sync completed",
+          description: `New: ${data.summary.new}, Updated: ${data.summary.updated}, Linked: ${data.summary.auto_linked}`,
+        });
+        fetchHosts();
+      } else {
+        throw new Error(data?.error || 'Sync failed');
+      }
+    } catch (error: any) {
+      console.error("Sync error:", error);
+      toast({
+        title: "Sync failed",
+        description: error.message || "Failed to sync vCenter data",
+        variant: "destructive",
+      });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const getStatusColor = (status: string | null) => {
     switch (status?.toLowerCase()) {
       case 'connected':
@@ -126,19 +159,45 @@ const VCenter = () => {
             VMware vCenter ESXi hosts and cluster management
           </p>
         </div>
-        <Button variant="outline" size="icon" onClick={fetchHosts}>
-          <RefreshCw className="h-4 w-4" />
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setSettingsOpen(true)}>
+            <Settings className="mr-2 h-4 w-4" />
+            Settings
+          </Button>
+          <Button onClick={handleSyncNow} disabled={syncing}>
+            {syncing ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Syncing...
+              </>
+            ) : (
+              <>
+                <RefreshCcw className="mr-2 h-4 w-4" />
+                Sync Now
+              </>
+            )}
+          </Button>
+          <Button variant="outline" size="icon" onClick={fetchHosts}>
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       <Alert className="mb-6">
         <InfoIcon className="h-4 w-4" />
-        <AlertTitle>Sync from vCenter</AlertTitle>
+        <AlertTitle>Native vCenter Integration</AlertTitle>
         <AlertDescription>
-          Your vCenter runs on a private network. Use the Python sync script to push ESXi host data from vCenter to this Dell Server Manager instance.
-          The script runs on your network and connects to this server to synchronize host information. See <code className="text-xs bg-muted px-1 py-0.5 rounded">docs/VCENTER_SYNC_GUIDE.md</code> for setup instructions.
+          Configure vCenter connection in Settings and click "Sync Now" to directly sync ESXi host data from your vCenter server. 
+          For air-gapped deployments, ensure this app and vCenter are on the same network. 
+          Alternatively, use the Python sync script (see <code className="text-xs bg-muted px-1 py-0.5 rounded">docs/VCENTER_SYNC_GUIDE.md</code>).
         </AlertDescription>
       </Alert>
+
+      <VCenterSettingsDialog 
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        onSaved={fetchHosts}
+      />
 
       <div className="grid gap-6 md:grid-cols-3 mb-6">
         <Card>
