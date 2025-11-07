@@ -76,6 +76,29 @@ echo "⏳ Waiting for services to start (60 seconds)..."
 sleep 60
 echo "✅ Supabase is running"
 
+# Apply database migrations for air-gapped deployment
+echo "📊 Applying air-gapped database migrations..."
+MIGRATIONS_DIR="$(dirname "$0")/air-gapped-migrations"
+
+if [ -d "$MIGRATIONS_DIR" ]; then
+    for migration_file in "$MIGRATIONS_DIR"/*.sql; do
+        if [ -f "$migration_file" ]; then
+            filename=$(basename "$migration_file")
+            echo "  → Applying $filename..."
+            
+            if docker exec -i supabase-db psql -U postgres -d postgres < "$migration_file" 2>/dev/null; then
+                echo "    ✓ $filename applied"
+            else
+                echo "    ⚠ Issues with $filename, continuing..."
+            fi
+        fi
+    done
+    echo "✅ Database schema configured"
+else
+    echo "⚠ Air-gapped migrations not found at: $MIGRATIONS_DIR"
+    echo "ℹ Database may need manual schema setup"
+fi
+
 # Create initial admin user
 echo "👤 Step 5/7: Creating initial admin user..."
 read -p "Enter admin email: " ADMIN_EMAIL

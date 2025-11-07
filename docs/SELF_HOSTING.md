@@ -146,6 +146,126 @@ Dell Server Manager supports two deployment modes to accommodate different infra
 
 **Migration:** You can migrate data between modes using the backup/restore tools. See [docs/BACKUP_GUIDE.md](BACKUP_GUIDE.md) for details.
 
+## Database Migrations
+
+For **air-gapped deployments**, the deployment scripts automatically apply database migrations that create the complete schema. These migrations are located in `scripts/air-gapped-migrations/` and include:
+
+- **01_initial_schema.sql** - Creates 10 tables, 5 functions, 6 triggers, and 3 custom enum types
+- **02_rls_policies.sql** - Applies 20+ Row Level Security policies for data protection
+- **03_indexes.sql** - Creates performance indexes on frequently queried columns
+
+### What Gets Created
+
+**Tables:**
+- `profiles` - User profile information
+- `user_roles` - Role-based access control (admin, operator, viewer)
+- `servers` - Dell server inventory and connection status
+- `vcenter_hosts` - VMware vCenter ESXi host information
+- `jobs` - Job queue and execution tracking
+- `job_tasks` - Individual task execution for each job
+- `audit_logs` - Security and compliance audit trail
+- `notification_settings` - SMTP and Teams notification configuration
+- `openmanage_settings` - Dell OpenManage Enterprise integration
+- `api_tokens` - API authentication tokens
+
+**Critical Functions:**
+- `handle_new_user()` - Automatically creates user profiles and assigns default viewer role
+- `has_role()` - Security definer function for RLS policy evaluation
+- `get_user_role()` - Retrieves user's highest privilege role
+- `update_updated_at_column()` - Maintains timestamp consistency
+- `validate_api_token()` - Secures API authentication
+
+**Triggers:**
+- `on_auth_user_created` - Fires on user signup to create profile and role
+- Auto-update triggers for `updated_at` timestamps on all mutable tables
+
+### Verifying Database Schema
+
+After deployment, verify the complete schema was created:
+
+**Windows:**
+```powershell
+cd C:\dell-supabase
+.\scripts\verify-database.ps1
+```
+
+**RHEL:**
+```bash
+cd /opt/supabase
+./scripts/verify-database.sh
+```
+
+The verification script validates:
+- ✓ Database connectivity
+- ✓ 3 custom enum types (app_role, job_status, job_type)
+- ✓ All 10 tables exist
+- ✓ All 5 functions configured
+- ✓ All 6 triggers active
+- ✓ RLS enabled on every table
+- ✓ 20+ RLS policies enforcing security
+
+### Troubleshooting Login Issues
+
+**Symptom: 500 Internal Server Error on login**
+```
+POST http://127.0.0.1:54321/auth/v1/token?grant_type=password 500
+```
+
+**Root Cause:** Database schema was not created. Tables, functions, or the critical `on_auth_user_created` trigger are missing.
+
+**Solution:**
+
+1. **Verify current schema:**
+   ```bash
+   docker exec supabase-db psql -U postgres -d postgres -c "\dt public.*"
+   ```
+   
+   Should show 10 tables. If empty or incomplete:
+
+2. **Reapply migrations manually:**
+   ```bash
+   # Navigate to project directory
+   cd /opt/supabase  # RHEL
+   cd C:\dell-supabase  # Windows
+   
+   # Apply each migration
+   docker exec -i supabase-db psql -U postgres -d postgres < scripts/air-gapped-migrations/01_initial_schema.sql
+   docker exec -i supabase-db psql -U postgres -d postgres < scripts/air-gapped-migrations/02_rls_policies.sql
+   docker exec -i supabase-db psql -U postgres -d postgres < scripts/air-gapped-migrations/03_indexes.sql
+   ```
+
+3. **Verify trigger exists:**
+   ```bash
+   docker exec supabase-db psql -U postgres -d postgres -c "
+   SELECT tgname FROM pg_trigger t 
+   JOIN pg_class c ON t.tgrelid = c.oid 
+   WHERE c.relname = 'users' AND tgname = 'on_auth_user_created';
+   "
+   ```
+   
+   Must return `on_auth_user_created`. Without this trigger, user signups fail.
+
+4. **Run verification:**
+   ```bash
+   ./scripts/verify-database.sh  # RHEL
+   .\scripts\verify-database.ps1  # Windows
+   ```
+   
+   All checks must pass (0 failures).
+
+5. **Retry login** after schema is confirmed complete.
+
+### Migration Logs
+
+If migrations fail during deployment, logs are saved to:
+- **Windows:** `C:\dell-supabase\logs\supabase-start-output.txt`
+- **RHEL:** Check console output during deployment
+
+Common migration errors:
+- **"relation already exists"** - Safe to ignore, migrations are idempotent
+- **"type already exists"** - Safe to ignore, migrations use `CREATE TYPE IF NOT EXISTS`
+- **"permission denied for schema auth"** - Indicates trigger creation on `auth.users` failed; requires manual fix
+
 ## Health Checks and Monitoring
 
 After deployment, you can validate your installation and monitor ongoing health using the provided health check scripts.

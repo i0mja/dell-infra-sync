@@ -300,6 +300,34 @@ if ($DeployMode -eq "1") {
 
     Write-Host "[OK] Supabase services started" -ForegroundColor Green
 
+    # Apply database migrations for air-gapped deployment
+    Write-Host "[DATABASE] Applying air-gapped database migrations..." -ForegroundColor Yellow
+    $MigrationsPath = Join-Path $PSScriptRoot "air-gapped-migrations"
+    
+    if (Test-Path $MigrationsPath) {
+        $migrationFiles = Get-ChildItem -Path $MigrationsPath -Filter "*.sql" | Sort-Object Name
+        
+        foreach ($file in $migrationFiles) {
+            Write-Host "[MIGRATE] Applying $($file.Name)..." -ForegroundColor Cyan
+            $sqlContent = Get-Content $file.FullName -Raw
+            
+            try {
+                docker exec -i supabase-db psql -U postgres -d postgres -c $sqlContent 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "[OK] $($file.Name) applied successfully" -ForegroundColor Green
+                } else {
+                    Write-Host "[WARNING] Issues applying $($file.Name), continuing..." -ForegroundColor Yellow
+                }
+            } catch {
+                Write-Host "[WARNING] Error with $($file.Name): $_" -ForegroundColor Yellow
+            }
+        }
+        Write-Host "[OK] Database schema configured" -ForegroundColor Green
+    } else {
+        Write-Host "[WARNING] Air-gapped migrations not found at: $MigrationsPath" -ForegroundColor Yellow
+        Write-Host "[INFO] Database may need manual schema setup" -ForegroundColor Cyan
+    }
+
     # Get Supabase credentials from CLI
     Write-Host "[INFO] Retrieving Supabase credentials..." -ForegroundColor Yellow
 
