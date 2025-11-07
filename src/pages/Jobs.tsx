@@ -21,6 +21,7 @@ interface Job {
   started_at: string | null;
   completed_at: string | null;
   schedule_at: string | null;
+  parent_job_id: string | null;
 }
 
 const Jobs = () => {
@@ -29,6 +30,7 @@ const Jobs = () => {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [subJobCounts, setSubJobCounts] = useState<Record<string, number>>({});
   const { toast } = useToast();
 
   const fetchJobs = async () => {
@@ -37,10 +39,25 @@ const Jobs = () => {
       const { data, error } = await supabase
         .from("jobs")
         .select("*")
+        .is("parent_job_id", null)
         .order("created_at", { ascending: false });
 
       if (error) throw error;
       setJobs(data || []);
+
+      // Fetch sub-job counts for full_server_update jobs
+      const fullUpdateJobs = (data || []).filter(j => j.job_type === 'full_server_update');
+      if (fullUpdateJobs.length > 0) {
+        const counts: Record<string, number> = {};
+        for (const job of fullUpdateJobs) {
+          const { count } = await supabase
+            .from("jobs")
+            .select("*", { count: 'exact', head: true })
+            .eq("parent_job_id", job.id);
+          counts[job.id] = count || 0;
+        }
+        setSubJobCounts(counts);
+      }
     } catch (error: any) {
       toast({
         title: "Error loading jobs",
@@ -108,6 +125,7 @@ const Jobs = () => {
       firmware_update: "Firmware Update",
       discovery_scan: "Discovery Scan",
       vcenter_sync: "vCenter Sync",
+      full_server_update: "Full Server Update",
     };
     return labels[type] || type;
   };
@@ -192,10 +210,14 @@ const Jobs = () => {
                   </p>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">Target:</span>
+                  <span className="text-muted-foreground">
+                    {job.job_type === 'full_server_update' ? 'Components:' : 'Target:'}
+                  </span>
                   <p className="font-medium">
-                    {job.target_scope?.cluster_name || 
-                     (job.target_scope?.server_ids ? `${job.target_scope.server_ids.length} servers` : "N/A")}
+                    {job.job_type === 'full_server_update' 
+                      ? `${subJobCounts[job.id] || 0} component updates`
+                      : (job.target_scope?.cluster_name || 
+                         (job.target_scope?.server_ids ? `${job.target_scope.server_ids.length} servers` : "N/A"))}
                   </p>
                 </div>
                 <div>
