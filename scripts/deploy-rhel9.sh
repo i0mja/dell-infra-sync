@@ -80,24 +80,78 @@ echo "✅ Supabase is running"
 echo "📊 Applying air-gapped database migrations..."
 MIGRATIONS_DIR="$(dirname "$0")/air-gapped-migrations"
 
-if [ -d "$MIGRATIONS_DIR" ]; then
-    for migration_file in "$MIGRATIONS_DIR"/*.sql; do
-        if [ -f "$migration_file" ]; then
-            filename=$(basename "$migration_file")
-            echo "  → Applying $filename..."
-            
-            if docker exec -i supabase-db psql -U postgres -d postgres < "$migration_file" 2>/dev/null; then
-                echo "    ✓ $filename applied"
-            else
-                echo "    ⚠ Issues with $filename, continuing..."
-            fi
-        fi
-    done
-    echo "✅ Database schema configured"
-else
-    echo "⚠ Air-gapped migrations not found at: $MIGRATIONS_DIR"
-    echo "ℹ Database may need manual schema setup"
+if [ ! -d "$MIGRATIONS_DIR" ]; then
+    echo "❌ CRITICAL: Air-gapped migrations not found!"
+    echo "Expected location: $MIGRATIONS_DIR"
+    echo "Without migrations, authentication will not work!"
+    echo ""
+    echo "To resolve this issue:"
+    echo "  1. Ensure you have the latest code: git pull"
+    echo "  2. Check that scripts/air-gapped-migrations/ exists"
+    echo "  3. Download missing migrations from the repository"
+    exit 1
 fi
+
+MIGRATION_COUNT=$(find "$MIGRATIONS_DIR" -name "*.sql" -type f | wc -l)
+if [ "$MIGRATION_COUNT" -eq 0 ]; then
+    echo "❌ No migration files found in $MIGRATIONS_DIR"
+    exit 1
+fi
+
+echo "ℹ Found $MIGRATION_COUNT migration files to apply"
+APPLIED_COUNT=0
+FAILED_MIGRATIONS=()
+
+for migration_file in "$MIGRATIONS_DIR"/*.sql; do
+    if [ -f "$migration_file" ]; then
+        filename=$(basename "$migration_file")
+        echo "  → Applying $filename..."
+        
+        if docker exec -i supabase-db psql -U postgres -d postgres < "$migration_file" 2>&1; then
+            echo "    ✓ $filename applied"
+            APPLIED_COUNT=$((APPLIED_COUNT + 1))
+        else
+            echo "    ✗ Failed to apply $filename"
+            FAILED_MIGRATIONS+=("$filename")
+        fi
+    fi
+done
+
+echo ""
+echo "📊 Applied $APPLIED_COUNT of $MIGRATION_COUNT migrations"
+
+if [ ${#FAILED_MIGRATIONS[@]} -gt 0 ]; then
+    echo "❌ Failed migrations:"
+    for failed in "${FAILED_MIGRATIONS[@]}"; do
+        echo "  ✗ $failed"
+    done
+    echo ""
+    echo "To rollback and retry:"
+    echo "  docker exec supabase-db psql -U postgres -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'"
+    echo "  Then re-run this deployment script"
+    exit 1
+fi
+
+# Verify database schema
+echo "🔍 Verifying database schema..."
+VERIFY_SCRIPT="$(dirname "$0")/verify-database.sh"
+
+if [ -f "$VERIFY_SCRIPT" ]; then
+    if bash "$VERIFY_SCRIPT"; then
+        echo "✅ Database schema verified successfully"
+    else
+        echo "❌ Database schema verification failed!"
+        echo "Authentication will not work without proper schema"
+        echo ""
+        echo "Run manually to see details:"
+        echo "  bash scripts/verify-database.sh"
+        exit 1
+    fi
+else
+    echo "ℹ Schema verification script not found, skipping..."
+fi
+
+echo "✅ Database setup complete"
 
 # Create initial admin user
 echo "👤 Step 5/7: Creating initial admin user..."

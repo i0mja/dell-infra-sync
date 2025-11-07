@@ -304,29 +304,95 @@ if ($DeployMode -eq "1") {
     Write-Host "[DATABASE] Applying air-gapped database migrations..." -ForegroundColor Yellow
     $MigrationsPath = Join-Path $PSScriptRoot "air-gapped-migrations"
     
-    if (Test-Path $MigrationsPath) {
-        $migrationFiles = Get-ChildItem -Path $MigrationsPath -Filter "*.sql" | Sort-Object Name
-        
-        foreach ($file in $migrationFiles) {
-            Write-Host "[MIGRATE] Applying $($file.Name)..." -ForegroundColor Cyan
-            $sqlContent = Get-Content $file.FullName -Raw
-            
-            try {
-                docker exec -i supabase-db psql -U postgres -d postgres -c $sqlContent 2>&1 | Out-Null
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Host "[OK] $($file.Name) applied successfully" -ForegroundColor Green
-                } else {
-                    Write-Host "[WARNING] Issues applying $($file.Name), continuing..." -ForegroundColor Yellow
-                }
-            } catch {
-                Write-Host "[WARNING] Error with $($file.Name): $_" -ForegroundColor Yellow
-            }
-        }
-        Write-Host "[OK] Database schema configured" -ForegroundColor Green
-    } else {
-        Write-Host "[WARNING] Air-gapped migrations not found at: $MigrationsPath" -ForegroundColor Yellow
-        Write-Host "[INFO] Database may need manual schema setup" -ForegroundColor Cyan
+    if (-not (Test-Path $MigrationsPath)) {
+        Write-Host "[ERROR] Critical: Air-gapped migrations not found!" -ForegroundColor Red
+        Write-Host "[ERROR] Expected location: $MigrationsPath" -ForegroundColor Red
+        Write-Host "[ERROR] Without migrations, authentication will not work!" -ForegroundColor Red
+        Write-Host "" -ForegroundColor Yellow
+        Write-Host "[FIX] To resolve this issue:" -ForegroundColor Yellow
+        Write-Host "  1. Ensure you have the latest code: git pull" -ForegroundColor White
+        Write-Host "  2. Check that scripts/air-gapped-migrations/ exists" -ForegroundColor White
+        Write-Host "  3. Download missing migrations from the repository" -ForegroundColor White
+        Write-Host "" -ForegroundColor Yellow
+        Stop-Transcript
+        exit 1
     }
+    
+    $migrationFiles = Get-ChildItem -Path $MigrationsPath -Filter "*.sql" | Sort-Object Name
+    $migrationCount = $migrationFiles.Count
+    
+    if ($migrationCount -eq 0) {
+        Write-Host "[ERROR] No migration files found in $MigrationsPath" -ForegroundColor Red
+        Stop-Transcript
+        exit 1
+    }
+    
+    Write-Host "[INFO] Found $migrationCount migration files to apply" -ForegroundColor Cyan
+    $appliedCount = 0
+    $failedMigrations = @()
+    
+    foreach ($file in $migrationFiles) {
+        Write-Host "[MIGRATE] Applying $($file.Name)..." -ForegroundColor Cyan
+        
+        try {
+            $result = docker exec -i supabase-db psql -U postgres -d postgres 2>&1 < $file.FullName
+            
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "[OK] $($file.Name) applied successfully" -ForegroundColor Green
+                $appliedCount++
+            } else {
+                Write-Host "[ERROR] Failed to apply $($file.Name)" -ForegroundColor Red
+                $failedMigrations += $file.Name
+            }
+        } catch {
+            Write-Host "[ERROR] Exception applying $($file.Name): $_" -ForegroundColor Red
+            $failedMigrations += $file.Name
+        }
+    }
+    
+    # Report migration results
+    Write-Host "" -ForegroundColor White
+    Write-Host "[SUMMARY] Applied $appliedCount of $migrationCount migrations" -ForegroundColor Cyan
+    
+    if ($failedMigrations.Count -gt 0) {
+        Write-Host "[ERROR] Failed migrations:" -ForegroundColor Red
+        foreach ($failed in $failedMigrations) {
+            Write-Host "  ✗ $failed" -ForegroundColor Red
+        }
+        Write-Host "" -ForegroundColor Yellow
+        Write-Host "[ROLLBACK] To reset the database:" -ForegroundColor Yellow
+        Write-Host "  docker exec supabase-db psql -U postgres -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'" -ForegroundColor White
+        Write-Host "  Then re-run this deployment script" -ForegroundColor White
+        Stop-Transcript
+        exit 1
+    }
+    
+    # Verify database schema
+    Write-Host "[VERIFY] Checking database schema integrity..." -ForegroundColor Yellow
+    $verifyScript = Join-Path $PSScriptRoot "verify-database.ps1"
+    
+    if (Test-Path $verifyScript) {
+        try {
+            $verifyResult = & $verifyScript 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "[OK] Database schema verified successfully" -ForegroundColor Green
+            } else {
+                Write-Host "[ERROR] Database schema verification failed!" -ForegroundColor Red
+                Write-Host "[ERROR] Authentication will not work without proper schema" -ForegroundColor Red
+                Write-Host "" -ForegroundColor Yellow
+                Write-Host "[FIX] Run manually to see details:" -ForegroundColor Yellow
+                Write-Host "  .\scripts\verify-database.ps1" -ForegroundColor White
+                Stop-Transcript
+                exit 1
+            }
+        } catch {
+            Write-Host "[WARNING] Could not run verification: $_" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "[INFO] Schema verification script not found, skipping..." -ForegroundColor Cyan
+    }
+    
+    Write-Host "[OK] Database setup complete" -ForegroundColor Green
 
     # Get Supabase credentials from CLI
     Write-Host "[INFO] Retrieving Supabase credentials..." -ForegroundColor Yellow
