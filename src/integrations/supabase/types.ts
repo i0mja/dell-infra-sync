@@ -14,6 +14,57 @@ export type Database = {
   }
   public: {
     Tables: {
+      activity_settings: {
+        Row: {
+          alert_on_failures: boolean
+          alert_on_slow_commands: boolean
+          auto_cleanup_enabled: boolean
+          created_at: string
+          id: string
+          keep_statistics: boolean
+          last_cleanup_at: string | null
+          log_level: string
+          log_retention_days: number
+          max_request_body_kb: number
+          max_response_body_kb: number
+          slow_command_threshold_ms: number
+          statistics_retention_days: number
+          updated_at: string
+        }
+        Insert: {
+          alert_on_failures?: boolean
+          alert_on_slow_commands?: boolean
+          auto_cleanup_enabled?: boolean
+          created_at?: string
+          id?: string
+          keep_statistics?: boolean
+          last_cleanup_at?: string | null
+          log_level?: string
+          log_retention_days?: number
+          max_request_body_kb?: number
+          max_response_body_kb?: number
+          slow_command_threshold_ms?: number
+          statistics_retention_days?: number
+          updated_at?: string
+        }
+        Update: {
+          alert_on_failures?: boolean
+          alert_on_slow_commands?: boolean
+          auto_cleanup_enabled?: boolean
+          created_at?: string
+          id?: string
+          keep_statistics?: boolean
+          last_cleanup_at?: string | null
+          log_level?: string
+          log_retention_days?: number
+          max_request_body_kb?: number
+          max_response_body_kb?: number
+          slow_command_threshold_ms?: number
+          statistics_retention_days?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       api_tokens: {
         Row: {
           created_at: string
@@ -600,6 +651,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      cleanup_activity_logs: { Args: never; Returns: undefined }
       get_user_role: {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["app_role"]

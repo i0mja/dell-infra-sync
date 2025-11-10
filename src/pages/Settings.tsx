@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTheme } from "next-themes";
-import { Moon, Sun, Monitor } from "lucide-react";
+import { Moon, Sun, Monitor, Database, Shield, AlertCircle } from "lucide-react";
 
 export default function Settings() {
   const { user, userRole } = useAuth();
@@ -50,6 +50,21 @@ export default function Settings() {
   const [newTokenName, setNewTokenName] = useState("");
   const [generatedToken, setGeneratedToken] = useState<string | null>(null);
   const [showTokenDialog, setShowTokenDialog] = useState(false);
+
+  // Activity Monitor Settings
+  const [activitySettingsId, setActivitySettingsId] = useState<string | null>(null);
+  const [logRetentionDays, setLogRetentionDays] = useState(30);
+  const [autoCleanupEnabled, setAutoCleanupEnabled] = useState(true);
+  const [lastCleanupAt, setLastCleanupAt] = useState<string | null>(null);
+  const [logLevel, setLogLevel] = useState<'all' | 'errors_only' | 'slow_only'>('all');
+  const [slowCommandThreshold, setSlowCommandThreshold] = useState(5000);
+  const [maxRequestBodyKb, setMaxRequestBodyKb] = useState(100);
+  const [maxResponseBodyKb, setMaxResponseBodyKb] = useState(100);
+  const [alertOnFailures, setAlertOnFailures] = useState(true);
+  const [alertOnSlowCommands, setAlertOnSlowCommands] = useState(false);
+  const [keepStatistics, setKeepStatistics] = useState(true);
+  const [statisticsRetentionDays, setStatisticsRetentionDays] = useState(365);
+  const [cleaningUp, setCleaningUp] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -200,6 +215,34 @@ export default function Settings() {
     } catch (error: any) {
       console.error("Error loading OpenManage settings:", error);
     }
+
+    // Load Activity Monitor settings
+    try {
+      const { data: activityData, error: activityError } = await supabase
+        .from("activity_settings")
+        .select("*")
+        .limit(1)
+        .maybeSingle();
+
+      if (activityError) throw activityError;
+
+      if (activityData) {
+        setActivitySettingsId(activityData.id);
+        setLogRetentionDays(activityData.log_retention_days ?? 30);
+        setAutoCleanupEnabled(activityData.auto_cleanup_enabled ?? true);
+        setLastCleanupAt(activityData.last_cleanup_at);
+        setLogLevel((activityData.log_level ?? 'all') as 'all' | 'errors_only' | 'slow_only');
+        setSlowCommandThreshold(activityData.slow_command_threshold_ms ?? 5000);
+        setMaxRequestBodyKb(activityData.max_request_body_kb ?? 100);
+        setMaxResponseBodyKb(activityData.max_response_body_kb ?? 100);
+        setAlertOnFailures(activityData.alert_on_failures ?? true);
+        setAlertOnSlowCommands(activityData.alert_on_slow_commands ?? false);
+        setKeepStatistics(activityData.keep_statistics ?? true);
+        setStatisticsRetentionDays(activityData.statistics_retention_days ?? 365);
+      }
+    } catch (error: any) {
+      console.error("Error loading activity settings:", error);
+    }
   };
 
   const handleSaveSettings = async () => {
@@ -315,6 +358,98 @@ export default function Settings() {
     }
   };
 
+  const handleSaveActivitySettings = async () => {
+    if (userRole !== "admin") {
+      toast({
+        title: "Permission Denied",
+        description: "Only admins can modify activity settings",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const activityData = {
+        log_retention_days: logRetentionDays,
+        auto_cleanup_enabled: autoCleanupEnabled,
+        log_level: logLevel,
+        slow_command_threshold_ms: slowCommandThreshold,
+        max_request_body_kb: maxRequestBodyKb,
+        max_response_body_kb: maxResponseBodyKb,
+        alert_on_failures: alertOnFailures,
+        alert_on_slow_commands: alertOnSlowCommands,
+        keep_statistics: keepStatistics,
+        statistics_retention_days: statisticsRetentionDays,
+      };
+
+      if (activitySettingsId) {
+        const { error } = await supabase
+          .from("activity_settings")
+          .update(activityData)
+          .eq("id", activitySettingsId);
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase
+          .from("activity_settings")
+          .insert(activityData)
+          .select()
+          .single();
+        if (error) throw error;
+        setActivitySettingsId(data.id);
+      }
+
+      toast({
+        title: "Success",
+        description: "Activity Monitor settings saved successfully",
+      });
+    } catch (error: any) {
+      console.error("Error saving activity settings:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to save activity settings",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCleanupNow = async () => {
+    if (userRole !== "admin") {
+      toast({
+        title: "Permission Denied",
+        description: "Only admins can trigger cleanup",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setCleaningUp(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('cleanup-activity-logs');
+      
+      if (error) throw error;
+
+      toast({
+        title: "Cleanup Complete",
+        description: `Deleted ${data.deleted_count || 0} old log entries`,
+      });
+      
+      // Reload settings to get updated last_cleanup_at
+      loadSettings();
+    } catch (error: any) {
+      console.error("Error triggering cleanup:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to trigger cleanup",
+        variant: "destructive",
+      });
+    } finally {
+      setCleaningUp(false);
+    }
+  };
+
   const handleSyncNow = async () => {
     if (userRole !== "admin" && userRole !== "operator") {
       toast({
@@ -383,11 +518,12 @@ export default function Settings() {
         <h1 className="text-3xl font-bold mb-6">Settings</h1>
 
         <Tabs defaultValue="appearance" className="w-full">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="appearance">Appearance</TabsTrigger>
             <TabsTrigger value="smtp">SMTP Email</TabsTrigger>
             <TabsTrigger value="teams">Microsoft Teams</TabsTrigger>
             <TabsTrigger value="openmanage">OpenManage</TabsTrigger>
+            <TabsTrigger value="activity">Activity Monitor</TabsTrigger>
             <TabsTrigger value="preferences">Preferences</TabsTrigger>
           </TabsList>
 
@@ -691,6 +827,221 @@ export default function Settings() {
                     See the <a href="/docs/OPENMANAGE_SYNC_GUIDE.md" className="text-primary underline">OpenManage Sync Guide</a> for setup instructions.
                   </p>
                 </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="activity">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Database className="h-5 w-5" />
+                  Activity Monitor Settings
+                </CardTitle>
+                <CardDescription>
+                  Configure log retention, cleanup, and monitoring preferences
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                
+                {/* Retention & Cleanup Section */}
+                <div className="space-y-4">
+                  <h3 className="text-lg font-medium flex items-center gap-2">
+                    <Shield className="h-4 w-4" />
+                    Log Retention & Cleanup
+                  </h3>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="retention-days">Retention Period (Days)</Label>
+                    <Input
+                      id="retention-days"
+                      type="number"
+                      min="1"
+                      max="365"
+                      value={logRetentionDays}
+                      onChange={(e) => setLogRetentionDays(parseInt(e.target.value) || 30)}
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Logs older than this will be automatically deleted (1-365 days)
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="auto-cleanup">Enable Automatic Cleanup</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Automatically delete old logs daily at 2 AM
+                      </p>
+                    </div>
+                    <Switch
+                      id="auto-cleanup"
+                      checked={autoCleanupEnabled}
+                      onCheckedChange={setAutoCleanupEnabled}
+                    />
+                  </div>
+
+                  {lastCleanupAt && (
+                    <div className="text-sm text-muted-foreground">
+                      Last cleanup: {new Date(lastCleanupAt).toLocaleString()}
+                    </div>
+                  )}
+
+                  <Button 
+                    onClick={handleCleanupNow} 
+                    disabled={cleaningUp}
+                    variant="outline"
+                  >
+                    {cleaningUp ? "Cleaning Up..." : "Run Cleanup Now"}
+                  </Button>
+                </div>
+
+                {/* Verbosity Section */}
+                <div className="space-y-4 border-t pt-6">
+                  <h3 className="text-lg font-medium">Log Verbosity</h3>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="log-level">Logging Level</Label>
+                    <select
+                      id="log-level"
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2"
+                      value={logLevel}
+                      onChange={(e) => setLogLevel(e.target.value as 'all' | 'errors_only' | 'slow_only')}
+                    >
+                      <option value="all">All Requests (Detailed)</option>
+                      <option value="errors_only">Errors Only</option>
+                      <option value="slow_only">Slow Requests Only</option>
+                    </select>
+                    <p className="text-sm text-muted-foreground">
+                      Choose what types of commands to log
+                    </p>
+                  </div>
+
+                  {logLevel === 'slow_only' && (
+                    <div className="space-y-2">
+                      <Label htmlFor="slow-threshold">Slow Command Threshold (ms)</Label>
+                      <Input
+                        id="slow-threshold"
+                        type="number"
+                        min="100"
+                        value={slowCommandThreshold}
+                        onChange={(e) => setSlowCommandThreshold(parseInt(e.target.value) || 5000)}
+                      />
+                      <p className="text-sm text-muted-foreground">
+                        Log commands that take longer than this duration
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Size Limits Section */}
+                <div className="space-y-4 border-t pt-6">
+                  <h3 className="text-lg font-medium">Size Limits</h3>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="max-request">Max Request Body (KB)</Label>
+                      <Input
+                        id="max-request"
+                        type="number"
+                        min="10"
+                        max="1000"
+                        value={maxRequestBodyKb}
+                        onChange={(e) => setMaxRequestBodyKb(parseInt(e.target.value) || 100)}
+                      />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label htmlFor="max-response">Max Response Body (KB)</Label>
+                      <Input
+                        id="max-response"
+                        type="number"
+                        min="10"
+                        max="1000"
+                        value={maxResponseBodyKb}
+                        onChange={(e) => setMaxResponseBodyKb(parseInt(e.target.value) || 100)}
+                      />
+                    </div>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Request/response bodies larger than these limits will be truncated
+                  </p>
+                </div>
+
+                {/* Alerts Section */}
+                <div className="space-y-4 border-t pt-6">
+                  <h3 className="text-lg font-medium flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4" />
+                    Alerts & Notifications
+                  </h3>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="alert-failures">Alert on Command Failures</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Show toast notifications for failed iDRAC commands
+                      </p>
+                    </div>
+                    <Switch
+                      id="alert-failures"
+                      checked={alertOnFailures}
+                      onCheckedChange={setAlertOnFailures}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="alert-slow">Alert on Slow Commands</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Show notifications for commands exceeding threshold
+                      </p>
+                    </div>
+                    <Switch
+                      id="alert-slow"
+                      checked={alertOnSlowCommands}
+                      onCheckedChange={setAlertOnSlowCommands}
+                    />
+                  </div>
+                </div>
+
+                {/* Statistics Section */}
+                <div className="space-y-4 border-t pt-6">
+                  <h3 className="text-lg font-medium">Statistics & Analytics</h3>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="keep-stats">Keep Aggregated Statistics</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Preserve summary data after log deletion
+                      </p>
+                    </div>
+                    <Switch
+                      id="keep-stats"
+                      checked={keepStatistics}
+                      onCheckedChange={setKeepStatistics}
+                    />
+                  </div>
+
+                  {keepStatistics && (
+                    <div className="space-y-2">
+                      <Label htmlFor="stats-retention">Statistics Retention (Days)</Label>
+                      <Input
+                        id="stats-retention"
+                        type="number"
+                        min="30"
+                        max="730"
+                        value={statisticsRetentionDays}
+                        onChange={(e) => setStatisticsRetentionDays(parseInt(e.target.value) || 365)}
+                      />
+                      <p className="text-sm text-muted-foreground">
+                        How long to keep aggregated statistics (30-730 days)
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <Button onClick={handleSaveActivitySettings} disabled={loading}>
+                  {loading ? "Saving..." : "Save Activity Settings"}
+                </Button>
               </CardContent>
             </Card>
           </TabsContent>
