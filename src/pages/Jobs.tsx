@@ -2,13 +2,15 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Briefcase, Plus, RefreshCw, Clock, CheckCircle, XCircle, PlayCircle } from "lucide-react";
+import { Briefcase, Plus, RefreshCw, Clock, CheckCircle, XCircle, PlayCircle, RotateCcw, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { CreateJobDialog } from "@/components/jobs/CreateJobDialog";
 import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { useAuth } from "@/hooks/useAuth";
 
 interface Job {
   id: string;
@@ -32,6 +34,9 @@ const Jobs = () => {
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
   const [subJobCounts, setSubJobCounts] = useState<Record<string, number>>({});
   const { toast } = useToast();
+  const { userRole } = useAuth();
+  
+  const canManageJobs = userRole === 'admin' || userRole === 'operator';
 
   const fetchJobs = async () => {
     try {
@@ -138,6 +143,83 @@ const Jobs = () => {
     return jobs.filter(j => j.status === filterStatus);
   };
 
+  const handleCancelJob = async (jobId: string) => {
+    if (!canManageJobs) {
+      toast({
+        title: "Permission denied",
+        description: "You don't have permission to cancel jobs",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const { error } = await supabase.functions.invoke('update-job', {
+        body: {
+          job: {
+            job_id: jobId,
+            status: 'cancelled',
+            completed_at: new Date().toISOString(),
+          }
+        }
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: "Job cancelled",
+        description: "The job has been cancelled successfully",
+      });
+      fetchJobs();
+    } catch (error: any) {
+      toast({
+        title: "Error cancelling job",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleRetryJob = async (job: Job) => {
+    if (!canManageJobs) {
+      toast({
+        title: "Permission denied",
+        description: "You don't have permission to retry jobs",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const { error } = await supabase.functions.invoke('create-job', {
+        body: {
+          job_type: job.job_type,
+          target_scope: job.target_scope,
+          details: job.details,
+        }
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: "Job retried",
+        description: "A new job has been created with the same configuration",
+      });
+      fetchJobs();
+    } catch (error: any) {
+      toast({
+        title: "Error retrying job",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleViewDetails = (job: Job) => {
+    setSelectedJob(job);
+    setDetailDialogOpen(true);
+  };
+
   const renderJobsList = (filteredJobs: Job[]) => {
     if (loading) {
       return (
@@ -174,61 +256,107 @@ const Jobs = () => {
     return (
       <div className="space-y-4">
         {filteredJobs.map((job) => (
-          <Card 
-            key={job.id} 
-            className="hover:shadow-md transition-shadow cursor-pointer"
-            onClick={() => {
-              setSelectedJob(job);
-              setDetailDialogOpen(true);
-            }}
-          >
-            <CardContent className="p-6">
-              <div className="flex items-start justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  {getStatusIcon(job.status)}
-                  <div>
-                    <h3 className="text-lg font-semibold">{getJobTypeLabel(job.job_type)}</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Created {new Date(job.created_at).toLocaleString()}
-                    </p>
+          <ContextMenu key={job.id}>
+            <ContextMenuTrigger asChild>
+              <Card 
+                className="hover:shadow-md transition-shadow cursor-pointer"
+                onClick={() => {
+                  setSelectedJob(job);
+                  setDetailDialogOpen(true);
+                }}
+              >
+                <CardContent className="p-6">
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      {getStatusIcon(job.status)}
+                      <div>
+                        <h3 className="text-lg font-semibold">{getJobTypeLabel(job.job_type)}</h3>
+                        <p className="text-sm text-muted-foreground">
+                          Created {new Date(job.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                    {getStatusBadge(job.status)}
                   </div>
-                </div>
-                {getStatusBadge(job.status)}
-              </div>
+                  
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <span className="text-muted-foreground">Started:</span>
+                      <p className="font-medium">
+                        {job.started_at ? new Date(job.started_at).toLocaleString() : "Not started"}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Completed:</span>
+                      <p className="font-medium">
+                        {job.completed_at ? new Date(job.completed_at).toLocaleString() : "-"}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">
+                        {job.job_type === 'full_server_update' ? 'Components:' : 'Target:'}
+                      </span>
+                      <p className="font-medium">
+                        {job.job_type === 'full_server_update' 
+                          ? `${subJobCounts[job.id] || 0} component updates`
+                          : (job.target_scope?.cluster_name || 
+                             (job.target_scope?.server_ids ? `${job.target_scope.server_ids.length} servers` : "N/A"))}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Scheduled:</span>
+                      <p className="font-medium">
+                        {job.schedule_at ? new Date(job.schedule_at).toLocaleString() : "Immediate"}
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </ContextMenuTrigger>
+            
+            <ContextMenuContent className="w-48">
+              <ContextMenuItem 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleViewDetails(job);
+                }}
+              >
+                <FileText className="mr-2 h-4 w-4" />
+                View Details
+              </ContextMenuItem>
               
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                <div>
-                  <span className="text-muted-foreground">Started:</span>
-                  <p className="font-medium">
-                    {job.started_at ? new Date(job.started_at).toLocaleString() : "Not started"}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Completed:</span>
-                  <p className="font-medium">
-                    {job.completed_at ? new Date(job.completed_at).toLocaleString() : "-"}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">
-                    {job.job_type === 'full_server_update' ? 'Components:' : 'Target:'}
-                  </span>
-                  <p className="font-medium">
-                    {job.job_type === 'full_server_update' 
-                      ? `${subJobCounts[job.id] || 0} component updates`
-                      : (job.target_scope?.cluster_name || 
-                         (job.target_scope?.server_ids ? `${job.target_scope.server_ids.length} servers` : "N/A"))}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Scheduled:</span>
-                  <p className="font-medium">
-                    {job.schedule_at ? new Date(job.schedule_at).toLocaleString() : "Immediate"}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              {canManageJobs && (job.status === 'pending' || job.status === 'running') && (
+                <>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCancelJob(job.id);
+                    }}
+                    className="text-destructive focus:text-destructive"
+                  >
+                    <XCircle className="mr-2 h-4 w-4" />
+                    Cancel Job
+                  </ContextMenuItem>
+                </>
+              )}
+              
+              {canManageJobs && job.status === 'failed' && (
+                <>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleRetryJob(job);
+                    }}
+                  >
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                    Retry Job
+                  </ContextMenuItem>
+                </>
+              )}
+            </ContextMenuContent>
+          </ContextMenu>
         ))}
       </div>
     );
