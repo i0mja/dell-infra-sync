@@ -82,6 +82,98 @@ export type Database = {
           },
         ]
       }
+      idrac_commands: {
+        Row: {
+          command_type: string
+          created_at: string
+          endpoint: string
+          error_message: string | null
+          full_url: string
+          id: string
+          initiated_by: string | null
+          job_id: string | null
+          request_body: Json | null
+          request_headers: Json | null
+          response_body: Json | null
+          response_time_ms: number | null
+          server_id: string | null
+          source: string | null
+          status_code: number | null
+          success: boolean
+          task_id: string | null
+          timestamp: string
+        }
+        Insert: {
+          command_type: string
+          created_at?: string
+          endpoint: string
+          error_message?: string | null
+          full_url: string
+          id?: string
+          initiated_by?: string | null
+          job_id?: string | null
+          request_body?: Json | null
+          request_headers?: Json | null
+          response_body?: Json | null
+          response_time_ms?: number | null
+          server_id?: string | null
+          source?: string | null
+          status_code?: number | null
+          success?: boolean
+          task_id?: string | null
+          timestamp?: string
+        }
+        Update: {
+          command_type?: string
+          created_at?: string
+          endpoint?: string
+          error_message?: string | null
+          full_url?: string
+          id?: string
+          initiated_by?: string | null
+          job_id?: string | null
+          request_body?: Json | null
+          request_headers?: Json | null
+          response_body?: Json | null
+          response_time_ms?: number | null
+          server_id?: string | null
+          source?: string | null
+          status_code?: number | null
+          success?: boolean
+          task_id?: string | null
+          timestamp?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "idrac_commands_initiated_by_fkey"
+            columns: ["initiated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "idrac_commands_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "idrac_commands_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "idrac_commands_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "job_tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       job_tasks: {
         Row: {
           completed_at: string | null

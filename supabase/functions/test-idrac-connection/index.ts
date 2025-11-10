@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { logIdracCommand } from "../_shared/idrac-logger.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -70,6 +71,28 @@ Deno.serve(async (req) => {
       });
 
       const responseTime = Date.now() - startTime;
+      let data = null;
+      try {
+        data = await response.json();
+      } catch (e) {
+        // Response body may not be JSON
+      }
+
+      // Log the command
+      await logIdracCommand({
+        supabase: supabaseClient,
+        commandType: 'GET',
+        endpoint: '/redfish/v1/',
+        fullUrl: redfishUrl,
+        requestHeaders: { 'Accept': 'application/json' },
+        statusCode: response.status,
+        responseTimeMs: responseTime,
+        responseBody: data,
+        success: response.ok,
+        errorMessage: response.ok ? undefined : `HTTP ${response.status}`,
+        initiatedBy: user.id,
+        source: 'edge_function',
+      });
 
       if (!response.ok) {
         let errorMessage = '';
@@ -102,11 +125,9 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
-
-      const data = await response.json();
       
       // Extract iDRAC version if available
-      const idracVersion = data.RedfishVersion || 'Unknown';
+      const idracVersion = data?.RedfishVersion || 'Unknown';
 
       // Update server connection status in database
       const { error: updateError } = await supabaseClient
@@ -144,6 +165,20 @@ Deno.serve(async (req) => {
       } else {
         errorMessage = error.message || 'Unknown connection error';
       }
+
+      // Log the failed command
+      await logIdracCommand({
+        supabase: supabaseClient,
+        commandType: 'GET',
+        endpoint: '/redfish/v1/',
+        fullUrl: redfishUrl,
+        requestHeaders: { 'Accept': 'application/json' },
+        responseTimeMs: responseTime,
+        success: false,
+        errorMessage,
+        initiatedBy: user.id,
+        source: 'edge_function',
+      });
 
       // Update server connection status in database
       const { error: updateError } = await supabaseClient

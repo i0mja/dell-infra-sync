@@ -9,9 +9,10 @@ import Layout from "@/components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Auth from "./pages/Auth";
 import Servers from "./pages/Servers";
-import VCenter from "./pages/VCenter";
 import Jobs from "./pages/Jobs";
 import Settings from "./pages/Settings";
+import VCenter from "./pages/VCenter";
+import ActivityMonitor from "./pages/ActivityMonitor";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -28,10 +29,11 @@ const App = () => (
               <Route path="/auth" element={<Auth />} />
               <Route path="/" element={<Layout />}>
                 <Route index element={<Dashboard />} />
-                <Route path="servers" element={<Servers />} />
-                <Route path="vcenter" element={<VCenter />} />
-                <Route path="jobs" element={<Jobs />} />
-                <Route path="settings" element={<Settings />} />
+        <Route path="servers" element={<Servers />} />
+        <Route path="vcenter" element={<VCenter />} />
+        <Route path="jobs" element={<Jobs />} />
+        <Route path="activity" element={<ActivityMonitor />} />
+        <Route path="settings" element={<Settings />} />
               </Route>
               <Route path="*" element={<NotFound />} />
             </Routes>
