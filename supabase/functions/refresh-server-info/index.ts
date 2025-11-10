@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { logIdracCommand } from '../_shared/idrac-logger.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -80,6 +81,7 @@ Deno.serve(async (req) => {
     const authHeader = `Basic ${btoa(`${username}:${password}`)}`;
 
     let redfishData;
+    const systemStartTime = Date.now();
     try {
       const response = await fetch(redfishUrl, {
         method: 'GET',
@@ -91,14 +93,50 @@ Deno.serve(async (req) => {
         signal: undefined,
       });
 
+      const systemResponseTime = Date.now() - systemStartTime;
+      const responseData = response.ok ? await response.json() : null;
+
+      // Log the command
+      await logIdracCommand({
+        supabase: supabaseClient,
+        serverId: server_id,
+        commandType: 'GET',
+        endpoint: '/redfish/v1/Systems/System.Embedded.1',
+        fullUrl: redfishUrl,
+        requestHeaders: { 'Accept': 'application/json' },
+        statusCode: response.status,
+        responseTimeMs: systemResponseTime,
+        responseBody: responseData,
+        success: response.ok,
+        errorMessage: !response.ok ? `iDRAC responded with status ${response.status}` : undefined,
+        initiatedBy: user.id,
+        source: 'edge_function',
+      });
+
       if (!response.ok) {
         throw new Error(`iDRAC responded with status ${response.status}`);
       }
 
-      redfishData = await response.json();
+      redfishData = responseData;
       console.log('[REDFISH] Successfully fetched system data');
     } catch (error) {
       console.error('[REDFISH] Failed to query iDRAC:', error);
+      
+      // Log the failed attempt
+      await logIdracCommand({
+        supabase: supabaseClient,
+        serverId: server_id,
+        commandType: 'GET',
+        endpoint: '/redfish/v1/Systems/System.Embedded.1',
+        fullUrl: redfishUrl,
+        requestHeaders: { 'Accept': 'application/json' },
+        responseTimeMs: Date.now() - systemStartTime,
+        success: false,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        initiatedBy: user.id,
+        source: 'edge_function',
+      });
+
       return new Response(JSON.stringify({ 
         error: 'Failed to connect to iDRAC',
         details: error instanceof Error ? error.message : 'Unknown error'
@@ -111,6 +149,7 @@ Deno.serve(async (req) => {
     // Query manager info for iDRAC version
     const managerUrl = `https://${ip_address}/redfish/v1/Managers/iDRAC.Embedded.1`;
     let idracFirmware = null;
+    const managerStartTime = Date.now();
     try {
       const managerResponse = await fetch(managerUrl, {
         method: 'GET',
@@ -120,12 +159,46 @@ Deno.serve(async (req) => {
         },
       });
 
-      if (managerResponse.ok) {
-        const managerData = await managerResponse.json();
+      const managerResponseTime = Date.now() - managerStartTime;
+      const managerData = managerResponse.ok ? await managerResponse.json() : null;
+
+      // Log the command
+      await logIdracCommand({
+        supabase: supabaseClient,
+        serverId: server_id,
+        commandType: 'GET',
+        endpoint: '/redfish/v1/Managers/iDRAC.Embedded.1',
+        fullUrl: managerUrl,
+        requestHeaders: { 'Accept': 'application/json' },
+        statusCode: managerResponse.status,
+        responseTimeMs: managerResponseTime,
+        responseBody: managerData,
+        success: managerResponse.ok,
+        errorMessage: !managerResponse.ok ? `Manager query failed: ${managerResponse.status}` : undefined,
+        initiatedBy: user.id,
+        source: 'edge_function',
+      });
+
+      if (managerResponse.ok && managerData) {
         idracFirmware = managerData.FirmwareVersion || null;
       }
     } catch (error) {
       console.warn('[REDFISH] Failed to fetch iDRAC firmware version:', error);
+      
+      // Log the failed attempt
+      await logIdracCommand({
+        supabase: supabaseClient,
+        serverId: server_id,
+        commandType: 'GET',
+        endpoint: '/redfish/v1/Managers/iDRAC.Embedded.1',
+        fullUrl: managerUrl,
+        requestHeaders: { 'Accept': 'application/json' },
+        responseTimeMs: Date.now() - managerStartTime,
+        success: false,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        initiatedBy: user.id,
+        source: 'edge_function',
+      });
     }
 
     // Extract server information
