@@ -96,9 +96,46 @@ Deno.serve(async (req) => {
           })
           .in('id', staleRunningJobs.map(j => j.id))
 
-        if (!cancelRunningError) {
+      if (!cancelRunningError) {
           staleCancelledCount += staleRunningJobs.length
           console.log(`[JOB-CLEANUP] Cancelled ${staleRunningJobs.length} stale running jobs`)
+        }
+      }
+
+      // Cancel orphaned sub-jobs whose parent is completed/failed/cancelled
+      console.log(`[JOB-CLEANUP] Checking for orphaned sub-jobs`)
+      
+      const { data: completedParents, error: parentsError } = await supabase
+        .from('jobs')
+        .select('id')
+        .in('status', ['completed', 'failed', 'cancelled'])
+
+      if (!parentsError && completedParents && completedParents.length > 0) {
+        const parentIds = completedParents.map(p => p.id)
+        
+        const { data: orphanedSubJobs, error: orphanedError } = await supabase
+          .from('jobs')
+          .select('id')
+          .in('status', ['pending', 'running'])
+          .not('parent_job_id', 'is', null)
+          .in('parent_job_id', parentIds)
+
+        if (!orphanedError && orphanedSubJobs && orphanedSubJobs.length > 0) {
+          const { error: cancelOrphanedError } = await supabase
+            .from('jobs')
+            .update({
+              status: 'cancelled',
+              completed_at: new Date().toISOString(),
+              details: {
+                cancellation_reason: 'Auto-cancelled: parent job completed/failed/cancelled'
+              }
+            })
+            .in('id', orphanedSubJobs.map(j => j.id))
+
+          if (!cancelOrphanedError) {
+            staleCancelledCount += orphanedSubJobs.length
+            console.log(`[JOB-CLEANUP] Cancelled ${orphanedSubJobs.length} orphaned sub-jobs`)
+          }
         }
       }
     }

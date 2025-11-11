@@ -55,6 +55,27 @@ serve(async (req) => {
 
       console.log(`Job updated: ${job.job_id} - status: ${job.status}`);
 
+      // If job is cancelled or failed, cascade to child jobs
+      if (job.status && ['cancelled', 'failed'].includes(job.status)) {
+        const { error: childError } = await supabase
+          .from('jobs')
+          .update({
+            status: 'cancelled',
+            completed_at: new Date().toISOString(),
+            details: {
+              cancellation_reason: `Auto-cancelled: parent job ${job.status}`
+            }
+          })
+          .eq('parent_job_id', job.job_id)
+          .in('status', ['pending', 'running']);
+
+        if (childError) {
+          console.error('Error cascading cancellation to child jobs:', childError);
+        } else {
+          console.log(`Cascaded ${job.status} status to child jobs of ${job.job_id}`);
+        }
+      }
+
       // Trigger notification if status changed to completed, failed, or running
       if (job.status && ['completed', 'failed', 'running'].includes(job.status)) {
         try {
