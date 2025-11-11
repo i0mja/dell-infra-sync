@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Briefcase, Plus, RefreshCw, Clock, CheckCircle, XCircle, PlayCircle, RotateCcw, FileText } from "lucide-react";
+import { Briefcase, Plus, RefreshCw, Clock, CheckCircle, XCircle, PlayCircle, RotateCcw, FileText, Settings } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -11,6 +11,7 @@ import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { useAuth } from "@/hooks/useAuth";
+import { Link } from "react-router-dom";
 
 interface Job {
   id: string;
@@ -378,6 +379,12 @@ const Jobs = () => {
         <div className="flex gap-2">
           <Button variant="outline" size="icon" onClick={fetchJobs}>
             <RefreshCw className="h-4 w-4" />
+          </Button>
+          <Button variant="outline" asChild>
+            <Link to="/settings?tab=activity-monitor">
+              <Settings className="mr-2 h-4 w-4" />
+              Job Settings
+            </Link>
           </Button>
           <Button onClick={() => setCreateDialogOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />

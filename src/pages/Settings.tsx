@@ -11,13 +11,19 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTheme } from "next-themes";
 import { Moon, Sun, Monitor, Database, Shield, AlertCircle } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 
 export default function Settings() {
   const { user, userRole } = useAuth();
   const { toast } = useToast();
   const { theme, setTheme } = useTheme();
+  const [searchParams] = useSearchParams();
   const [loading, setLoading] = useState(false);
   const [settingsId, setSettingsId] = useState<string | null>(null);
+  
+  // Get default tab from query params or use 'appearance'
+  const tabFromUrl = searchParams.get('tab');
+  const defaultTab = tabFromUrl === 'activity-monitor' ? 'activity' : 'appearance';
 
   // SMTP Settings
   const [smtpHost, setSmtpHost] = useState("");
@@ -563,7 +569,7 @@ export default function Settings() {
     <div className="container mx-auto py-8">
         <h1 className="text-3xl font-bold mb-6">Settings</h1>
 
-        <Tabs defaultValue="appearance" className="w-full">
+        <Tabs defaultValue={defaultTab} className="w-full">
           <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="appearance">Appearance</TabsTrigger>
             <TabsTrigger value="smtp">SMTP Email</TabsTrigger>
