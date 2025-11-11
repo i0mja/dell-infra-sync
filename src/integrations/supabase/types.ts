@@ -21,6 +21,9 @@ export type Database = {
           auto_cleanup_enabled: boolean
           created_at: string
           id: string
+          job_auto_cleanup_enabled: boolean | null
+          job_last_cleanup_at: string | null
+          job_retention_days: number | null
           keep_statistics: boolean
           last_cleanup_at: string | null
           log_level: string
@@ -37,6 +40,9 @@ export type Database = {
           auto_cleanup_enabled?: boolean
           created_at?: string
           id?: string
+          job_auto_cleanup_enabled?: boolean | null
+          job_last_cleanup_at?: string | null
+          job_retention_days?: number | null
           keep_statistics?: boolean
           last_cleanup_at?: string | null
           log_level?: string
@@ -53,6 +59,9 @@ export type Database = {
           auto_cleanup_enabled?: boolean
           created_at?: string
           id?: string
+          job_auto_cleanup_enabled?: boolean | null
+          job_last_cleanup_at?: string | null
+          job_retention_days?: number | null
           keep_statistics?: boolean
           last_cleanup_at?: string | null
           log_level?: string
@@ -652,6 +661,7 @@ export type Database = {
     }
     Functions: {
       cleanup_activity_logs: { Args: never; Returns: undefined }
+      cleanup_old_jobs: { Args: never; Returns: undefined }
       get_user_role: {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["app_role"]

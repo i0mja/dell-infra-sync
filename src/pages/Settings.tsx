@@ -65,6 +65,12 @@ export default function Settings() {
   const [keepStatistics, setKeepStatistics] = useState(true);
   const [statisticsRetentionDays, setStatisticsRetentionDays] = useState(365);
   const [cleaningUp, setCleaningUp] = useState(false);
+  
+  // Job Retention Settings
+  const [jobRetentionDays, setJobRetentionDays] = useState(90);
+  const [jobAutoCleanupEnabled, setJobAutoCleanupEnabled] = useState(true);
+  const [jobLastCleanupAt, setJobLastCleanupAt] = useState<string | null>(null);
+  const [jobCleaningUp, setJobCleaningUp] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -239,6 +245,9 @@ export default function Settings() {
         setAlertOnSlowCommands(activityData.alert_on_slow_commands ?? false);
         setKeepStatistics(activityData.keep_statistics ?? true);
         setStatisticsRetentionDays(activityData.statistics_retention_days ?? 365);
+        setJobRetentionDays(activityData.job_retention_days ?? 90);
+        setJobAutoCleanupEnabled(activityData.job_auto_cleanup_enabled ?? true);
+        setJobLastCleanupAt(activityData.job_last_cleanup_at);
       }
     } catch (error: any) {
       console.error("Error loading activity settings:", error);
@@ -381,6 +390,8 @@ export default function Settings() {
         alert_on_slow_commands: alertOnSlowCommands,
         keep_statistics: keepStatistics,
         statistics_retention_days: statisticsRetentionDays,
+        job_retention_days: jobRetentionDays,
+        job_auto_cleanup_enabled: jobAutoCleanupEnabled,
       };
 
       if (activitySettingsId) {
@@ -447,6 +458,41 @@ export default function Settings() {
       });
     } finally {
       setCleaningUp(false);
+    }
+  };
+
+  const handleJobCleanupNow = async () => {
+    if (userRole !== "admin") {
+      toast({
+        title: "Permission Denied",
+        description: "Only admins can trigger job cleanup",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setJobCleaningUp(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('cleanup-old-jobs');
+      
+      if (error) throw error;
+
+      toast({
+        title: "Job Cleanup Complete",
+        description: `Deleted ${data.deleted_count || 0} old jobs`,
+      });
+      
+      // Reload settings to get updated last_cleanup_at
+      loadSettings();
+    } catch (error: any) {
+      console.error("Error triggering job cleanup:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to trigger job cleanup",
+        variant: "destructive",
+      });
+    } finally {
+      setJobCleaningUp(false);
     }
   };
 
@@ -844,11 +890,11 @@ export default function Settings() {
               </CardHeader>
               <CardContent className="space-y-6">
                 
-                {/* Retention & Cleanup Section */}
+                {/* iDRAC Log Retention & Cleanup Section */}
                 <div className="space-y-4">
                   <h3 className="text-lg font-medium flex items-center gap-2">
                     <Shield className="h-4 w-4" />
-                    Log Retention & Cleanup
+                    iDRAC Log Retention & Cleanup
                   </h3>
                   
                   <div className="space-y-2">
@@ -862,7 +908,7 @@ export default function Settings() {
                       onChange={(e) => setLogRetentionDays(parseInt(e.target.value) || 30)}
                     />
                     <p className="text-sm text-muted-foreground">
-                      Logs older than this will be automatically deleted (1-365 days)
+                      iDRAC activity logs older than this will be automatically deleted (1-365 days)
                     </p>
                   </div>
 
@@ -891,7 +937,58 @@ export default function Settings() {
                     disabled={cleaningUp}
                     variant="outline"
                   >
-                    {cleaningUp ? "Cleaning Up..." : "Run Cleanup Now"}
+                    {cleaningUp ? "Cleaning Up..." : "Run Log Cleanup Now"}
+                  </Button>
+                </div>
+
+                {/* Job Retention & Cleanup Section */}
+                <div className="space-y-4 border-t pt-6">
+                  <h3 className="text-lg font-medium flex items-center gap-2">
+                    <Shield className="h-4 w-4" />
+                    Job Retention & Cleanup
+                  </h3>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="job-retention-days">Job Retention Period (Days)</Label>
+                    <Input
+                      id="job-retention-days"
+                      type="number"
+                      min="1"
+                      max="365"
+                      value={jobRetentionDays}
+                      onChange={(e) => setJobRetentionDays(parseInt(e.target.value) || 90)}
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Completed, failed, and cancelled jobs older than this will be automatically deleted (1-365 days)
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="job-auto-cleanup">Enable Automatic Job Cleanup</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Automatically delete old jobs daily at 3 AM
+                      </p>
+                    </div>
+                    <Switch
+                      id="job-auto-cleanup"
+                      checked={jobAutoCleanupEnabled}
+                      onCheckedChange={setJobAutoCleanupEnabled}
+                    />
+                  </div>
+
+                  {jobLastCleanupAt && (
+                    <div className="text-sm text-muted-foreground">
+                      Last job cleanup: {new Date(jobLastCleanupAt).toLocaleString()}
+                    </div>
+                  )}
+
+                  <Button 
+                    onClick={handleJobCleanupNow} 
+                    disabled={jobCleaningUp}
+                    variant="outline"
+                  >
+                    {jobCleaningUp ? "Cleaning Up..." : "Run Job Cleanup Now"}
                   </Button>
                 </div>
 
