@@ -77,10 +77,17 @@ export default function Settings() {
   const [jobAutoCleanupEnabled, setJobAutoCleanupEnabled] = useState(true);
   const [jobLastCleanupAt, setJobLastCleanupAt] = useState<string | null>(null);
   const [jobCleaningUp, setJobCleaningUp] = useState(false);
+  
+  // Stale Job Settings
+  const [stalePendingHours, setStalePendingHours] = useState(24);
+  const [staleRunningHours, setStaleRunningHours] = useState(48);
+  const [autoCancelStaleJobs, setAutoCancelStaleJobs] = useState(true);
+  const [staleJobCount, setStaleJobCount] = useState(0);
 
   useEffect(() => {
     loadSettings();
     loadApiTokens();
+    fetchStaleJobCount();
   }, []);
 
   const loadApiTokens = async () => {
@@ -254,6 +261,9 @@ export default function Settings() {
         setJobRetentionDays(activityData.job_retention_days ?? 90);
         setJobAutoCleanupEnabled(activityData.job_auto_cleanup_enabled ?? true);
         setJobLastCleanupAt(activityData.job_last_cleanup_at);
+        setStalePendingHours(activityData.stale_pending_hours ?? 24);
+        setStaleRunningHours(activityData.stale_running_hours ?? 48);
+        setAutoCancelStaleJobs(activityData.auto_cancel_stale_jobs ?? true);
       }
     } catch (error: any) {
       console.error("Error loading activity settings:", error);
@@ -398,6 +408,9 @@ export default function Settings() {
         statistics_retention_days: statisticsRetentionDays,
         job_retention_days: jobRetentionDays,
         job_auto_cleanup_enabled: jobAutoCleanupEnabled,
+        stale_pending_hours: stalePendingHours,
+        stale_running_hours: staleRunningHours,
+        auto_cancel_stale_jobs: autoCancelStaleJobs,
       };
 
       if (activitySettingsId) {
@@ -483,18 +496,102 @@ export default function Settings() {
       
       if (error) throw error;
 
+      const deletedCount = data.deleted_count || 0;
+      const cancelledCount = data.stale_cancelled_count || 0;
+      const message = cancelledCount > 0 
+        ? `Deleted ${deletedCount} old jobs and cancelled ${cancelledCount} stale jobs`
+        : `Deleted ${deletedCount} old jobs`;
+
       toast({
         title: "Job Cleanup Complete",
-        description: `Deleted ${data.deleted_count || 0} old jobs`,
+        description: message,
       });
       
       // Reload settings to get updated last_cleanup_at
       loadSettings();
+      fetchStaleJobCount();
     } catch (error: any) {
       console.error("Error triggering job cleanup:", error);
       toast({
         title: "Error",
         description: error.message || "Failed to trigger job cleanup",
+        variant: "destructive",
+      });
+    } finally {
+      setJobCleaningUp(false);
+    }
+  };
+
+  const fetchStaleJobCount = async () => {
+    try {
+      const { data: activityData } = await supabase
+        .from('activity_settings')
+        .select('stale_pending_hours, stale_running_hours')
+        .limit(1)
+        .maybeSingle();
+
+      if (!activityData) return;
+
+      const stalePendingCutoff = new Date();
+      stalePendingCutoff.setHours(stalePendingCutoff.getHours() - activityData.stale_pending_hours);
+      
+      const staleRunningCutoff = new Date();
+      staleRunningCutoff.setHours(staleRunningCutoff.getHours() - activityData.stale_running_hours);
+
+      const { count: pendingCount } = await supabase
+        .from('jobs')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'pending')
+        .lt('created_at', stalePendingCutoff.toISOString());
+
+      const { count: runningCount } = await supabase
+        .from('jobs')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'running')
+        .lt('started_at', staleRunningCutoff.toISOString());
+
+      setStaleJobCount((pendingCount || 0) + (runningCount || 0));
+    } catch (error: any) {
+      console.error("Error fetching stale job count:", error);
+    }
+  };
+
+  const handleCancelStaleJobsNow = async () => {
+    if (userRole !== "admin") {
+      toast({
+        title: "Permission Denied",
+        description: "Only admins can cancel stale jobs",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (staleJobCount === 0) {
+      toast({
+        title: "No Stale Jobs",
+        description: "There are no stale jobs to cancel",
+      });
+      return;
+    }
+
+    setJobCleaningUp(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('cleanup-old-jobs');
+      
+      if (error) throw error;
+
+      const cancelledCount = data.stale_cancelled_count || 0;
+      toast({
+        title: "Stale Jobs Cancelled",
+        description: `Cancelled ${cancelledCount} stale jobs`,
+      });
+      
+      fetchStaleJobCount();
+    } catch (error: any) {
+      console.error("Error cancelling stale jobs:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to cancel stale jobs",
         variant: "destructive",
       });
     } finally {
@@ -995,6 +1092,77 @@ export default function Settings() {
                     variant="outline"
                   >
                     {jobCleaningUp ? "Cleaning Up..." : "Run Job Cleanup Now"}
+                  </Button>
+                </div>
+
+                {/* Stale Job Management Section */}
+                <div className="space-y-4 border-t pt-6">
+                  <h3 className="text-lg font-medium flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4" />
+                    Stale Job Management
+                  </h3>
+
+                  {staleJobCount > 0 && (
+                    <div className="p-4 bg-warning/10 border border-warning rounded-lg">
+                      <p className="text-sm font-medium text-warning mb-1">
+                        ⚠️ {staleJobCount} Stale Job{staleJobCount !== 1 ? 's' : ''} Detected
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        Jobs stuck in pending or running state beyond configured thresholds
+                      </p>
+                    </div>
+                  )}
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="stale-pending-hours">Cancel Pending Jobs After (Hours)</Label>
+                    <Input
+                      id="stale-pending-hours"
+                      type="number"
+                      min="1"
+                      max="168"
+                      value={stalePendingHours}
+                      onChange={(e) => setStalePendingHours(parseInt(e.target.value) || 24)}
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Auto-cancel jobs stuck in pending state for longer than this (1-168 hours)
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="stale-running-hours">Cancel Running Jobs After (Hours)</Label>
+                    <Input
+                      id="stale-running-hours"
+                      type="number"
+                      min="1"
+                      max="168"
+                      value={staleRunningHours}
+                      onChange={(e) => setStaleRunningHours(parseInt(e.target.value) || 48)}
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Auto-cancel jobs stuck in running state for longer than this (1-168 hours)
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="auto-cancel-stale">Enable Automatic Stale Job Cancellation</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Automatically cancel stuck jobs during daily cleanup
+                      </p>
+                    </div>
+                    <Switch
+                      id="auto-cancel-stale"
+                      checked={autoCancelStaleJobs}
+                      onCheckedChange={setAutoCancelStaleJobs}
+                    />
+                  </div>
+
+                  <Button 
+                    onClick={handleCancelStaleJobsNow} 
+                    disabled={jobCleaningUp || staleJobCount === 0}
+                    variant={staleJobCount > 0 ? "default" : "outline"}
+                  >
+                    {jobCleaningUp ? "Cancelling..." : `Cancel Stale Jobs Now${staleJobCount > 0 ? ` (${staleJobCount})` : ''}`}
                   </Button>
                 </div>
 

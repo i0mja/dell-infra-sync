@@ -18,6 +18,7 @@ export type Database = {
         Row: {
           alert_on_failures: boolean
           alert_on_slow_commands: boolean
+          auto_cancel_stale_jobs: boolean | null
           auto_cleanup_enabled: boolean
           created_at: string
           id: string
@@ -31,12 +32,15 @@ export type Database = {
           max_request_body_kb: number
           max_response_body_kb: number
           slow_command_threshold_ms: number
+          stale_pending_hours: number | null
+          stale_running_hours: number | null
           statistics_retention_days: number
           updated_at: string
         }
         Insert: {
           alert_on_failures?: boolean
           alert_on_slow_commands?: boolean
+          auto_cancel_stale_jobs?: boolean | null
           auto_cleanup_enabled?: boolean
           created_at?: string
           id?: string
@@ -50,12 +54,15 @@ export type Database = {
           max_request_body_kb?: number
           max_response_body_kb?: number
           slow_command_threshold_ms?: number
+          stale_pending_hours?: number | null
+          stale_running_hours?: number | null
           statistics_retention_days?: number
           updated_at?: string
         }
         Update: {
           alert_on_failures?: boolean
           alert_on_slow_commands?: boolean
+          auto_cancel_stale_jobs?: boolean | null
           auto_cleanup_enabled?: boolean
           created_at?: string
           id?: string
@@ -69,6 +76,8 @@ export type Database = {
           max_request_body_kb?: number
           max_response_body_kb?: number
           slow_command_threshold_ms?: number
+          stale_pending_hours?: number | null
+          stale_running_hours?: number | null
           statistics_retention_days?: number
           updated_at?: string
         }

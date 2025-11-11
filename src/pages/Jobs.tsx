@@ -34,6 +34,7 @@ const Jobs = () => {
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
   const [subJobCounts, setSubJobCounts] = useState<Record<string, number>>({});
+  const [staleThresholds, setStaleThresholds] = useState({ pending: 24, running: 48 });
   const { toast } = useToast();
   const { userRole } = useAuth();
   
@@ -77,6 +78,7 @@ const Jobs = () => {
 
   useEffect(() => {
     fetchJobs();
+    fetchStaleThresholds();
 
     // Set up realtime subscription
     const channel = supabase
@@ -99,6 +101,51 @@ const Jobs = () => {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  const fetchStaleThresholds = async () => {
+    try {
+      const { data } = await supabase
+        .from('activity_settings')
+        .select('stale_pending_hours, stale_running_hours')
+        .limit(1)
+        .maybeSingle();
+      
+      if (data) {
+        setStaleThresholds({
+          pending: data.stale_pending_hours || 24,
+          running: data.stale_running_hours || 48
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching stale thresholds:', error);
+    }
+  };
+
+  const isJobStale = (job: Job): boolean => {
+    if (job.status === 'pending') {
+      const hoursOld = (new Date().getTime() - new Date(job.created_at).getTime()) / (1000 * 60 * 60);
+      return hoursOld > staleThresholds.pending;
+    }
+    if (job.status === 'running' && job.started_at) {
+      const hoursOld = (new Date().getTime() - new Date(job.started_at).getTime()) / (1000 * 60 * 60);
+      return hoursOld > staleThresholds.running;
+    }
+    return false;
+  };
+
+  const getJobAge = (job: Job): string => {
+    const referenceDate = job.status === 'running' && job.started_at 
+      ? new Date(job.started_at) 
+      : new Date(job.created_at);
+    
+    const hoursOld = (new Date().getTime() - referenceDate.getTime()) / (1000 * 60 * 60);
+    const daysOld = Math.floor(hoursOld / 24);
+    
+    if (daysOld > 0) {
+      return `${daysOld} day${daysOld !== 1 ? 's' : ''}`;
+    }
+    return `${Math.floor(hoursOld)} hour${Math.floor(hoursOld) !== 1 ? 's' : ''}`;
+  };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -277,7 +324,14 @@ const Jobs = () => {
                         </p>
                       </div>
                     </div>
-                    {getStatusBadge(job.status)}
+                    <div className="flex gap-2">
+                      {getStatusBadge(job.status)}
+                      {isJobStale(job) && (
+                        <Badge variant="outline" className="border-warning text-warning">
+                          ⚠️ Stuck ({getJobAge(job)})
+                        </Badge>
+                      )}
+                    </div>
                   </div>
                   
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
