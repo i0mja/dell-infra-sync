@@ -94,6 +94,13 @@ export default function Settings() {
     fetchStaleJobCount();
   }, []);
 
+  // Sync activeTab with URL params when they change
+  useEffect(() => {
+    const tabFromUrl = searchParams.get('tab');
+    const newTab = tabFromUrl === 'activity-monitor' ? 'activity' : tabFromUrl === 'jobs' ? 'jobs' : tabFromUrl || 'appearance';
+    setActiveTab(newTab);
+  }, [searchParams]);
+
   const loadApiTokens = async () => {
     const { data, error } = await supabase
       .from('api_tokens')
