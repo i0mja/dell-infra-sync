@@ -101,6 +101,45 @@ export default function Settings() {
     setActiveTab(newTab);
   }, [searchParams]);
 
+  // Tab metadata for dynamic headers
+  const tabMetadata: Record<string, { title: string; description: string; icon: any }> = {
+    appearance: {
+      title: "Appearance",
+      description: "Customize how the application looks and feels",
+      icon: Palette,
+    },
+    smtp: {
+      title: "SMTP Configuration",
+      description: "Configure your SMTP server for email notifications",
+      icon: Mail,
+    },
+    teams: {
+      title: "Microsoft Teams Integration",
+      description: "Configure Teams webhook for job notifications",
+      icon: MessageSquare,
+    },
+    openmanage: {
+      title: "Dell OpenManage Enterprise",
+      description: "Configure automatic server discovery from OpenManage Enterprise",
+      icon: Server,
+    },
+    jobs: {
+      title: "Jobs Configuration",
+      description: "Configure job retention, cleanup, and stale job management",
+      icon: Briefcase,
+    },
+    activity: {
+      title: "Activity Monitor Settings",
+      description: "Configure log retention, cleanup, and monitoring preferences",
+      icon: Activity,
+    },
+    preferences: {
+      title: "Notification Preferences",
+      description: "Choose which events trigger notifications",
+      icon: Bell,
+    },
+  };
+
   const loadApiTokens = async () => {
     const { data, error } = await supabase
       .from('api_tokens')
@@ -676,8 +715,22 @@ export default function Settings() {
   return (
     <div className="container mx-auto py-8">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold">Settings</h1>
-        <p className="text-muted-foreground">Manage your application settings</p>
+        <div className="flex items-center gap-3 mb-2">
+          {tabMetadata[activeTab]?.icon && (
+            <div className="text-primary">
+              {(() => {
+                const IconComponent = tabMetadata[activeTab].icon;
+                return <IconComponent className="h-8 w-8" />;
+              })()}
+            </div>
+          )}
+          <h1 className="text-3xl font-bold">
+            {tabMetadata[activeTab]?.title || "Settings"}
+          </h1>
+        </div>
+        <p className="text-muted-foreground">
+          {tabMetadata[activeTab]?.description || "Manage your application settings"}
+        </p>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
