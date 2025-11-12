@@ -97,7 +97,7 @@ const Layout = () => {
             key={item.name}
             variant={isActive ? "secondary" : "ghost"}
             className={cn(
-              "w-full justify-start",
+              "w-full justify-start transition-all duration-200",
               isActive && "bg-secondary"
             )}
             onClick={() => {
@@ -112,19 +112,24 @@ const Layout = () => {
       })}
       
       {/* Jobs Dropdown */}
-      <Collapsible open={jobsOpen} onOpenChange={setJobsOpen}>
+      <Collapsible open={jobsOpen}>
         <CollapsibleTrigger asChild>
           <Button
             variant={location.pathname === '/jobs' ? "secondary" : "ghost"}
             className={cn(
-              "w-full justify-start",
+              "w-full justify-start transition-all duration-200",
               location.pathname === '/jobs' && "bg-secondary"
             )}
+            onClick={() => {
+              if (location.pathname !== '/jobs') {
+                navigate('/jobs?view=all');
+              }
+            }}
           >
             <Briefcase className="mr-2 h-4 w-4" />
             <span className="flex-1 text-left">Jobs</span>
             <ChevronRight className={cn(
-              "h-4 w-4 transition-transform",
+              "h-4 w-4 transition-transform duration-300 ease-in-out",
               jobsOpen && "rotate-90"
             )} />
           </Button>
@@ -139,7 +144,7 @@ const Layout = () => {
                 key={item.name}
                 variant={isActive ? "secondary" : "ghost"}
                 className={cn(
-                  "w-full justify-start pl-10 text-sm",
+                  "w-full justify-start pl-10 text-sm transition-all duration-200",
                   isActive && "bg-muted text-foreground font-medium"
                 )}
                 onClick={() => {
@@ -156,19 +161,24 @@ const Layout = () => {
       </Collapsible>
       
       {/* Settings Dropdown */}
-      <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen}>
+      <Collapsible open={settingsOpen}>
         <CollapsibleTrigger asChild>
           <Button
             variant={location.pathname === '/settings' ? "secondary" : "ghost"}
             className={cn(
-              "w-full justify-start",
+              "w-full justify-start transition-all duration-200",
               location.pathname === '/settings' && "bg-secondary"
             )}
+            onClick={() => {
+              if (location.pathname !== '/settings') {
+                navigate('/settings?tab=appearance');
+              }
+            }}
           >
             <Settings className="mr-2 h-4 w-4" />
             <span className="flex-1 text-left">Settings</span>
             <ChevronRight className={cn(
-              "h-4 w-4 transition-transform",
+              "h-4 w-4 transition-transform duration-300 ease-in-out",
               settingsOpen && "rotate-90"
             )} />
           </Button>
@@ -183,7 +193,7 @@ const Layout = () => {
                 key={item.name}
                 variant={isActive ? "secondary" : "ghost"}
                 className={cn(
-                  "w-full justify-start pl-10 text-sm",
+                  "w-full justify-start pl-10 text-sm transition-all duration-200",
                   isActive && "bg-muted text-foreground font-medium"
                 )}
                 onClick={() => {
@@ -265,7 +275,7 @@ const Layout = () => {
 
         {/* Main Content */}
         <main className="flex-1 overflow-auto">
-          <div className="animate-in fade-in duration-200">
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
             <Outlet key={location.pathname} />
           </div>
         </main>
