@@ -1,7 +1,7 @@
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { Server, Database, Briefcase, Activity, LogOut, Menu, Settings, LayoutDashboard, ChevronRight, Palette, Mail, MessageSquare, Bell } from "lucide-react";
+import { Server, Database, Briefcase, Activity, LogOut, Menu, Settings, LayoutDashboard, ChevronRight, Palette, Mail, MessageSquare, Bell, PlayCircle, CheckCircle, XCircle, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
 import {
@@ -23,6 +23,7 @@ const Layout = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchParams] = useSearchParams();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [jobsOpen, setJobsOpen] = useState(false);
 
   // Auto-expand settings if we're on a settings page
   useEffect(() => {
@@ -30,6 +31,15 @@ const Layout = () => {
       setSettingsOpen(true);
     } else {
       setSettingsOpen(false);
+    }
+  }, [location.pathname]);
+
+  // Auto-expand jobs if we're on a jobs page
+  useEffect(() => {
+    if (location.pathname === '/jobs') {
+      setJobsOpen(true);
+    } else {
+      setJobsOpen(false);
     }
   }, [location.pathname]);
 
@@ -51,7 +61,6 @@ const Layout = () => {
     { name: "Dashboard", href: "/", icon: LayoutDashboard },
     { name: "Servers", href: "/servers", icon: Server },
     { name: "vCenter", href: "/vcenter", icon: Database },
-    { name: "Jobs", href: "/jobs", icon: Briefcase },
     { name: "Activity Monitor", href: "/activity", icon: Activity },
   ];
 
@@ -65,7 +74,16 @@ const Layout = () => {
     { name: "Preferences", href: "/settings?tab=preferences", icon: Bell, group: "Other" },
   ];
 
+  const jobsNavigation = [
+    { name: "All Jobs", href: "/jobs?view=all", icon: Briefcase },
+    { name: "Active", href: "/jobs?view=active", icon: PlayCircle },
+    { name: "Completed", href: "/jobs?view=completed", icon: CheckCircle },
+    { name: "Failed", href: "/jobs?view=failed", icon: XCircle },
+    { name: "Scheduled", href: "/jobs?view=scheduled", icon: Clock },
+  ];
+
   const activeTab = searchParams.get('tab') || 'appearance';
+  const activeJobView = searchParams.get('view') || 'all';
 
   const NavLinks = () => (
     <>
@@ -89,6 +107,50 @@ const Layout = () => {
           </Button>
         );
       })}
+      
+      {/* Jobs Dropdown */}
+      <Collapsible open={jobsOpen} onOpenChange={setJobsOpen}>
+        <CollapsibleTrigger asChild>
+          <Button
+            variant={location.pathname === '/jobs' ? "secondary" : "ghost"}
+            className={cn(
+              "w-full justify-start",
+              location.pathname === '/jobs' && "bg-secondary"
+            )}
+          >
+            <Briefcase className="mr-2 h-4 w-4" />
+            <span className="flex-1 text-left">Jobs</span>
+            <ChevronRight className={cn(
+              "h-4 w-4 transition-transform",
+              jobsOpen && "rotate-90"
+            )} />
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="space-y-1 mt-1">
+          {jobsNavigation.map((item) => {
+            const isActive = location.pathname === '/jobs' && 
+                            (item.href.includes(`view=${activeJobView}`) || 
+                             (!activeJobView && item.href.includes('view=all')));
+            return (
+              <Button
+                key={item.name}
+                variant={isActive ? "secondary" : "ghost"}
+                className={cn(
+                  "w-full justify-start pl-10 text-sm",
+                  isActive && "bg-muted text-foreground font-medium"
+                )}
+                onClick={() => {
+                  navigate(item.href);
+                  setMobileOpen(false);
+                }}
+              >
+                <item.icon className="mr-2 h-3.5 w-3.5" />
+                {item.name}
+              </Button>
+            );
+          })}
+        </CollapsibleContent>
+      </Collapsible>
       
       {/* Settings Dropdown */}
       <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen}>

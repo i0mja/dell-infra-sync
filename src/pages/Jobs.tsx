@@ -2,16 +2,18 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Briefcase, Plus, RefreshCw, Clock, CheckCircle, XCircle, PlayCircle, RotateCcw, FileText, Settings } from "lucide-react";
+import { Briefcase, Plus, RefreshCw, Clock, CheckCircle, XCircle, PlayCircle, RotateCcw, FileText, Settings, Calendar, Filter, BarChart3 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { CreateJobDialog } from "@/components/jobs/CreateJobDialog";
 import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { useAuth } from "@/hooks/useAuth";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 
 interface Job {
   id: string;
@@ -27,6 +29,34 @@ interface Job {
   parent_job_id: string | null;
 }
 
+const viewMetadata = {
+  all: {
+    title: "All Jobs",
+    description: "View and manage all jobs across the system",
+    icon: Briefcase,
+  },
+  active: {
+    title: "Active Jobs",
+    description: "Monitor running and pending jobs in real-time",
+    icon: PlayCircle,
+  },
+  completed: {
+    title: "Completed Jobs",
+    description: "Review successfully finished jobs",
+    icon: CheckCircle,
+  },
+  failed: {
+    title: "Failed Jobs",
+    description: "Investigate errors and retry failed jobs",
+    icon: XCircle,
+  },
+  scheduled: {
+    title: "Scheduled Jobs",
+    description: "Manage jobs scheduled for future execution",
+    icon: Calendar,
+  },
+};
+
 const Jobs = () => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,9 +65,13 @@ const Jobs = () => {
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
   const [subJobCounts, setSubJobCounts] = useState<Record<string, number>>({});
   const [staleThresholds, setStaleThresholds] = useState({ pending: 24, running: 48 });
+  const [searchParams] = useSearchParams();
+  const [selectedJobType, setSelectedJobType] = useState<string>("all");
   const { toast } = useToast();
   const { userRole } = useAuth();
   
+  const view = searchParams.get('view') || 'all';
+  const currentView = viewMetadata[view as keyof typeof viewMetadata] || viewMetadata.all;
   const canManageJobs = userRole === 'admin' || userRole === 'operator';
 
   const fetchJobs = async () => {
@@ -183,12 +217,26 @@ const Jobs = () => {
     return labels[type] || type;
   };
 
-  const filterJobs = (filterStatus: string) => {
-    if (filterStatus === 'all') return jobs;
-    if (filterStatus === 'active') {
-      return jobs.filter(j => j.status === 'pending' || j.status === 'running');
+  const filterJobs = (filterView: string) => {
+    let filtered = jobs;
+
+    // Filter by view
+    if (filterView === 'active') {
+      filtered = filtered.filter(j => j.status === 'pending' || j.status === 'running');
+    } else if (filterView === 'completed') {
+      filtered = filtered.filter(j => j.status === 'completed');
+    } else if (filterView === 'failed') {
+      filtered = filtered.filter(j => j.status === 'failed' || j.status === 'cancelled');
+    } else if (filterView === 'scheduled') {
+      filtered = filtered.filter(j => j.schedule_at !== null && j.status === 'pending');
     }
-    return jobs.filter(j => j.status === filterStatus);
+
+    // Filter by job type if not 'all'
+    if (selectedJobType !== 'all') {
+      filtered = filtered.filter(j => j.job_type === selectedJobType);
+    }
+
+    return filtered;
   };
 
   const handleCancelJob = async (jobId: string) => {
@@ -287,10 +335,12 @@ const Jobs = () => {
       return (
         <Card>
           <CardContent className="flex flex-col items-center justify-center p-12 text-center">
-            <Briefcase className="h-12 w-12 text-muted-foreground mb-4" />
+            <currentView.icon className="h-12 w-12 text-muted-foreground mb-4" />
             <p className="text-lg font-medium mb-2">No jobs found</p>
             <p className="text-muted-foreground mb-4">
-              Create your first job to start automating server management
+              {view === 'scheduled' 
+                ? "No jobs are scheduled for future execution"
+                : "Create your first job to start automating server management"}
             </p>
             <Button onClick={() => setCreateDialogOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
@@ -417,18 +467,26 @@ const Jobs = () => {
     );
   };
 
-  const activeJobs = filterJobs('active').length;
-  const completedJobs = filterJobs('completed').length;
-  const failedJobs = filterJobs('failed').length;
+  const activeJobs = jobs.filter(j => j.status === 'pending' || j.status === 'running').length;
+  const completedJobs = jobs.filter(j => j.status === 'completed').length;
+  const failedJobs = jobs.filter(j => j.status === 'failed' || j.status === 'cancelled').length;
+
+  const filteredJobs = filterJobs(view);
 
   return (
     <div className="container mx-auto p-6">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-bold mb-2">Job Management</h1>
-          <p className="text-muted-foreground">
-            Create and monitor firmware updates, discovery scans, and automation jobs
-          </p>
+      {/* Dynamic Page Header */}
+      <div className="flex items-start justify-between mb-8">
+        <div className="flex items-start gap-4">
+          <div className="p-3 rounded-lg bg-primary/10">
+            <currentView.icon className="h-6 w-6 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-3xl font-bold mb-2">{currentView.title}</h1>
+            <p className="text-muted-foreground">
+              {currentView.description}
+            </p>
+          </div>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="icon" onClick={fetchJobs}>
@@ -437,7 +495,7 @@ const Jobs = () => {
           <Button variant="outline" asChild>
             <Link to="/settings?tab=jobs">
               <Settings className="mr-2 h-4 w-4" />
-              Job Settings
+              Settings
             </Link>
           </Button>
           <Button onClick={() => setCreateDialogOpen(true)}>
@@ -447,6 +505,7 @@ const Jobs = () => {
         </div>
       </div>
 
+      {/* Summary Cards */}
       <div className="grid gap-6 md:grid-cols-3 mb-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -500,26 +559,37 @@ const Jobs = () => {
         </Card>
       </div>
 
-      <Tabs defaultValue="all" className="w-full">
-        <TabsList className="grid w-full max-w-md grid-cols-4">
-          <TabsTrigger value="all">All</TabsTrigger>
-          <TabsTrigger value="active">Active</TabsTrigger>
-          <TabsTrigger value="completed">Completed</TabsTrigger>
-          <TabsTrigger value="failed">Failed</TabsTrigger>
-        </TabsList>
-        <TabsContent value="all" className="mt-6">
-          {renderJobsList(filterJobs('all'))}
-        </TabsContent>
-        <TabsContent value="active" className="mt-6">
-          {renderJobsList(filterJobs('active'))}
-        </TabsContent>
-        <TabsContent value="completed" className="mt-6">
-          {renderJobsList(filterJobs('completed'))}
-        </TabsContent>
-        <TabsContent value="failed" className="mt-6">
-          {renderJobsList(filterJobs('failed'))}
-        </TabsContent>
-      </Tabs>
+      {/* Job Type Filter (shown for all views) */}
+      <div className="mb-6 flex items-center gap-4">
+        <div className="flex items-center gap-2">
+          <Filter className="h-4 w-4 text-muted-foreground" />
+          <span className="text-sm font-medium">Filter by type:</span>
+        </div>
+        <Select value={selectedJobType} onValueChange={setSelectedJobType}>
+          <SelectTrigger className="w-[200px]">
+            <SelectValue placeholder="All job types" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Types</SelectItem>
+            <SelectItem value="firmware_update">Firmware Update</SelectItem>
+            <SelectItem value="discovery_scan">Discovery Scan</SelectItem>
+            <SelectItem value="vcenter_sync">vCenter Sync</SelectItem>
+            <SelectItem value="full_server_update">Full Server Update</SelectItem>
+          </SelectContent>
+        </Select>
+        {selectedJobType !== 'all' && (
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={() => setSelectedJobType('all')}
+          >
+            Clear filter
+          </Button>
+        )}
+      </div>
+
+      {/* Jobs List */}
+      {renderJobsList(filteredJobs)}
 
       <CreateJobDialog 
         open={createDialogOpen} 
