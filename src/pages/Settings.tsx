@@ -737,12 +737,6 @@ export default function Settings() {
 
           <TabsContent value="appearance">
             <Card>
-              <CardHeader>
-                <CardTitle>Appearance</CardTitle>
-                <CardDescription>
-                  Customize how the application looks and feels
-                </CardDescription>
-              </CardHeader>
               <CardContent className="space-y-6">
                 <div className="space-y-4">
                   <Label>Theme</Label>
@@ -782,12 +776,6 @@ export default function Settings() {
 
           <TabsContent value="smtp">
             <Card>
-              <CardHeader>
-                <CardTitle>SMTP Configuration</CardTitle>
-                <CardDescription>
-                  Configure your SMTP server for email notifications
-                </CardDescription>
-              </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="smtp-host">SMTP Host</Label>
@@ -851,12 +839,6 @@ export default function Settings() {
 
           <TabsContent value="teams">
             <Card>
-              <CardHeader>
-                <CardTitle>Microsoft Teams Integration</CardTitle>
-                <CardDescription>
-                  Configure Teams webhook for job notifications
-                </CardDescription>
-              </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="teams-webhook">Teams Webhook URL</Label>
@@ -880,12 +862,6 @@ export default function Settings() {
 
           <TabsContent value="openmanage">
             <Card>
-              <CardHeader>
-                <CardTitle>Dell OpenManage Enterprise</CardTitle>
-                <CardDescription>
-                  Configure automatic server discovery from OpenManage Enterprise
-                </CardDescription>
-              </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="ome-host">OpenManage Host</Label>
@@ -1041,15 +1017,6 @@ export default function Settings() {
 
           <TabsContent value="jobs">
             <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Database className="h-5 w-5" />
-                  Jobs Configuration
-                </CardTitle>
-                <CardDescription>
-                  Configure job retention, cleanup, and stale job management
-                </CardDescription>
-              </CardHeader>
               <CardContent className="space-y-6">
                 
                 {/* Job Retention & Cleanup Section */}
@@ -1183,15 +1150,6 @@ export default function Settings() {
 
           <TabsContent value="activity">
             <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Database className="h-5 w-5" />
-                  Activity Monitor Settings
-                </CardTitle>
-                <CardDescription>
-                  Configure log retention, cleanup, and monitoring preferences
-                </CardDescription>
-              </CardHeader>
               <CardContent className="space-y-6">
                 
                 {/* iDRAC Log Retention & Cleanup Section */}
@@ -1398,12 +1356,6 @@ export default function Settings() {
 
           <TabsContent value="preferences">
             <Card>
-              <CardHeader>
-                <CardTitle>Notification Preferences</CardTitle>
-                <CardDescription>
-                  Choose which events trigger notifications
-                </CardDescription>
-              </CardHeader>
               <CardContent className="space-y-6">
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
