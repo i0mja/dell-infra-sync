@@ -1,7 +1,7 @@
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { Server, Database, Briefcase, Activity, LogOut, Menu, Settings, LayoutDashboard } from "lucide-react";
+import { Server, Database, Briefcase, Activity, LogOut, Menu, Settings, LayoutDashboard, ChevronRight, Palette, Mail, MessageSquare, Bell } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
 import {
@@ -9,12 +9,27 @@ import {
   SheetContent,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { useSearchParams } from "react-router-dom";
 
 const Layout = () => {
   const { user, signOut, loading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [searchParams] = useSearchParams();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Auto-expand settings if we're on a settings page
+  useEffect(() => {
+    if (location.pathname === '/settings') {
+      setSettingsOpen(true);
+    }
+  }, [location.pathname]);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -36,8 +51,19 @@ const Layout = () => {
     { name: "vCenter", href: "/vcenter", icon: Database },
     { name: "Jobs", href: "/jobs", icon: Briefcase },
     { name: "Activity Monitor", href: "/activity", icon: Activity },
-    { name: "Settings", href: "/settings", icon: Settings },
   ];
+
+  const settingsNavigation = [
+    { name: "Appearance", href: "/settings?tab=appearance", icon: Palette, group: "General" },
+    { name: "SMTP Email", href: "/settings?tab=smtp", icon: Mail, group: "Integrations" },
+    { name: "Microsoft Teams", href: "/settings?tab=teams", icon: MessageSquare, group: "Integrations" },
+    { name: "OpenManage", href: "/settings?tab=openmanage", icon: Server, group: "Integrations" },
+    { name: "Jobs", href: "/settings?tab=jobs", icon: Briefcase, group: "Monitoring" },
+    { name: "Activity Monitor", href: "/settings?tab=activity", icon: Activity, group: "Monitoring" },
+    { name: "Preferences", href: "/settings?tab=preferences", icon: Bell, group: "Other" },
+  ];
+
+  const activeTab = searchParams.get('tab') || 'appearance';
 
   const NavLinks = () => (
     <>
@@ -61,6 +87,50 @@ const Layout = () => {
           </Button>
         );
       })}
+      
+      {/* Settings Dropdown */}
+      <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <CollapsibleTrigger asChild>
+          <Button
+            variant={location.pathname === '/settings' ? "secondary" : "ghost"}
+            className={cn(
+              "w-full justify-start",
+              location.pathname === '/settings' && "bg-secondary"
+            )}
+          >
+            <Settings className="mr-2 h-4 w-4" />
+            <span className="flex-1 text-left">Settings</span>
+            <ChevronRight className={cn(
+              "h-4 w-4 transition-transform",
+              settingsOpen && "rotate-90"
+            )} />
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="space-y-1 mt-1">
+          {settingsNavigation.map((item) => {
+            const isActive = location.pathname === '/settings' && 
+                            (item.href.includes(`tab=${activeTab}`) || 
+                             (!activeTab && item.href.includes('tab=appearance')));
+            return (
+              <Button
+                key={item.name}
+                variant={isActive ? "secondary" : "ghost"}
+                className={cn(
+                  "w-full justify-start pl-10 text-sm",
+                  isActive && "bg-muted text-foreground font-medium"
+                )}
+                onClick={() => {
+                  navigate(item.href);
+                  setMobileOpen(false);
+                }}
+              >
+                <item.icon className="mr-2 h-3.5 w-3.5" />
+                {item.name}
+              </Button>
+            );
+          })}
+        </CollapsibleContent>
+      </Collapsible>
     </>
   );
 

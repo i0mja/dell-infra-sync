@@ -668,130 +668,12 @@ export default function Settings() {
 
   return (
     <div className="container mx-auto py-8">
-      <h1 className="text-3xl font-bold mb-6">Settings</h1>
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold">Settings</h1>
+        <p className="text-muted-foreground">Manage your application settings</p>
+      </div>
 
-      <div className="flex gap-6 w-full">
-        {/* Sidebar Navigation */}
-        <aside className="w-64 shrink-0">
-          <ScrollArea className="h-[calc(100vh-12rem)]">
-            <nav className="space-y-2 pr-4">
-              {/* General Section */}
-              <div className="space-y-1">
-                <button
-                  onClick={() => setActiveTab("appearance")}
-                  className={cn(
-                    "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
-                    activeTab === "appearance"
-                      ? "bg-muted text-foreground font-medium"
-                      : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                  )}
-                >
-                  <Palette className="h-4 w-4" />
-                  <span>Appearance</span>
-                </button>
-              </div>
-
-              {/* Integrations Section */}
-              <Collapsible defaultOpen className="space-y-1">
-                <CollapsibleTrigger className="w-full flex items-center gap-2 px-3 py-2 text-sm font-medium text-foreground hover:bg-muted/50 rounded-md transition-colors">
-                  <Server className="h-4 w-4" />
-                  <span>Integrations</span>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-1 pl-6">
-                  <button
-                    onClick={() => setActiveTab("smtp")}
-                    className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
-                      activeTab === "smtp"
-                        ? "bg-muted text-foreground font-medium"
-                        : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                    )}
-                  >
-                    <Mail className="h-4 w-4" />
-                    <span>SMTP Email</span>
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("teams")}
-                    className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
-                      activeTab === "teams"
-                        ? "bg-muted text-foreground font-medium"
-                        : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                    )}
-                  >
-                    <MessageSquare className="h-4 w-4" />
-                    <span>Microsoft Teams</span>
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("openmanage")}
-                    className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
-                      activeTab === "openmanage"
-                        ? "bg-muted text-foreground font-medium"
-                        : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                    )}
-                  >
-                    <Server className="h-4 w-4" />
-                    <span>OpenManage</span>
-                  </button>
-                </CollapsibleContent>
-              </Collapsible>
-
-              {/* Monitoring Section */}
-              <Collapsible defaultOpen className="space-y-1">
-                <CollapsibleTrigger className="w-full flex items-center gap-2 px-3 py-2 text-sm font-medium text-foreground hover:bg-muted/50 rounded-md transition-colors">
-                  <Activity className="h-4 w-4" />
-                  <span>Monitoring</span>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-1 pl-6">
-                  <button
-                    onClick={() => setActiveTab("jobs")}
-                    className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
-                      activeTab === "jobs"
-                        ? "bg-muted text-foreground font-medium"
-                        : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                    )}
-                  >
-                    <Briefcase className="h-4 w-4" />
-                    <span>Jobs</span>
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("activity")}
-                    className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
-                      activeTab === "activity"
-                        ? "bg-muted text-foreground font-medium"
-                        : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                    )}
-                  >
-                    <Activity className="h-4 w-4" />
-                    <span>Activity Monitor</span>
-                  </button>
-                </CollapsibleContent>
-              </Collapsible>
-
-              {/* Preferences Section */}
-              <div className="space-y-1">
-                <button
-                  onClick={() => setActiveTab("preferences")}
-                  className={cn(
-                    "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
-                    activeTab === "preferences"
-                      ? "bg-muted text-foreground font-medium"
-                      : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                  )}
-                >
-                  <Bell className="h-4 w-4" />
-                  <span>Preferences</span>
-                </button>
-              </div>
-            </nav>
-          </ScrollArea>
-        </aside>
-
-        {/* Main Content Area */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
 
           <TabsContent value="appearance">
             <Card>
@@ -1550,7 +1432,6 @@ export default function Settings() {
             </div>
           </DialogContent>
         </Dialog>
-      </div>
     </div>
   );
 }
