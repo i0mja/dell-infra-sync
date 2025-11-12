@@ -25,20 +25,16 @@ const Layout = () => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [jobsOpen, setJobsOpen] = useState(false);
 
-  // Auto-expand settings if we're on a settings page
+  // Make Jobs & Settings mutually exclusive
   useEffect(() => {
     if (location.pathname === '/settings') {
       setSettingsOpen(true);
+      setJobsOpen(false);
+    } else if (location.pathname === '/jobs') {
+      setJobsOpen(true);
+      setSettingsOpen(false);
     } else {
       setSettingsOpen(false);
-    }
-  }, [location.pathname]);
-
-  // Auto-expand jobs if we're on a jobs page
-  useEffect(() => {
-    if (location.pathname === '/jobs') {
-      setJobsOpen(true);
-    } else {
       setJobsOpen(false);
     }
   }, [location.pathname]);
@@ -50,7 +46,14 @@ const Layout = () => {
   }, [user, loading, navigate]);
 
   if (loading) {
-    return null;
+    return (
+      <div className="flex h-screen items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-4">
+          <Server className="h-12 w-12 text-primary animate-pulse" />
+          <p className="text-muted-foreground">Loading Server Manager...</p>
+        </div>
+      </div>
+    );
   }
 
   if (!user) {
@@ -262,7 +265,9 @@ const Layout = () => {
 
         {/* Main Content */}
         <main className="flex-1 overflow-auto">
-          <Outlet key={location.pathname} />
+          <div className="animate-in fade-in duration-200">
+            <Outlet key={location.pathname} />
+          </div>
         </main>
       </div>
     </div>
