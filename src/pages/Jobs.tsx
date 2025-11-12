@@ -435,7 +435,7 @@ const Jobs = () => {
             <RefreshCw className="h-4 w-4" />
           </Button>
           <Button variant="outline" asChild>
-            <Link to="/settings?tab=activity-monitor">
+            <Link to="/settings?tab=jobs">
               <Settings className="mr-2 h-4 w-4" />
               Job Settings
             </Link>

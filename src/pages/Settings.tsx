@@ -23,7 +23,7 @@ export default function Settings() {
   
   // Get default tab from query params or use 'appearance'
   const tabFromUrl = searchParams.get('tab');
-  const defaultTab = tabFromUrl === 'activity-monitor' ? 'activity' : 'appearance';
+  const defaultTab = tabFromUrl === 'activity-monitor' ? 'activity' : tabFromUrl === 'jobs' ? 'jobs' : 'appearance';
 
   // SMTP Settings
   const [smtpHost, setSmtpHost] = useState("");
@@ -667,11 +667,12 @@ export default function Settings() {
         <h1 className="text-3xl font-bold mb-6">Settings</h1>
 
         <Tabs defaultValue={defaultTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-6">
+          <TabsList className="grid w-full grid-cols-7">
             <TabsTrigger value="appearance">Appearance</TabsTrigger>
             <TabsTrigger value="smtp">SMTP Email</TabsTrigger>
             <TabsTrigger value="teams">Microsoft Teams</TabsTrigger>
             <TabsTrigger value="openmanage">OpenManage</TabsTrigger>
+            <TabsTrigger value="jobs">Jobs</TabsTrigger>
             <TabsTrigger value="activity">Activity Monitor</TabsTrigger>
             <TabsTrigger value="preferences">Preferences</TabsTrigger>
           </TabsList>
@@ -980,72 +981,21 @@ export default function Settings() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="activity">
+          <TabsContent value="jobs">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Database className="h-5 w-5" />
-                  Activity Monitor Settings
+                  Jobs Configuration
                 </CardTitle>
                 <CardDescription>
-                  Configure log retention, cleanup, and monitoring preferences
+                  Configure job retention, cleanup, and stale job management
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
                 
-                {/* iDRAC Log Retention & Cleanup Section */}
-                <div className="space-y-4">
-                  <h3 className="text-lg font-medium flex items-center gap-2">
-                    <Shield className="h-4 w-4" />
-                    iDRAC Log Retention & Cleanup
-                  </h3>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="retention-days">Retention Period (Days)</Label>
-                    <Input
-                      id="retention-days"
-                      type="number"
-                      min="1"
-                      max="365"
-                      value={logRetentionDays}
-                      onChange={(e) => setLogRetentionDays(parseInt(e.target.value) || 30)}
-                    />
-                    <p className="text-sm text-muted-foreground">
-                      iDRAC activity logs older than this will be automatically deleted (1-365 days)
-                    </p>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="auto-cleanup">Enable Automatic Cleanup</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Automatically delete old logs daily at 2 AM
-                      </p>
-                    </div>
-                    <Switch
-                      id="auto-cleanup"
-                      checked={autoCleanupEnabled}
-                      onCheckedChange={setAutoCleanupEnabled}
-                    />
-                  </div>
-
-                  {lastCleanupAt && (
-                    <div className="text-sm text-muted-foreground">
-                      Last cleanup: {new Date(lastCleanupAt).toLocaleString()}
-                    </div>
-                  )}
-
-                  <Button 
-                    onClick={handleCleanupNow} 
-                    disabled={cleaningUp}
-                    variant="outline"
-                  >
-                    {cleaningUp ? "Cleaning Up..." : "Run Log Cleanup Now"}
-                  </Button>
-                </div>
-
                 {/* Job Retention & Cleanup Section */}
-                <div className="space-y-4 border-t pt-6">
+                <div className="space-y-4">
                   <h3 className="text-lg font-medium flex items-center gap-2">
                     <Shield className="h-4 w-4" />
                     Job Retention & Cleanup
@@ -1163,6 +1113,77 @@ export default function Settings() {
                     variant={staleJobCount > 0 ? "default" : "outline"}
                   >
                     {jobCleaningUp ? "Cancelling..." : `Cancel Stale Jobs Now${staleJobCount > 0 ? ` (${staleJobCount})` : ''}`}
+                  </Button>
+                </div>
+
+                <Button onClick={handleSaveActivitySettings} disabled={loading}>
+                  {loading ? "Saving..." : "Save Jobs Settings"}
+                </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="activity">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Database className="h-5 w-5" />
+                  Activity Monitor Settings
+                </CardTitle>
+                <CardDescription>
+                  Configure log retention, cleanup, and monitoring preferences
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                
+                {/* iDRAC Log Retention & Cleanup Section */}
+                <div className="space-y-4">
+                  <h3 className="text-lg font-medium flex items-center gap-2">
+                    <Shield className="h-4 w-4" />
+                    iDRAC Log Retention & Cleanup
+                  </h3>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="retention-days">Retention Period (Days)</Label>
+                    <Input
+                      id="retention-days"
+                      type="number"
+                      min="1"
+                      max="365"
+                      value={logRetentionDays}
+                      onChange={(e) => setLogRetentionDays(parseInt(e.target.value) || 30)}
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      iDRAC activity logs older than this will be automatically deleted (1-365 days)
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="auto-cleanup">Enable Automatic Cleanup</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Automatically delete old logs daily at 2 AM
+                      </p>
+                    </div>
+                    <Switch
+                      id="auto-cleanup"
+                      checked={autoCleanupEnabled}
+                      onCheckedChange={setAutoCleanupEnabled}
+                    />
+                  </div>
+
+                  {lastCleanupAt && (
+                    <div className="text-sm text-muted-foreground">
+                      Last cleanup: {new Date(lastCleanupAt).toLocaleString()}
+                    </div>
+                  )}
+
+                  <Button 
+                    onClick={handleCleanupNow} 
+                    disabled={cleaningUp}
+                    variant="outline"
+                  >
+                    {cleaningUp ? "Cleaning Up..." : "Run Log Cleanup Now"}
                   </Button>
                 </div>
 
