@@ -28,6 +28,8 @@ const Layout = () => {
   useEffect(() => {
     if (location.pathname === '/settings') {
       setSettingsOpen(true);
+    } else {
+      setSettingsOpen(false);
     }
   }, [location.pathname]);
 
