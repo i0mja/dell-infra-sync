@@ -1,7 +1,7 @@
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { Server, Database, Briefcase, Activity, LogOut, Menu, Settings, LayoutDashboard, ChevronRight, Palette, Mail, MessageSquare, Bell, PlayCircle, CheckCircle, XCircle, Clock, Shield } from "lucide-react";
+import { Server, Database, Briefcase, Activity, LogOut, Menu, Settings, LayoutDashboard, ChevronRight, Palette, Mail, MessageSquare, Bell, PlayCircle, CheckCircle, XCircle, Clock, Shield, Network } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
 import {
@@ -76,6 +76,7 @@ const Layout = () => {
     { name: "Credentials", href: "/settings?tab=credentials", icon: Shield, group: "Security" },
     { name: "Jobs", href: "/settings?tab=jobs", icon: Briefcase, group: "Monitoring" },
     { name: "Activity Monitor", href: "/settings?tab=activity", icon: Activity, group: "Monitoring" },
+    { name: "Network", href: "/settings?tab=network", icon: Network, group: "Monitoring" },
     { name: "Preferences", href: "/settings?tab=preferences", icon: Bell, group: "Other" },
   ];
 
