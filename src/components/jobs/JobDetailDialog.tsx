@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Clock, CheckCircle, XCircle, PlayCircle, Server } from "lucide-react";
+import { Clock, CheckCircle, XCircle, PlayCircle, Server, AlertCircle } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 interface Job {
   id: string;
@@ -212,7 +213,7 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
           </Card>
 
           {/* Progress */}
-          {tasks.length > 0 && (
+          {tasks.length > 0 && job.job_type !== 'discovery_scan' && (
             <Card>
               <CardContent className="pt-6">
                 <div className="space-y-2">
@@ -234,6 +235,63 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
                 </div>
               </CardContent>
             </Card>
+          )}
+
+          {/* Discovery Scan Results */}
+          {job.job_type === 'discovery_scan' && job.status === 'completed' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-3 gap-4">
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">Discovered</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-3xl font-bold text-primary">
+                      {job.details?.discovered_count || 0}
+                    </p>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">Auth Failures</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-3xl font-bold text-destructive">
+                      {job.details?.auth_failures || 0}
+                    </p>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">Scanned IPs</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-3xl font-bold">
+                      {job.details?.scanned_ips || 0}
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+              
+              {job.details?.auth_failure_ips && job.details.auth_failure_ips.length > 0 && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Authentication Failures</AlertTitle>
+                  <AlertDescription>
+                    <p className="mb-2">These IPs responded but authentication failed with all credential sets:</p>
+                    <ScrollArea className="h-32 w-full rounded border p-2 bg-background">
+                      <ul className="list-disc list-inside space-y-1">
+                        {job.details.auth_failure_ips.map((ip: string) => (
+                          <li key={ip} className="text-sm">{ip}</li>
+                        ))}
+                      </ul>
+                    </ScrollArea>
+                  </AlertDescription>
+                </Alert>
+              )}
+            </div>
           )}
 
           {/* Sub-Jobs List (for full_server_update) */}

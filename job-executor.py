@@ -223,14 +223,104 @@ class JobExecutor:
                     "model": data.get("Model", "Unknown"),
                     "service_tag": data.get("SKU", None),  # Dell reports Service Tag as SKU
                     "serial": data.get("SerialNumber", None),
+                    "hostname": data.get("HostName", None),
+                    "username": username,
+                    "password": password,
                 }
             return None
         except Exception as e:
             self.log(f"Error testing iDRAC {ip}: {e}", "DEBUG")
             return None
 
+    def get_credential_sets(self, credential_set_ids: List[str]) -> List[Dict]:
+        """Fetch credential sets from database"""
+        if not credential_set_ids:
+            return []
+        
+        try:
+            headers = {"apikey": API_KEY, "Authorization": f"Bearer {API_KEY}"}
+            url = f"{DSM_URL}/rest/v1/credential_sets"
+            params = {"id": f"in.({','.join(credential_set_ids)})", "order": "priority.asc"}
+            response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
+            
+            if response.status_code == 200:
+                return response.json()
+            return []
+        except Exception as e:
+            self.log(f"Error fetching credential sets: {e}", "ERROR")
+            return []
+
+    def discover_single_ip(self, ip: str, credential_sets: List[Dict], job_id: str) -> Dict:
+        """Try multiple credential sets for a single IP"""
+        
+        for cred_set in sorted(credential_sets, key=lambda x: x['priority']):
+            try:
+                result = self.test_idrac_connection(
+                    ip,
+                    cred_set['username'],
+                    cred_set['password_encrypted']
+                )
+                
+                if result:
+                    return {
+                        'success': True,
+                        'ip': ip,
+                        'credential_set_id': cred_set.get('id'),
+                        'credential_set_name': cred_set['name'],
+                        'auth_failed': False,
+                        **result
+                    }
+            except Exception as e:
+                continue  # Try next credential set
+        
+        # All credential sets failed
+        return {
+            'success': False,
+            'ip': ip,
+            'auth_failed': True
+        }
+
+    def insert_discovered_server(self, server: Dict, job_id: str):
+        """Insert discovered server into database with credential info"""
+        try:
+            headers = {"apikey": API_KEY, "Authorization": f"Bearer {API_KEY}"}
+            
+            # Check if server already exists by IP
+            check_url = f"{DSM_URL}/rest/v1/servers"
+            check_params = {"ip_address": f"eq.{server['ip']}", "select": "id"}
+            existing = requests.get(check_url, headers=headers, params=check_params, verify=VERIFY_SSL)
+            
+            server_data = {
+                'hostname': server.get('hostname'),
+                'model': server.get('model'),
+                'service_tag': server.get('service_tag'),
+                'connection_status': 'online',
+                'last_seen': datetime.now().isoformat(),
+                'idrac_username': server.get('username'),
+                'idrac_password_encrypted': server.get('password'),
+                'credential_test_status': 'valid',
+                'credential_last_tested': datetime.now().isoformat(),
+                'discovered_by_credential_set_id': server.get('credential_set_id'),
+                'discovery_job_id': job_id,
+            }
+            
+            if existing.status_code == 200 and existing.json():
+                # Update existing server
+                server_id = existing.json()[0]['id']
+                update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}"
+                requests.patch(update_url, headers=headers, json=server_data, verify=VERIFY_SSL)
+                self.log(f"Updated existing server: {server['ip']}")
+            else:
+                # Insert new server
+                server_data['ip_address'] = server['ip']
+                insert_url = f"{DSM_URL}/rest/v1/servers"
+                requests.post(insert_url, headers=headers, json=server_data, verify=VERIFY_SSL)
+                self.log(f"Inserted new server: {server['ip']}")
+        except Exception as e:
+            self.log(f"Error inserting server {server['ip']}: {e}", "ERROR")
+
     def execute_discovery_scan(self, job: Dict):
-        """Execute IP discovery scan"""
+        """Execute IP discovery scan with multi-credential support"""
         self.log(f"Starting discovery scan job {job['id']}")
         
         self.update_job_status(
@@ -241,7 +331,24 @@ class JobExecutor:
         
         try:
             ip_range = job['target_scope'].get('ip_range', '')
+            credential_set_ids = job.get('credential_set_ids', [])
+            
             self.log(f"Scanning IP range: {ip_range}")
+            
+            # Fetch credential sets from database
+            credential_sets = self.get_credential_sets(credential_set_ids)
+            
+            # Fallback to environment defaults if no sets configured
+            if not credential_sets:
+                credential_sets = [{
+                    'id': None,
+                    'name': 'Environment Default',
+                    'username': IDRAC_DEFAULT_USER,
+                    'password_encrypted': IDRAC_DEFAULT_PASSWORD,
+                    'priority': 999
+                }]
+            
+            self.log(f"Using {len(credential_sets)} credential set(s) for discovery")
             
             # Parse IP range
             ips_to_scan = []
@@ -262,13 +369,15 @@ class JobExecutor:
             self.log(f"Scanning {len(ips_to_scan)} IPs...")
             
             discovered = []
+            auth_failures = []
+            
             with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
                 futures = {
                     executor.submit(
-                        self.test_idrac_connection,
+                        self.discover_single_ip,
                         ip,
-                        IDRAC_DEFAULT_USER,
-                        IDRAC_DEFAULT_PASSWORD
+                        credential_sets,
+                        job['id']
                     ): ip for ip in ips_to_scan
                 }
                 
@@ -276,27 +385,33 @@ class JobExecutor:
                     ip = futures[future]
                     try:
                         result = future.result()
-                        if result:
-                            self.log(f"✓ Found iDRAC at {ip}: {result['model']}")
-                            discovered.append({
-                                "ip": ip,
-                                **result
+                        if result['success']:
+                            self.log(f"✓ Found iDRAC at {ip}: {result['model']} (using {result['credential_set_name']})")
+                            discovered.append(result)
+                        elif result['auth_failed']:
+                            auth_failures.append({
+                                'ip': ip,
+                                'reason': 'Authentication failed with all credential sets'
                             })
                     except Exception as e:
                         pass  # Silent fail for non-responsive IPs
             
-            self.log(f"Discovery complete: {len(discovered)} servers found")
+            self.log(f"Discovery complete: {len(discovered)} servers found, {len(auth_failures)} auth failures")
             
-            # TODO: Insert discovered servers into database
-            # For now, just log them
+            # Insert discovered servers into database with credential info
             for server in discovered:
-                self.log(f"  {server['ip']}: {server['model']} (Service Tag: {server['service_tag']})")
+                self.insert_discovered_server(server, job['id'])
             
             self.update_job_status(
                 job['id'],
                 'completed',
                 completed_at=datetime.now().isoformat(),
-                details={"discovered_count": len(discovered), "scanned_ips": len(ips_to_scan)}
+                details={
+                    "discovered_count": len(discovered),
+                    "auth_failures": len(auth_failures),
+                    "scanned_ips": len(ips_to_scan),
+                    "auth_failure_ips": [f['ip'] for f in auth_failures]
+                }
             )
             
         except Exception as e:

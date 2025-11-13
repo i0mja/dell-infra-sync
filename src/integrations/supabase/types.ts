@@ -151,6 +151,42 @@ export type Database = {
           },
         ]
       }
+      credential_sets: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          id: string
+          is_default: boolean | null
+          name: string
+          password_encrypted: string
+          priority: number | null
+          updated_at: string | null
+          username: string
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          is_default?: boolean | null
+          name: string
+          password_encrypted: string
+          priority?: number | null
+          updated_at?: string | null
+          username: string
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          is_default?: boolean | null
+          name?: string
+          password_encrypted?: string
+          priority?: number | null
+          updated_at?: string | null
+          username?: string
+        }
+        Relationships: []
+      }
       idrac_commands: {
         Row: {
           command_type: string
@@ -307,6 +343,7 @@ export type Database = {
           component_order: number | null
           created_at: string
           created_by: string
+          credential_set_ids: string[] | null
           details: Json | null
           id: string
           job_type: Database["public"]["Enums"]["job_type"]
@@ -321,6 +358,7 @@ export type Database = {
           component_order?: number | null
           created_at?: string
           created_by: string
+          credential_set_ids?: string[] | null
           details?: Json | null
           id?: string
           job_type: Database["public"]["Enums"]["job_type"]
@@ -335,6 +373,7 @@ export type Database = {
           component_order?: number | null
           created_at?: string
           created_by?: string
+          credential_set_ids?: string[] | null
           details?: Json | null
           id?: string
           job_type?: Database["public"]["Enums"]["job_type"]
@@ -531,6 +570,8 @@ export type Database = {
           created_at: string
           credential_last_tested: string | null
           credential_test_status: string | null
+          discovered_by_credential_set_id: string | null
+          discovery_job_id: string | null
           hostname: string | null
           id: string
           idrac_firmware: string | null
@@ -556,6 +597,8 @@ export type Database = {
           created_at?: string
           credential_last_tested?: string | null
           credential_test_status?: string | null
+          discovered_by_credential_set_id?: string | null
+          discovery_job_id?: string | null
           hostname?: string | null
           id?: string
           idrac_firmware?: string | null
@@ -581,6 +624,8 @@ export type Database = {
           created_at?: string
           credential_last_tested?: string | null
           credential_test_status?: string | null
+          discovered_by_credential_set_id?: string | null
+          discovery_job_id?: string | null
           hostname?: string | null
           id?: string
           idrac_firmware?: string | null
@@ -604,6 +649,20 @@ export type Database = {
             columns: ["vcenter_host_id"]
             isOneToOne: false
             referencedRelation: "vcenter_hosts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "servers_discovered_by_credential_set_id_fkey"
+            columns: ["discovered_by_credential_set_id"]
+            isOneToOne: false
+            referencedRelation: "credential_sets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "servers_discovery_job_id_fkey"
+            columns: ["discovery_job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
             referencedColumns: ["id"]
           },
         ]

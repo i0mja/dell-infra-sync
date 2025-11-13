@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertCircle, Info } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 
 interface CreateJobDialogProps {
   open: boolean;
@@ -25,6 +26,13 @@ interface Server {
   model: string | null;
 }
 
+interface CredentialSet {
+  id: string;
+  name: string;
+  description: string | null;
+  priority: number;
+}
+
 export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServerId }: CreateJobDialogProps) => {
   const [loading, setLoading] = useState(false);
   const [jobType, setJobType] = useState<'firmware_update' | 'discovery_scan' | 'full_server_update' | ''>("");
@@ -35,11 +43,14 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
   const [notes, setNotes] = useState("");
   const [firmwareUri, setFirmwareUri] = useState("");
   const [component, setComponent] = useState("BIOS");
+  const [credentialSets, setCredentialSets] = useState<CredentialSet[]>([]);
+  const [selectedCredentialSets, setSelectedCredentialSets] = useState<string[]>([]);
   const { toast } = useToast();
 
   useEffect(() => {
     if (open) {
       fetchServers();
+      fetchCredentialSets();
       // Pre-select server if provided
       if (preSelectedServerId) {
         setSelectedServers([preSelectedServerId]);
@@ -55,6 +66,15 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
       .order("ip_address");
     
     setServers(data || []);
+  };
+
+  const fetchCredentialSets = async () => {
+    const { data } = await supabase
+      .from("credential_sets")
+      .select("id, name, description, priority")
+      .order("priority");
+    
+    setCredentialSets(data || []);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -84,6 +104,7 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
         }
         target_scope = { ip_range: scanRange };
         details.scan_type = 'redfish';
+        details.credential_set_ids = selectedCredentialSets;
       }
 
       const { data, error } = await supabase.functions.invoke('create-job', {
@@ -92,6 +113,7 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
           target_scope,
           details,
           schedule_at: scheduleAt || null,
+          credential_set_ids: jobType === 'discovery_scan' ? selectedCredentialSets : undefined,
         },
       });
 
@@ -110,6 +132,7 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
       setNotes("");
       setFirmwareUri("");
       setComponent("BIOS");
+      setSelectedCredentialSets([]);
       onOpenChange(false);
       onSuccess();
     } catch (error: any) {
@@ -278,19 +301,83 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
           )}
 
           {jobType === 'discovery_scan' && (
-            <div className="space-y-2">
-              <Label htmlFor="scan_range">IP Range to Scan *</Label>
-              <Input
-                id="scan_range"
-                placeholder="192.168.1.0/24 or 10.0.0.1-10.0.0.254"
-                value={scanRange}
-                onChange={(e) => setScanRange(e.target.value)}
-                required
-              />
-              <p className="text-xs text-muted-foreground">
-                Enter a CIDR range (e.g., 192.168.1.0/24) or IP range (e.g., 192.168.1.1-192.168.1.100)
-              </p>
-            </div>
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="scan_range">IP Range to Scan *</Label>
+                <Input
+                  id="scan_range"
+                  placeholder="192.168.1.0/24 or 10.0.0.1-10.0.0.254"
+                  value={scanRange}
+                  onChange={(e) => setScanRange(e.target.value)}
+                  required
+                />
+                <p className="text-xs text-muted-foreground">
+                  Enter a CIDR range (e.g., 192.168.1.0/24) or IP range (e.g., 192.168.1.1-192.168.1.100)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Credential Sets to Try</Label>
+                <p className="text-sm text-muted-foreground">
+                  Discovery will try each credential set in priority order until successful
+                </p>
+                
+                <div className="space-y-2 border rounded-md p-3">
+                  {credentialSets.length === 0 ? (
+                    <Alert>
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription>
+                        No credential sets configured. Using environment defaults.
+                      </AlertDescription>
+                    </Alert>
+                  ) : (
+                    credentialSets.map((set) => (
+                      <div key={set.id} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`cred-${set.id}`}
+                          checked={selectedCredentialSets.includes(set.id)}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setSelectedCredentialSets([...selectedCredentialSets, set.id]);
+                            } else {
+                              setSelectedCredentialSets(
+                                selectedCredentialSets.filter((id) => id !== set.id)
+                              );
+                            }
+                          }}
+                        />
+                        <Label htmlFor={`cred-${set.id}`} className="flex-1 cursor-pointer">
+                          <div className="flex items-center justify-between">
+                            <span>{set.name}</span>
+                            <Badge variant="outline" className="ml-2">
+                              Priority: {set.priority}
+                            </Badge>
+                          </div>
+                          {set.description && (
+                            <p className="text-xs text-muted-foreground">{set.description}</p>
+                          )}
+                        </Label>
+                      </div>
+                    ))
+                  )}
+                </div>
+                
+                {selectedCredentialSets.length > 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    ✓ {selectedCredentialSets.length} credential set(s) selected
+                  </p>
+                )}
+              </div>
+
+              <Alert>
+                <Info className="h-4 w-4" />
+                <AlertTitle>Discovery Scan</AlertTitle>
+                <AlertDescription>
+                  This will scan the specified IP range for Dell iDRAC endpoints using Redfish API.
+                  Discovered servers will be automatically added to your inventory with working credentials.
+                </AlertDescription>
+              </Alert>
+            </>
           )}
 
           <div className="space-y-2">
