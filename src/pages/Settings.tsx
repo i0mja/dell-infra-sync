@@ -136,13 +136,180 @@ export default function Settings() {
     is_default: false,
   });
 
+  // Network Testing State
+  const [servers, setServers] = useState<any[]>([]);
+  const [vcenterSettings, setVCenterSettings] = useState<any | null>(null);
+  const [testingServers, setTestingServers] = useState<Map<string, boolean>>(new Map());
+  const [serverTestResults, setServerTestResults] = useState<Map<string, any>>(new Map());
+  const [testingVCenter, setTestingVCenter] = useState(false);
+  const [vcenterTestResult, setVCenterTestResult] = useState<any | null>(null);
+  const [testingAllServers, setTestingAllServers] = useState(false);
+
   useEffect(() => {
     loadSettings();
     loadApiTokens();
     fetchStaleJobCount();
     loadRecentNotifications();
     loadCredentialSets();
+    loadServersAndVCenter();
   }, []);
+
+  const loadServersAndVCenter = async () => {
+    // Load servers
+    const { data: serversData } = await supabase
+      .from('servers')
+      .select('*')
+      .order('hostname');
+    if (serversData) setServers(serversData);
+
+    // Load vCenter settings
+    const { data: vcenterData } = await supabase
+      .from('vcenter_settings')
+      .select('*')
+      .single();
+    if (vcenterData) setVCenterSettings(vcenterData);
+  };
+
+  const testIdracServer = async (serverId: string) => {
+    const server = servers.find(s => s.id === serverId);
+    if (!server) return;
+
+    setTestingServers(new Map(testingServers.set(serverId, true)));
+    
+    try {
+      const startTime = Date.now();
+      const { data, error } = await supabase.functions.invoke('test-idrac-connection', {
+        body: {
+          ip_address: server.ip_address,
+          username: server.idrac_username,
+          password: server.idrac_password_encrypted,
+        },
+      });
+
+      const responseTime = Date.now() - startTime;
+
+      if (error) throw error;
+
+      const result = {
+        success: data?.success || false,
+        response_time_ms: data?.response_time_ms || responseTime,
+        last_tested: new Date().toISOString(),
+        error: data?.error,
+        version: data?.idrac_version,
+      };
+
+      setServerTestResults(new Map(serverTestResults.set(serverId, result)));
+
+      toast({
+        title: result.success ? "Connection Successful" : "Connection Failed",
+        description: result.success 
+          ? `${server.hostname || server.ip_address} is online (${result.response_time_ms}ms)`
+          : result.error || "Failed to connect to iDRAC",
+        variant: result.success ? "default" : "destructive",
+      });
+    } catch (error: any) {
+      const result = {
+        success: false,
+        response_time_ms: 0,
+        last_tested: new Date().toISOString(),
+        error: error.message,
+      };
+      setServerTestResults(new Map(serverTestResults.set(serverId, result)));
+      
+      toast({
+        title: "Connection Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setTestingServers(new Map(testingServers.set(serverId, false)));
+    }
+  };
+
+  const testAllServers = async () => {
+    if (servers.length === 0) {
+      toast({
+        title: "No Servers",
+        description: "Add servers first to test connectivity",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setTestingAllServers(true);
+    toast({
+      title: "Testing All Servers",
+      description: `Testing connectivity to ${servers.length} servers...`,
+    });
+
+    for (const server of servers) {
+      await testIdracServer(server.id);
+    }
+
+    setTestingAllServers(false);
+    toast({
+      title: "Testing Complete",
+      description: "All server connectivity tests completed",
+    });
+  };
+
+  const testVCenterConnection = async () => {
+    if (!vcenterSettings) {
+      toast({
+        title: "vCenter Not Configured",
+        description: "Configure vCenter settings first",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setTestingVCenter(true);
+    
+    try {
+      const startTime = Date.now();
+      const { data, error } = await supabase.functions.invoke('test-vcenter-connection', {
+        body: {},
+      });
+
+      const responseTime = Date.now() - startTime;
+
+      if (error) throw error;
+
+      const result = {
+        success: data?.success || false,
+        response_time_ms: data?.response_time_ms || responseTime,
+        last_tested: new Date().toISOString(),
+        error: data?.error,
+        version: data?.version,
+      };
+
+      setVCenterTestResult(result);
+
+      toast({
+        title: result.success ? "vCenter Connection Successful" : "vCenter Connection Failed",
+        description: result.success 
+          ? `Connected to ${vcenterSettings.host} (${result.response_time_ms}ms)${result.version ? ` - Version: ${result.version}` : ''}`
+          : result.error || "Failed to connect to vCenter",
+        variant: result.success ? "default" : "destructive",
+      });
+    } catch (error: any) {
+      const result = {
+        success: false,
+        response_time_ms: 0,
+        last_tested: new Date().toISOString(),
+        error: error.message,
+      };
+      setVCenterTestResult(result);
+      
+      toast({
+        title: "vCenter Connection Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setTestingVCenter(false);
+    }
+  };
 
   // Sync activeTab with URL params when they change
   useEffect(() => {
@@ -192,6 +359,11 @@ export default function Settings() {
       title: "Credential Management",
       description: "Manage iDRAC credential sets for server discovery and operations",
       icon: Shield,
+    },
+    network: {
+      title: "Network Connectivity",
+      description: "Test connectivity to iDRAC servers and vCenter hosts",
+      icon: Network,
     },
   };
 
@@ -2341,6 +2513,225 @@ export default function Settings() {
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="network">
+            <div className="space-y-4">
+              {/* Deployment Mode Card */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Deployment Mode</CardTitle>
+                  <CardDescription>
+                    Current backend connectivity status
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center gap-3">
+                    <div className={cn("w-3 h-3 rounded-full", deploymentInfo.color)} />
+                    <div>
+                      <div className="font-medium">{deploymentInfo.mode}</div>
+                      <div className="text-sm text-muted-foreground">{deploymentInfo.description}</div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Backend: {import.meta.env.VITE_SUPABASE_URL?.replace(/^https?:\/\//, '').split('/')[0] || 'Unknown'}
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* iDRAC Servers Test Section */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>iDRAC Servers</CardTitle>
+                  <CardDescription>
+                    Test connectivity to internal iDRAC interfaces (port 443)
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    {servers.length > 0 ? (
+                      <>
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm text-muted-foreground">
+                            {servers.length} server{servers.length !== 1 ? 's' : ''} configured
+                          </div>
+                          <Button 
+                            onClick={testAllServers}
+                            disabled={testingAllServers}
+                            size="sm"
+                          >
+                            {testingAllServers ? "Testing All..." : `Test All Servers (${servers.length})`}
+                          </Button>
+                        </div>
+
+                        <ScrollArea className="h-[400px] border rounded-md">
+                          <div className="p-4 space-y-2">
+                            {servers.map((server) => {
+                              const result = serverTestResults.get(server.id);
+                              const testing = testingServers.get(server.id);
+                              
+                              return (
+                                <div 
+                                  key={server.id} 
+                                  className="flex items-center justify-between p-3 border-b last:border-0 hover:bg-muted/50 rounded-md transition-colors"
+                                >
+                                  <div className="flex-1">
+                                    <div className="font-medium">{server.hostname || 'Unknown'}</div>
+                                    <div className="text-sm text-muted-foreground">{server.ip_address}</div>
+                                    {result && (
+                                      <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
+                                        <div>Last tested: {new Date(result.last_tested).toLocaleString()}</div>
+                                        <div>Response time: {result.response_time_ms}ms</div>
+                                        {result.version && <div>iDRAC Version: {result.version}</div>}
+                                        {result.error && (
+                                          <div className="text-destructive">Error: {result.error}</div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    {result && (
+                                      <Badge variant={result.success ? "default" : "destructive"}>
+                                        {result.success ? "Online" : "Offline"}
+                                      </Badge>
+                                    )}
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => testIdracServer(server.id)}
+                                      disabled={testing}
+                                    >
+                                      {testing ? "Testing..." : "Test"}
+                                    </Button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </ScrollArea>
+                      </>
+                    ) : (
+                      <div className="text-center py-12 space-y-3">
+                        <Server className="mx-auto h-12 w-12 text-muted-foreground" />
+                        <div>
+                          <h4 className="font-medium text-base mb-1">No Servers Configured</h4>
+                          <p className="text-sm text-muted-foreground">
+                            Add servers to test iDRAC connectivity
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* vCenter Connection Test Section */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>vCenter Connection</CardTitle>
+                  <CardDescription>
+                    Test connectivity to VMware vCenter server (port 443)
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    {vcenterSettings ? (
+                      <>
+                        <div className="space-y-2 p-4 border rounded-md bg-muted/30">
+                          <div className="flex items-center justify-between">
+                            <div className="text-sm">
+                              <div><strong>Host:</strong> {vcenterSettings.host}:{vcenterSettings.port}</div>
+                              <div><strong>Username:</strong> {vcenterSettings.username}</div>
+                              <div><strong>SSL Verification:</strong> {vcenterSettings.verify_ssl ? 'Enabled' : 'Disabled'}</div>
+                            </div>
+                          </div>
+                          
+                          {vcenterTestResult && (
+                            <div className="mt-3 pt-3 border-t text-xs text-muted-foreground space-y-1">
+                              <div>Last tested: {new Date(vcenterTestResult.last_tested).toLocaleString()}</div>
+                              <div>Response time: {vcenterTestResult.response_time_ms}ms</div>
+                              {vcenterTestResult.version && <div>vCenter Version: {vcenterTestResult.version}</div>}
+                              {vcenterTestResult.error && (
+                                <div className="text-destructive">Error: {vcenterTestResult.error}</div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {vcenterTestResult && (
+                            <Badge variant={vcenterTestResult.success ? "default" : "destructive"}>
+                              {vcenterTestResult.success ? "Connected" : "Failed"}
+                            </Badge>
+                          )}
+                          <Button
+                            onClick={testVCenterConnection}
+                            disabled={testingVCenter}
+                          >
+                            {testingVCenter ? "Testing..." : "Test Connection"}
+                          </Button>
+                        </div>
+
+                        {vcenterTestResult?.error && !vcenterTestResult.success && (
+                          <div className="p-3 border border-destructive/50 rounded-md bg-destructive/10">
+                            <div className="flex items-start gap-2">
+                              <AlertCircle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
+                              <div className="text-sm">
+                                <div className="font-medium text-destructive mb-1">Connection Failed</div>
+                                <div className="text-muted-foreground">{vcenterTestResult.error}</div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="text-center py-12 space-y-3">
+                        <Database className="mx-auto h-12 w-12 text-muted-foreground" />
+                        <div>
+                          <h4 className="font-medium text-base mb-1">vCenter Not Configured</h4>
+                          <p className="text-sm text-muted-foreground">
+                            Configure vCenter settings in the vCenter page to test connectivity
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Network Requirements Info */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Network Requirements</CardTitle>
+                  <CardDescription>
+                    Required network connectivity for air-gapped deployment
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3 text-sm">
+                    <div>
+                      <div className="font-medium mb-1">Internal Network Ports:</div>
+                      <ul className="list-disc list-inside space-y-1 text-muted-foreground ml-2">
+                        <li><strong>Port 443:</strong> iDRAC Redfish API (HTTPS)</li>
+                        <li><strong>Port 443:</strong> vCenter API (HTTPS)</li>
+                        <li><strong>Port 3000:</strong> Application frontend (HTTP)</li>
+                        <li><strong>Port 8000:</strong> Local backend/database (HTTP)</li>
+                      </ul>
+                    </div>
+                    <div className="pt-2 border-t">
+                      <div className="font-medium mb-1">External Connectivity (Optional):</div>
+                      <ul className="list-disc list-inside space-y-1 text-muted-foreground ml-2">
+                        <li><strong>SMTP:</strong> Email notifications (user-configured)</li>
+                        <li><strong>Teams Webhook:</strong> Microsoft Teams notifications (user-configured)</li>
+                      </ul>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Note: Core functionality works without external connectivity. Notifications are optional.
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
         </Tabs>
 
