@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTheme } from "next-themes";
-import { Moon, Sun, Monitor, Database, Shield, AlertCircle, Palette, Mail, MessageSquare, Server, Briefcase, Activity, Bell, Network } from "lucide-react";
+import { Moon, Sun, Monitor, Database, Shield, AlertCircle, Palette, Mail, MessageSquare, Server, Briefcase, Activity, Bell, Network, ChevronRight, Plus, X } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -108,6 +108,11 @@ export default function Settings() {
   const [newIpRange, setNewIpRange] = useState("");
   const [newIpRangeDescription, setNewIpRangeDescription] = useState("");
   const [editingIpRange, setEditingIpRange] = useState<any | null>(null);
+  
+  // Temp state for inline IP range management in credential dialog
+  const [tempIpRanges, setTempIpRanges] = useState<Array<{ start_ip: string; end_ip: string }>>([]);
+  const [newInlineIpRange, setNewInlineIpRange] = useState({ start_ip: "", end_ip: "" });
+  const [ipRangeExpanded, setIpRangeExpanded] = useState(false);
 
   // Form state for credential dialog
   const [credentialForm, setCredentialForm] = useState({
@@ -1017,6 +1022,28 @@ export default function Settings() {
           .eq('id', editingCredential.id);
         
         if (error) throw error;
+
+        // Handle IP ranges - delete existing and insert new ones
+        await (supabase as any)
+          .from('credential_ip_ranges')
+          .delete()
+          .eq('credential_set_id', editingCredential.id);
+
+        if (tempIpRanges.length > 0) {
+          const { error: rangeError } = await (supabase as any)
+            .from('credential_ip_ranges')
+            .insert(
+              tempIpRanges.map((range, idx) => ({
+                credential_set_id: editingCredential.id,
+                ip_range: `${range.start_ip}-${range.end_ip}`,
+                priority: idx + 1,
+              }))
+            );
+
+          if (rangeError) {
+            console.error("Error updating IP ranges:", rangeError);
+          }
+        }
         
         toast({
           title: "Credential Set Updated",
@@ -1024,11 +1051,30 @@ export default function Settings() {
         });
       } else {
         // Create new
-        const { error } = await supabase
+        const { data: newCred, error } = await supabase
           .from('credential_sets')
-          .insert(payload);
+          .insert(payload)
+          .select()
+          .single();
         
         if (error) throw error;
+
+        // Insert IP ranges if any
+        if (tempIpRanges.length > 0 && newCred) {
+          const { error: rangeError } = await (supabase as any)
+            .from('credential_ip_ranges')
+            .insert(
+              tempIpRanges.map((range, idx) => ({
+                credential_set_id: newCred.id,
+                ip_range: `${range.start_ip}-${range.end_ip}`,
+                priority: idx + 1,
+              }))
+            );
+
+          if (rangeError) {
+            console.error("Error adding IP ranges:", rangeError);
+          }
+        }
         
         toast({
           title: "Credential Set Created",
@@ -1046,6 +1092,9 @@ export default function Settings() {
         priority: 100,
         is_default: false,
       });
+      setTempIpRanges([]);
+      setNewInlineIpRange({ start_ip: "", end_ip: "" });
+      setIpRangeExpanded(false);
       loadCredentialSets();
     } catch (error: any) {
       toast({
@@ -2183,6 +2232,13 @@ export default function Settings() {
                                       priority: credentialSet.priority,
                                       is_default: credentialSet.is_default,
                                     });
+                                    // Load existing IP ranges into temp state - parse ip_range format
+                                    const ranges = (credentialSet.credential_ip_ranges || []).map((r: any) => {
+                                      const [start_ip, end_ip] = r.ip_range.split('-');
+                                      return { start_ip: start_ip.trim(), end_ip: end_ip.trim() };
+                                    });
+                                    setTempIpRanges(ranges);
+                                    setIpRangeExpanded(ranges.length > 0);
                                     setShowCredentialDialog(true);
                                   }}
                                 >
