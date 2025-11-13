@@ -101,6 +101,14 @@ export default function Settings() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [testIp, setTestIp] = useState("");
 
+  // IP Range Management State
+  const [showIpRangeDialog, setShowIpRangeDialog] = useState(false);
+  const [selectedCredentialForIpRanges, setSelectedCredentialForIpRanges] = useState<any | null>(null);
+  const [ipRanges, setIpRanges] = useState<any[]>([]);
+  const [newIpRange, setNewIpRange] = useState("");
+  const [newIpRangeDescription, setNewIpRangeDescription] = useState("");
+  const [editingIpRange, setEditingIpRange] = useState<any | null>(null);
+
   // Form state for credential dialog
   const [credentialForm, setCredentialForm] = useState({
     name: '',
@@ -796,7 +804,15 @@ export default function Settings() {
     try {
       const { data, error } = await supabase
         .from('credential_sets')
-        .select('*')
+        .select(`
+          *,
+          credential_ip_ranges (
+            id,
+            ip_range,
+            description,
+            priority
+          )
+        `)
         .order('priority', { ascending: true });
       
       if (error) throw error;
@@ -808,6 +824,155 @@ export default function Settings() {
         variant: "destructive",
       });
     }
+  };
+
+  // IP Range Management Functions
+  const loadIpRanges = async (credentialSetId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('credential_ip_ranges')
+        .select('*')
+        .eq('credential_set_id', credentialSetId)
+        .order('priority', { ascending: true });
+      
+      if (error) throw error;
+      setIpRanges(data || []);
+    } catch (error: any) {
+      toast({
+        title: "Error loading IP ranges",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const openIpRangeDialog = async (credentialSet: any) => {
+    setSelectedCredentialForIpRanges(credentialSet);
+    await loadIpRanges(credentialSet.id);
+    setShowIpRangeDialog(true);
+  };
+
+  const handleAddIpRange = async () => {
+    if (!newIpRange || !selectedCredentialForIpRanges) {
+      toast({
+        title: "Missing Required Fields",
+        description: "Please enter an IP range",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from('credential_ip_ranges')
+        .insert({
+          credential_set_id: selectedCredentialForIpRanges.id,
+          ip_range: newIpRange,
+          description: newIpRangeDescription || null,
+          priority: 100,
+        });
+      
+      if (error) throw error;
+      
+      toast({
+        title: "IP Range Added",
+        description: "The IP range has been added successfully",
+      });
+      
+      setNewIpRange("");
+      setNewIpRangeDescription("");
+      await loadIpRanges(selectedCredentialForIpRanges.id);
+      await loadCredentialSets();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdateIpRange = async () => {
+    if (!editingIpRange || !newIpRange) return;
+
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from('credential_ip_ranges')
+        .update({
+          ip_range: newIpRange,
+          description: newIpRangeDescription || null,
+        })
+        .eq('id', editingIpRange.id);
+      
+      if (error) throw error;
+      
+      toast({
+        title: "IP Range Updated",
+        description: "The IP range has been updated successfully",
+      });
+      
+      setEditingIpRange(null);
+      setNewIpRange("");
+      setNewIpRangeDescription("");
+      if (selectedCredentialForIpRanges) {
+        await loadIpRanges(selectedCredentialForIpRanges.id);
+        await loadCredentialSets();
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteIpRange = async (id: string) => {
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from('credential_ip_ranges')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
+      
+      toast({
+        title: "IP Range Deleted",
+        description: "The IP range has been removed",
+      });
+      
+      if (selectedCredentialForIpRanges) {
+        await loadIpRanges(selectedCredentialForIpRanges.id);
+        await loadCredentialSets();
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startEditIpRange = (range: any) => {
+    setEditingIpRange(range);
+    setNewIpRange(range.ip_range);
+    setNewIpRangeDescription(range.description || "");
+  };
+
+  const cancelEditIpRange = () => {
+    setEditingIpRange(null);
+    setNewIpRange("");
+    setNewIpRangeDescription("");
   };
 
   const handleSaveCredential = async () => {
@@ -1957,6 +2122,19 @@ export default function Settings() {
                                   {credentialSet.description}
                                 </p>
                               )}
+
+                              {credentialSet.credential_ip_ranges && credentialSet.credential_ip_ranges.length > 0 && (
+                                <div className="mt-3 pt-3 border-t">
+                                  <span className="text-sm text-muted-foreground font-medium">IP Ranges:</span>
+                                  <div className="flex flex-wrap gap-1 mt-2">
+                                    {credentialSet.credential_ip_ranges.map((range: any) => (
+                                      <span key={range.id} className="inline-flex items-center rounded-md bg-blue-50 dark:bg-blue-950 px-2 py-1 text-xs font-mono text-blue-700 dark:text-blue-300 ring-1 ring-inset ring-blue-600/20">
+                                        {range.ip_range}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                             
                             <div className="flex flex-col gap-2">
@@ -1982,6 +2160,14 @@ export default function Settings() {
                               
                               {/* Action Buttons */}
                               <div className="flex gap-1">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => openIpRangeDialog(credentialSet)}
+                                >
+                                  IP ({credentialSet.credential_ip_ranges?.length || 0})
+                                </Button>
+                                
                                 <Button
                                   size="sm"
                                   variant="outline"

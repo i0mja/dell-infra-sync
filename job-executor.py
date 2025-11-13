@@ -84,6 +84,86 @@ class JobExecutor:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{timestamp}] [{level}] {message}")
 
+    def ip_in_range(self, ip_address: str, ip_range: str) -> bool:
+        """
+        Check if an IP address is within a given range.
+        Supports CIDR notation (10.0.0.0/8) and hyphenated ranges (192.168.1.1-192.168.1.50)
+        """
+        try:
+            ip = ipaddress.ip_address(ip_address)
+            
+            # CIDR notation
+            if '/' in ip_range:
+                network = ipaddress.ip_network(ip_range, strict=False)
+                return ip in network
+            
+            # Hyphenated range
+            elif '-' in ip_range:
+                start_ip, end_ip = ip_range.split('-')
+                start = ipaddress.ip_address(start_ip.strip())
+                end = ipaddress.ip_address(end_ip.strip())
+                return start <= ip <= end
+            
+            # Single IP
+            else:
+                return ip == ipaddress.ip_address(ip_range)
+                
+        except ValueError:
+            self.log(f"Invalid IP range format: {ip_range}", "ERROR")
+            return False
+
+    def get_credential_sets_for_ip(self, ip_address: str) -> List[Dict]:
+        """
+        Get credential sets that match the given IP address based on IP ranges.
+        Returns credential sets ordered by priority.
+        """
+        try:
+            # Fetch all credential_ip_ranges with their credential_sets
+            url = f"{DSM_URL}/rest/v1/credential_ip_ranges"
+            headers = {
+                "apikey": SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+            }
+            params = {
+                "select": "*, credential_sets(*)"
+            }
+            
+            response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
+            
+            if response.status_code != 200:
+                self.log(f"Error fetching credential IP ranges: {response.status_code}", "WARN")
+                return []
+            
+            matching_sets = []
+            ip_range_entries = response.json()
+            
+            for ip_range_entry in ip_range_entries:
+                ip_range = ip_range_entry['ip_range']
+                
+                # Check if IP matches range
+                if self.ip_in_range(ip_address, ip_range):
+                    cred_set = ip_range_entry['credential_sets']
+                    matching_sets.append({
+                        'id': cred_set['id'],
+                        'name': cred_set['name'],
+                        'username': cred_set['username'],
+                        'password': cred_set['password_encrypted'],
+                        'priority': ip_range_entry['priority'],
+                        'matched_range': ip_range
+                    })
+            
+            # Sort by priority (lower = higher priority)
+            matching_sets.sort(key=lambda x: x['priority'])
+            
+            if matching_sets:
+                self.log(f"Found {len(matching_sets)} credential set(s) for IP {ip_address}", "INFO")
+            
+            return matching_sets
+            
+        except Exception as e:
+            self.log(f"Error fetching credential sets for IP: {e}", "ERROR")
+            return []
+
     def get_server_credentials(self, server_id: str) -> tuple:
         """Fetch server-specific credentials from database, fallback to defaults"""
         try:
@@ -251,14 +331,41 @@ class JobExecutor:
             return []
 
     def discover_single_ip(self, ip: str, credential_sets: List[Dict], job_id: str) -> Dict:
-        """Try multiple credential sets for a single IP"""
+        """
+        Try credentials for a single IP.
+        Priority:
+          1. Credential sets matching IP ranges (highest priority)
+          2. Global credential sets selected in the discovery job
+        """
         
-        for cred_set in sorted(credential_sets, key=lambda x: x['priority']):
+        # Step 1: Get credential sets that match this IP's range
+        range_based_credentials = self.get_credential_sets_for_ip(ip)
+        
+        # Step 2: Combine with global credentials (range-based first)
+        all_credentials = range_based_credentials + credential_sets
+        
+        # Remove duplicates (prioritize range-based)
+        seen_ids = set()
+        unique_credentials = []
+        for cred in all_credentials:
+            if cred['id'] not in seen_ids:
+                unique_credentials.append(cred)
+                seen_ids.add(cred['id'])
+        
+        # Step 3: Try each credential set in order
+        for cred_set in sorted(unique_credentials, key=lambda x: x.get('priority', 999)):
             try:
+                matched_by = cred_set.get('matched_range', 'manual_selection')
+                self.log(f"Trying {cred_set['name']} for {ip} (matched: {matched_by})", "INFO")
+                
+                # For range-based creds, password is already decrypted
+                # For global creds from DB, it may be in 'password_encrypted' field
+                password = cred_set.get('password') or cred_set.get('password_encrypted')
+                
                 result = self.test_idrac_connection(
                     ip,
                     cred_set['username'],
-                    cred_set['password_encrypted']
+                    password
                 )
                 
                 if result:
@@ -267,6 +374,7 @@ class JobExecutor:
                         'ip': ip,
                         'credential_set_id': cred_set.get('id'),
                         'credential_set_name': cred_set['name'],
+                        'matched_by': matched_by,
                         'auth_failed': False,
                         **result
                     }
