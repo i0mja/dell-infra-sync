@@ -38,6 +38,8 @@ export default function Settings() {
 
   // Teams Settings
   const [teamsWebhookUrl, setTeamsWebhookUrl] = useState("");
+  const [testingTeams, setTestingTeams] = useState(false);
+  const [recentNotifications, setRecentNotifications] = useState<any[]>([]);
 
   // Notification Preferences
   const [notifyOnJobComplete, setNotifyOnJobComplete] = useState(true);
@@ -92,6 +94,7 @@ export default function Settings() {
     loadSettings();
     loadApiTokens();
     fetchStaleJobCount();
+    loadRecentNotifications();
   }, []);
 
   // Sync activeTab with URL params when they change
@@ -138,6 +141,65 @@ export default function Settings() {
       description: "Choose which events trigger notifications",
       icon: Bell,
     },
+  };
+
+  const loadRecentNotifications = async () => {
+    const { data, error } = await supabase
+      .from('notification_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(10);
+    
+    if (error) {
+      console.error('Error loading notification logs:', error);
+      return;
+    }
+    
+    setRecentNotifications(data || []);
+  };
+
+  const handleTestTeamsNotification = async () => {
+    if (!teamsWebhookUrl) {
+      toast({
+        title: "Webhook URL Required",
+        description: "Please enter a Teams webhook URL before testing",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setTestingTeams(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('send-notification', {
+        body: {
+          isTest: true,
+          testMessage: 'This is a test notification from your Server Management System',
+        },
+      });
+
+      if (error) throw error;
+
+      if (data?.results?.teams?.success) {
+        toast({
+          title: "Test Notification Sent",
+          description: "Check your Teams channel for the test message",
+        });
+        // Refresh notification logs
+        await loadRecentNotifications();
+      } else if (data?.results?.teams?.error) {
+        throw new Error(data.results.teams.error);
+      } else {
+        throw new Error('Unexpected response from notification service');
+      }
+    } catch (error: any) {
+      toast({
+        title: "Test Failed",
+        description: error.message || "Failed to send test notification",
+        variant: "destructive",
+      });
+    } finally {
+      setTestingTeams(false);
+    }
   };
 
   const loadApiTokens = async () => {
@@ -853,9 +915,56 @@ export default function Settings() {
                   </p>
                 </div>
 
-                <Button onClick={handleSaveSettings} disabled={loading}>
-                  {loading ? "Saving..." : "Save Teams Settings"}
-                </Button>
+                <div className="flex gap-2">
+                  <Button onClick={handleSaveSettings} disabled={loading}>
+                    {loading ? "Saving..." : "Save Teams Settings"}
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    onClick={handleTestTeamsNotification} 
+                    disabled={testingTeams || !teamsWebhookUrl}
+                  >
+                    {testingTeams ? "Sending..." : "Send Test Notification"}
+                  </Button>
+                </div>
+
+                {recentNotifications.length > 0 && (
+                  <div className="mt-6 space-y-3">
+                    <Label className="text-base">Recent Notification Deliveries</Label>
+                    <div className="rounded-md border">
+                      <div className="divide-y">
+                        {recentNotifications.slice(0, 5).map((log) => (
+                          <div key={log.id} className="flex items-center justify-between p-3">
+                            <div className="flex items-center gap-3">
+                              <div className={cn(
+                                "h-2 w-2 rounded-full",
+                                log.status === 'success' ? "bg-green-500" : "bg-destructive"
+                              )} />
+                              <div>
+                                <p className="text-sm font-medium">
+                                  {log.notification_type === 'teams' ? 'Teams' : 'Email'} 
+                                  {log.is_test && ' (Test)'}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {new Date(log.created_at).toLocaleString()}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-sm">
+                              {log.status === 'success' ? (
+                                <span className="text-green-600">Delivered</span>
+                              ) : (
+                                <span className="text-destructive" title={log.error_message}>
+                                  Failed
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

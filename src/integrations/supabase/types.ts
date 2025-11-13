@@ -361,6 +361,47 @@ export type Database = {
           },
         ]
       }
+      notification_logs: {
+        Row: {
+          created_at: string
+          delivery_details: Json | null
+          error_message: string | null
+          id: string
+          is_test: boolean
+          job_id: string | null
+          notification_type: string
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          delivery_details?: Json | null
+          error_message?: string | null
+          id?: string
+          is_test?: boolean
+          job_id?: string | null
+          notification_type: string
+          status: string
+        }
+        Update: {
+          created_at?: string
+          delivery_details?: Json | null
+          error_message?: string | null
+          id?: string
+          is_test?: boolean
+          job_id?: string | null
+          notification_type?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notification_logs_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notification_settings: {
         Row: {
           created_at: string

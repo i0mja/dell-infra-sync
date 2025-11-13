@@ -6,10 +6,12 @@ const corsHeaders = {
 };
 
 interface NotificationPayload {
-  jobId: string;
-  jobType: string;
-  status: string;
+  jobId?: string;
+  jobType?: string;
+  status?: string;
   details?: any;
+  isTest?: boolean;
+  testMessage?: string;
 }
 
 Deno.serve(async (req) => {
@@ -23,9 +25,9 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const { jobId, jobType, status, details }: NotificationPayload = await req.json();
+    const { jobId, jobType, status, details, isTest, testMessage }: NotificationPayload = await req.json();
 
-    console.log('Processing notification for job:', { jobId, jobType, status });
+    console.log('Processing notification:', { jobId, jobType, status, isTest });
 
     // Get notification settings
     const { data: settings, error: settingsError } = await supabaseClient
@@ -47,18 +49,20 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Check if we should notify for this event
-    const shouldNotify = 
-      (status === 'completed' && settings.notify_on_job_complete) ||
-      (status === 'failed' && settings.notify_on_job_failed) ||
-      (status === 'running' && settings.notify_on_job_started);
+    // Check if we should notify for this event (skip for test notifications)
+    if (!isTest) {
+      const shouldNotify = 
+        (status === 'completed' && settings.notify_on_job_complete) ||
+        (status === 'failed' && settings.notify_on_job_failed) ||
+        (status === 'running' && settings.notify_on_job_started);
 
-    if (!shouldNotify) {
-      console.log('Notification disabled for this event type');
-      return new Response(
-        JSON.stringify({ message: 'Notification disabled for this event' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
-      );
+      if (!shouldNotify) {
+        console.log('Notification disabled for this event type');
+        return new Response(
+          JSON.stringify({ message: 'Notification disabled for this event' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+        );
+      }
     }
 
     const results: any = { email: null, teams: null };
@@ -67,11 +71,36 @@ Deno.serve(async (req) => {
     if (settings.smtp_host && settings.smtp_user && settings.smtp_from_email) {
       try {
         console.log('Sending email notification...');
-        const emailResult = await sendEmailNotification(settings, jobId, jobType, status, details);
+        const emailResult = await sendEmailNotification(
+          settings, 
+          jobId || 'test', 
+          jobType || 'test', 
+          status || 'test', 
+          details
+        );
         results.email = emailResult;
+        
+        // Log successful email delivery
+        await supabaseClient.from('notification_logs').insert({
+          notification_type: 'email',
+          job_id: jobId || null,
+          status: 'success',
+          delivery_details: emailResult,
+          is_test: isTest || false
+        });
       } catch (emailError: any) {
         console.error('Email notification failed:', emailError);
         results.email = { error: emailError.message };
+        
+        // Log failed email delivery
+        await supabaseClient.from('notification_logs').insert({
+          notification_type: 'email',
+          job_id: jobId || null,
+          status: 'failed',
+          error_message: emailError.message,
+          delivery_details: { error: emailError.message },
+          is_test: isTest || false
+        });
       }
     }
 
@@ -79,11 +108,38 @@ Deno.serve(async (req) => {
     if (settings.teams_webhook_url) {
       try {
         console.log('Sending Teams notification...');
-        const teamsResult = await sendTeamsNotification(settings.teams_webhook_url, jobId, jobType, status, details);
+        const teamsResult = await sendTeamsNotification(
+          settings.teams_webhook_url, 
+          jobId || 'test', 
+          jobType || 'test', 
+          status || 'test', 
+          details,
+          isTest,
+          testMessage
+        );
         results.teams = teamsResult;
+        
+        // Log successful Teams delivery
+        await supabaseClient.from('notification_logs').insert({
+          notification_type: 'teams',
+          job_id: jobId || null,
+          status: 'success',
+          delivery_details: teamsResult,
+          is_test: isTest || false
+        });
       } catch (teamsError: any) {
         console.error('Teams notification failed:', teamsError);
         results.teams = { error: teamsError.message };
+        
+        // Log failed Teams delivery
+        await supabaseClient.from('notification_logs').insert({
+          notification_type: 'teams',
+          job_id: jobId || null,
+          status: 'failed',
+          error_message: teamsError.message,
+          delivery_details: { error: teamsError.message },
+          is_test: isTest || false
+        });
       }
     }
 
@@ -180,8 +236,43 @@ async function sendTeamsNotification(
   jobId: string,
   jobType: string,
   status: string,
-  details?: any
+  details?: any,
+  isTest?: boolean,
+  testMessage?: string
 ): Promise<any> {
+  if (isTest) {
+    const card = {
+      "@type": "MessageCard",
+      "@context": "https://schema.org/extensions",
+      "summary": "Test Notification",
+      "themeColor": "0078D4",
+      "title": "🔔 Test Notification from Server Management System",
+      "sections": [
+        {
+          "activityTitle": "Connection Test",
+          "facts": [
+            { "name": "Status", "value": "Success" },
+            { "name": "Message", "value": testMessage || "Your Teams webhook is configured correctly!" },
+            { "name": "Timestamp", "value": new Date().toISOString() },
+          ],
+        },
+      ],
+    };
+
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(card),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Teams webhook failed: ${response.status} ${errorText}`);
+    }
+
+    return { success: true, message: 'Test notification sent successfully' };
+  }
+
   const statusColor = status === 'completed' ? '00FF00' : status === 'failed' ? 'FF0000' : 'FFA500';
   const statusEmoji = status === 'completed' ? '✅' : status === 'failed' ? '❌' : '🔄';
 
