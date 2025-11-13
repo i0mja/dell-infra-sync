@@ -76,6 +76,17 @@ export default function Settings() {
   const [slowCommandThreshold, setSlowCommandThreshold] = useState(5000);
   const [maxRequestBodyKb, setMaxRequestBodyKb] = useState(100);
   const [maxResponseBodyKb, setMaxResponseBodyKb] = useState(100);
+
+  // Deployment Mode Detection
+  const getDeploymentMode = () => {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+    if (supabaseUrl.includes('supabase.co')) {
+      return { mode: 'Cloud-Connected', color: 'bg-blue-500', description: 'Connected to Lovable Cloud' };
+    }
+    return { mode: 'Air-Gapped', color: 'bg-green-500', description: 'Self-hosted with local backend' };
+  };
+
+  const deploymentInfo = getDeploymentMode();
   const [alertOnFailures, setAlertOnFailures] = useState(true);
   const [alertOnSlowCommands, setAlertOnSlowCommands] = useState(false);
   const [keepStatistics, setKeepStatistics] = useState(true);
@@ -1297,42 +1308,72 @@ export default function Settings() {
       <Tabs value={activeTab} onValueChange={setActiveTab}>
 
           <TabsContent value="appearance">
-            <Card>
-              <CardContent className="space-y-6">
-                <div className="space-y-4">
-                  <Label>Theme</Label>
-                  <p className="text-sm text-muted-foreground">
-                    Choose your preferred color scheme
-                  </p>
-                  <div className="grid grid-cols-3 gap-4">
-                    <Button
-                      variant={theme === "light" ? "default" : "outline"}
-                      onClick={() => setTheme("light")}
-                      className="flex items-center gap-2"
-                    >
-                      <Sun className="h-4 w-4" />
-                      Light
-                    </Button>
-                    <Button
-                      variant={theme === "dark" ? "default" : "outline"}
-                      onClick={() => setTheme("dark")}
-                      className="flex items-center gap-2"
-                    >
-                      <Moon className="h-4 w-4" />
-                      Dark
-                    </Button>
-                    <Button
-                      variant={theme === "system" ? "default" : "outline"}
-                      onClick={() => setTheme("system")}
-                      className="flex items-center gap-2"
-                    >
-                      <Monitor className="h-4 w-4" />
-                      System
-                    </Button>
+            <div className="space-y-4">
+              <Card>
+                <CardContent className="space-y-6">
+                  <div className="space-y-4">
+                    <Label>Theme</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Choose your preferred color scheme
+                    </p>
+                    <div className="grid grid-cols-3 gap-4">
+                      <Button
+                        variant={theme === "light" ? "default" : "outline"}
+                        onClick={() => setTheme("light")}
+                        className="flex items-center gap-2"
+                      >
+                        <Sun className="h-4 w-4" />
+                        Light
+                      </Button>
+                      <Button
+                        variant={theme === "dark" ? "default" : "outline"}
+                        onClick={() => setTheme("dark")}
+                        className="flex items-center gap-2"
+                      >
+                        <Moon className="h-4 w-4" />
+                        Dark
+                      </Button>
+                      <Button
+                        variant={theme === "system" ? "default" : "outline"}
+                        onClick={() => setTheme("system")}
+                        className="flex items-center gap-2"
+                      >
+                        <Monitor className="h-4 w-4" />
+                        System
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Network className="h-5 w-5" />
+                    Deployment Mode
+                  </CardTitle>
+                  <CardDescription>
+                    Your current deployment configuration
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <div className={cn("h-2 w-2 rounded-full", deploymentInfo.color)} />
+                        <span className="font-medium">{deploymentInfo.mode}</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        {deploymentInfo.description}
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="text-xs">
+                      {import.meta.env.VITE_SUPABASE_URL?.replace(/^https?:\/\//, '').split('/')[0] || 'Unknown'}
+                    </Badge>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
           <TabsContent value="smtp">
