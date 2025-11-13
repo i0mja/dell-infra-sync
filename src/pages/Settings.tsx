@@ -1517,34 +1517,6 @@ export default function Settings() {
                   </div>
                 </CardContent>
               </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Network className="h-5 w-5" />
-                    Deployment Mode
-                  </CardTitle>
-                  <CardDescription>
-                    Your current deployment configuration
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <div className={cn("h-2 w-2 rounded-full", deploymentInfo.color)} />
-                        <span className="font-medium">{deploymentInfo.mode}</span>
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        {deploymentInfo.description}
-                      </p>
-                    </div>
-                    <Badge variant="outline" className="text-xs">
-                      {import.meta.env.VITE_SUPABASE_URL?.replace(/^https?:\/\//, '').split('/')[0] || 'Unknown'}
-                    </Badge>
-                  </div>
-                </CardContent>
-              </Card>
             </div>
           </TabsContent>
 
