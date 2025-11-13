@@ -14,6 +14,21 @@ interface NotificationPayload {
   testMessage?: string;
 }
 
+interface NotificationSettings {
+  smtp_host?: string;
+  smtp_port?: number;
+  smtp_user?: string;
+  smtp_password?: string;
+  smtp_from_email?: string;
+  teams_webhook_url?: string;
+  notify_on_job_complete?: boolean;
+  notify_on_job_failed?: boolean;
+  notify_on_job_started?: boolean;
+  teams_mention_users?: string;
+  mention_on_critical_failures?: boolean;
+  critical_job_types?: string[];
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -34,7 +49,7 @@ Deno.serve(async (req) => {
       .from('notification_settings')
       .select('*')
       .limit(1)
-      .maybeSingle();
+      .maybeSingle() as { data: NotificationSettings | null; error: any };
 
     if (settingsError) {
       console.error('Error fetching notification settings:', settingsError);
@@ -65,6 +80,15 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Determine if this is a critical failure
+    const isCritical = status === 'failed' && 
+                       settings.critical_job_types?.includes(jobType || '') &&
+                       !isTest;
+
+    const severity = isCritical ? 'critical' : 
+                     status === 'failed' ? 'high' : 
+                     'normal';
+
     const results: any = { email: null, teams: null };
 
     // Send email notification
@@ -86,7 +110,8 @@ Deno.serve(async (req) => {
           job_id: jobId || null,
           status: 'success',
           delivery_details: emailResult,
-          is_test: isTest || false
+          is_test: isTest || false,
+          severity
         });
       } catch (emailError: any) {
         console.error('Email notification failed:', emailError);
@@ -99,7 +124,8 @@ Deno.serve(async (req) => {
           status: 'failed',
           error_message: emailError.message,
           delivery_details: { error: emailError.message },
-          is_test: isTest || false
+          is_test: isTest || false,
+          severity
         });
       }
     }
@@ -115,7 +141,10 @@ Deno.serve(async (req) => {
           status || 'test', 
           details,
           isTest,
-          testMessage
+          testMessage,
+          isCritical,
+          settings.teams_mention_users,
+          settings.mention_on_critical_failures
         );
         results.teams = teamsResult;
         
@@ -125,7 +154,8 @@ Deno.serve(async (req) => {
           job_id: jobId || null,
           status: 'success',
           delivery_details: teamsResult,
-          is_test: isTest || false
+          is_test: isTest || false,
+          severity
         });
       } catch (teamsError: any) {
         console.error('Teams notification failed:', teamsError);
@@ -138,7 +168,8 @@ Deno.serve(async (req) => {
           status: 'failed',
           error_message: teamsError.message,
           delivery_details: { error: teamsError.message },
-          is_test: isTest || false
+          is_test: isTest || false,
+          severity
         });
       }
     }
@@ -238,7 +269,10 @@ async function sendTeamsNotification(
   status: string,
   details?: any,
   isTest?: boolean,
-  testMessage?: string
+  testMessage?: string,
+  isCritical?: boolean,
+  mentionUsers?: string,
+  mentionOnCriticalFailures?: boolean
 ): Promise<any> {
   if (isTest) {
     const card = {
@@ -273,24 +307,60 @@ async function sendTeamsNotification(
     return { success: true, message: 'Test notification sent successfully' };
   }
 
-  const statusColor = status === 'completed' ? '00FF00' : status === 'failed' ? 'FF0000' : 'FFA500';
-  const statusEmoji = status === 'completed' ? '✅' : status === 'failed' ? '❌' : '🔄';
+  const getSeverityBadge = (status: string, isCritical: boolean) => {
+    if (status === 'failed') {
+      return isCritical ? '🚨 CRITICAL' : '❌ FAILED';
+    }
+    if (status === 'completed') return '✅ SUCCESS';
+    return '🔄 RUNNING';
+  };
+
+  const statusEmoji = status === 'completed' ? '✅' : 
+                     status === 'failed' ? (isCritical ? '🚨' : '❌') : 
+                     status === 'running' ? '🔄' : '❓';
+  
+  const statusColor = status === 'completed' ? '28a745' : 
+                     status === 'failed' ? (isCritical ? 'FF0000' : 'dc3545') : 
+                     status === 'running' ? '007bff' : '6c757d';
+
+  // Build @mention text for critical failures
+  let mentionText = '';
+  if (isCritical && mentionOnCriticalFailures && mentionUsers) {
+    const users = mentionUsers.split(',').map(u => u.trim()).filter(u => u);
+    mentionText = users.map(user => `<at>${user}</at>`).join(' ');
+  }
+
+  // Regular job notification
+  const severityBadge = getSeverityBadge(status, isCritical || false);
+  const titleText = isCritical ? `${statusEmoji} CRITICAL: JOB ${status.toUpperCase()}` : `${statusEmoji} Job ${status.toUpperCase()}`;
+  
+  // Build message text
+  let messageText = '';
+  if (isCritical && mentionText) {
+    messageText = `⚠️ **CRITICAL FAILURE** - Immediate attention required!\n\n${mentionText}\n\n`;
+  }
+  if (details) {
+    messageText += details ? `Details: ${JSON.stringify(details, null, 2)}` : '';
+  }
 
   const card = {
     "@type": "MessageCard",
     "@context": "https://schema.org/extensions",
     "summary": `Job ${status}: ${jobType}`,
     "themeColor": statusColor,
-    "title": `${statusEmoji} Job ${status.toUpperCase()}`,
+    "title": titleText,
+    ...(isCritical && { "importance": "high" }),
     "sections": [
       {
-        "activityTitle": jobType,
+        "activityTitle": `${severityBadge} - ${jobType}`,
         "facts": [
           { "name": "Job ID", "value": jobId },
           { "name": "Status", "value": status },
           { "name": "Type", "value": jobType },
+          { "name": "Severity", "value": isCritical ? "CRITICAL" : (status === 'failed' ? "High" : "Normal") },
+          { "name": "Timestamp", "value": new Date().toISOString() },
         ],
-        "text": details ? `Details: ${JSON.stringify(details, null, 2)}` : undefined,
+        "text": messageText || undefined,
       },
     ],
   };

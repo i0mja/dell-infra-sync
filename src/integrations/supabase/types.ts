@@ -370,6 +370,7 @@ export type Database = {
           is_test: boolean
           job_id: string | null
           notification_type: string
+          severity: string | null
           status: string
         }
         Insert: {
@@ -380,6 +381,7 @@ export type Database = {
           is_test?: boolean
           job_id?: string | null
           notification_type: string
+          severity?: string | null
           status: string
         }
         Update: {
@@ -390,6 +392,7 @@ export type Database = {
           is_test?: boolean
           job_id?: string | null
           notification_type?: string
+          severity?: string | null
           status?: string
         }
         Relationships: [
@@ -405,7 +408,9 @@ export type Database = {
       notification_settings: {
         Row: {
           created_at: string
+          critical_job_types: string[] | null
           id: string
+          mention_on_critical_failures: boolean | null
           notify_on_job_complete: boolean | null
           notify_on_job_failed: boolean | null
           notify_on_job_started: boolean | null
@@ -414,12 +419,15 @@ export type Database = {
           smtp_password: string | null
           smtp_port: number | null
           smtp_user: string | null
+          teams_mention_users: string | null
           teams_webhook_url: string | null
           updated_at: string
         }
         Insert: {
           created_at?: string
+          critical_job_types?: string[] | null
           id?: string
+          mention_on_critical_failures?: boolean | null
           notify_on_job_complete?: boolean | null
           notify_on_job_failed?: boolean | null
           notify_on_job_started?: boolean | null
@@ -428,12 +436,15 @@ export type Database = {
           smtp_password?: string | null
           smtp_port?: number | null
           smtp_user?: string | null
+          teams_mention_users?: string | null
           teams_webhook_url?: string | null
           updated_at?: string
         }
         Update: {
           created_at?: string
+          critical_job_types?: string[] | null
           id?: string
+          mention_on_critical_failures?: boolean | null
           notify_on_job_complete?: boolean | null
           notify_on_job_failed?: boolean | null
           notify_on_job_started?: boolean | null
@@ -442,6 +453,7 @@ export type Database = {
           smtp_password?: string | null
           smtp_port?: number | null
           smtp_user?: string | null
+          teams_mention_users?: string | null
           teams_webhook_url?: string | null
           updated_at?: string
         }

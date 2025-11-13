@@ -40,6 +40,9 @@ export default function Settings() {
   const [teamsWebhookUrl, setTeamsWebhookUrl] = useState("");
   const [testingTeams, setTestingTeams] = useState(false);
   const [recentNotifications, setRecentNotifications] = useState<any[]>([]);
+  const [teamsMentionUsers, setTeamsMentionUsers] = useState("");
+  const [mentionOnCriticalFailures, setMentionOnCriticalFailures] = useState(true);
+  const [criticalJobTypes, setCriticalJobTypes] = useState<string[]>(['firmware_update', 'full_server_update']);
 
   // Notification Preferences
   const [notifyOnJobComplete, setNotifyOnJobComplete] = useState(true);
@@ -309,10 +312,16 @@ export default function Settings() {
         setSmtpUser(data.smtp_user || "");
         setSmtpPassword(data.smtp_password || "");
         setSmtpFromEmail(data.smtp_from_email || "");
-        setTeamsWebhookUrl(data.teams_webhook_url || "");
-        setNotifyOnJobComplete(data.notify_on_job_complete ?? true);
-        setNotifyOnJobFailed(data.notify_on_job_failed ?? true);
-        setNotifyOnJobStarted(data.notify_on_job_started ?? false);
+      setTeamsWebhookUrl(data.teams_webhook_url || "");
+      setNotifyOnJobComplete(data.notify_on_job_complete ?? true);
+      setNotifyOnJobFailed(data.notify_on_job_failed ?? true);
+      setNotifyOnJobStarted(data.notify_on_job_started ?? false);
+      setTeamsMentionUsers(data.teams_mention_users || "");
+      setMentionOnCriticalFailures(data.mention_on_critical_failures ?? true);
+      setCriticalJobTypes(data.critical_job_types || ['firmware_update', 'full_server_update']);
+      setTeamsMentionUsers(data.teams_mention_users || "");
+      setMentionOnCriticalFailures(data.mention_on_critical_failures ?? true);
+      setCriticalJobTypes(data.critical_job_types || ['firmware_update', 'full_server_update']);
       }
     } catch (error: any) {
       console.error("Error loading settings:", error);
@@ -404,6 +413,9 @@ export default function Settings() {
         notify_on_job_complete: notifyOnJobComplete,
         notify_on_job_failed: notifyOnJobFailed,
         notify_on_job_started: notifyOnJobStarted,
+        teams_mention_users: teamsMentionUsers || null,
+        mention_on_critical_failures: mentionOnCriticalFailures,
+        critical_job_types: criticalJobTypes,
       };
 
       if (settingsId) {
@@ -915,6 +927,67 @@ export default function Settings() {
                   </p>
                 </div>
 
+                <div className="space-y-2">
+                  <Label htmlFor="teams-mention-users">Users to @Mention on Critical Failures</Label>
+                  <Input
+                    id="teams-mention-users"
+                    type="text"
+                    placeholder="user@company.com, ops-team@company.com"
+                    value={teamsMentionUsers}
+                    onChange={(e) => setTeamsMentionUsers(e.target.value)}
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    Comma-separated email addresses or UPNs. These users will be @mentioned in Teams for critical failures.
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>@Mention on Critical Failures</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Notify mentioned users when critical jobs fail
+                    </p>
+                  </div>
+                  <Switch
+                    checked={mentionOnCriticalFailures}
+                    onCheckedChange={setMentionOnCriticalFailures}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Critical Job Types</Label>
+                  <p className="text-sm text-muted-foreground mb-2">
+                    Failed jobs of these types will be marked as critical and trigger @mentions
+                  </p>
+                  <div className="space-y-2">
+                    {[
+                      { value: 'firmware_update', label: 'Firmware Update' },
+                      { value: 'discovery_scan', label: 'Discovery Scan' },
+                      { value: 'vcenter_sync', label: 'vCenter Sync' },
+                      { value: 'full_server_update', label: 'Full Server Update' }
+                    ].map((type) => (
+                      <div key={type.value} className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          id={`critical-${type.value}`}
+                          checked={criticalJobTypes.includes(type.value)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setCriticalJobTypes([...criticalJobTypes, type.value]);
+                            } else {
+                              setCriticalJobTypes(criticalJobTypes.filter(t => t !== type.value));
+                            }
+                          }}
+                          className="h-4 w-4 rounded border-input"
+                        />
+                        <Label htmlFor={`critical-${type.value}`} className="text-sm font-normal cursor-pointer">
+                          {type.label}
+                        </Label>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
                 <div className="flex gap-2">
                   <Button onClick={handleSaveSettings} disabled={loading}>
                     {loading ? "Saving..." : "Save Teams Settings"}
@@ -944,6 +1017,14 @@ export default function Settings() {
                                 <p className="text-sm font-medium">
                                   {log.notification_type === 'teams' ? 'Teams' : 'Email'} 
                                   {log.is_test && ' (Test)'}
+                                  {log.severity && log.severity !== 'normal' && (
+                                    <span className={cn(
+                                      "ml-2 text-xs font-bold px-2 py-0.5 rounded",
+                                      log.severity === 'critical' ? "bg-red-600 text-white" : "bg-orange-600 text-white"
+                                    )}>
+                                      {log.severity.toUpperCase()}
+                                    </span>
+                                  )}
                                 </p>
                                 <p className="text-xs text-muted-foreground">
                                   {new Date(log.created_at).toLocaleString()}
