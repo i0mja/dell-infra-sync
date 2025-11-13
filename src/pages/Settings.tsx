@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -2342,134 +2343,186 @@ export default function Settings() {
 
         {/* Credential Set Dialog */}
         <Dialog open={showCredentialDialog} onOpenChange={setShowCredentialDialog}>
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden">
             <DialogHeader>
               <DialogTitle>
                 {editingCredential ? 'Edit Credential Set' : 'Add Credential Set'}
               </DialogTitle>
             </DialogHeader>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="cred-name">Name *</Label>
-                <Input
-                  id="cred-name"
-                  placeholder="Production iDRAC"
-                  value={credentialForm.name}
-                  onChange={(e) => setCredentialForm({...credentialForm, name: e.target.value})}
-                />
-              </div>
-              
-              <div className="space-y-2">
-                <Label htmlFor="cred-username">Username *</Label>
-                <Input
-                  id="cred-username"
-                  placeholder="root"
-                  value={credentialForm.username}
-                  onChange={(e) => setCredentialForm({...credentialForm, username: e.target.value})}
-                />
-              </div>
-              
-              <div className="space-y-2">
-                <Label htmlFor="cred-password">
-                  Password * {editingCredential && "(leave blank to keep unchanged)"}
-                </Label>
-                <Input
-                  id="cred-password"
-                  type="password"
-                  placeholder="••••••••"
-                  value={credentialForm.password}
-                  onChange={(e) => setCredentialForm({...credentialForm, password: e.target.value})}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Credentials are encrypted at rest and protected by Row Level Security policies
-                </p>
-              </div>
-              
-              <div className="space-y-2">
-                <Label htmlFor="cred-description">Description (Optional)</Label>
-                <Input
-                  id="cred-description"
-                  placeholder="Used for production environment servers"
-                  value={credentialForm.description}
-                  onChange={(e) => setCredentialForm({...credentialForm, description: e.target.value})}
-                />
-              </div>
-              
-              <div className="space-y-2">
-                <Label htmlFor="cred-priority">Priority</Label>
-                <Input
-                  id="cred-priority"
-                  type="number"
-                  value={credentialForm.priority}
-                  onChange={(e) => setCredentialForm({...credentialForm, priority: parseInt(e.target.value) || 100})}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Lower numbers = higher priority. Discovery will try credentials in ascending priority order.
-                </p>
-              </div>
-              
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id="cred-default"
-                  checked={credentialForm.is_default}
-                  onCheckedChange={(checked) => setCredentialForm({...credentialForm, is_default: checked})}
-                />
-                <Label htmlFor="cred-default">Set as default credential set</Label>
-              </div>
-
-              {/* IP Range Assignment Section */}
-              {editingCredential && (
-                <Collapsible className="border rounded-lg p-4 space-y-3">
-                  <CollapsibleTrigger asChild>
-                    <Button variant="ghost" className="w-full justify-between p-0 h-auto hover:bg-transparent">
-                      <div className="flex items-center gap-2">
-                        <Network className="h-4 w-4" />
-                        <span className="font-medium">IP Range Assignment (Optional)</span>
-                      </div>
-                      <span className="text-xs text-muted-foreground">
-                        {editingCredential.credential_ip_ranges?.length || 0} configured
-                      </span>
-                    </Button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="space-y-3">
+            
+            <ScrollArea className="max-h-[calc(90vh-12rem)] pr-4">
+              <div className="grid md:grid-cols-2 gap-6">
+                {/* Left Column: Basic Credentials */}
+                <div className="space-y-4">
+                  <h3 className="text-sm font-medium">Basic Credentials</h3>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="cred-name">Name *</Label>
+                    <Input
+                      id="cred-name"
+                      placeholder="Production iDRAC"
+                      value={credentialForm.name}
+                      onChange={(e) => setCredentialForm({...credentialForm, name: e.target.value})}
+                    />
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="cred-username">Username *</Label>
+                    <Input
+                      id="cred-username"
+                      placeholder="root"
+                      value={credentialForm.username}
+                      onChange={(e) => setCredentialForm({...credentialForm, username: e.target.value})}
+                    />
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="cred-password">
+                      Password * {editingCredential && "(leave blank to keep unchanged)"}
+                    </Label>
+                    <Input
+                      id="cred-password"
+                      type="password"
+                      placeholder="••••••••"
+                      value={credentialForm.password}
+                      onChange={(e) => setCredentialForm({...credentialForm, password: e.target.value})}
+                    />
                     <p className="text-xs text-muted-foreground">
-                      Restrict these credentials to specific network segments. When a server IP matches a configured range, these credentials will be used automatically.
+                      Credentials are encrypted at rest and protected by Row Level Security policies
                     </p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        setShowCredentialDialog(false);
-                        openIpRangeDialog(editingCredential);
-                      }}
-                      className="w-full gap-2"
-                    >
-                      <Network className="h-3.5 w-3.5" />
-                      Manage IP Ranges
-                    </Button>
-                  </CollapsibleContent>
-                </Collapsible>
-              )}
-              
-              <div className="flex gap-2 pt-4">
-                <Button
-                  variant="outline"
-                  className="flex-1"
-                  onClick={() => {
-                    setShowCredentialDialog(false);
-                    setEditingCredential(null);
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  className="flex-1"
-                  onClick={handleSaveCredential}
-                  disabled={loading}
-                >
-                  {loading ? "Saving..." : editingCredential ? "Update" : "Create"}
-                </Button>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="cred-description">Description (Optional)</Label>
+                    <Input
+                      id="cred-description"
+                      placeholder="Used for production environment servers"
+                      value={credentialForm.description}
+                      onChange={(e) => setCredentialForm({...credentialForm, description: e.target.value})}
+                    />
+                  </div>
+                </div>
+
+                {/* Right Column: Configuration & IP Ranges */}
+                <div className="space-y-4">
+                  <h3 className="text-sm font-medium">Configuration</h3>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="cred-priority">Priority</Label>
+                    <Input
+                      id="cred-priority"
+                      type="number"
+                      value={credentialForm.priority}
+                      onChange={(e) => setCredentialForm({...credentialForm, priority: parseInt(e.target.value) || 100})}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Lower numbers = higher priority. Discovery will try credentials in ascending priority order.
+                    </p>
+                  </div>
+                  
+                  <div className="flex items-center space-x-2">
+                    <Switch
+                      id="cred-default"
+                      checked={credentialForm.is_default}
+                      onCheckedChange={(checked) => setCredentialForm({...credentialForm, is_default: checked})}
+                    />
+                    <Label htmlFor="cred-default">Set as default credential set</Label>
+                  </div>
+
+                  {/* IP Range Assignment Section - Always visible */}
+                  <Collapsible 
+                    open={ipRangeExpanded} 
+                    onOpenChange={setIpRangeExpanded}
+                    className="border rounded-lg p-4 space-y-3"
+                  >
+                    <CollapsibleTrigger asChild>
+                      <Button variant="ghost" className="w-full justify-between p-0 h-auto hover:bg-transparent">
+                        <div className="flex items-center gap-2">
+                          <Network className="h-4 w-4" />
+                          <span className="font-medium">IP Range Assignment</span>
+                          {tempIpRanges.length > 0 && (
+                            <Badge variant="secondary" className="ml-2">{tempIpRanges.length}</Badge>
+                          )}
+                        </div>
+                        <ChevronRight className={cn(
+                          "h-4 w-4 transition-transform",
+                          ipRangeExpanded && "rotate-90"
+                        )} />
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="space-y-3 pt-3">
+                      <p className="text-sm text-muted-foreground">
+                        Assign specific IP ranges to use this credential set automatically. Leave empty to use as a general credential set.
+                      </p>
+                      
+                      {/* Existing IP Ranges */}
+                      {tempIpRanges.length > 0 && (
+                        <div className="space-y-2">
+                          {tempIpRanges.map((range, idx) => (
+                            <div key={idx} className="flex items-center gap-2 p-2 bg-muted rounded-md">
+                              <span className="text-sm flex-1 font-mono">
+                                {range.start_ip} - {range.end_ip}
+                              </span>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setTempIpRanges(tempIpRanges.filter((_, i) => i !== idx));
+                                }}
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      
+                      {/* Add New IP Range Inline */}
+                      <div className="space-y-2 pt-2 border-t">
+                        <Label className="text-xs font-medium">Add IP Range</Label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <Input
+                            placeholder="Start IP"
+                            value={newInlineIpRange.start_ip}
+                            onChange={(e) => setNewInlineIpRange({...newInlineIpRange, start_ip: e.target.value})}
+                          />
+                          <Input
+                            placeholder="End IP"
+                            value={newInlineIpRange.end_ip}
+                            onChange={(e) => setNewInlineIpRange({...newInlineIpRange, end_ip: e.target.value})}
+                          />
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => {
+                            if (newInlineIpRange.start_ip && newInlineIpRange.end_ip) {
+                              setTempIpRanges([...tempIpRanges, newInlineIpRange]);
+                              setNewInlineIpRange({ start_ip: "", end_ip: "" });
+                            }
+                          }}
+                        >
+                          <Plus className="mr-2 h-4 w-4" />
+                          Add Range
+                        </Button>
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+                </div>
               </div>
+            </ScrollArea>
+
+            <div className="flex justify-end gap-2 pt-4 border-t">
+              <Button variant="outline" onClick={() => {
+                setShowCredentialDialog(false);
+                setEditingCredential(null);
+              }}>
+                Cancel
+              </Button>
+              <Button onClick={handleSaveCredential} disabled={loading}>
+                {loading ? "Saving..." : editingCredential ? "Update" : "Create"}
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
