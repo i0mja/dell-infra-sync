@@ -13,6 +13,7 @@ import { EditServerDialog } from "@/components/servers/EditServerDialog";
 import { ServerAuditDialog } from "@/components/servers/ServerAuditDialog";
 import { CreateJobDialog } from "@/components/jobs/CreateJobDialog";
 import { ConnectionStatusBadge } from "@/components/servers/ConnectionStatusBadge";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -313,9 +314,31 @@ const Servers = () => {
                             error={server.connection_error}
                           />
                           {server.vcenter_host_id ? (
-                            <Badge variant="secondary">Linked</Badge>
+                            <Badge variant="secondary">
+                              <CheckCircle className="mr-1 h-3 w-3" />
+                              Linked
+                            </Badge>
                           ) : (
-                            <Badge variant="outline">Unlinked</Badge>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Badge 
+                                    variant="outline" 
+                                    className="cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleLinkToVCenter(server);
+                                    }}
+                                  >
+                                    <Link2 className="mr-1 h-3 w-3" />
+                                    Unlinked
+                                  </Badge>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Click to link to vCenter host</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
                           )}
                           {refreshing === server.id && (
                             <Badge variant="outline" className="animate-pulse">Refreshing...</Badge>
