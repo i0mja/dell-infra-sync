@@ -7,10 +7,21 @@ interface ConnectionStatusBadgeProps {
   status: 'online' | 'offline' | 'unknown' | null;
   lastTest: string | null;
   error: string | null;
+  credentialTestStatus?: string | null;
 }
 
-export function ConnectionStatusBadge({ status, lastTest, error }: ConnectionStatusBadgeProps) {
+export function ConnectionStatusBadge({ status, lastTest, error, credentialTestStatus }: ConnectionStatusBadgeProps) {
   const getStatusConfig = () => {
+    // Priority: Show credential status if invalid
+    if (credentialTestStatus === 'invalid') {
+      return {
+        icon: XCircle,
+        label: 'Credentials Required',
+        variant: 'destructive' as const,
+        className: 'bg-yellow-600 hover:bg-yellow-700 text-white border-transparent',
+      };
+    }
+    
     switch (status) {
       case 'online':
         return {
@@ -40,6 +51,10 @@ export function ConnectionStatusBadge({ status, lastTest, error }: ConnectionSta
   const Icon = config.icon;
 
   const tooltipContent = () => {
+    if (credentialTestStatus === 'invalid') {
+      return "iDRAC detected but authentication failed with all credential sets.\nAssign valid credentials to access this server.";
+    }
+    
     if (!lastTest) return "Connection not tested yet";
     
     const timeAgo = formatDistanceToNow(new Date(lastTest), { addSuffix: true });
