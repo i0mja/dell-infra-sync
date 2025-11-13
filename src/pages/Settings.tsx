@@ -2039,9 +2039,9 @@ export default function Settings() {
                 <div className="flex items-center justify-between">
                   <div>
                     <CardTitle>iDRAC Credential Sets</CardTitle>
-                    <CardDescription>
-                      Manage credential profiles for server discovery and operations. Discovery jobs will try credentials in priority order. You can also assign IP ranges to automatically use specific credentials for certain networks.
-                    </CardDescription>
+            <CardDescription>
+              Manage credential profiles for server discovery and operations. Discovery jobs try credentials in priority order.
+            </CardDescription>
                   </div>
                   <Button
                     onClick={() => {
@@ -2069,7 +2069,7 @@ export default function Settings() {
                     <Shield className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
                     <h3 className="text-lg font-medium mb-2">No Credential Sets</h3>
                     <p className="text-sm text-muted-foreground mb-4">
-                      Create credential sets to use during server discovery and operations
+                      Create credential sets for server discovery. Optionally assign IP ranges to auto-select credentials for specific networks.
                     </p>
                     <Button
                       onClick={() => {
@@ -2123,15 +2123,6 @@ export default function Settings() {
                                 </p>
                               )}
 
-                              {(!credentialSet.credential_ip_ranges || credentialSet.credential_ip_ranges.length === 0) && (
-                                <div className="flex items-start gap-2 mt-3 p-2 rounded-md bg-muted/50">
-                                  <Network className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
-                                  <p className="text-xs text-muted-foreground">
-                                    <span className="font-medium">Tip:</span> Assign IP ranges to automatically use these credentials for specific network segments during discovery.
-                                  </p>
-                                </div>
-                              )}
-
                               {credentialSet.credential_ip_ranges && credentialSet.credential_ip_ranges.length > 0 && (
                                 <div className="mt-3 pt-3 border-t">
                                   <span className="text-sm text-muted-foreground font-medium">IP Ranges:</span>
@@ -2168,16 +2159,16 @@ export default function Settings() {
                               </div>
                               
                               {/* Action Buttons */}
-                              <div className="flex gap-1">
-                                <Button
-                                  size="sm"
-                                  variant={(credentialSet.credential_ip_ranges?.length || 0) > 0 ? "default" : "outline"}
-                                  onClick={() => openIpRangeDialog(credentialSet)}
-                                  className="gap-1"
-                                >
-                                  <Network className="h-3.5 w-3.5" />
-                                  IP Ranges ({credentialSet.credential_ip_ranges?.length || 0})
-                                </Button>
+                            <div className="flex gap-1">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => openIpRangeDialog(credentialSet)}
+                                className="gap-1"
+                              >
+                                <Network className="h-3.5 w-3.5" />
+                                IP Ranges ({credentialSet.credential_ip_ranges?.length || 0})
+                              </Button>
                                 
                                 <Button
                                   size="sm"
@@ -2369,6 +2360,40 @@ export default function Settings() {
                 />
                 <Label htmlFor="cred-default">Set as default credential set</Label>
               </div>
+
+              {/* IP Range Assignment Section */}
+              {editingCredential && (
+                <Collapsible className="border rounded-lg p-4 space-y-3">
+                  <CollapsibleTrigger asChild>
+                    <Button variant="ghost" className="w-full justify-between p-0 h-auto hover:bg-transparent">
+                      <div className="flex items-center gap-2">
+                        <Network className="h-4 w-4" />
+                        <span className="font-medium">IP Range Assignment (Optional)</span>
+                      </div>
+                      <span className="text-xs text-muted-foreground">
+                        {editingCredential.credential_ip_ranges?.length || 0} configured
+                      </span>
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="space-y-3">
+                    <p className="text-xs text-muted-foreground">
+                      Restrict these credentials to specific network segments. When a server IP matches a configured range, these credentials will be used automatically.
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setShowCredentialDialog(false);
+                        openIpRangeDialog(editingCredential);
+                      }}
+                      className="w-full gap-2"
+                    >
+                      <Network className="h-3.5 w-3.5" />
+                      Manage IP Ranges
+                    </Button>
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
               
               <div className="flex gap-2 pt-4">
                 <Button
