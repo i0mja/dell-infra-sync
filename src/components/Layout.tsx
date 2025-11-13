@@ -14,6 +14,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { useSearchParams } from "react-router-dom";
 
 const Layout = () => {
@@ -220,14 +221,16 @@ const Layout = () => {
       {/* Desktop Sidebar */}
       <aside className="hidden w-64 border-r bg-card md:block">
         <div className="flex h-full flex-col">
-          <div className="flex h-16 items-center border-b px-6">
+          <div className="flex h-16 items-center border-b px-6 flex-shrink-0">
             <Server className="h-6 w-6 text-primary mr-2" />
             <span className="text-lg font-semibold">Server Manager</span>
           </div>
-          <nav className="flex-1 space-y-1 p-4">
-            <NavLinks />
-          </nav>
-          <div className="border-t p-4">
+          <ScrollArea className="flex-1">
+            <nav className="space-y-1 p-4">
+              <NavLinks />
+            </nav>
+          </ScrollArea>
+          <div className="border-t p-4 flex-shrink-0">
             <div className="mb-2 px-2">
               <p className="text-sm font-medium">{user.email}</p>
               <p className="text-xs text-muted-foreground">Administrator</p>
@@ -251,14 +254,16 @@ const Layout = () => {
             </SheetTrigger>
             <SheetContent side="left" className="w-64 p-0">
               <div className="flex h-full flex-col">
-                <div className="flex h-16 items-center border-b px-6">
+                <div className="flex h-16 items-center border-b px-6 flex-shrink-0">
                   <Server className="h-6 w-6 text-primary mr-2" />
                   <span className="text-lg font-semibold">Server Manager</span>
                 </div>
-                <nav className="flex-1 space-y-1 p-4">
-                  <NavLinks />
-                </nav>
-                <div className="border-t p-4">
+                <ScrollArea className="flex-1">
+                  <nav className="space-y-1 p-4">
+                    <NavLinks />
+                  </nav>
+                </ScrollArea>
+                <div className="border-t p-4 flex-shrink-0">
                   <div className="mb-2 px-2">
                     <p className="text-sm font-medium">{user.email}</p>
                     <p className="text-xs text-muted-foreground">Administrator</p>
