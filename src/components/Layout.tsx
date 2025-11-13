@@ -98,16 +98,17 @@ const Layout = () => {
             key={item.name}
             variant={isActive ? "secondary" : "ghost"}
             className={cn(
-              "w-full justify-start transition-all duration-200",
+              "w-full justify-start transition-all duration-200 truncate",
               isActive && "bg-secondary"
             )}
             onClick={() => {
               navigate(item.href);
               setMobileOpen(false);
             }}
+            title={item.name}
           >
-            <item.icon className="mr-2 h-4 w-4" />
-            {item.name}
+            <item.icon className="mr-2 h-4 w-4 flex-shrink-0" />
+            <span className="truncate">{item.name}</span>
           </Button>
         );
       })}
@@ -145,16 +146,17 @@ const Layout = () => {
                 key={item.name}
                 variant={isActive ? "secondary" : "ghost"}
                 className={cn(
-                  "w-full justify-start pl-10 text-sm transition-all duration-200",
+                  "w-full justify-start pl-10 text-sm transition-all duration-200 truncate",
                   isActive && "bg-muted text-foreground font-medium"
                 )}
                 onClick={() => {
                   navigate(item.href);
                   setMobileOpen(false);
                 }}
+                title={item.name}
               >
-                <item.icon className="mr-2 h-3.5 w-3.5" />
-                {item.name}
+                <item.icon className="mr-2 h-3.5 w-3.5 flex-shrink-0" />
+                <span className="truncate">{item.name}</span>
               </Button>
             );
           })}
@@ -194,16 +196,17 @@ const Layout = () => {
                 key={item.name}
                 variant={isActive ? "secondary" : "ghost"}
                 className={cn(
-                  "w-full justify-start pl-10 text-sm transition-all duration-200",
+                  "w-full justify-start pl-10 text-sm transition-all duration-200 truncate",
                   isActive && "bg-muted text-foreground font-medium"
                 )}
                 onClick={() => {
                   navigate(item.href);
                   setMobileOpen(false);
                 }}
+                title={item.name}
               >
-                <item.icon className="mr-2 h-3.5 w-3.5" />
-                {item.name}
+                <item.icon className="mr-2 h-3.5 w-3.5 flex-shrink-0" />
+                <span className="truncate">{item.name}</span>
               </Button>
             );
           })}
