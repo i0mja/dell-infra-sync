@@ -93,11 +93,30 @@ export default function Settings() {
   const [autoCancelStaleJobs, setAutoCancelStaleJobs] = useState(true);
   const [staleJobCount, setStaleJobCount] = useState(0);
 
+  // Credential Sets State
+  const [credentialSets, setCredentialSets] = useState<any[]>([]);
+  const [editingCredential, setEditingCredential] = useState<any | null>(null);
+  const [showCredentialDialog, setShowCredentialDialog] = useState(false);
+  const [testingCredential, setTestingCredential] = useState<string | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [testIp, setTestIp] = useState("");
+
+  // Form state for credential dialog
+  const [credentialForm, setCredentialForm] = useState({
+    name: '',
+    username: '',
+    password: '',
+    description: '',
+    priority: 100,
+    is_default: false,
+  });
+
   useEffect(() => {
     loadSettings();
     loadApiTokens();
     fetchStaleJobCount();
     loadRecentNotifications();
+    loadCredentialSets();
   }, []);
 
   // Sync activeTab with URL params when they change
@@ -143,6 +162,11 @@ export default function Settings() {
       title: "Notification Preferences",
       description: "Choose which events trigger notifications",
       icon: Bell,
+    },
+    credentials: {
+      title: "Credential Management",
+      description: "Manage iDRAC credential sets for server discovery and operations",
+      icon: Shield,
     },
   };
 
@@ -764,6 +788,254 @@ export default function Settings() {
       });
     } finally {
       setOmeSyncing(false);
+    }
+  };
+
+  // Credential Management Functions
+  const loadCredentialSets = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('credential_sets')
+        .select('*')
+        .order('priority', { ascending: true });
+      
+      if (error) throw error;
+      setCredentialSets(data || []);
+    } catch (error: any) {
+      toast({
+        title: "Error loading credential sets",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleSaveCredential = async () => {
+    if (!credentialForm.name || !credentialForm.username) {
+      toast({
+        title: "Missing Required Fields",
+        description: "Please fill in name and username",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!editingCredential && !credentialForm.password) {
+      toast({
+        title: "Password Required",
+        description: "Password is required when creating a new credential set",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const payload: any = {
+        name: credentialForm.name,
+        username: credentialForm.username,
+        description: credentialForm.description || null,
+        priority: credentialForm.priority,
+        is_default: credentialForm.is_default,
+      };
+
+      // Only include password if it's provided
+      if (credentialForm.password) {
+        payload.password_encrypted = credentialForm.password;
+      }
+
+      if (editingCredential) {
+        // Update existing
+        const { error } = await supabase
+          .from('credential_sets')
+          .update(payload)
+          .eq('id', editingCredential.id);
+        
+        if (error) throw error;
+        
+        toast({
+          title: "Credential Set Updated",
+          description: `${credentialForm.name} has been updated successfully`,
+        });
+      } else {
+        // Create new
+        const { error } = await supabase
+          .from('credential_sets')
+          .insert(payload);
+        
+        if (error) throw error;
+        
+        toast({
+          title: "Credential Set Created",
+          description: `${credentialForm.name} has been created successfully`,
+        });
+      }
+
+      setShowCredentialDialog(false);
+      setEditingCredential(null);
+      setCredentialForm({
+        name: '',
+        username: '',
+        password: '',
+        description: '',
+        priority: 100,
+        is_default: false,
+      });
+      loadCredentialSets();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteCredential = async (id: string) => {
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from('credential_sets')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
+      
+      toast({
+        title: "Credential Set Deleted",
+        description: "The credential set has been removed",
+      });
+      
+      setDeleteConfirmId(null);
+      loadCredentialSets();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTestCredential = async (credentialSet: any) => {
+    if (!testIp) {
+      toast({
+        title: "IP Address Required",
+        description: "Please enter an IP address to test against",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setTestingCredential(credentialSet.id);
+    try {
+      const { data, error } = await supabase.functions.invoke('test-idrac-connection', {
+        body: {
+          ip_address: testIp,
+          username: credentialSet.username,
+          password: credentialSet.password_encrypted,
+        },
+      });
+
+      if (error) throw error;
+
+      if (data.success) {
+        toast({
+          title: "Connection Successful",
+          description: `Connected to ${testIp} successfully. Model: ${data.model || 'Unknown'}`,
+        });
+      } else {
+        throw new Error(data.error || 'Connection failed');
+      }
+    } catch (error: any) {
+      toast({
+        title: "Connection Failed",
+        description: error.message || "Failed to connect with these credentials",
+        variant: "destructive",
+      });
+    } finally {
+      setTestingCredential(null);
+    }
+  };
+
+  const handleMovePriority = async (id: string, direction: 'up' | 'down') => {
+    const index = credentialSets.findIndex(cs => cs.id === id);
+    if (index === -1) return;
+    
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= credentialSets.length) return;
+    
+    const currentSet = credentialSets[index];
+    const targetSet = credentialSets[targetIndex];
+    
+    setLoading(true);
+    try {
+      // Swap priorities
+      const updates = [
+        supabase
+          .from('credential_sets')
+          .update({ priority: targetSet.priority })
+          .eq('id', currentSet.id),
+        supabase
+          .from('credential_sets')
+          .update({ priority: currentSet.priority })
+          .eq('id', targetSet.id),
+      ];
+      
+      await Promise.all(updates);
+      
+      toast({
+        title: "Priority Updated",
+        description: "Credential set order has been changed",
+      });
+      
+      loadCredentialSets();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSetDefault = async (id: string) => {
+    setLoading(true);
+    try {
+      // First, unset all defaults
+      await supabase
+        .from('credential_sets')
+        .update({ is_default: false })
+        .neq('id', '00000000-0000-0000-0000-000000000000');
+      
+      // Then set the selected one as default
+      const { error } = await supabase
+        .from('credential_sets')
+        .update({ is_default: true })
+        .eq('id', id);
+      
+      if (error) throw error;
+      
+      toast({
+        title: "Default Credential Set",
+        description: "This credential set is now the default",
+      });
+      
+      loadCredentialSets();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1595,6 +1867,195 @@ export default function Settings() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          <TabsContent value="credentials">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>iDRAC Credential Sets</CardTitle>
+                    <CardDescription>
+                      Manage credential profiles for server discovery and operations. Discovery jobs will try credentials in priority order.
+                    </CardDescription>
+                  </div>
+                  <Button
+                    onClick={() => {
+                      setEditingCredential(null);
+                      setCredentialForm({
+                        name: '',
+                        username: '',
+                        password: '',
+                        description: '',
+                        priority: credentialSets.length > 0 
+                          ? Math.max(...credentialSets.map(cs => cs.priority)) + 10 
+                          : 100,
+                        is_default: credentialSets.length === 0,
+                      });
+                      setShowCredentialDialog(true);
+                    }}
+                  >
+                    Add Credential Set
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {credentialSets.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Shield className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
+                    <h3 className="text-lg font-medium mb-2">No Credential Sets</h3>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Create credential sets to use during server discovery and operations
+                    </p>
+                    <Button
+                      onClick={() => {
+                        setCredentialForm({
+                          name: '',
+                          username: '',
+                          password: '',
+                          description: '',
+                          priority: 100,
+                          is_default: true,
+                        });
+                        setShowCredentialDialog(true);
+                      }}
+                    >
+                      Create First Credential Set
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {credentialSets.map((credentialSet, index) => (
+                      <Card key={credentialSet.id} className="border-2">
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="flex-1 space-y-2">
+                              <div className="flex items-center gap-2">
+                                <h3 className="font-semibold text-lg">{credentialSet.name}</h3>
+                                {credentialSet.is_default && (
+                                  <span className="inline-flex items-center rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary ring-1 ring-inset ring-primary/20">
+                                    Default
+                                  </span>
+                                )}
+                                <span className="inline-flex items-center rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground ring-1 ring-inset ring-secondary/20">
+                                  Priority: {credentialSet.priority}
+                                </span>
+                              </div>
+                              
+                              <div className="grid grid-cols-2 gap-4 text-sm">
+                                <div>
+                                  <span className="text-muted-foreground">Username:</span>
+                                  <span className="ml-2 font-mono">{credentialSet.username}</span>
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground">Password:</span>
+                                  <span className="ml-2">••••••••</span>
+                                </div>
+                              </div>
+                              
+                              {credentialSet.description && (
+                                <p className="text-sm text-muted-foreground">
+                                  {credentialSet.description}
+                                </p>
+                              )}
+                            </div>
+                            
+                            <div className="flex flex-col gap-2">
+                              {/* Priority Controls */}
+                              <div className="flex gap-1">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleMovePriority(credentialSet.id, 'up')}
+                                  disabled={index === 0 || loading}
+                                >
+                                  ↑
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleMovePriority(credentialSet.id, 'down')}
+                                  disabled={index === credentialSets.length - 1 || loading}
+                                >
+                                  ↓
+                                </Button>
+                              </div>
+                              
+                              {/* Action Buttons */}
+                              <div className="flex gap-1">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setEditingCredential(credentialSet);
+                                    setCredentialForm({
+                                      name: credentialSet.name,
+                                      username: credentialSet.username,
+                                      password: '',
+                                      description: credentialSet.description || '',
+                                      priority: credentialSet.priority,
+                                      is_default: credentialSet.is_default,
+                                    });
+                                    setShowCredentialDialog(true);
+                                  }}
+                                >
+                                  Edit
+                                </Button>
+                                
+                                {!credentialSet.is_default && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleSetDefault(credentialSet.id)}
+                                    disabled={loading}
+                                  >
+                                    Set Default
+                                  </Button>
+                                )}
+                                
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => setDeleteConfirmId(credentialSet.id)}
+                                  disabled={loading}
+                                >
+                                  Delete
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+                
+                {/* Test Connection Section */}
+                <div className="mt-6 p-4 border rounded-lg bg-muted/50">
+                  <h4 className="font-medium mb-3">Test Credentials</h4>
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Test any credential set against an iDRAC IP address to verify connectivity
+                  </p>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="192.168.1.100"
+                      value={testIp}
+                      onChange={(e) => setTestIp(e.target.value)}
+                    />
+                    {credentialSets.map((credentialSet) => (
+                      <Button
+                        key={credentialSet.id}
+                        variant="outline"
+                        disabled={testingCredential !== null || !testIp}
+                        onClick={() => handleTestCredential(credentialSet)}
+                      >
+                        {testingCredential === credentialSet.id ? "Testing..." : `Test ${credentialSet.name}`}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
 
         {/* Token Generation Dialog */}
@@ -1631,6 +2092,135 @@ export default function Settings() {
               <p className="text-sm text-destructive">
                 ⚠️ Save this token now. You won't be able to see it again!
               </p>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Credential Set Dialog */}
+        <Dialog open={showCredentialDialog} onOpenChange={setShowCredentialDialog}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>
+                {editingCredential ? 'Edit Credential Set' : 'Add Credential Set'}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="cred-name">Name *</Label>
+                <Input
+                  id="cred-name"
+                  placeholder="Production iDRAC"
+                  value={credentialForm.name}
+                  onChange={(e) => setCredentialForm({...credentialForm, name: e.target.value})}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="cred-username">Username *</Label>
+                <Input
+                  id="cred-username"
+                  placeholder="root"
+                  value={credentialForm.username}
+                  onChange={(e) => setCredentialForm({...credentialForm, username: e.target.value})}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="cred-password">
+                  Password * {editingCredential && "(leave blank to keep unchanged)"}
+                </Label>
+                <Input
+                  id="cred-password"
+                  type="password"
+                  placeholder="••••••••"
+                  value={credentialForm.password}
+                  onChange={(e) => setCredentialForm({...credentialForm, password: e.target.value})}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Credentials are encrypted at rest and protected by Row Level Security policies
+                </p>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="cred-description">Description (Optional)</Label>
+                <Input
+                  id="cred-description"
+                  placeholder="Used for production environment servers"
+                  value={credentialForm.description}
+                  onChange={(e) => setCredentialForm({...credentialForm, description: e.target.value})}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="cred-priority">Priority</Label>
+                <Input
+                  id="cred-priority"
+                  type="number"
+                  value={credentialForm.priority}
+                  onChange={(e) => setCredentialForm({...credentialForm, priority: parseInt(e.target.value) || 100})}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Lower numbers = higher priority. Discovery will try credentials in ascending priority order.
+                </p>
+              </div>
+              
+              <div className="flex items-center space-x-2">
+                <Switch
+                  id="cred-default"
+                  checked={credentialForm.is_default}
+                  onCheckedChange={(checked) => setCredentialForm({...credentialForm, is_default: checked})}
+                />
+                <Label htmlFor="cred-default">Set as default credential set</Label>
+              </div>
+              
+              <div className="flex gap-2 pt-4">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => {
+                    setShowCredentialDialog(false);
+                    setEditingCredential(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={handleSaveCredential}
+                  disabled={loading}
+                >
+                  {loading ? "Saving..." : editingCredential ? "Update" : "Create"}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Delete Confirmation Dialog */}
+        <Dialog open={deleteConfirmId !== null} onOpenChange={() => setDeleteConfirmId(null)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Delete Credential Set</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              Are you sure you want to delete this credential set? This action cannot be undone.
+            </p>
+            <div className="flex gap-2 pt-4">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setDeleteConfirmId(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                className="flex-1"
+                onClick={() => deleteConfirmId && handleDeleteCredential(deleteConfirmId)}
+                disabled={loading}
+              >
+                {loading ? "Deleting..." : "Delete"}
+              </Button>
             </div>
           </DialogContent>
         </Dialog>

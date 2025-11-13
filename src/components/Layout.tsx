@@ -1,7 +1,7 @@
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { Server, Database, Briefcase, Activity, LogOut, Menu, Settings, LayoutDashboard, ChevronRight, Palette, Mail, MessageSquare, Bell, PlayCircle, CheckCircle, XCircle, Clock } from "lucide-react";
+import { Server, Database, Briefcase, Activity, LogOut, Menu, Settings, LayoutDashboard, ChevronRight, Palette, Mail, MessageSquare, Bell, PlayCircle, CheckCircle, XCircle, Clock, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
 import {
@@ -72,6 +72,7 @@ const Layout = () => {
     { name: "SMTP Email", href: "/settings?tab=smtp", icon: Mail, group: "Integrations" },
     { name: "Microsoft Teams", href: "/settings?tab=teams", icon: MessageSquare, group: "Integrations" },
     { name: "OpenManage", href: "/settings?tab=openmanage", icon: Server, group: "Integrations" },
+    { name: "Credentials", href: "/settings?tab=credentials", icon: Shield, group: "Security" },
     { name: "Jobs", href: "/settings?tab=jobs", icon: Briefcase, group: "Monitoring" },
     { name: "Activity Monitor", href: "/settings?tab=activity", icon: Activity, group: "Monitoring" },
     { name: "Preferences", href: "/settings?tab=preferences", icon: Bell, group: "Other" },
