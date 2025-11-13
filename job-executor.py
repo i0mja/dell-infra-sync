@@ -84,6 +84,39 @@ class JobExecutor:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{timestamp}] [{level}] {message}")
 
+    def get_server_credentials(self, server_id: str) -> tuple:
+        """Fetch server-specific credentials from database, fallback to defaults"""
+        try:
+            url = f"{DSM_URL}/rest/v1/servers"
+            headers = {
+                "apikey": SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+            }
+            params = {
+                "id": f"eq.{server_id}",
+                "select": "idrac_username,idrac_password_encrypted"
+            }
+            
+            response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
+            if response.status_code == 200:
+                servers = response.json()
+                if servers and len(servers) > 0:
+                    server = servers[0]
+                    # Use server-specific credentials if available, otherwise use defaults
+                    username = server.get('idrac_username') or IDRAC_DEFAULT_USER
+                    password = server.get('idrac_password_encrypted') or IDRAC_DEFAULT_PASSWORD
+                    
+                    if server.get('idrac_username'):
+                        self.log(f"Using server-specific credentials for server {server_id}", "INFO")
+                    else:
+                        self.log(f"Using default credentials for server {server_id}", "INFO")
+                    
+                    return (username, password)
+        except Exception as e:
+            self.log(f"Error fetching server credentials: {str(e)}, using defaults", "WARN")
+        
+        return (IDRAC_DEFAULT_USER, IDRAC_DEFAULT_PASSWORD)
+
     def get_pending_jobs(self) -> List[Dict]:
         """Fetch pending jobs from the cloud"""
         try:
@@ -553,9 +586,12 @@ class JobExecutor:
                 session_token = None
                 
                 try:
-                    # Step 1: Create iDRAC session
+                    # Step 1: Get server-specific credentials
+                    username, password = self.get_server_credentials(server['id'])
+                    
+                    # Step 2: Create iDRAC session
                     session_token = self.create_idrac_session(
-                        ip, IDRAC_DEFAULT_USER, IDRAC_DEFAULT_PASSWORD
+                        ip, username, password
                     )
                     
                     if not session_token:
@@ -652,7 +688,7 @@ class JobExecutor:
                         system_online = False
                         for attempt in range(SYSTEM_ONLINE_CHECK_ATTEMPTS):
                             try:
-                                test_result = self.test_idrac_connection(ip, IDRAC_DEFAULT_USER, IDRAC_DEFAULT_PASSWORD)
+                                test_result = self.test_idrac_connection(ip, username, password)
                                 if test_result:
                                     system_online = True
                                     self.log(f"  System back online")
@@ -671,7 +707,7 @@ class JobExecutor:
                         time.sleep(2)
                     
                     # Step 9: Verify firmware version
-                    new_session = self.create_idrac_session(ip, IDRAC_DEFAULT_USER, IDRAC_DEFAULT_PASSWORD)
+                    new_session = self.create_idrac_session(ip, username, password)
                     if new_session:
                         new_fw = self.get_firmware_inventory(ip, new_session)
                         self.close_idrac_session(ip, new_session)

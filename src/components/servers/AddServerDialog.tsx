@@ -30,6 +30,8 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
     idrac_firmware: "",
     bios_version: "",
     notes: "",
+    idrac_username: "",
+    idrac_password: "",
   });
   const { toast } = useToast();
 
@@ -101,14 +103,14 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
       if (error) throw error;
 
       if (data.success && data.server_info) {
-        setFormData({
-          ...formData,
-          hostname: data.server_info.hostname || formData.hostname,
-          model: data.server_info.model || formData.model,
-          service_tag: data.server_info.service_tag || formData.service_tag,
-          idrac_firmware: data.server_info.idrac_firmware || formData.idrac_firmware,
-          bios_version: data.server_info.bios_version || formData.bios_version,
-        });
+        setFormData(prev => ({
+          ...prev,
+          hostname: data.server_info.hostname || prev.hostname,
+          model: data.server_info.model || prev.model,
+          service_tag: data.server_info.service_tag || prev.service_tag,
+          idrac_firmware: data.server_info.idrac_firmware || prev.idrac_firmware,
+          bios_version: data.server_info.bios_version || prev.bios_version,
+        }));
 
         toast({
           title: "Details Retrieved",
@@ -159,6 +161,8 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
         idrac_firmware: "",
         bios_version: "",
         notes: "",
+        idrac_username: "",
+        idrac_password: "",
       });
       onOpenChange(false);
       onSuccess();

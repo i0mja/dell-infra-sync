@@ -529,9 +529,13 @@ export type Database = {
           connection_status: string | null
           cpu_count: number | null
           created_at: string
+          credential_last_tested: string | null
+          credential_test_status: string | null
           hostname: string | null
           id: string
           idrac_firmware: string | null
+          idrac_password_encrypted: string | null
+          idrac_username: string | null
           ip_address: string
           last_connection_test: string | null
           last_openmanage_sync: string | null
@@ -550,9 +554,13 @@ export type Database = {
           connection_status?: string | null
           cpu_count?: number | null
           created_at?: string
+          credential_last_tested?: string | null
+          credential_test_status?: string | null
           hostname?: string | null
           id?: string
           idrac_firmware?: string | null
+          idrac_password_encrypted?: string | null
+          idrac_username?: string | null
           ip_address: string
           last_connection_test?: string | null
           last_openmanage_sync?: string | null
@@ -571,9 +579,13 @@ export type Database = {
           connection_status?: string | null
           cpu_count?: number | null
           created_at?: string
+          credential_last_tested?: string | null
+          credential_test_status?: string | null
           hostname?: string | null
           id?: string
           idrac_firmware?: string | null
+          idrac_password_encrypted?: string | null
+          idrac_username?: string | null
           ip_address?: string
           last_connection_test?: string | null
           last_openmanage_sync?: string | null
