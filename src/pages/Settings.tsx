@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTheme } from "next-themes";
-import { Moon, Sun, Monitor, Database, Shield, AlertCircle, Palette, Mail, MessageSquare, Server, Briefcase, Activity, Bell } from "lucide-react";
+import { Moon, Sun, Monitor, Database, Shield, AlertCircle, Palette, Mail, MessageSquare, Server, Briefcase, Activity, Bell, Network } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -2040,7 +2040,7 @@ export default function Settings() {
                   <div>
                     <CardTitle>iDRAC Credential Sets</CardTitle>
                     <CardDescription>
-                      Manage credential profiles for server discovery and operations. Discovery jobs will try credentials in priority order.
+                      Manage credential profiles for server discovery and operations. Discovery jobs will try credentials in priority order. You can also assign IP ranges to automatically use specific credentials for certain networks.
                     </CardDescription>
                   </div>
                   <Button
@@ -2123,6 +2123,15 @@ export default function Settings() {
                                 </p>
                               )}
 
+                              {(!credentialSet.credential_ip_ranges || credentialSet.credential_ip_ranges.length === 0) && (
+                                <div className="flex items-start gap-2 mt-3 p-2 rounded-md bg-muted/50">
+                                  <Network className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+                                  <p className="text-xs text-muted-foreground">
+                                    <span className="font-medium">Tip:</span> Assign IP ranges to automatically use these credentials for specific network segments during discovery.
+                                  </p>
+                                </div>
+                              )}
+
                               {credentialSet.credential_ip_ranges && credentialSet.credential_ip_ranges.length > 0 && (
                                 <div className="mt-3 pt-3 border-t">
                                   <span className="text-sm text-muted-foreground font-medium">IP Ranges:</span>
@@ -2162,10 +2171,12 @@ export default function Settings() {
                               <div className="flex gap-1">
                                 <Button
                                   size="sm"
-                                  variant="outline"
+                                  variant={(credentialSet.credential_ip_ranges?.length || 0) > 0 ? "default" : "outline"}
                                   onClick={() => openIpRangeDialog(credentialSet)}
+                                  className="gap-1"
                                 >
-                                  IP ({credentialSet.credential_ip_ranges?.length || 0})
+                                  <Network className="h-3.5 w-3.5" />
+                                  IP Ranges ({credentialSet.credential_ip_ranges?.length || 0})
                                 </Button>
                                 
                                 <Button
@@ -2415,20 +2426,42 @@ export default function Settings() {
         <Dialog open={showIpRangeDialog} onOpenChange={setShowIpRangeDialog}>
           <DialogContent className="max-w-3xl max-h-[80vh]">
             <DialogHeader>
-              <DialogTitle>
-                Manage IP Ranges for "{selectedCredentialForIpRanges?.name}"
+              <DialogTitle className="flex items-center gap-2">
+                <Network className="h-5 w-5" />
+                IP Range Assignment for "{selectedCredentialForIpRanges?.name}"
               </DialogTitle>
               <p className="text-sm text-muted-foreground">
-                Define IP ranges where this credential set should be used automatically during discovery. 
-                Supports CIDR notation (10.0.0.0/8) and hyphenated ranges (192.168.1.1-192.168.1.50).
+                Automatically use these credentials for servers in specific IP ranges during discovery. This helps apply the right credentials to different network segments without manual selection.
               </p>
+              <div className="mt-2 p-3 rounded-md bg-muted/50 space-y-1">
+                <p className="text-xs font-medium">Supported Formats:</p>
+                <ul className="text-xs text-muted-foreground space-y-0.5 ml-4 list-disc">
+                  <li><span className="font-mono">10.0.0.0/8</span> - CIDR notation for network ranges</li>
+                  <li><span className="font-mono">192.168.1.1-192.168.1.50</span> - Hyphenated range for consecutive IPs</li>
+                  <li><span className="font-mono">172.16.0.100</span> - Single IP address</li>
+                </ul>
+              </div>
             </DialogHeader>
             
             <ScrollArea className="max-h-[500px] pr-4">
               <div className="space-y-4">
                 {ipRanges.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    No IP ranges configured yet
+                  <div className="text-center py-12 space-y-3">
+                    <Network className="mx-auto h-12 w-12 text-muted-foreground" />
+                    <div>
+                      <h4 className="font-medium text-base mb-1">No IP Ranges Configured</h4>
+                      <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                        Add IP ranges below to automatically apply these credentials to specific network segments. This is useful when different server groups require different authentication.
+                      </p>
+                    </div>
+                    <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3 max-w-md mx-auto">
+                      <p className="font-medium mb-2">Example Use Cases:</p>
+                      <ul className="text-left space-y-1 ml-4 list-disc">
+                        <li>Production servers (10.0.0.0/24) use admin credentials</li>
+                        <li>Test environment (192.168.1.0/24) uses test credentials</li>
+                        <li>DMZ servers (172.16.0.0/16) use restricted credentials</li>
+                      </ul>
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-2">
