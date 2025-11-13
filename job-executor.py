@@ -427,6 +427,42 @@ class JobExecutor:
         except Exception as e:
             self.log(f"Error inserting server {server['ip']}: {e}", "ERROR")
 
+    def insert_auth_failed_server(self, ip: str, job_id: str):
+        """Insert server that was discovered but authentication failed"""
+        try:
+            headers = {"apikey": API_KEY, "Authorization": f"Bearer {API_KEY}"}
+            
+            # Check if server already exists
+            check_url = f"{DSM_URL}/rest/v1/servers"
+            params = {"ip_address": f"eq.{ip}"}
+            existing = requests.get(check_url, headers=headers, params=params, verify=VERIFY_SSL)
+            
+            server_data = {
+                'ip_address': ip,
+                'connection_status': 'offline',
+                'connection_error': 'Authentication failed - credentials required',
+                'credential_test_status': 'invalid',
+                'credential_last_tested': datetime.now().isoformat(),
+                'last_connection_test': datetime.now().isoformat(),
+                'discovery_job_id': job_id,
+                'notes': f'Discovered by IP scan on {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} - iDRAC detected but no valid credentials'
+            }
+            
+            if existing.status_code == 200 and existing.json():
+                # Update existing server with auth failure status
+                server_id = existing.json()[0]['id']
+                update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}"
+                requests.patch(update_url, headers=headers, json=server_data, verify=VERIFY_SSL)
+                self.log(f"Updated server {ip} - auth failed status")
+            else:
+                # Insert new server with auth failed status
+                insert_url = f"{DSM_URL}/rest/v1/servers"
+                requests.post(insert_url, headers=headers, json=server_data, verify=VERIFY_SSL)
+                self.log(f"Inserted auth-failed server: {ip}")
+                
+        except Exception as e:
+            self.log(f"Error inserting auth-failed server {ip}: {e}", "ERROR")
+
     def execute_discovery_scan(self, job: Dict):
         """Execute IP discovery scan with multi-credential support"""
         self.log(f"Starting discovery scan job {job['id']}")
@@ -504,11 +540,15 @@ class JobExecutor:
                     except Exception as e:
                         pass  # Silent fail for non-responsive IPs
             
-            self.log(f"Discovery complete: {len(discovered)} servers found, {len(auth_failures)} auth failures")
+            self.log(f"Discovery complete: {len(discovered)} servers authenticated, {len(auth_failures)} require credentials")
             
             # Insert discovered servers into database with credential info
             for server in discovered:
                 self.insert_discovered_server(server, job['id'])
+            
+            # Insert auth-failed servers so they're tracked in inventory
+            for failure in auth_failures:
+                self.insert_auth_failed_server(failure['ip'], job['id'])
             
             self.update_job_status(
                 job['id'],

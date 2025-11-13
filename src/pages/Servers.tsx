@@ -12,6 +12,7 @@ import { LinkVCenterDialog } from "@/components/servers/LinkVCenterDialog";
 import { EditServerDialog } from "@/components/servers/EditServerDialog";
 import { ServerAuditDialog } from "@/components/servers/ServerAuditDialog";
 import { CreateJobDialog } from "@/components/jobs/CreateJobDialog";
+import { AssignCredentialsDialog } from "@/components/servers/AssignCredentialsDialog";
 import { ConnectionStatusBadge } from "@/components/servers/ConnectionStatusBadge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -46,6 +47,7 @@ interface Server {
   last_connection_test: string | null;
   connection_status: 'online' | 'offline' | 'unknown' | null;
   connection_error: string | null;
+  credential_test_status: string | null;
 }
 
 const Servers = () => {
@@ -58,6 +60,7 @@ const Servers = () => {
   const [auditDialogOpen, setAuditDialogOpen] = useState(false);
   const [jobDialogOpen, setJobDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [assignCredentialsDialogOpen, setAssignCredentialsDialogOpen] = useState(false);
   const [selectedServer, setSelectedServer] = useState<Server | null>(null);
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const { toast } = useToast();
@@ -312,6 +315,7 @@ const Servers = () => {
                             status={server.connection_status}
                             lastTest={server.last_connection_test}
                             error={server.connection_error}
+                            credentialTestStatus={server.credential_test_status}
                           />
                           {server.vcenter_host_id ? (
                             <Badge variant="secondary">
@@ -368,6 +372,21 @@ const Servers = () => {
                 </Card>
               </ContextMenuTrigger>
               <ContextMenuContent className="w-64">
+                {server.credential_test_status === 'invalid' && (
+                  <>
+                    <ContextMenuItem 
+                      onClick={() => {
+                        setSelectedServer(server);
+                        setAssignCredentialsDialogOpen(true);
+                      }}
+                      className="text-yellow-600 dark:text-yellow-500 font-medium"
+                    >
+                      <CheckCircle className="mr-2 h-4 w-4" />
+                      Assign Credentials
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                  </>
+                )}
                 <ContextMenuItem onClick={() => handleLinkToVCenter(server)}>
                   <Link2 className="mr-2 h-4 w-4" />
                   Link to vCenter Host
@@ -439,6 +458,12 @@ const Servers = () => {
             onOpenChange={setJobDialogOpen}
             onSuccess={fetchServers}
             preSelectedServerId={selectedServer.id}
+          />
+          <AssignCredentialsDialog
+            open={assignCredentialsDialogOpen}
+            onOpenChange={setAssignCredentialsDialogOpen}
+            server={selectedServer}
+            onSuccess={fetchServers}
           />
         </>
       )}
