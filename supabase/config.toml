@@ -8,3 +8,6 @@ verify_jwt = false  # Internal function called by update-job
 
 [functions.openmanage-sync]
 verify_jwt = true  # Requires admin/operator authentication
+
+[functions.test-vcenter-connection]
+verify_jwt = true  # Requires admin authentication
