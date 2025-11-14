@@ -151,6 +151,44 @@ export type Database = {
           },
         ]
       }
+      credential_ip_ranges: {
+        Row: {
+          created_at: string | null
+          credential_set_id: string
+          description: string | null
+          id: string
+          ip_range: string
+          priority: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          credential_set_id: string
+          description?: string | null
+          id?: string
+          ip_range: string
+          priority?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          credential_set_id?: string
+          description?: string | null
+          id?: string
+          ip_range?: string
+          priority?: number | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credential_ip_ranges_credential_set_id_fkey"
+            columns: ["credential_set_id"]
+            isOneToOne: false
+            referencedRelation: "credential_sets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       credential_sets: {
         Row: {
           created_at: string | null
@@ -400,6 +438,57 @@ export type Database = {
           },
         ]
       }
+      network_settings: {
+        Row: {
+          connection_timeout_seconds: number
+          created_at: string
+          id: string
+          latency_alert_threshold_ms: number
+          max_concurrent_connections: number
+          max_requests_per_minute: number
+          max_retry_attempts: number
+          monitor_latency: boolean
+          operation_timeout_seconds: number
+          read_timeout_seconds: number
+          require_prereq_validation: boolean
+          retry_backoff_type: string
+          retry_delay_seconds: number
+          updated_at: string
+        }
+        Insert: {
+          connection_timeout_seconds?: number
+          created_at?: string
+          id?: string
+          latency_alert_threshold_ms?: number
+          max_concurrent_connections?: number
+          max_requests_per_minute?: number
+          max_retry_attempts?: number
+          monitor_latency?: boolean
+          operation_timeout_seconds?: number
+          read_timeout_seconds?: number
+          require_prereq_validation?: boolean
+          retry_backoff_type?: string
+          retry_delay_seconds?: number
+          updated_at?: string
+        }
+        Update: {
+          connection_timeout_seconds?: number
+          created_at?: string
+          id?: string
+          latency_alert_threshold_ms?: number
+          max_concurrent_connections?: number
+          max_requests_per_minute?: number
+          max_retry_attempts?: number
+          monitor_latency?: boolean
+          operation_timeout_seconds?: number
+          read_timeout_seconds?: number
+          require_prereq_validation?: boolean
+          retry_backoff_type?: string
+          retry_delay_seconds?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       notification_logs: {
         Row: {
           created_at: string
@@ -569,6 +658,7 @@ export type Database = {
           cpu_count: number | null
           created_at: string
           credential_last_tested: string | null
+          credential_set_id: string | null
           credential_test_status: string | null
           discovered_by_credential_set_id: string | null
           discovery_job_id: string | null
@@ -596,6 +686,7 @@ export type Database = {
           cpu_count?: number | null
           created_at?: string
           credential_last_tested?: string | null
+          credential_set_id?: string | null
           credential_test_status?: string | null
           discovered_by_credential_set_id?: string | null
           discovery_job_id?: string | null
@@ -623,6 +714,7 @@ export type Database = {
           cpu_count?: number | null
           created_at?: string
           credential_last_tested?: string | null
+          credential_set_id?: string | null
           credential_test_status?: string | null
           discovered_by_credential_set_id?: string | null
           discovery_job_id?: string | null
@@ -649,6 +741,13 @@ export type Database = {
             columns: ["vcenter_host_id"]
             isOneToOne: false
             referencedRelation: "vcenter_hosts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "servers_credential_set_id_fkey"
+            columns: ["credential_set_id"]
+            isOneToOne: false
+            referencedRelation: "credential_sets"
             referencedColumns: ["id"]
           },
           {

@@ -211,13 +211,32 @@ function Test-RLSPolicies {
     $query = "SELECT COUNT(*) FROM pg_policies WHERE schemaname = 'public';"
     Write-Verbose "Query: $query"
     $result = docker exec $dbContainer psql -U postgres -t -c $query 2>&1
-    $policyCount = $result.Trim()
     
-    if ($LASTEXITCODE -eq 0 -and [int]$policyCount -gt 20) {
-        Write-Success "Found $policyCount RLS policies in public schema"
+    # Convert to string properly, handling both array and string results
+    if ($result -is [array]) {
+        $policyCountStr = ($result -join "").Trim()
     } else {
-        Write-Host "[ERROR] Query result: $result" -ForegroundColor Red
-        Write-Failure "Only found $policyCount RLS policies (expected 20+)"
+        $policyCountStr = ([string]$result).Trim()
+    }
+    
+    Write-Verbose "Raw result type: $($result.GetType().Name)"
+    Write-Verbose "Parsed count string: '$policyCountStr'"
+    
+    # Try to parse as integer
+    try {
+        $policyCount = [int]$policyCountStr
+        
+        if ($LASTEXITCODE -eq 0 -and $policyCount -gt 20) {
+            Write-Success "Found $policyCount RLS policies in public schema"
+        } else {
+            Write-Host "[ERROR] Query result: $result" -ForegroundColor Red
+            Write-Failure "Only found $policyCount RLS policies (expected 20+)"
+        }
+    } catch {
+        Write-Host "[ERROR] Failed to parse policy count: $policyCountStr" -ForegroundColor Red
+        Write-Host "[ERROR] Original result: $result" -ForegroundColor Red
+        Write-Host "[ERROR] Parse exception: $_" -ForegroundColor Red
+        Write-Failure "Could not verify RLS policies count"
     }
 }
 
