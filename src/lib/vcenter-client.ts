@@ -1,6 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 
-interface VCenterSettings {
+export interface VCenterSettings {
   host: string;
   username: string;
   password: string;
@@ -8,14 +8,14 @@ interface VCenterSettings {
   verify_ssl: boolean;
 }
 
-interface TestVCenterResult {
+export interface TestVCenterResult {
   success: boolean;
   responseTime: number;
   version?: string;
   error?: string;
 }
 
-interface SyncVCenterResult {
+export interface SyncVCenterResult {
   success: boolean;
   summary: {
     new: number;
@@ -96,10 +96,17 @@ export async function testVCenterConnection(
     
     // Update last_sync timestamp
     if (!settings?.host) {
-      await supabase
+      const { data: settingsRecord } = await supabase
         .from('vcenter_settings')
-        .update({ last_sync: new Date().toISOString() })
-        .eq('id', vcenterSettings.host);
+        .select('id')
+        .maybeSingle();
+      
+      if (settingsRecord) {
+        await supabase
+          .from('vcenter_settings')
+          .update({ last_sync: new Date().toISOString() })
+          .eq('id', settingsRecord.id);
+      }
     }
     
     return {

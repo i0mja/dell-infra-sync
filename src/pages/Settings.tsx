@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { testIdracConnection } from "@/lib/idrac-client";
-import { testVCenterConnection } from "@/lib/vcenter-client";
 import { testNotification } from "@/lib/notification-client";
 import { validateNetworkPrerequisites } from "@/lib/network-validator";
 import { runNetworkDiagnostics } from "@/lib/network-diagnostics";
@@ -217,17 +216,17 @@ export default function Settings() {
         response_time_ms: result.responseTime || responseTime,
         last_tested: new Date().toISOString(),
         error: result.error,
-        version: result.server_info?.idrac_firmware,
+        version: result.version,
       };
 
-      setServerTestResults(new Map(serverTestResults.set(serverId, result)));
+      setServerTestResults(new Map(serverTestResults.set(serverId, testResult)));
 
       toast({
-        title: result.success ? "Connection Successful" : "Connection Failed",
-        description: result.success 
-          ? `${server.hostname || server.ip_address} is online (${result.response_time_ms}ms)`
-          : result.error || "Failed to connect to iDRAC",
-        variant: result.success ? "default" : "destructive",
+        title: testResult.success ? "Connection Successful" : "Connection Failed",
+        description: testResult.success 
+          ? `${server.hostname || server.ip_address} is online (${testResult.response_time_ms}ms)`
+          : testResult.error || "Failed to connect to iDRAC",
+        variant: testResult.success ? "default" : "destructive",
       });
     } catch (error: any) {
       const result = {
@@ -288,36 +287,66 @@ export default function Settings() {
     setTestingVCenter(true);
     
     try {
+      // Fetch vCenter settings
+      const { data: vcenterSettings, error: settingsError } = await supabase
+        .from('vcenter_settings')
+        .select('*')
+        .maybeSingle();
+      
+      if (settingsError || !vcenterSettings) {
+        throw new Error('vCenter settings not configured');
+      }
+
+      const baseUrl = `https://${vcenterSettings.host}:${vcenterSettings.port}`;
       const startTime = Date.now();
-      const result = await testVCenterConnection();
-
+      
+      // Test connection
+      const authResponse = await fetch(`${baseUrl}/api/session`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Basic ${btoa(`${vcenterSettings.username}:${vcenterSettings.password}`)}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      
       const responseTime = Date.now() - startTime;
+      
+      if (!authResponse.ok) {
+        throw new Error(`vCenter authentication failed: ${authResponse.status}`);
+      }
 
-      const testResult = {
-        success: result.success,
-        response_time_ms: result.responseTime || responseTime,
+      const sessionToken = await authResponse.text();
+      const sessionId = sessionToken.replace(/"/g, '');
+      
+      // Get version
+      const versionResponse = await fetch(`${baseUrl}/api/vcenter/system/version`, {
+        headers: { 'vmware-api-session-id': sessionId },
+      });
+      
+      let version = 'Unknown';
+      if (versionResponse.ok) {
+        const versionData = await versionResponse.json();
+        version = versionData.version || 'Unknown';
+      }
+
+      setVCenterTestResult({
+        success: true,
+        response_time_ms: responseTime,
         last_tested: new Date().toISOString(),
-        error: result.error,
-        version: result.version,
-      };
-
-      setVCenterTestResult(testResult);
+        version,
+      });
 
       toast({
-        title: testResult.success ? "vCenter Connection Successful" : "vCenter Connection Failed",
-        description: testResult.success 
-          ? `Connected to vCenter (${testResult.response_time_ms}ms)${testResult.version ? ` - Version: ${testResult.version}` : ''}`
-          : testResult.error || "Failed to connect to vCenter",
-        variant: testResult.success ? "default" : "destructive",
+        title: "vCenter Connection Successful",
+        description: `Connected to vCenter (${responseTime}ms)${version ? ` - Version: ${version}` : ''}`,
       });
     } catch (error: any) {
-      const result = {
+      setVCenterTestResult({
         success: false,
         response_time_ms: 0,
         last_tested: new Date().toISOString(),
         error: error.message,
-      };
-      setVCenterTestResult(result);
+      });
       
       toast({
         title: "vCenter Connection Failed",
@@ -419,12 +448,9 @@ export default function Settings() {
           title: "Test Notification Sent",
           description: "Check your Teams channel for the test message",
         });
-        // Refresh notification logs
         await loadRecentNotifications();
-      } else if (data?.results?.teams?.error) {
-        throw new Error(data.results.teams.error);
       } else {
-        throw new Error('Unexpected response from notification service');
+        throw new Error(result.error || 'Failed to send notification');
       }
     } catch (error: any) {
       toast({
@@ -712,15 +738,16 @@ export default function Settings() {
       setExecutionLog(result.executionLog || []);
       setShowExecutionLog(true);
 
-      if (result.results.overall.passed) {
+      if (result.results.overallStatus === 'passed') {
         toast({
           title: "Validation Passed",
           description: "All network prerequisites are met",
         });
       } else {
+        const failedCount = Object.values(result.results).filter((r: any) => r.tested && !r.passed).length;
         toast({
           title: "Validation Issues",
-          description: `${result.results.overall.criticalFailures.length} critical issue(s) found`,
+          description: `${failedCount} issue(s) found`,
           variant: "destructive",
         });
       }
@@ -1481,7 +1508,6 @@ export default function Settings() {
     }
 
     setTestingCredential(credentialSet.id);
-    try {
     try {
       const result = await testIdracConnection(testIp, {
         username: credentialSet.username,
