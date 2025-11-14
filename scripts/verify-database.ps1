@@ -3,8 +3,13 @@
 # Verifies that all required database objects exist in the local Supabase instance
 
 param(
-    [string]$DbUrl = "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+    [string]$DbUrl = "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+    [switch]$Verbose
 )
+
+if ($Verbose) {
+    $VerbosePreference = "Continue"
+}
 
 $ErrorActionPreference = "Continue"
 $script:FailureCount = 0
@@ -22,16 +27,50 @@ function Write-Failure {
     $script:FailureCount++
 }
 
+# Function to get the actual Supabase database container name
+function Get-SupabaseDbContainer {
+    try {
+        $containers = docker ps --filter "name=supabase" --format "{{.Names}}" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "Docker command failed: $containers"
+        }
+        $dbContainer = $containers | Where-Object { $_ -match "supabase.*_db_" } | Select-Object -First 1
+        if ([string]::IsNullOrEmpty($dbContainer)) {
+            throw "No Supabase database container found. Run 'docker ps --filter name=supabase' to verify."
+        }
+        return $dbContainer.Trim()
+    } catch {
+        Write-Host "[ERROR] Container detection failed: $_" -ForegroundColor Red
+        Write-Host "[DEBUG] Available containers:" -ForegroundColor Yellow
+        docker ps --format "{{.Names}}" | Write-Host -ForegroundColor Gray
+        throw
+    }
+}
+
 function Test-DatabaseConnection {
     Write-Host "`n=== Testing Database Connection ===" -ForegroundColor Cyan
     
-    $query = "SELECT version();"
-    $result = docker exec supabase-db psql -U postgres -t -c $query 2>$null
-    
-    if ($LASTEXITCODE -eq 0) {
-        Write-Success "Database connection successful"
-        return $true
-    } else {
+    try {
+        $dbContainer = Get-SupabaseDbContainer
+        Write-Host "[DEBUG] Using container: $dbContainer" -ForegroundColor Gray
+        
+        $query = "SELECT version();"
+        $result = docker exec $dbContainer psql -U postgres -t -c $query 2>&1
+        $exitCode = $LASTEXITCODE
+        
+        if ($exitCode -eq 0) {
+            Write-Host "[DEBUG] PostgreSQL version: $($result.Trim())" -ForegroundColor Gray
+            Write-Success "Database connection successful"
+            return $true
+        } else {
+            Write-Host "[ERROR] Connection failed with exit code: $exitCode" -ForegroundColor Red
+            Write-Host "[ERROR] Docker exec output: $result" -ForegroundColor Red
+            Write-Host "[DEBUG] Attempted connection to container: $dbContainer" -ForegroundColor Yellow
+            Write-Failure "Cannot connect to database"
+            return $false
+        }
+    } catch {
+        Write-Host "[ERROR] Exception during connection test: $_" -ForegroundColor Red
         Write-Failure "Cannot connect to database"
         return $false
     }
@@ -40,15 +79,18 @@ function Test-DatabaseConnection {
 function Test-CustomTypes {
     Write-Host "`n=== Verifying Custom Types ===" -ForegroundColor Cyan
     
+    $dbContainer = Get-SupabaseDbContainer
     $types = @('app_role', 'job_status', 'job_type')
     
     foreach ($type in $types) {
         $query = "SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = '$type');"
-        $result = docker exec supabase-db psql -U postgres -t -c $query 2>$null
+        Write-Verbose "Query: $query"
+        $result = docker exec $dbContainer psql -U postgres -t -c $query 2>&1
         
         if ($result -match 't') {
             Write-Success "Custom type '$type' exists"
         } else {
+            Write-Host "[ERROR] Query result: $result" -ForegroundColor Red
             Write-Failure "Custom type '$type' is missing"
         }
     }
@@ -57,6 +99,7 @@ function Test-CustomTypes {
 function Test-Tables {
     Write-Host "`n=== Verifying Tables ===" -ForegroundColor Cyan
     
+    $dbContainer = Get-SupabaseDbContainer
     $tables = @(
         'profiles',
         'user_roles',
@@ -72,11 +115,13 @@ function Test-Tables {
     
     foreach ($table in $tables) {
         $query = "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '$table');"
-        $result = docker exec supabase-db psql -U postgres -t -c $query 2>$null
+        Write-Verbose "Query: $query"
+        $result = docker exec $dbContainer psql -U postgres -t -c $query 2>&1
         
         if ($result -match 't') {
             Write-Success "Table 'public.$table' exists"
         } else {
+            Write-Host "[ERROR] Query result: $result" -ForegroundColor Red
             Write-Failure "Table 'public.$table' is missing"
         }
     }
@@ -85,6 +130,7 @@ function Test-Tables {
 function Test-Functions {
     Write-Host "`n=== Verifying Functions ===" -ForegroundColor Cyan
     
+    $dbContainer = Get-SupabaseDbContainer
     $functions = @(
         'update_updated_at_column',
         'handle_new_user',
@@ -95,11 +141,13 @@ function Test-Functions {
     
     foreach ($func in $functions) {
         $query = "SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = '$func');"
-        $result = docker exec supabase-db psql -U postgres -t -c $query 2>$null
+        Write-Verbose "Query: $query"
+        $result = docker exec $dbContainer psql -U postgres -t -c $query 2>&1
         
         if ($result -match 't') {
             Write-Success "Function 'public.$func' exists"
         } else {
+            Write-Host "[ERROR] Query result: $result" -ForegroundColor Red
             Write-Failure "Function 'public.$func' is missing"
         }
     }
@@ -108,6 +156,7 @@ function Test-Functions {
 function Test-Triggers {
     Write-Host "`n=== Verifying Triggers ===" -ForegroundColor Cyan
     
+    $dbContainer = Get-SupabaseDbContainer
     $triggers = @(
         @{Name='on_auth_user_created'; Table='users'; Schema='auth'},
         @{Name='update_profiles_updated_at'; Table='profiles'; Schema='public'},
@@ -119,11 +168,13 @@ function Test-Triggers {
     
     foreach ($trigger in $triggers) {
         $query = "SELECT EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_class c ON t.tgrelid = c.oid JOIN pg_namespace n ON c.relnamespace = n.oid WHERE t.tgname = '$($trigger.Name)' AND c.relname = '$($trigger.Table)' AND n.nspname = '$($trigger.Schema)');"
-        $result = docker exec supabase-db psql -U postgres -t -c $query 2>$null
+        Write-Verbose "Query: $query"
+        $result = docker exec $dbContainer psql -U postgres -t -c $query 2>&1
         
         if ($result -match 't') {
             Write-Success "Trigger '$($trigger.Name)' exists on $($trigger.Schema).$($trigger.Table)"
         } else {
+            Write-Host "[ERROR] Query result: $result" -ForegroundColor Red
             Write-Failure "Trigger '$($trigger.Name)' is missing on $($trigger.Schema).$($trigger.Table)"
         }
     }
@@ -132,6 +183,7 @@ function Test-Triggers {
 function Test-RLSEnabled {
     Write-Host "`n=== Verifying RLS is Enabled ===" -ForegroundColor Cyan
     
+    $dbContainer = Get-SupabaseDbContainer
     $tables = @(
         'profiles', 'user_roles', 'servers', 'vcenter_hosts',
         'jobs', 'job_tasks', 'audit_logs', 'notification_settings',
@@ -140,11 +192,13 @@ function Test-RLSEnabled {
     
     foreach ($table in $tables) {
         $query = "SELECT relrowsecurity FROM pg_class WHERE relname = '$table';"
-        $result = docker exec supabase-db psql -U postgres -t -c $query 2>$null
+        Write-Verbose "Query: $query"
+        $result = docker exec $dbContainer psql -U postgres -t -c $query 2>&1
         
         if ($result -match 't') {
             Write-Success "RLS enabled on 'public.$table'"
         } else {
+            Write-Host "[ERROR] Query result: $result" -ForegroundColor Red
             Write-Failure "RLS not enabled on 'public.$table'"
         }
     }
@@ -153,19 +207,30 @@ function Test-RLSEnabled {
 function Test-RLSPolicies {
     Write-Host "`n=== Verifying RLS Policies ===" -ForegroundColor Cyan
     
+    $dbContainer = Get-SupabaseDbContainer
     $query = "SELECT COUNT(*) FROM pg_policies WHERE schemaname = 'public';"
-    $result = docker exec supabase-db psql -U postgres -t -c $query 2>$null
+    Write-Verbose "Query: $query"
+    $result = docker exec $dbContainer psql -U postgres -t -c $query 2>&1
     $policyCount = $result.Trim()
     
-    if ([int]$policyCount -gt 20) {
+    if ($LASTEXITCODE -eq 0 -and [int]$policyCount -gt 20) {
         Write-Success "Found $policyCount RLS policies in public schema"
     } else {
+        Write-Host "[ERROR] Query result: $result" -ForegroundColor Red
         Write-Failure "Only found $policyCount RLS policies (expected 20+)"
     }
 }
 
 function Show-Summary {
     Write-Host "`n=== Verification Summary ===" -ForegroundColor Cyan
+    
+    try {
+        $dbContainer = Get-SupabaseDbContainer
+        Write-Host "Container: $dbContainer" -ForegroundColor Gray
+    } catch {
+        Write-Host "Container: Could not detect" -ForegroundColor Yellow
+    }
+    
     Write-Host "Passed: $script:SuccessCount" -ForegroundColor Green
     Write-Host "Failed: $script:FailureCount" -ForegroundColor Red
     
@@ -175,8 +240,19 @@ function Show-Summary {
     } else {
         Write-Host "`n✗ Database schema has missing components!" -ForegroundColor Red
         Write-Host "`nTo fix, run:" -ForegroundColor Yellow
-        Write-Host "  docker exec supabase-db psql -U postgres -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'" -ForegroundColor Yellow
+        try {
+            $fixContainer = Get-SupabaseDbContainer
+            Write-Host "  docker exec $fixContainer psql -U postgres -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'" -ForegroundColor Yellow
+        } catch {
+            Write-Host "  docker exec <container-name> psql -U postgres -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'" -ForegroundColor Yellow
+        }
         Write-Host "  supabase db reset" -ForegroundColor Yellow
+        Write-Host "`nFor more details, check container logs:" -ForegroundColor Yellow
+        try {
+            Write-Host "  docker logs $dbContainer --tail 50" -ForegroundColor Yellow
+        } catch {
+            Write-Host "  docker logs <container-name> --tail 50" -ForegroundColor Yellow
+        }
         exit 1
     }
 }

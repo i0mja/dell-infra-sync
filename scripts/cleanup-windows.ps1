@@ -21,6 +21,19 @@ if ($Confirm -ne "yes") {
     exit 0
 }
 
+# Stop any existing transcript to prevent locked log files
+try {
+    Stop-Transcript -ErrorAction SilentlyContinue 2>&1 | Out-Null
+} catch {
+    # Transcript wasn't running, that's fine
+}
+
+# Start our own transcript
+$timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$logPath = Join-Path $env:TEMP "cleanup-$timestamp.log"
+Start-Transcript -Path $logPath -Append
+Write-Host "[LOG] Cleanup log: $logPath" -ForegroundColor Cyan
+
 Write-Host ""
 Write-Host "[*] Starting cleanup..." -ForegroundColor Yellow
 Write-Host ""
@@ -94,23 +107,41 @@ if ($dockerAvailable) {
     Write-Host "[SKIP] Docker engine not available, skipping container cleanup" -ForegroundColor Yellow
 }
 
-# Step 4: Wait for file locks to release
-Write-Host "[STEP 4/7] Waiting for file locks to release..." -ForegroundColor Yellow
+# Step 4: Remove Scoop bucket for Supabase
+Write-Host "[STEP 4/8] Removing Scoop Supabase bucket..." -ForegroundColor Yellow
+if (Get-Command scoop -ErrorAction SilentlyContinue) {
+    try {
+        $buckets = scoop bucket list 2>&1 | Out-String
+        if ($buckets -match "supabase") {
+            scoop bucket rm supabase 2>&1 | Out-Null
+            Write-Host "[OK] Supabase bucket removed from Scoop" -ForegroundColor Green
+        } else {
+            Write-Host "[OK] Supabase bucket not found in Scoop" -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "[WARN] Failed to remove Scoop bucket: $_" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "[SKIP] Scoop not installed" -ForegroundColor Yellow
+}
+
+# Step 5: Wait for file locks to release
+Write-Host "[STEP 5/8] Waiting for file locks to release..." -ForegroundColor Yellow
 Start-Sleep -Seconds 5
 
-# Step 5: Stop Docker processes if folders remain locked (optional)
-Write-Host "[STEP 5/7] Stopping Docker background processes..." -ForegroundColor Yellow
+# Step 6: Stop Docker processes if folders remain locked (optional)
+Write-Host "[STEP 6/8] Attempting to stop Docker processes..." -ForegroundColor Yellow
 try {
-    Stop-Process -Name "com.docker.backend" -Force -ErrorAction SilentlyContinue
-    Stop-Process -Name "Docker Desktop" -Force -ErrorAction SilentlyContinue
+    Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue | Stop-Process -Force 2>&1 | Out-Null
+    Get-Process -Name "com.docker.*" -ErrorAction SilentlyContinue | Stop-Process -Force 2>&1 | Out-Null
     Start-Sleep -Seconds 3
     Write-Host "[OK] Docker processes stopped" -ForegroundColor Green
 } catch {
-    Write-Host "[OK] No Docker processes to stop" -ForegroundColor Green
+    Write-Host "[WARN] Could not stop Docker processes: $($_.Exception.Message)" -ForegroundColor Yellow
 }
 
-# Step 6: Remove directories
-Write-Host "[STEP 6/7] Removing directories..." -ForegroundColor Yellow
+# Step 7: Remove directories (with unlock attempt)
+Write-Host "[STEP 7/8] Removing directories..." -ForegroundColor Yellow
 
 $directories = @(
     "C:\supabase",
@@ -122,19 +153,40 @@ foreach ($dir in $directories) {
     if (Test-Path $dir) {
         try {
             Write-Host "[INFO] Removing $dir..." -ForegroundColor Cyan
+            
+            # First attempt: direct removal
             Remove-Item -Recurse -Force $dir -ErrorAction Stop
             Write-Host "[OK] Removed $dir" -ForegroundColor Green
+            
         } catch {
-            Write-Host "[WARN] Could not remove $dir : $($_.Exception.Message)" -ForegroundColor Yellow
-            Write-Host "[WARN] You may need to manually delete this folder after reboot" -ForegroundColor Yellow
+            Write-Host "[WARN] Direct removal failed, attempting to unlock..." -ForegroundColor Yellow
+            
+            # Second attempt: take ownership and reset permissions
+            try {
+                Write-Host "[INFO] Taking ownership of $dir..." -ForegroundColor Cyan
+                takeown /F $dir /R /D Y 2>&1 | Out-Null
+                icacls $dir /grant "$($env:USERNAME):(OI)(CI)F" /T /C /Q 2>&1 | Out-Null
+                
+                Start-Sleep -Seconds 2
+                Remove-Item -Recurse -Force $dir -ErrorAction Stop
+                Write-Host "[OK] Removed $dir after unlocking" -ForegroundColor Green
+                
+            } catch {
+                Write-Host "[ERROR] Could not remove $dir even after unlock attempt" -ForegroundColor Red
+                Write-Host "[ERROR] Error: $($_.Exception.Message)" -ForegroundColor Red
+                Write-Host "[WARN] You may need to:" -ForegroundColor Yellow
+                Write-Host "  1. Close all programs accessing this folder" -ForegroundColor Yellow
+                Write-Host "  2. Restart your computer" -ForegroundColor Yellow
+                Write-Host "  3. Manually delete: $dir" -ForegroundColor Yellow
+            }
         }
     } else {
         Write-Host "[OK] $dir does not exist" -ForegroundColor Green
     }
 }
 
-# Step 7: Remove firewall rules
-Write-Host "[STEP 7/7] Removing firewall rules..." -ForegroundColor Yellow
+# Step 8: Remove firewall rules
+Write-Host "[STEP 8/8] Removing firewall rules..." -ForegroundColor Yellow
 try {
     Remove-NetFirewallRule -DisplayName "Dell Server Manager" -ErrorAction SilentlyContinue
     Remove-NetFirewallRule -DisplayName "Supabase API" -ErrorAction SilentlyContinue
