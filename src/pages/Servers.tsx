@@ -63,6 +63,7 @@ const Servers = () => {
   const [assignCredentialsDialogOpen, setAssignCredentialsDialogOpen] = useState(false);
   const [selectedServer, setSelectedServer] = useState<Server | null>(null);
   const [refreshing, setRefreshing] = useState<string | null>(null);
+  const [quickScanIp, setQuickScanIp] = useState<string>("");
   const { toast } = useToast();
 
   const fetchServers = async () => {
@@ -97,6 +98,11 @@ const Servers = () => {
 
   const handleCreateJob = (server: Server) => {
     setSelectedServer(server);
+    setJobDialogOpen(true);
+  };
+
+  const handleRequestDiscoveryJob = (serverIp: string) => {
+    setQuickScanIp(serverIp);
     setJobDialogOpen(true);
   };
 
@@ -436,7 +442,12 @@ const Servers = () => {
         </div>
       )}
 
-      <AddServerDialog open={dialogOpen} onOpenChange={setDialogOpen} onSuccess={fetchServers} />
+      <AddServerDialog 
+        open={dialogOpen} 
+        onOpenChange={setDialogOpen} 
+        onSuccess={fetchServers}
+        onRequestDiscoveryJob={handleRequestDiscoveryJob}
+      />
       
       {selectedServer && (
         <>
@@ -459,9 +470,13 @@ const Servers = () => {
           />
           <CreateJobDialog
             open={jobDialogOpen}
-            onOpenChange={setJobDialogOpen}
+            onOpenChange={(open) => {
+              setJobDialogOpen(open);
+              if (!open) setQuickScanIp("");
+            }}
             onSuccess={fetchServers}
             preSelectedServerId={selectedServer.id}
+            quickScanIp={quickScanIp}
           />
           <AssignCredentialsDialog
             open={assignCredentialsDialogOpen}
