@@ -133,7 +133,7 @@ Deno.serve(async (req) => {
               responseTimeMs: responseTime,
               success: true,
               source: 'network_prerequisites',
-              initiatedBy: user.email
+              initiatedBy: user.id
             });
           } else {
             results.servers.unreachable++;
@@ -164,7 +164,7 @@ Deno.serve(async (req) => {
               success: false,
               errorMessage: `HTTP ${response.status}`,
               source: 'network_prerequisites',
-              initiatedBy: user.email
+              initiatedBy: user.id
             });
           }
         } catch (error) {
@@ -197,7 +197,7 @@ Deno.serve(async (req) => {
             success: false,
             errorMessage: errorMsg,
             source: 'network_prerequisites',
-            initiatedBy: user.email
+            initiatedBy: user.id
           });
         }
       }
@@ -287,7 +287,7 @@ Deno.serve(async (req) => {
             success: false,
             errorMessage: `HTTP ${response.status}`,
             source: 'network_prerequisites',
-            initiatedBy: user.email
+            initiatedBy: user.id
           });
         } else {
           logStep(
@@ -311,7 +311,7 @@ Deno.serve(async (req) => {
             responseTimeMs: responseTime,
             success: true,
             source: 'network_prerequisites',
-            initiatedBy: user.email
+            initiatedBy: user.id
           });
         }
       } catch (error) {
@@ -340,7 +340,7 @@ Deno.serve(async (req) => {
           success: false,
           errorMessage: errorMsg,
           source: 'network_prerequisites',
-          initiatedBy: user.email
+          initiatedBy: user.id
         });
       }
     } else {
@@ -393,7 +393,7 @@ Deno.serve(async (req) => {
         responseTimeMs: dnsResponseTime,
         success: true,
         source: 'network_prerequisites',
-        initiatedBy: user.email
+        initiatedBy: user.id
       });
     } catch (error) {
       const dnsResponseTime = Date.now() - dnsStartTime;
@@ -420,7 +420,7 @@ Deno.serve(async (req) => {
         success: false,
         errorMessage: 'DNS resolution failed',
         source: 'network_prerequisites',
-        initiatedBy: user.email
+        initiatedBy: user.id
       });
     }
 

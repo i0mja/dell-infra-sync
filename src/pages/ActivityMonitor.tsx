@@ -163,8 +163,18 @@ export default function ActivityMonitor() {
       POST: 'bg-green-600',
       PATCH: 'bg-yellow-600',
       DELETE: 'bg-red-600',
+      network_validation_server: 'bg-purple-600',
+      network_validation_vcenter: 'bg-purple-600',
+      network_validation_dns: 'bg-purple-600',
     };
-    return <Badge className={colors[type] || 'bg-gray-600'}>{type}</Badge>;
+    
+    const labels: Record<string, string> = {
+      network_validation_server: 'NET:SERVER',
+      network_validation_vcenter: 'NET:VCENTER',
+      network_validation_dns: 'NET:DNS',
+    };
+    
+    return <Badge className={colors[type] || 'bg-gray-600'}>{labels[type] || type}</Badge>;
   };
 
   return (
@@ -224,6 +234,9 @@ export default function ActivityMonitor() {
               <SelectItem value="POST">POST</SelectItem>
               <SelectItem value="PATCH">PATCH</SelectItem>
               <SelectItem value="DELETE">DELETE</SelectItem>
+              <SelectItem value="network_validation_server">Network: Server Test</SelectItem>
+              <SelectItem value="network_validation_vcenter">Network: vCenter Test</SelectItem>
+              <SelectItem value="network_validation_dns">Network: DNS Test</SelectItem>
             </SelectContent>
           </Select>
 
