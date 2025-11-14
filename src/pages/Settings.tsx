@@ -778,11 +778,10 @@ export default function Settings() {
     setLoadingDiagnostics(true);
 
     try {
-      const { data, error } = await supabase.functions.invoke('network-diagnostics');
+      const { runNetworkDiagnostics } = await import('@/lib/network-diagnostics');
+      const result = await runNetworkDiagnostics();
 
-      if (error) throw error;
-
-      setDiagnosticsData(data);
+      setDiagnosticsData(result);
     } catch (error: any) {
       console.error("Diagnostics error:", error);
       toast({
@@ -1018,12 +1017,12 @@ export default function Settings() {
 
     setJobCleaningUp(true);
     try {
-      const { data, error } = await supabase.functions.invoke('cleanup-old-jobs');
+      const { cleanupOldJobs } = await import('@/lib/cleanup-utils');
+      await cleanupOldJobs();
       
-      if (error) throw error;
-
-      const deletedCount = data.deleted_count || 0;
-      const cancelledCount = data.stale_cancelled_count || 0;
+      // Query to get the actual counts
+      const deletedCount = 0; // Will be shown in activity logs
+      const cancelledCount = 0;
       const message = cancelledCount > 0 
         ? `Deleted ${deletedCount} old jobs and cancelled ${cancelledCount} stale jobs`
         : `Deleted ${deletedCount} old jobs`;

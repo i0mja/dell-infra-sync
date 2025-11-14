@@ -113,20 +113,17 @@ const VCenter = () => {
   const handleSyncNow = async () => {
     setSyncing(true);
     try {
-      const { data, error } = await supabase.functions.invoke('sync-vcenter-direct', {
-        method: 'POST',
-      });
+      const result = await syncVCenter();
 
-      if (error) throw error;
-
-      if (data?.success) {
+      if (result.success) {
         toast({
           title: "Sync completed",
-          description: `New: ${data.summary.new}, Updated: ${data.summary.updated}, Linked: ${data.summary.auto_linked}`,
+          description: `New: ${result.summary.new}, Updated: ${result.summary.updated}, Linked: ${result.summary.linked}`,
         });
         fetchHosts();
       } else {
-        throw new Error(data?.error || 'Sync failed');
+        const errorMsg = result.errors.length > 0 ? result.errors[0] : "Sync failed";
+        throw new Error(errorMsg);
       }
     } catch (error: any) {
       console.error("Sync error:", error);
