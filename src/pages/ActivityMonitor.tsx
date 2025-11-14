@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Activity, ChevronDown, ChevronRight, Search, RefreshCw, Filter } from "lucide-react";
 import { toast } from "sonner";
 import { CommandDetailDialog } from "@/components/activity/CommandDetailDialog";
@@ -45,6 +46,11 @@ export default function ActivityMonitor() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [timeRangeFilter, setTimeRangeFilter] = useState<string>("24h");
   const [searchTerm, setSearchTerm] = useState("");
+  const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+
+  // Detect deployment mode
+  const isLocalMode = import.meta.env.VITE_SUPABASE_URL?.includes('localhost') || 
+                      import.meta.env.VITE_SUPABASE_URL?.includes('127.0.0.1');
 
   // Fetch servers for filter dropdown
   const { data: servers } = useQuery({
@@ -66,20 +72,25 @@ export default function ActivityMonitor() {
       case '1h': return new Date(now.getTime() - 60 * 60 * 1000);
       case '24h': return new Date(now.getTime() - 24 * 60 * 60 * 1000);
       case '7d': return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      case 'all': return new Date(0); // Beginning of time
       default: return new Date(now.getTime() - 24 * 60 * 60 * 1000);
     }
   };
 
   // Fetch commands
-  const { data: commandsData, refetch } = useQuery({
+  const { data: commandsData, refetch, isError, error } = useQuery({
     queryKey: ['idrac-commands', serverFilter, commandTypeFilter, statusFilter, timeRangeFilter],
     queryFn: async () => {
       let query = supabase
         .from('idrac_commands')
         .select('*, servers(hostname, ip_address)')
-        .gte('timestamp', getTimeRangeDate().toISOString())
         .order('timestamp', { ascending: false })
         .limit(500);
+
+      // Only apply time filter if not "all"
+      if (timeRangeFilter !== 'all') {
+        query = query.gte('timestamp', getTimeRangeDate().toISOString());
+      }
 
       if (serverFilter !== 'all') {
         query = query.eq('server_id', serverFilter);
@@ -92,7 +103,10 @@ export default function ActivityMonitor() {
       }
 
       const { data, error } = await query;
-      if (error) throw error;
+      if (error) {
+        console.error('Error fetching commands:', error);
+        throw error;
+      }
       return data as IdracCommand[];
     },
   });
@@ -100,8 +114,18 @@ export default function ActivityMonitor() {
   useEffect(() => {
     if (commandsData) {
       setCommands(commandsData);
+      setLastRefresh(new Date());
     }
   }, [commandsData]);
+
+  // Handle query errors
+  useEffect(() => {
+    if (isError) {
+      toast.error('Failed to load activity logs', {
+        description: error instanceof Error ? error.message : 'Please try refreshing the page'
+      });
+    }
+  }, [isError, error]);
 
   // Set up realtime subscription
   useEffect(() => {
@@ -184,13 +208,21 @@ export default function ActivityMonitor() {
           <Activity className="h-8 w-8 text-primary" />
           <div>
             <h1 className="text-3xl font-bold">Activity Monitor</h1>
-            <p className="text-muted-foreground">Live iDRAC command viewer</p>
+            <p className="text-muted-foreground">
+              Live iDRAC command viewer
+              {isLocalMode && <Badge variant="outline" className="ml-2">Local Mode</Badge>}
+            </p>
           </div>
         </div>
-        <Button onClick={() => refetch()} variant="outline" size="sm">
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">
+            Last updated: {format(lastRefresh, 'HH:mm:ss')}
+          </span>
+          <Button onClick={() => refetch()} variant="outline" size="sm">
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -259,6 +291,7 @@ export default function ActivityMonitor() {
               <SelectItem value="1h">Last Hour</SelectItem>
               <SelectItem value="24h">Last 24 Hours</SelectItem>
               <SelectItem value="7d">Last 7 Days</SelectItem>
+              <SelectItem value="all">All Time</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -266,28 +299,38 @@ export default function ActivityMonitor() {
 
       {/* Commands Table */}
       <Card>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-12"></TableHead>
-              <TableHead>Timestamp</TableHead>
-              <TableHead>Server</TableHead>
-              <TableHead>Command</TableHead>
-              <TableHead>Endpoint</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Response Time</TableHead>
-              <TableHead>Source</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filteredCommands.length === 0 ? (
+        {filteredCommands.length === 0 ? (
+          <div className="p-12 text-center">
+            <Activity className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
+            <h3 className="text-lg font-semibold mb-2">No Activity Logs Found</h3>
+            <p className="text-muted-foreground mb-4">
+              Logs are created when edge functions or Job Executor interact with iDRAC servers.
+            </p>
+            {isLocalMode && (
+              <Alert className="max-w-md mx-auto">
+                <AlertDescription>
+                  <strong>Local Mode:</strong> Use the Job Executor for iDRAC operations in local deployments. 
+                  Edge functions running in Docker may have limited network access to local iDRAC IPs.
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
-                  No commands found. Commands will appear here in real-time.
-                </TableCell>
+                <TableHead className="w-12"></TableHead>
+                <TableHead>Timestamp</TableHead>
+                <TableHead>Server</TableHead>
+                <TableHead>Command</TableHead>
+                <TableHead>Endpoint</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Response Time</TableHead>
+                <TableHead>Source</TableHead>
               </TableRow>
-            ) : (
-              filteredCommands.map((cmd) => (
+            </TableHeader>
+            <TableBody>
+              {filteredCommands.map((cmd) => (
                 <>
                   <TableRow 
                     key={cmd.id}
@@ -351,10 +394,10 @@ export default function ActivityMonitor() {
                     </TableRow>
                   )}
                 </>
-              ))
-            )}
-          </TableBody>
-        </Table>
+              ))}
+            </TableBody>
+          </Table>
+        )}
       </Card>
 
       <CommandDetailDialog

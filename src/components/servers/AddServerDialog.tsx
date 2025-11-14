@@ -50,6 +50,10 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
   
   const { toast } = useToast();
 
+  // Detect if running in local mode
+  const isLocalMode = import.meta.env.VITE_SUPABASE_URL?.includes('localhost') || 
+                      import.meta.env.VITE_SUPABASE_URL?.includes('127.0.0.1');
+
   // Fetch credential sets on mount
   useEffect(() => {
     if (open) {
@@ -257,6 +261,15 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
 
               {!manualEntryMode && (
                 <>
+                  {isLocalMode && (
+                    <Alert variant="default" className="mb-4">
+                      <AlertDescription>
+                        <strong>Local Deployment:</strong> The "Fetch Server Details" feature may not work in local deployments 
+                        due to Docker networking limitations. Use "Manual Entry" or run a Discovery Scan job via the Job Executor instead.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
                   <div className="space-y-2">
                     <Label htmlFor="credential_set">Credentials *</Label>
                     {!useCustomCredentials ? (
@@ -328,13 +341,18 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
                   <Button 
                     type="button" 
                     onClick={handleFetchServerDetails}
-                    disabled={fetching || !formData.ip_address}
+                    disabled={fetching || !formData.ip_address || isLocalMode}
                     className="w-full"
                   >
                     {fetching ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                         Fetching Server Details...
+                      </>
+                    ) : isLocalMode ? (
+                      <>
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                        Fetch Disabled (Local Mode)
                       </>
                     ) : (
                       <>
