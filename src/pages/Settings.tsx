@@ -12,7 +12,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTheme } from "next-themes";
-import { Activity, AlertCircle, Bell, Briefcase, CheckCircle2, ChevronDown, ChevronRight, Copy, Database, FileText, Globe, Loader2, Mail, MessageSquare, Monitor, Moon, Network, Palette, Plus, RefreshCw, Save, Server, Settings as SettingsIcon, Shield, Sun, Terminal, Users, X, XCircle } from "lucide-react";
+import { Activity, AlertCircle, Bell, Briefcase, CheckCircle2, ChevronDown, ChevronRight, Copy, Database, FileText, Globe, Info, Loader2, Mail, MessageSquare, Monitor, Moon, Network, Palette, Plus, RefreshCw, Save, Server, Settings as SettingsIcon, Shield, Sun, Terminal, Users, X, XCircle } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { DiagnosticsDialog } from "@/components/settings/DiagnosticsDialog";
 import { useSearchParams } from "react-router-dom";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -20,6 +21,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 export default function Settings() {
+  const isLocalMode = import.meta.env.VITE_SUPABASE_URL?.includes('127.0.0.1') || 
+                      import.meta.env.VITE_SUPABASE_URL?.includes('localhost');
   const { user, userRole } = useAuth();
   const { toast } = useToast();
   const { theme, setTheme } = useTheme();
@@ -2697,6 +2700,16 @@ export default function Settings() {
                   </div>
                 </CardContent>
               </Card>
+
+              {isLocalMode && (
+                <Alert className="mb-6">
+                  <Info className="h-4 w-4" />
+                  <AlertDescription>
+                    Running in local mode. Network tests use Edge Functions which may have limited access to your local network due to Docker isolation. 
+                    For comprehensive network validation and testing, use the Job Executor with discovery jobs which runs directly on the host with full network access.
+                  </AlertDescription>
+                </Alert>
+              )}
 
               {/* Network Resilience Settings */}
               <Card>
