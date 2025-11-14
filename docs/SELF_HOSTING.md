@@ -49,6 +49,36 @@ cd C:\dell-server-manager
 
 **Total time: ~10 minutes** (includes Docker Desktop and Supabase CLI installation)
 
+---
+
+## Environment Configuration
+
+Dell Server Manager uses Vite's environment file hierarchy for configuration:
+
+- **`.env`** - Contains Lovable Cloud credentials (managed automatically, do not edit)
+- **`.env.local`** - Local overrides for offline/self-hosted deployments (created by installers)
+- **`.env.offline.template`** - Template for offline installations (committed to repository)
+
+### How It Works
+
+1. **Lovable Cloud Development**: Uses `.env` with cloud credentials
+2. **Local/Offline Deployments**: Installer scripts create `.env.local` from `.env.offline.template`
+3. **Priority**: Vite loads `.env.local` first, then falls back to `.env`
+
+This approach allows:
+- ✅ Lovable Cloud to manage `.env` without conflicts
+- ✅ Local deployments to override with `.env.local`
+- ✅ No manual `.env` editing required
+
+**Note**: If you're developing locally and want to use local Supabase, simply copy `.env.offline.template` to `.env.local`:
+
+```bash
+cp .env.offline.template .env.local
+# Then update VITE_SUPABASE_URL if needed
+```
+
+---
+
 ## Deployment Modes: Local vs Cloud-Connected
 
 Dell Server Manager supports two deployment modes to accommodate different infrastructure requirements:

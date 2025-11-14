@@ -132,33 +132,35 @@ echo "Studio URL: http://$(hostname -I | awk '{print $1}'):8000"
 echo "Database URL: $DB_URL"
 echo ""
 
-# Create admin user
+# Create admin user via Supabase signup API
 echo "Creating admin user..."
 read -p "Enter admin email address: " ADMIN_EMAIL
 read -sp "Enter admin password: " ADMIN_PASSWORD
 echo ""
 
-ADMIN_USER_ID=$(uuidgen)
-PASSWORD_HASH=$(echo -n "$ADMIN_PASSWORD" | openssl dgst -sha256 -binary | openssl enc -base64)
+# Use Supabase signup API to properly create user
+SUPABASE_URL=$(grep SUPABASE_URL /opt/supabase/.env | cut -d'=' -f2)
+ANON_KEY=$(grep ANON_KEY /opt/supabase/.env | cut -d'=' -f2)
 
+curl -X POST "${SUPABASE_URL}/auth/v1/signup" \
+  -H "apikey: ${ANON_KEY}" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"email\": \"$ADMIN_EMAIL\",
+    \"password\": \"$ADMIN_PASSWORD\",
+    \"email_confirm\": true,
+    \"data\": {
+      \"full_name\": \"Administrator\"
+    }
+  }" > /dev/null 2>&1
+
+# Wait for triggers to complete
+sleep 2
+
+# Assign admin role
 docker exec -i supabase-db psql -U postgres -d postgres << EOF
-INSERT INTO auth.users (
-  id, email, encrypted_password, email_confirmed_at, 
-  created_at, updated_at, raw_user_meta_data
-)
-VALUES (
-  '$ADMIN_USER_ID',
-  '$ADMIN_EMAIL',
-  '$PASSWORD_HASH',
-  NOW(),
-  NOW(),
-  NOW(),
-  '{"role": "admin"}'::jsonb
-) ON CONFLICT (email) DO NOTHING;
-
-INSERT INTO public.profiles (id, email, role, created_at, updated_at)
-VALUES ('$ADMIN_USER_ID', '$ADMIN_EMAIL', 'admin', NOW(), NOW())
-ON CONFLICT (id) DO NOTHING;
+UPDATE public.user_roles SET role = 'admin'::app_role 
+WHERE user_id = (SELECT id FROM auth.users WHERE email = '$ADMIN_EMAIL');
 EOF
 
 echo "✓ Admin user created"
@@ -188,10 +190,10 @@ pip3 install --no-index --find-links="$SCRIPT_DIR/python-packages" \
 # Build application
 echo "Building application..."
 cd "$INSTALL_DIR"
-cat > .env << EOF
-VITE_SUPABASE_URL=$SUPABASE_URL
-VITE_SUPABASE_ANON_KEY=$ANON_KEY
-EOF
+
+# Create .env.local for local Supabase override
+cp .env.offline.template .env.local
+sed -i "s|http://127.0.0.1:54321|$SUPABASE_URL|g" .env.local
 
 npm run build
 

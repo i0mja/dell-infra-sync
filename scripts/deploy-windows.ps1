@@ -547,7 +547,7 @@ if ($DeployMode -eq "1") {
 
     Write-Host "[OK] Supabase is running at $SupabaseUrl" -ForegroundColor Green
 
-    # Create initial admin user
+    # Create initial admin user via Supabase signup API
     Write-Host "[USER] Creating initial admin user..." -ForegroundColor Yellow
     $AdminEmail = Read-Host "Enter admin email"
     $AdminPassword = Read-Host "Enter admin password" -AsSecureString
@@ -565,57 +565,36 @@ if ($DeployMode -eq "1") {
 
     Write-Host "[INFO] Using Postgres container: $ContainerName" -ForegroundColor Cyan
 
-    # Create admin user in auth.users and capture the user ID
-    Write-Host "[SQL] Creating admin user in auth.users..." -ForegroundColor Yellow
-    $SqlCreateUser = @"
-INSERT INTO auth.users (
-    instance_id, id, aud, role, email, 
-    encrypted_password, email_confirmed_at, 
-    created_at, updated_at, confirmation_token
-) VALUES (
-    '00000000-0000-0000-0000-000000000000',
-    gen_random_uuid(),
-    'authenticated',
-    'authenticated',
-    '$AdminEmail',
-    crypt('$AdminPasswordText', gen_salt('bf')),
-    now(),
-    now(),
-    now(),
-    ''
-) RETURNING id;
-"@
-
-    # Use -A (unaligned), -t (tuples only), -q (quiet) for clean UUID output
-    $AdminUserId = docker exec $ContainerName psql -U postgres -d postgres -A -t -q -c "$SqlCreateUser" 2>&1
-    $AdminUserId = $AdminUserId.Trim()
-
-    # Validate that we got a valid UUID format
-    if ($AdminUserId -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
-        Write-Host "[ERROR] Failed to capture valid user ID" -ForegroundColor Red
-        Write-Host "[DEBUG] Got: $AdminUserId" -ForegroundColor Yellow
-        Write-Host "[INFO] This might be due to an empty email address or invalid SQL output" -ForegroundColor Yellow
-        exit 1
+    # Use Supabase signup API to properly create user
+    Write-Host "[API] Creating user via Supabase signup API..." -ForegroundColor Yellow
+    $headers = @{
+        "apikey" = $AnonKey
+        "Content-Type" = "application/json"
     }
 
-    Write-Host "[OK] Created user with ID: $AdminUserId" -ForegroundColor Green
+    $body = @{
+        email = $AdminEmail
+        password = $AdminPasswordText
+        email_confirm = $true
+        data = @{
+            full_name = "Administrator"
+        }
+    } | ConvertTo-Json
 
-    # Update profile and assign admin role (trigger already created profile with viewer role)
-    Write-Host "[SQL] Updating profile and assigning admin role..." -ForegroundColor Yellow
-    $SqlUpdateProfile = @"
--- Update profile if it exists, create if it doesn't (idempotent)
-INSERT INTO public.profiles (id, email, full_name)
-VALUES ('$AdminUserId', '$AdminEmail', 'Administrator')
-ON CONFLICT (id) DO UPDATE 
-SET full_name = EXCLUDED.full_name;
+    try {
+        Invoke-WebRequest -Uri "$SupabaseUrl/auth/v1/signup" -Method POST -Headers $headers -Body $body -ErrorAction Stop | Out-Null
+        Write-Host "[OK] User account created" -ForegroundColor Green
+    } catch {
+        Write-Host "[WARN] User creation failed or user already exists: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
 
--- Update role from viewer to admin (idempotent)
-UPDATE public.user_roles 
-SET role = 'admin'
-WHERE user_id = '$AdminUserId';
-"@
+    # Wait for triggers to complete
+    Start-Sleep -Seconds 2
 
-    $ProfileResult = docker exec $ContainerName psql -U postgres -d postgres -c "$SqlUpdateProfile" 2>&1
+    # Update role to admin
+    Write-Host "[SQL] Assigning admin role..." -ForegroundColor Yellow
+    $SqlUpdateRole = "UPDATE public.user_roles SET role = 'admin'::app_role WHERE user_id = (SELECT id FROM auth.users WHERE email = '$AdminEmail');"
+    docker exec $ContainerName psql -U postgres -d postgres -c "$SqlUpdateRole" 2>&1 | Out-Null
 
     if ($ProfileResult -match "ERROR") {
         Write-Host "[ERROR] Failed to create profile/role" -ForegroundColor Red
@@ -651,21 +630,15 @@ npm install
 
 # Create production .env based on deployment mode
 if ($DeployMode -eq "1") {
-    # Local/Air-gapped mode - use extracted local Supabase credentials
-    Write-Host "[CONFIG] Creating .env for local Supabase..." -ForegroundColor Yellow
-    @"
-VITE_SUPABASE_URL=$SupabaseUrl
-VITE_SUPABASE_PUBLISHABLE_KEY=$AnonKey
-VITE_SUPABASE_PROJECT_ID=local
-"@ | Out-File -FilePath ".env" -Encoding ASCII
+    # Local/Air-gapped mode - create .env.local for local Supabase override
+    Write-Host "[CONFIG] Creating .env.local for local Supabase..." -ForegroundColor Yellow
+    Copy-Item ".env.offline.template" ".env.local"
+    (Get-Content ".env.local") -replace 'http://127.0.0.1:54321', "$SupabaseUrl" | Set-Content ".env.local"
+    (Get-Content ".env.local") -replace 'VITE_SUPABASE_PUBLISHABLE_KEY="[^"]*"', "VITE_SUPABASE_PUBLISHABLE_KEY=`"$AnonKey`"" | Set-Content ".env.local"
 } else {
-    # Cloud mode - use Lovable Cloud credentials
-    Write-Host "[CONFIG] Creating .env for Lovable Cloud..." -ForegroundColor Yellow
-    @"
-VITE_SUPABASE_PROJECT_ID=ylwkczjqvymshktuuqkx
-VITE_SUPABASE_PUBLISHABLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlsd2tjempxdnltc2hrdHV1cWt4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjIxODQ0OTMsImV4cCI6MjA3Nzc2MDQ5M30.hIkDV2AAos-Z9hvQLfZmiQ7UvGCpGqwG5kzd1VBRx0w
-VITE_SUPABASE_URL=https://ylwkczjqvymshktuuqkx.supabase.co
-"@ | Out-File -FilePath ".env" -Encoding ASCII
+    # Cloud mode - use existing .env with Lovable Cloud credentials
+    Write-Host "[CONFIG] Using .env for Lovable Cloud..." -ForegroundColor Yellow
+    # No changes needed - .env already has cloud credentials
 }
 
 # Build application
