@@ -116,6 +116,30 @@ function Wait-Docker {
     Write-Host "[OK] Docker engine is ready" -ForegroundColor Green
 }
 
+# Function to get the actual Supabase database container name
+function Get-SupabaseDbContainer {
+    try {
+        # Get all Supabase containers
+        $containers = docker ps --filter "name=supabase" --format "{{.Names}}" 2>&1
+        
+        if ($LASTEXITCODE -ne 0) {
+            throw "Docker command failed. Ensure Docker Desktop is running."
+        }
+        
+        # Find the database container (contains _db_)
+        $dbContainer = $containers | Where-Object { $_ -match "supabase.*_db_" } | Select-Object -First 1
+        
+        if ([string]::IsNullOrEmpty($dbContainer)) {
+            throw "Supabase database container not found. Ensure 'supabase start' completed successfully."
+        }
+        
+        return $dbContainer.Trim()
+    } catch {
+        Write-Host "[ERROR] Failed to detect Supabase container: $_" -ForegroundColor Red
+        throw
+    }
+}
+
 # Step 1: Install Chocolatey
 Write-Host "[INSTALL] Step 1/8: Installing Chocolatey..." -ForegroundColor Yellow
 if (!(Get-Command choco -ErrorAction SilentlyContinue)) {
@@ -328,6 +352,18 @@ if ($DeployMode -eq "1") {
     }
     
     Write-Host "[INFO] Found $migrationCount migration files to apply" -ForegroundColor Cyan
+    
+    # Detect the actual Supabase database container name
+    try {
+        $dbContainer = Get-SupabaseDbContainer
+        Write-Host "[INFO] Detected Supabase database container: $dbContainer" -ForegroundColor Cyan
+    } catch {
+        Write-Host "[ERROR] Failed to detect Supabase database container" -ForegroundColor Red
+        Write-Host "[ERROR] Make sure Supabase services are running with 'supabase start'" -ForegroundColor Red
+        Stop-Transcript
+        exit 1
+    }
+    
     $appliedCount = 0
     $failedMigrations = @()
     
@@ -335,7 +371,7 @@ if ($DeployMode -eq "1") {
         Write-Host "[MIGRATE] Applying $($file.Name)..." -ForegroundColor Cyan
         
         try {
-            $result = Get-Content $file.FullName | docker exec -i supabase-db psql -U postgres -d postgres 2>&1
+            $result = Get-Content $file.FullName | docker exec -i $dbContainer psql -U postgres -d postgres 2>&1
             
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "[OK] $($file.Name) applied successfully" -ForegroundColor Green
@@ -361,7 +397,13 @@ if ($DeployMode -eq "1") {
         }
         Write-Host "" -ForegroundColor Yellow
         Write-Host "[ROLLBACK] To reset the database:" -ForegroundColor Yellow
-        Write-Host "  docker exec supabase-db psql -U postgres -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'" -ForegroundColor White
+        try {
+            $rollbackContainer = Get-SupabaseDbContainer
+            Write-Host "  docker exec $rollbackContainer psql -U postgres -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'" -ForegroundColor White
+        } catch {
+            Write-Host "  docker exec <supabase-container-name> psql -U postgres -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'" -ForegroundColor White
+            Write-Host "  (Use 'docker ps --filter name=supabase' to find your container name)" -ForegroundColor Yellow
+        }
         Write-Host "  Then re-run this deployment script" -ForegroundColor White
         Stop-Transcript
         exit 1
