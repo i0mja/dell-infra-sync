@@ -6,8 +6,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
-import { createJob } from "@/lib/job-manager";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertCircle, Info } from "lucide-react";
@@ -47,6 +47,7 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
   const [credentialSets, setCredentialSets] = useState<CredentialSet[]>([]);
   const [selectedCredentialSets, setSelectedCredentialSets] = useState<string[]>([]);
   const { toast } = useToast();
+  const { user } = useAuth();
 
   useEffect(() => {
     if (open) {
@@ -108,15 +109,19 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
         details.credential_set_ids = selectedCredentialSets;
       }
 
-      const result = await createJob({
-        job_type: jobType as "firmware_update" | "discovery_scan" | "vcenter_sync" | "full_server_update",
-        target_scope,
-        details,
-        schedule_at: scheduleAt || null,
-        credential_set_ids: jobType === 'discovery_scan' ? selectedCredentialSets : undefined,
+      const { data: result, error } = await supabase.functions.invoke('create-job', {
+        body: {
+          job_type: jobType as "firmware_update" | "discovery_scan" | "vcenter_sync" | "full_server_update",
+          created_by: user?.id,
+          target_scope,
+          details,
+          schedule_at: scheduleAt || null,
+          credential_set_ids: jobType === 'discovery_scan' ? selectedCredentialSets : undefined,
+        }
       });
 
-      if (!result.success) throw new Error(result.error);
+      if (error) throw error;
+      if (!result?.success) throw new Error(result?.error || 'Failed to create job');
 
       toast({
         title: "Job Created",
