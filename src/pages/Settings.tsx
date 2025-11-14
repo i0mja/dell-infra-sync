@@ -12,7 +12,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTheme } from "next-themes";
-import { Activity, AlertCircle, Bell, Briefcase, CheckCircle2, ChevronDown, ChevronRight, Copy, Database, Globe, Loader2, Mail, MessageSquare, Monitor, Moon, Network, Palette, Plus, RefreshCw, Save, Server, Settings as SettingsIcon, Shield, Sun, Terminal, Users, X, XCircle } from "lucide-react";
+import { Activity, AlertCircle, Bell, Briefcase, CheckCircle2, ChevronDown, ChevronRight, Copy, Database, FileText, Globe, Loader2, Mail, MessageSquare, Monitor, Moon, Network, Palette, Plus, RefreshCw, Save, Server, Settings as SettingsIcon, Shield, Sun, Terminal, Users, X, XCircle } from "lucide-react";
+import { DiagnosticsDialog } from "@/components/settings/DiagnosticsDialog";
 import { useSearchParams } from "react-router-dom";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -165,6 +166,7 @@ export default function Settings() {
   const [showExecutionLog, setShowExecutionLog] = useState(true);
   const [diagnosticsData, setDiagnosticsData] = useState<any | null>(null);
   const [loadingDiagnostics, setLoadingDiagnostics] = useState(false);
+  const [showDiagnosticsDialog, setShowDiagnosticsDialog] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -2405,55 +2407,86 @@ export default function Settings() {
           </TabsContent>
 
           <TabsContent value="preferences">
-            <Card>
-              <CardContent className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label htmlFor="notify-complete">Job Completed</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Send notification when jobs complete successfully
-                    </p>
+            <div className="space-y-4">
+              <Card>
+                <CardContent className="space-y-6">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="notify-complete">Job Completed</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Send notification when jobs complete successfully
+                      </p>
+                    </div>
+                    <Switch
+                      id="notify-complete"
+                      checked={notifyOnJobComplete}
+                      onCheckedChange={setNotifyOnJobComplete}
+                    />
                   </div>
-                  <Switch
-                    id="notify-complete"
-                    checked={notifyOnJobComplete}
-                    onCheckedChange={setNotifyOnJobComplete}
-                  />
-                </div>
 
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label htmlFor="notify-failed">Job Failed</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Send notification when jobs fail
-                    </p>
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="notify-failed">Job Failed</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Send notification when jobs fail
+                      </p>
+                    </div>
+                    <Switch
+                      id="notify-failed"
+                      checked={notifyOnJobFailed}
+                      onCheckedChange={setNotifyOnJobFailed}
+                    />
                   </div>
-                  <Switch
-                    id="notify-failed"
-                    checked={notifyOnJobFailed}
-                    onCheckedChange={setNotifyOnJobFailed}
-                  />
-                </div>
 
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label htmlFor="notify-started">Job Started</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Send notification when jobs start
-                    </p>
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="notify-started">Job Started</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Send notification when jobs start
+                      </p>
+                    </div>
+                    <Switch
+                      id="notify-started"
+                      checked={notifyOnJobStarted}
+                      onCheckedChange={setNotifyOnJobStarted}
+                    />
                   </div>
-                  <Switch
-                    id="notify-started"
-                    checked={notifyOnJobStarted}
-                    onCheckedChange={setNotifyOnJobStarted}
-                  />
-                </div>
 
-                <Button onClick={handleSaveSettings} disabled={loading}>
-                  {loading ? "Saving..." : "Save Preferences"}
-                </Button>
-              </CardContent>
-            </Card>
+                  <Button onClick={handleSaveSettings} disabled={loading}>
+                    {loading ? "Saving..." : "Save Preferences"}
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>System Diagnostics</CardTitle>
+                  <CardDescription>
+                    Generate a comprehensive diagnostic report for troubleshooting
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-start gap-3">
+                    <FileText className="h-5 w-5 text-muted-foreground mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-sm text-muted-foreground">
+                        Generate a detailed diagnostic report that includes system information, database status, 
+                        edge function health, server status, job statistics, activity logs, and recent errors. 
+                        This report can be copied and shared when troubleshooting issues.
+                      </p>
+                    </div>
+                  </div>
+                  <Button 
+                    onClick={() => setShowDiagnosticsDialog(true)}
+                    variant="outline"
+                    className="w-full"
+                  >
+                    <FileText className="mr-2 h-4 w-4" />
+                    Generate Diagnostics Report
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
           <TabsContent value="credentials">
@@ -3464,6 +3497,11 @@ export default function Settings() {
             </ScrollArea>
           </DialogContent>
         </Dialog>
+
+        <DiagnosticsDialog 
+          open={showDiagnosticsDialog}
+          onOpenChange={setShowDiagnosticsDialog}
+        />
     </div>
   );
 }
