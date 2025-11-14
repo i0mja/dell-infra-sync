@@ -1,11 +1,8 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
-import { testIdracConnection } from "@/lib/idrac-client";
 import { testNotification } from "@/lib/notification-client";
 import { validateNetworkPrerequisites } from "@/lib/network-validator";
-import { runNetworkDiagnostics } from "@/lib/network-diagnostics";
-import { cleanupActivityLogs, cleanupOldJobs } from "@/lib/cleanup-utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -204,19 +201,24 @@ export default function Settings() {
     
     try {
       const startTime = Date.now();
-      const result = await testIdracConnection(server.ip_address, {
-        username: server.idrac_username,
-        password: server.idrac_password_encrypted,
+      const { data: result, error: invokeError } = await supabase.functions.invoke('test-idrac-connection', {
+        body: {
+          ip_address: server.ip_address,
+          username: server.idrac_username,
+          password: server.idrac_password_encrypted,
+        },
       });
+
+      if (invokeError) throw invokeError;
 
       const responseTime = Date.now() - startTime;
 
       const testResult = {
         success: result.success,
-        response_time_ms: result.responseTime || responseTime,
+        response_time_ms: result.response_time_ms || responseTime,
         last_tested: new Date().toISOString(),
         error: result.error,
-        version: result.version,
+        version: result.idrac_version,
       };
 
       setServerTestResults(new Map(serverTestResults.set(serverId, testResult)));
@@ -984,7 +986,9 @@ export default function Settings() {
 
     setCleaningUp(true);
     try {
-      await cleanupActivityLogs();
+      const { error } = await supabase.functions.invoke('cleanup-activity-logs');
+      
+      if (error) throw error;
 
       toast({
         title: "Cleanup Complete",
@@ -1101,7 +1105,9 @@ export default function Settings() {
 
     setJobCleaningUp(true);
     try {
-      await cleanupOldJobs();
+      const { error } = await supabase.functions.invoke('cleanup-old-jobs');
+      
+      if (error) throw error;
 
       toast({
         title: "Stale Jobs Cancelled",
@@ -1508,10 +1514,15 @@ export default function Settings() {
 
     setTestingCredential(credentialSet.id);
     try {
-      const result = await testIdracConnection(testIp, {
-        username: credentialSet.username,
-        password: credentialSet.password_encrypted,
+      const { data: result, error: invokeError } = await supabase.functions.invoke('test-idrac-connection', {
+        body: {
+          ip_address: testIp,
+          username: credentialSet.username,
+          password: credentialSet.password_encrypted,
+        },
       });
+
+      if (invokeError) throw invokeError;
 
       if (result.success) {
         toast({

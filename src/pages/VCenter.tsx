@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { syncVCenter } from "@/lib/vcenter-client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Database, RefreshCw, Link as LinkIcon, Search, Settings, RefreshCcw } from "lucide-react";
@@ -113,16 +112,18 @@ const VCenter = () => {
   const handleSyncNow = async () => {
     setSyncing(true);
     try {
-      const result = await syncVCenter();
+      const { data: result, error: invokeError } = await supabase.functions.invoke('sync-vcenter-direct');
+
+      if (invokeError) throw invokeError;
 
       if (result.success) {
         toast({
           title: "Sync completed",
-          description: `New: ${result.summary.new}, Updated: ${result.summary.updated}, Linked: ${result.summary.linked}`,
+          description: `New: ${result.hosts_added || 0}, Updated: ${result.hosts_updated || 0}, Linked: ${result.linked || 0}`,
         });
         fetchHosts();
       } else {
-        const errorMsg = result.errors.length > 0 ? result.errors[0] : "Sync failed";
+        const errorMsg = result.errors?.length > 0 ? result.errors[0] : "Sync failed";
         throw new Error(errorMsg);
       }
     } catch (error: any) {
