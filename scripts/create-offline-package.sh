@@ -23,6 +23,7 @@ mkdir -p "$PACKAGE_DIR/$PACKAGE_NAME"/{docker-images,npm-packages,python-package
 echo "Copying application code..."
 rsync -av --exclude='node_modules' --exclude='dist' --exclude='.git' \
   --exclude='offline-package' --exclude='supabase/.branches' \
+  --exclude='.env' \
   "$PROJECT_ROOT/" "$PACKAGE_DIR/$PACKAGE_NAME/app/"
 
 # Download npm dependencies
