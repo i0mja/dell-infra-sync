@@ -290,58 +290,24 @@ export default function Settings() {
     setTestingVCenter(true);
     
     try {
-      // Fetch vCenter settings
-      const { data: vcenterSettings, error: settingsError } = await supabase
-        .from('vcenter_settings')
-        .select('*')
-        .maybeSingle();
+      // Call the edge function instead of direct browser fetch
+      // This avoids CORS issues with vCenter API
+      const { data, error } = await supabase.functions.invoke('test-vcenter-connection');
       
-      if (settingsError || !vcenterSettings) {
-        throw new Error('vCenter settings not configured');
-      }
-
-      const baseUrl = `https://${vcenterSettings.host}:${vcenterSettings.port}`;
-      const startTime = Date.now();
-      
-      // Test connection
-      const authResponse = await fetch(`${baseUrl}/api/session`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Basic ${btoa(`${vcenterSettings.username}:${vcenterSettings.password}`)}`,
-          'Content-Type': 'application/json',
-        },
-      });
-      
-      const responseTime = Date.now() - startTime;
-      
-      if (!authResponse.ok) {
-        throw new Error(`vCenter authentication failed: ${authResponse.status}`);
-      }
-
-      const sessionToken = await authResponse.text();
-      const sessionId = sessionToken.replace(/"/g, '');
-      
-      // Get version
-      const versionResponse = await fetch(`${baseUrl}/api/vcenter/system/version`, {
-        headers: { 'vmware-api-session-id': sessionId },
-      });
-      
-      let version = 'Unknown';
-      if (versionResponse.ok) {
-        const versionData = await versionResponse.json();
-        version = versionData.version || 'Unknown';
+      if (error) {
+        throw new Error(error.message);
       }
 
       setVCenterTestResult({
         success: true,
-        response_time_ms: responseTime,
+        response_time_ms: data.response_time_ms || 0,
         last_tested: new Date().toISOString(),
-        version,
+        version: data.version,
       });
 
       toast({
         title: "vCenter Connection Successful",
-        description: `Connected to vCenter (${responseTime}ms)${version ? ` - Version: ${version}` : ''}`,
+        description: `Connected to vCenter (${data.response_time_ms}ms)${data.version ? ` - Version: ${data.version}` : ''}`,
       });
     } catch (error: any) {
       setVCenterTestResult({
