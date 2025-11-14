@@ -11,7 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTheme } from "next-themes";
-import { Moon, Sun, Monitor, Database, Shield, AlertCircle, Palette, Mail, MessageSquare, Server, Briefcase, Activity, Bell, Network, ChevronRight, Plus, X } from "lucide-react";
+import { Activity, AlertCircle, Bell, Briefcase, CheckCircle2, ChevronDown, ChevronRight, Copy, Database, Globe, Loader2, Mail, MessageSquare, Monitor, Moon, Network, Palette, Plus, RefreshCw, Save, Server, Settings as SettingsIcon, Shield, Sun, Terminal, Users, X, XCircle } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -160,6 +160,8 @@ export default function Settings() {
   const [latencyAlertThreshold, setLatencyAlertThreshold] = useState(1000);
   const [validatingPrereqs, setValidatingPrereqs] = useState(false);
   const [prereqResults, setPrereqResults] = useState<any | null>(null);
+  const [executionLog, setExecutionLog] = useState<any[]>([]);
+  const [showExecutionLog, setShowExecutionLog] = useState(true);
   const [diagnosticsData, setDiagnosticsData] = useState<any | null>(null);
   const [loadingDiagnostics, setLoadingDiagnostics] = useState(false);
 
@@ -634,7 +636,7 @@ export default function Settings() {
   const loadNetworkSettings = async () => {
     try {
       const { data, error } = await supabase
-        .from("network_settings")
+        .from("network_settings" as any)
         .select("*")
         .limit(1)
         .maybeSingle();
@@ -642,18 +644,19 @@ export default function Settings() {
       if (error) throw error;
 
       if (data) {
-        setNetworkSettingsId(data.id);
-        setConnectionTimeout(data.connection_timeout_seconds ?? 30);
-        setReadTimeout(data.read_timeout_seconds ?? 60);
-        setOperationTimeout(data.operation_timeout_seconds ?? 300);
-        setMaxRetryAttempts(data.max_retry_attempts ?? 3);
-        setRetryBackoffType((data.retry_backoff_type ?? 'exponential') as 'exponential' | 'linear' | 'fixed');
-        setRetryDelay(data.retry_delay_seconds ?? 2);
-        setMaxConcurrentConnections(data.max_concurrent_connections ?? 5);
-        setMaxRequestsPerMinute(data.max_requests_per_minute ?? 60);
-        setRequirePrereqValidation(data.require_prereq_validation ?? true);
-        setMonitorLatency(data.monitor_latency ?? true);
-        setLatencyAlertThreshold(data.latency_alert_threshold_ms ?? 1000);
+        const settings = data as any;
+        setNetworkSettingsId(settings.id);
+        setConnectionTimeout(settings.connection_timeout_seconds ?? 30);
+        setReadTimeout(settings.read_timeout_seconds ?? 60);
+        setOperationTimeout(settings.operation_timeout_seconds ?? 300);
+        setMaxRetryAttempts(settings.max_retry_attempts ?? 3);
+        setRetryBackoffType((settings.retry_backoff_type ?? 'exponential') as 'exponential' | 'linear' | 'fixed');
+        setRetryDelay(settings.retry_delay_seconds ?? 2);
+        setMaxConcurrentConnections(settings.max_concurrent_connections ?? 5);
+        setMaxRequestsPerMinute(settings.max_requests_per_minute ?? 60);
+        setRequirePrereqValidation(settings.require_prereq_validation ?? true);
+        setMonitorLatency(settings.monitor_latency ?? true);
+        setLatencyAlertThreshold(settings.latency_alert_threshold_ms ?? 1000);
       }
     } catch (error: any) {
       console.error("Error loading network settings:", error);
@@ -673,7 +676,7 @@ export default function Settings() {
     setLoading(true);
     try {
       const { error } = await supabase
-        .from("network_settings")
+        .from("network_settings" as any)
         .update({
           connection_timeout_seconds: connectionTimeout,
           read_timeout_seconds: readTimeout,
@@ -710,15 +713,18 @@ export default function Settings() {
   const handleValidatePrerequisites = async () => {
     setValidatingPrereqs(true);
     setPrereqResults(null);
+    setExecutionLog([]);
 
     try {
       const { data, error } = await supabase.functions.invoke('validate-network-prerequisites');
 
       if (error) throw error;
 
-      setPrereqResults(data);
+      setPrereqResults(data.results);
+      setExecutionLog(data.executionLog || []);
+      setShowExecutionLog(true);
 
-      if (data.overall.passed) {
+      if (data.results.overall.passed) {
         toast({
           title: "Validation Passed",
           description: "All network prerequisites are met",
@@ -726,7 +732,7 @@ export default function Settings() {
       } else {
         toast({
           title: "Validation Issues",
-          description: `${data.overall.criticalFailures.length} critical issue(s) found`,
+          description: `${data.results.overall.criticalFailures.length} critical issue(s) found`,
           variant: "destructive",
         });
       }
@@ -740,6 +746,17 @@ export default function Settings() {
     } finally {
       setValidatingPrereqs(false);
     }
+  };
+
+  const copyExecutionLog = () => {
+    const logText = executionLog.map(entry => 
+      `[${new Date(entry.timestamp).toLocaleTimeString()}] ${entry.status.toUpperCase()} ${entry.method} ${entry.target} ${entry.response_time_ms}ms${entry.details ? ' - ' + entry.details : ''}`
+    ).join('\n');
+    navigator.clipboard.writeText(logText);
+    toast({
+      title: "Log Copied",
+      description: "Execution log copied to clipboard",
+    });
   };
 
   const loadDiagnostics = async () => {
@@ -2866,6 +2883,95 @@ export default function Settings() {
                           </div>
                         )}
                       </div>
+
+                      {executionLog.length > 0 && (
+                        <div className="mt-4">
+                          <div 
+                            className="flex items-center justify-between p-2 rounded-t-lg bg-muted cursor-pointer hover:bg-muted/80"
+                            onClick={() => setShowExecutionLog(!showExecutionLog)}
+                          >
+                            <div className="flex items-center gap-2">
+                              <Terminal className="h-4 w-4" />
+                              <span className="font-medium text-sm">Execution Log</span>
+                              <span className="text-xs text-muted-foreground">({executionLog.length} steps)</span>
+                            </div>
+                            <ChevronDown className={`h-4 w-4 transition-transform ${showExecutionLog ? 'rotate-180' : ''}`} />
+                          </div>
+                          
+                          {showExecutionLog && (
+                            <div className="border border-t-0 rounded-b-lg">
+                              <div className="flex justify-end gap-2 p-2 border-b bg-muted/30">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={copyExecutionLog}
+                                  className="h-7"
+                                >
+                                  <Copy className="h-3 w-3 mr-1" />
+                                  Copy
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => setExecutionLog([])}
+                                  className="h-7"
+                                >
+                                  Clear
+                                </Button>
+                              </div>
+                              <ScrollArea className="h-[300px] w-full">
+                                <div className="p-3 font-mono text-xs space-y-1">
+                                  {executionLog.map((entry, idx) => {
+                                    const statusColors = {
+                                      success: 'text-green-400',
+                                      failed: 'text-red-400',
+                                      warning: 'text-yellow-400'
+                                    };
+                                    const statusIcons = {
+                                      success: '✓',
+                                      failed: '✗',
+                                      warning: '⚠'
+                                    };
+                                    
+                                    return (
+                                      <div key={idx} className="leading-relaxed">
+                                        <span className="text-muted-foreground">
+                                          [{new Date(entry.timestamp).toLocaleTimeString()}]
+                                        </span>
+                                        {' '}
+                                        <span className={statusColors[entry.status as keyof typeof statusColors]}>
+                                          {statusIcons[entry.status as keyof typeof statusIcons]}
+                                        </span>
+                                        {' '}
+                                        <span className="text-blue-400">{entry.method}</span>
+                                        {' '}
+                                        <span className="text-foreground">{entry.target}</span>
+                                        {entry.response_time_ms > 0 && (
+                                          <>
+                                            {' | '}
+                                            <span className="text-muted-foreground">{entry.response_time_ms}ms</span>
+                                          </>
+                                        )}
+                                        {entry.status_code && (
+                                          <>
+                                            {' | '}
+                                            <span className="text-purple-400">HTTP {entry.status_code}</span>
+                                          </>
+                                        )}
+                                        {entry.details && (
+                                          <div className="ml-6 text-muted-foreground">
+                                            {entry.details}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </ScrollArea>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </CardContent>
