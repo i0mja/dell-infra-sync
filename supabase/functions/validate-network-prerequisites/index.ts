@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { logIdracCommand } from '../_shared/idrac-logger.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -120,6 +121,20 @@ Deno.serve(async (req) => {
               response.status,
               `${server.hostname || server.ip_address}: iDRAC reachable (${response.status === 401 ? 'auth required - expected' : 'OK'})`
             );
+            
+            // Log to Activity Monitor
+            await logIdracCommand({
+              supabase: supabaseClient,
+              serverId: server.id,
+              commandType: 'network_validation_server',
+              endpoint: '/redfish/v1/',
+              fullUrl: testUrl,
+              statusCode: response.status,
+              responseTimeMs: responseTime,
+              success: true,
+              source: 'network_prerequisites',
+              initiatedBy: user.email
+            });
           } else {
             results.servers.unreachable++;
             results.servers.errors.push({
@@ -136,6 +151,21 @@ Deno.serve(async (req) => {
               response.status,
               `${server.hostname || server.ip_address}: Unexpected status ${response.status}`
             );
+            
+            // Log failure to Activity Monitor
+            await logIdracCommand({
+              supabase: supabaseClient,
+              serverId: server.id,
+              commandType: 'network_validation_server',
+              endpoint: '/redfish/v1/',
+              fullUrl: testUrl,
+              statusCode: response.status,
+              responseTimeMs: responseTime,
+              success: false,
+              errorMessage: `HTTP ${response.status}`,
+              source: 'network_prerequisites',
+              initiatedBy: user.email
+            });
           }
         } catch (error) {
           const responseTime = Date.now() - startTime;
@@ -155,6 +185,20 @@ Deno.serve(async (req) => {
             undefined,
             `${server.hostname || server.ip_address}: ${errorMsg}`
           );
+          
+          // Log error to Activity Monitor
+          await logIdracCommand({
+            supabase: supabaseClient,
+            serverId: server.id,
+            commandType: 'network_validation_server',
+            endpoint: '/redfish/v1/',
+            fullUrl: `https://${server.ip_address}/redfish/v1/`,
+            responseTimeMs: responseTime,
+            success: false,
+            errorMessage: errorMsg,
+            source: 'network_prerequisites',
+            initiatedBy: user.email
+          });
         }
       }
 
@@ -232,6 +276,19 @@ Deno.serve(async (req) => {
             response.status,
             `vCenter unreachable: HTTP ${response.status}`
           );
+          
+          await logIdracCommand({
+            supabase: supabaseClient,
+            commandType: 'network_validation_vcenter',
+            endpoint: '/api',
+            fullUrl: vcenterUrl,
+            statusCode: response.status,
+            responseTimeMs: responseTime,
+            success: false,
+            errorMessage: `HTTP ${response.status}`,
+            source: 'network_prerequisites',
+            initiatedBy: user.email
+          });
         } else {
           logStep(
             stepCounter++,
@@ -243,6 +300,19 @@ Deno.serve(async (req) => {
             response.status,
             `vCenter reachable (${response.status === 401 ? 'auth required - expected' : 'OK'})`
           );
+          
+          // Log to Activity Monitor
+          await logIdracCommand({
+            supabase: supabaseClient,
+            commandType: 'network_validation_vcenter',
+            endpoint: '/api',
+            fullUrl: vcenterUrl,
+            statusCode: response.status,
+            responseTimeMs: responseTime,
+            success: true,
+            source: 'network_prerequisites',
+            initiatedBy: user.email
+          });
         }
       } catch (error) {
         const responseTime = Date.now() - startTime;
@@ -259,6 +329,19 @@ Deno.serve(async (req) => {
           undefined,
           `vCenter unreachable: ${errorMsg}`
         );
+        
+        // Log error to Activity Monitor
+        await logIdracCommand({
+          supabase: supabaseClient,
+          commandType: 'network_validation_vcenter',
+          endpoint: '/api',
+          fullUrl: `https://${vcenterSettings.host}:${vcenterSettings.port}/api`,
+          responseTimeMs: responseTime,
+          success: false,
+          errorMessage: errorMsg,
+          source: 'network_prerequisites',
+          initiatedBy: user.email
+        });
       }
     } else {
       executionLog.push({
@@ -299,6 +382,19 @@ Deno.serve(async (req) => {
         200,
         'DNS resolution working'
       );
+      
+      // Log to Activity Monitor
+      await logIdracCommand({
+        supabase: supabaseClient,
+        commandType: 'network_validation_dns',
+        endpoint: '/',
+        fullUrl: 'https://1.1.1.1/',
+        statusCode: 200,
+        responseTimeMs: dnsResponseTime,
+        success: true,
+        source: 'network_prerequisites',
+        initiatedBy: user.email
+      });
     } catch (error) {
       const dnsResponseTime = Date.now() - dnsStartTime;
       results.dns.working = false;
@@ -313,6 +409,19 @@ Deno.serve(async (req) => {
         undefined,
         'DNS resolution failed'
       );
+      
+      // Log error to Activity Monitor
+      await logIdracCommand({
+        supabase: supabaseClient,
+        commandType: 'network_validation_dns',
+        endpoint: '/',
+        fullUrl: 'https://1.1.1.1/',
+        responseTimeMs: dnsResponseTime,
+        success: false,
+        errorMessage: 'DNS resolution failed',
+        source: 'network_prerequisites',
+        initiatedBy: user.email
+      });
     }
 
     results.overall.passed = results.overall.criticalFailures.length === 0;
