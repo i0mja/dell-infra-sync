@@ -364,6 +364,21 @@ if ($DeployMode -eq "1") {
         exit 1
     }
     
+    # Show diagnostic information before migrations
+    Write-Host "[DEBUG] Pre-migration diagnostics:" -ForegroundColor Cyan
+    Write-Host "[DEBUG] Supabase containers:" -ForegroundColor Gray
+    docker ps --filter "name=supabase" --format "table {{.Names}}\t{{.Status}}"
+    Write-Host "[DEBUG] Testing database connectivity..." -ForegroundColor Gray
+    $testQuery = docker exec $dbContainer psql -U postgres -t -c "SELECT 'Connected successfully' as status;" 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "[DEBUG] Database test: $($testQuery.Trim())" -ForegroundColor Green
+    } else {
+        Write-Host "[ERROR] Database test failed: $testQuery" -ForegroundColor Red
+        Write-Host "[ERROR] Cannot proceed with migrations" -ForegroundColor Red
+        Stop-Transcript
+        exit 1
+    }
+    
     $appliedCount = 0
     $failedMigrations = @()
     
@@ -371,17 +386,25 @@ if ($DeployMode -eq "1") {
         Write-Host "[MIGRATE] Applying $($file.Name)..." -ForegroundColor Cyan
         
         try {
+            Write-Host "[DEBUG] Running migration: $($file.FullName)" -ForegroundColor Gray
             $result = Get-Content $file.FullName | docker exec -i $dbContainer psql -U postgres -d postgres 2>&1
+            $migrationExitCode = $LASTEXITCODE
             
-            if ($LASTEXITCODE -eq 0) {
+            if ($migrationExitCode -eq 0) {
                 Write-Host "[OK] $($file.Name) applied successfully" -ForegroundColor Green
                 $appliedCount++
             } else {
                 Write-Host "[ERROR] Failed to apply $($file.Name)" -ForegroundColor Red
+                Write-Host "[ERROR] Exit code: $migrationExitCode" -ForegroundColor Red
+                Write-Host "[ERROR] SQL Error output:" -ForegroundColor Red
+                Write-Host "─────────────────────────────────────────────────" -ForegroundColor DarkGray
+                $result | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+                Write-Host "─────────────────────────────────────────────────" -ForegroundColor DarkGray
                 $failedMigrations += $file.Name
             }
         } catch {
             Write-Host "[ERROR] Exception applying $($file.Name): $_" -ForegroundColor Red
+            Write-Host "[ERROR] Stack trace: $($_.ScriptStackTrace)" -ForegroundColor Red
             $failedMigrations += $file.Name
         }
     }
@@ -415,20 +438,35 @@ if ($DeployMode -eq "1") {
     
     if (Test-Path $verifyScript) {
         try {
-            $verifyResult = & $verifyScript 2>&1
-            if ($LASTEXITCODE -eq 0) {
+            Write-Host "[VERIFY] Running database schema verification..." -ForegroundColor Yellow
+            Write-Host "[VERIFY] Output from verification script:" -ForegroundColor Cyan
+            Write-Host "─────────────────────────────────────────────────" -ForegroundColor DarkGray
+            
+            # Run verification and show ALL output
+            & $verifyScript -Verbose
+            $verifyExitCode = $LASTEXITCODE
+            
+            Write-Host "─────────────────────────────────────────────────" -ForegroundColor DarkGray
+            
+            if ($verifyExitCode -eq 0) {
                 Write-Host "[OK] Database schema verified successfully" -ForegroundColor Green
             } else {
+                Write-Host "" -ForegroundColor White
                 Write-Host "[ERROR] Database schema verification failed!" -ForegroundColor Red
-                Write-Host "[ERROR] Authentication will not work without proper schema" -ForegroundColor Red
+                Write-Host "[ERROR] See detailed output above for specific failures" -ForegroundColor Red
                 Write-Host "" -ForegroundColor Yellow
-                Write-Host "[FIX] Run manually to see details:" -ForegroundColor Yellow
-                Write-Host "  .\scripts\verify-database.ps1" -ForegroundColor White
+                Write-Host "[DEBUG] Container info:" -ForegroundColor Yellow
+                docker ps --filter "name=supabase" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+                Write-Host "" -ForegroundColor Yellow
+                Write-Host "[FIX] Check container logs for more details:" -ForegroundColor Yellow
+                Write-Host "  docker logs $dbContainer --tail 50" -ForegroundColor White
                 Stop-Transcript
                 exit 1
             }
         } catch {
-            Write-Host "[WARNING] Could not run verification: $_" -ForegroundColor Yellow
+            Write-Host "[ERROR] Verification exception: $_" -ForegroundColor Red
+            Stop-Transcript
+            exit 1
         }
     } else {
         Write-Host "[INFO] Schema verification script not found, skipping..." -ForegroundColor Cyan
