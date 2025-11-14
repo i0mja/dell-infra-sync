@@ -145,6 +145,24 @@ export default function Settings() {
   const [vcenterTestResult, setVCenterTestResult] = useState<any | null>(null);
   const [testingAllServers, setTestingAllServers] = useState(false);
 
+  // Network Settings State
+  const [networkSettingsId, setNetworkSettingsId] = useState<string | null>(null);
+  const [connectionTimeout, setConnectionTimeout] = useState(30);
+  const [readTimeout, setReadTimeout] = useState(60);
+  const [operationTimeout, setOperationTimeout] = useState(300);
+  const [maxRetryAttempts, setMaxRetryAttempts] = useState(3);
+  const [retryBackoffType, setRetryBackoffType] = useState<'exponential' | 'linear' | 'fixed'>('exponential');
+  const [retryDelay, setRetryDelay] = useState(2);
+  const [maxConcurrentConnections, setMaxConcurrentConnections] = useState(5);
+  const [maxRequestsPerMinute, setMaxRequestsPerMinute] = useState(60);
+  const [requirePrereqValidation, setRequirePrereqValidation] = useState(true);
+  const [monitorLatency, setMonitorLatency] = useState(true);
+  const [latencyAlertThreshold, setLatencyAlertThreshold] = useState(1000);
+  const [validatingPrereqs, setValidatingPrereqs] = useState(false);
+  const [prereqResults, setPrereqResults] = useState<any | null>(null);
+  const [diagnosticsData, setDiagnosticsData] = useState<any | null>(null);
+  const [loadingDiagnostics, setLoadingDiagnostics] = useState(false);
+
   useEffect(() => {
     loadSettings();
     loadApiTokens();
@@ -152,6 +170,7 @@ export default function Settings() {
     loadRecentNotifications();
     loadCredentialSets();
     loadServersAndVCenter();
+    loadNetworkSettings();
   }, []);
 
   const loadServersAndVCenter = async () => {
@@ -609,6 +628,138 @@ export default function Settings() {
       }
     } catch (error: any) {
       console.error("Error loading activity settings:", error);
+    }
+  };
+
+  const loadNetworkSettings = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("network_settings")
+        .select("*")
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      if (data) {
+        setNetworkSettingsId(data.id);
+        setConnectionTimeout(data.connection_timeout_seconds ?? 30);
+        setReadTimeout(data.read_timeout_seconds ?? 60);
+        setOperationTimeout(data.operation_timeout_seconds ?? 300);
+        setMaxRetryAttempts(data.max_retry_attempts ?? 3);
+        setRetryBackoffType((data.retry_backoff_type ?? 'exponential') as 'exponential' | 'linear' | 'fixed');
+        setRetryDelay(data.retry_delay_seconds ?? 2);
+        setMaxConcurrentConnections(data.max_concurrent_connections ?? 5);
+        setMaxRequestsPerMinute(data.max_requests_per_minute ?? 60);
+        setRequirePrereqValidation(data.require_prereq_validation ?? true);
+        setMonitorLatency(data.monitor_latency ?? true);
+        setLatencyAlertThreshold(data.latency_alert_threshold_ms ?? 1000);
+      }
+    } catch (error: any) {
+      console.error("Error loading network settings:", error);
+    }
+  };
+
+  const handleSaveNetworkSettings = async () => {
+    if (!networkSettingsId) {
+      toast({
+        title: "Error",
+        description: "Network settings not initialized",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from("network_settings")
+        .update({
+          connection_timeout_seconds: connectionTimeout,
+          read_timeout_seconds: readTimeout,
+          operation_timeout_seconds: operationTimeout,
+          max_retry_attempts: maxRetryAttempts,
+          retry_backoff_type: retryBackoffType,
+          retry_delay_seconds: retryDelay,
+          max_concurrent_connections: maxConcurrentConnections,
+          max_requests_per_minute: maxRequestsPerMinute,
+          require_prereq_validation: requirePrereqValidation,
+          monitor_latency: monitorLatency,
+          latency_alert_threshold_ms: latencyAlertThreshold,
+        })
+        .eq("id", networkSettingsId);
+
+      if (error) throw error;
+
+      toast({
+        title: "Settings saved",
+        description: "Network settings updated successfully",
+      });
+    } catch (error: any) {
+      console.error("Error saving network settings:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to save network settings",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleValidatePrerequisites = async () => {
+    setValidatingPrereqs(true);
+    setPrereqResults(null);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('validate-network-prerequisites');
+
+      if (error) throw error;
+
+      setPrereqResults(data);
+
+      if (data.overall.passed) {
+        toast({
+          title: "Validation Passed",
+          description: "All network prerequisites are met",
+        });
+      } else {
+        toast({
+          title: "Validation Issues",
+          description: `${data.overall.criticalFailures.length} critical issue(s) found`,
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
+      console.error("Validation error:", error);
+      toast({
+        title: "Validation Failed",
+        description: error.message || "Failed to validate network prerequisites",
+        variant: "destructive",
+      });
+    } finally {
+      setValidatingPrereqs(false);
+    }
+  };
+
+  const loadDiagnostics = async () => {
+    setLoadingDiagnostics(true);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('network-diagnostics');
+
+      if (error) throw error;
+
+      setDiagnosticsData(data);
+    } catch (error: any) {
+      console.error("Diagnostics error:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load network diagnostics",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingDiagnostics(false);
     }
   };
 
@@ -2511,196 +2662,299 @@ export default function Settings() {
                 </CardContent>
               </Card>
 
-              {/* iDRAC Servers Test Section */}
+              {/* Network Resilience Settings */}
               <Card>
                 <CardHeader>
-                  <CardTitle>iDRAC Servers</CardTitle>
+                  <CardTitle>Network Resilience</CardTitle>
                   <CardDescription>
-                    Test connectivity to internal iDRAC interfaces (port 443)
+                    Configure timeouts, retries, and connection pooling for reliable operations
                   </CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {servers.length > 0 ? (
-                      <>
-                        <div className="flex items-center justify-between">
-                          <div className="text-sm text-muted-foreground">
-                            {servers.length} server{servers.length !== 1 ? 's' : ''} configured
-                          </div>
-                          <Button 
-                            onClick={testAllServers}
-                            disabled={testingAllServers}
-                            size="sm"
-                          >
-                            {testingAllServers ? "Testing All..." : `Test All Servers (${servers.length})`}
-                          </Button>
+                <CardContent className="space-y-6">
+                  <Collapsible defaultOpen>
+                    <CollapsibleTrigger className="flex items-center justify-between w-full p-3 bg-muted/50 rounded-lg hover:bg-muted">
+                      <h3 className="font-medium">Timeouts</h3>
+                      <ChevronRight className="h-4 w-4 transition-transform data-[state=open]:rotate-90" />
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="pt-4 space-y-4">
+                      <div className="grid grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="connection-timeout">Connection (seconds)</Label>
+                          <Input
+                            id="connection-timeout"
+                            type="number"
+                            min="5"
+                            max="120"
+                            value={connectionTimeout}
+                            onChange={(e) => setConnectionTimeout(parseInt(e.target.value))}
+                          />
                         </div>
-
-                        <ScrollArea className="h-[400px] border rounded-md">
-                          <div className="p-4 space-y-2">
-                            {servers.map((server) => {
-                              const result = serverTestResults.get(server.id);
-                              const testing = testingServers.get(server.id);
-                              
-                              return (
-                                <div 
-                                  key={server.id} 
-                                  className="flex items-center justify-between p-3 border-b last:border-0 hover:bg-muted/50 rounded-md transition-colors"
-                                >
-                                  <div className="flex-1">
-                                    <div className="font-medium">{server.hostname || 'Unknown'}</div>
-                                    <div className="text-sm text-muted-foreground">{server.ip_address}</div>
-                                    {result && (
-                                      <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
-                                        <div>Last tested: {new Date(result.last_tested).toLocaleString()}</div>
-                                        <div>Response time: {result.response_time_ms}ms</div>
-                                        {result.version && <div>iDRAC Version: {result.version}</div>}
-                                        {result.error && (
-                                          <div className="text-destructive">Error: {result.error}</div>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    {result && (
-                                      <Badge variant={result.success ? "default" : "destructive"}>
-                                        {result.success ? "Online" : "Offline"}
-                                      </Badge>
-                                    )}
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => testIdracServer(server.id)}
-                                      disabled={testing}
-                                    >
-                                      {testing ? "Testing..." : "Test"}
-                                    </Button>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </ScrollArea>
-                      </>
-                    ) : (
-                      <div className="text-center py-12 space-y-3">
-                        <Server className="mx-auto h-12 w-12 text-muted-foreground" />
-                        <div>
-                          <h4 className="font-medium text-base mb-1">No Servers Configured</h4>
-                          <p className="text-sm text-muted-foreground">
-                            Add servers to test iDRAC connectivity
-                          </p>
+                        <div className="space-y-2">
+                          <Label htmlFor="read-timeout">Read (seconds)</Label>
+                          <Input
+                            id="read-timeout"
+                            type="number"
+                            min="10"
+                            max="300"
+                            value={readTimeout}
+                            onChange={(e) => setReadTimeout(parseInt(e.target.value))}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="operation-timeout">Operation (seconds)</Label>
+                          <Input
+                            id="operation-timeout"
+                            type="number"
+                            min="60"
+                            max="1800"
+                            value={operationTimeout}
+                            onChange={(e) => setOperationTimeout(parseInt(e.target.value))}
+                          />
                         </div>
                       </div>
-                    )}
-                  </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+
+                  <Collapsible defaultOpen>
+                    <CollapsibleTrigger className="flex items-center justify-between w-full p-3 bg-muted/50 rounded-lg hover:bg-muted">
+                      <h3 className="font-medium">Retry Policy</h3>
+                      <ChevronRight className="h-4 w-4 transition-transform data-[state=open]:rotate-90" />
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="pt-4 space-y-4">
+                      <div className="grid grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="max-retries">Max Attempts</Label>
+                          <Input
+                            id="max-retries"
+                            type="number"
+                            min="0"
+                            max="10"
+                            value={maxRetryAttempts}
+                            onChange={(e) => setMaxRetryAttempts(parseInt(e.target.value))}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="retry-delay">Delay (seconds)</Label>
+                          <Input
+                            id="retry-delay"
+                            type="number"
+                            min="1"
+                            max="60"
+                            value={retryDelay}
+                            onChange={(e) => setRetryDelay(parseInt(e.target.value))}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="backoff-type">Backoff Strategy</Label>
+                          <select
+                            id="backoff-type"
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            value={retryBackoffType}
+                            onChange={(e) => setRetryBackoffType(e.target.value as 'exponential' | 'linear' | 'fixed')}
+                          >
+                            <option value="exponential">Exponential</option>
+                            <option value="linear">Linear</option>
+                            <option value="fixed">Fixed</option>
+                          </select>
+                        </div>
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+
+                  <Collapsible defaultOpen>
+                    <CollapsibleTrigger className="flex items-center justify-between w-full p-3 bg-muted/50 rounded-lg hover:bg-muted">
+                      <h3 className="font-medium">Connection & Rate Limits</h3>
+                      <ChevronRight className="h-4 w-4 transition-transform data-[state=open]:rotate-90" />
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="pt-4 space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="max-connections">Max Concurrent Connections</Label>
+                          <Input
+                            id="max-connections"
+                            type="number"
+                            min="1"
+                            max="50"
+                            value={maxConcurrentConnections}
+                            onChange={(e) => setMaxConcurrentConnections(parseInt(e.target.value))}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="rate-limit">Requests Per Minute</Label>
+                          <Input
+                            id="rate-limit"
+                            type="number"
+                            min="1"
+                            max="300"
+                            value={maxRequestsPerMinute}
+                            onChange={(e) => setMaxRequestsPerMinute(parseInt(e.target.value))}
+                          />
+                        </div>
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+
+                  <Button onClick={handleSaveNetworkSettings} disabled={loading}>
+                    {loading ? "Saving..." : "Save Network Settings"}
+                  </Button>
                 </CardContent>
               </Card>
 
-              {/* vCenter Connection Test Section */}
+              {/* Pre-Job Validation */}
               <Card>
                 <CardHeader>
-                  <CardTitle>vCenter Connection</CardTitle>
+                  <CardTitle>Pre-Job Validation</CardTitle>
                   <CardDescription>
-                    Test connectivity to VMware vCenter server (port 443)
+                    Validate network prerequisites before starting autonomous update jobs
                   </CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {vcenterSettings ? (
-                      <>
-                        <div className="space-y-2 p-4 border rounded-md bg-muted/30">
-                          <div className="flex items-center justify-between">
-                            <div className="text-sm">
-                              <div><strong>Host:</strong> {vcenterSettings.host}:{vcenterSettings.port}</div>
-                              <div><strong>Username:</strong> {vcenterSettings.username}</div>
-                              <div><strong>SSL Verification:</strong> {vcenterSettings.verify_ssl ? 'Enabled' : 'Disabled'}</div>
-                            </div>
-                          </div>
-                          
-                          {vcenterTestResult && (
-                            <div className="mt-3 pt-3 border-t text-xs text-muted-foreground space-y-1">
-                              <div>Last tested: {new Date(vcenterTestResult.last_tested).toLocaleString()}</div>
-                              <div>Response time: {vcenterTestResult.response_time_ms}ms</div>
-                              {vcenterTestResult.version && <div>vCenter Version: {vcenterTestResult.version}</div>}
-                              {vcenterTestResult.error && (
-                                <div className="text-destructive">Error: {vcenterTestResult.error}</div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          {vcenterTestResult && (
-                            <Badge variant={vcenterTestResult.success ? "default" : "destructive"}>
-                              {vcenterTestResult.success ? "Connected" : "Failed"}
-                            </Badge>
-                          )}
-                          <Button
-                            onClick={testVCenterConnection}
-                            disabled={testingVCenter}
-                          >
-                            {testingVCenter ? "Testing..." : "Test Connection"}
-                          </Button>
-                        </div>
-
-                        {vcenterTestResult?.error && !vcenterTestResult.success && (
-                          <div className="p-3 border border-destructive/50 rounded-md bg-destructive/10">
-                            <div className="flex items-start gap-2">
-                              <AlertCircle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
-                              <div className="text-sm">
-                                <div className="font-medium text-destructive mb-1">Connection Failed</div>
-                                <div className="text-muted-foreground">{vcenterTestResult.error}</div>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="text-center py-12 space-y-3">
-                        <Database className="mx-auto h-12 w-12 text-muted-foreground" />
-                        <div>
-                          <h4 className="font-medium text-base mb-1">vCenter Not Configured</h4>
-                          <p className="text-sm text-muted-foreground">
-                            Configure vCenter settings in the vCenter page to test connectivity
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Network Requirements Info */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Network Requirements</CardTitle>
-                  <CardDescription>
-                    Required network connectivity for air-gapped deployment
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3 text-sm">
-                    <div>
-                      <div className="font-medium mb-1">Internal Network Ports:</div>
-                      <ul className="list-disc list-inside space-y-1 text-muted-foreground ml-2">
-                        <li><strong>Port 443:</strong> iDRAC Redfish API (HTTPS)</li>
-                        <li><strong>Port 443:</strong> vCenter API (HTTPS)</li>
-                        <li><strong>Port 3000:</strong> Application frontend (HTTP)</li>
-                        <li><strong>Port 8000:</strong> Local backend/database (HTTP)</li>
-                      </ul>
-                    </div>
-                    <div className="pt-2 border-t">
-                      <div className="font-medium mb-1">External Connectivity (Optional):</div>
-                      <ul className="list-disc list-inside space-y-1 text-muted-foreground ml-2">
-                        <li><strong>SMTP:</strong> Email notifications (user-configured)</li>
-                        <li><strong>Teams Webhook:</strong> Microsoft Teams notifications (user-configured)</li>
-                      </ul>
-                      <p className="text-xs text-muted-foreground mt-2">
-                        Note: Core functionality works without external connectivity. Notifications are optional.
+                <CardContent className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label>Require Pre-Job Validation</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Block job execution if critical network checks fail
                       </p>
                     </div>
+                    <Switch
+                      checked={requirePrereqValidation}
+                      onCheckedChange={setRequirePrereqValidation}
+                    />
                   </div>
+
+                  <Button 
+                    onClick={handleValidatePrerequisites}
+                    disabled={validatingPrereqs}
+                    className="w-full"
+                  >
+                    {validatingPrereqs ? "Validating..." : "Test All Prerequisites"}
+                  </Button>
+
+                  {prereqResults && (
+                    <div className="space-y-3 p-4 border rounded-lg">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-medium">Validation Results</h4>
+                        <Badge variant={prereqResults.overall.passed ? "default" : "destructive"}>
+                          {prereqResults.overall.passed ? "All Checks Passed" : "Issues Found"}
+                        </Badge>
+                      </div>
+
+                      {prereqResults.overall.criticalFailures.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium text-destructive">Critical Issues:</p>
+                          <ul className="list-disc list-inside text-sm text-destructive space-y-1">
+                            {prereqResults.overall.criticalFailures.map((failure: string, idx: number) => (
+                              <li key={idx}>{failure}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-4 pt-2 border-t">
+                        <div>
+                          <p className="text-sm font-medium">Servers</p>
+                          <p className="text-xs text-muted-foreground">
+                            {prereqResults.servers.reachable}/{prereqResults.servers.tested} reachable
+                          </p>
+                        </div>
+                        {prereqResults.vcenter.configured && (
+                          <div>
+                            <p className="text-sm font-medium">vCenter</p>
+                            <p className="text-xs text-muted-foreground">
+                              {prereqResults.vcenter.reachable ? "Reachable" : "Unreachable"}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Network Monitoring */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Network Monitoring</CardTitle>
+                  <CardDescription>
+                    Real-time network health and diagnostics
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="space-y-0.5">
+                      <Label>Monitor Latency</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Track response times and alert on slow connections
+                      </p>
+                    </div>
+                    <Switch
+                      checked={monitorLatency}
+                      onCheckedChange={setMonitorLatency}
+                    />
+                  </div>
+
+                  {monitorLatency && (
+                    <div className="space-y-2">
+                      <Label htmlFor="latency-threshold">Alert Threshold (ms)</Label>
+                      <Input
+                        id="latency-threshold"
+                        type="number"
+                        min="100"
+                        max="10000"
+                        value={latencyAlertThreshold}
+                        onChange={(e) => setLatencyAlertThreshold(parseInt(e.target.value))}
+                      />
+                    </div>
+                  )}
+
+                  <Button 
+                    onClick={loadDiagnostics}
+                    disabled={loadingDiagnostics}
+                    variant="outline"
+                    className="w-full"
+                  >
+                    {loadingDiagnostics ? "Loading..." : "Refresh Diagnostics"}
+                  </Button>
+
+                  {diagnosticsData && (
+                    <div className="grid grid-cols-2 gap-4 p-4 border rounded-lg">
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium">Active Connections</p>
+                        <p className="text-2xl font-bold">{diagnosticsData.activeConnections}</p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium">Average Latency</p>
+                        <p className="text-2xl font-bold">{diagnosticsData.avgLatency}ms</p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium">Success Rate</p>
+                        <p className="text-2xl font-bold">{diagnosticsData.successRate}%</p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium">Recent Errors</p>
+                        <p className="text-2xl font-bold">{diagnosticsData.recentErrors.length}</p>
+                      </div>
+
+                      {diagnosticsData.recentErrors.length > 0 && (
+                        <div className="col-span-2 pt-2 border-t">
+                          <p className="text-sm font-medium mb-2">Recent Network Errors:</p>
+                          <ScrollArea className="h-[120px]">
+                            <div className="space-y-2">
+                              {diagnosticsData.recentErrors.map((error: any, idx: number) => (
+                                <div key={idx} className="text-xs p-2 bg-destructive/10 rounded">
+                                  <div className="font-mono">{error.endpoint}</div>
+                                  <div className="text-muted-foreground">{error.error}</div>
+                                  <div className="text-muted-foreground">
+                                    {new Date(error.timestamp).toLocaleString()}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </ScrollArea>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
