@@ -17,3 +17,6 @@ verify_jwt = true  # Requires authentication for pre-job validation
 
 [functions.network-diagnostics]
 verify_jwt = true  # Requires authentication for network monitoring
+
+[functions.preview-server-info]
+verify_jwt = true  # Requires authentication for previewing new servers

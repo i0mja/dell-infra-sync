@@ -113,7 +113,7 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
         requestBody.credential_set_id = selectedCredentialSetId;
       }
 
-      const { data: result, error: invokeError } = await supabase.functions.invoke('refresh-server-info', {
+      const { data: result, error: invokeError } = await supabase.functions.invoke('preview-server-info', {
         body: requestBody,
       });
 
