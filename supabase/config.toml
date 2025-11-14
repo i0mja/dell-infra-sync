@@ -11,3 +11,9 @@ verify_jwt = true  # Requires admin/operator authentication
 
 [functions.test-vcenter-connection]
 verify_jwt = true  # Requires admin authentication
+
+[functions.validate-network-prerequisites]
+verify_jwt = true  # Requires authentication for pre-job validation
+
+[functions.network-diagnostics]
+verify_jwt = true  # Requires authentication for network monitoring
