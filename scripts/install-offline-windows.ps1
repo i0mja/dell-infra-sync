@@ -189,35 +189,39 @@ Write-Host "Supabase is running!" -ForegroundColor Green
 Write-Host "Studio URL: http://localhost:8000" -ForegroundColor Cyan
 Write-Host ""
 
-# Create admin user
+# Create admin user via Supabase signup API (not direct SQL)
 Write-Host "Creating admin user..." -ForegroundColor Yellow
 $AdminEmail = Read-Host "Enter admin email address"
 $AdminPassword = Read-Host "Enter admin password" -AsSecureString
 $AdminPasswordText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AdminPassword))
-$AdminUserId = [guid]::NewGuid().ToString()
 
-$PasswordHashBytes = [System.Text.Encoding]::UTF8.GetBytes($AdminPasswordText)
-$PasswordHash = [Convert]::ToBase64String([System.Security.Cryptography.SHA256]::Create().ComputeHash($PasswordHashBytes))
+# Use Supabase signup API to properly create user
+$headers = @{
+    "apikey" = $AnonKey
+    "Content-Type" = "application/json"
+}
 
-@"
-INSERT INTO auth.users (
-  id, email, encrypted_password, email_confirmed_at, 
-  created_at, updated_at, raw_user_meta_data
-)
-VALUES (
-  '$AdminUserId',
-  '$AdminEmail',
-  '$PasswordHash',
-  NOW(),
-  NOW(),
-  NOW(),
-  '{"role": "admin"}'::jsonb
-) ON CONFLICT (email) DO NOTHING;
+$body = @{
+    email = $AdminEmail
+    password = $AdminPasswordText
+    email_confirm = $true
+    data = @{
+        full_name = "Administrator"
+    }
+} | ConvertTo-Json
 
-INSERT INTO public.profiles (id, email, role, created_at, updated_at)
-VALUES ('$AdminUserId', '$AdminEmail', 'admin', NOW(), NOW())
-ON CONFLICT (id) DO NOTHING;
-"@ | docker exec -i supabase-db psql -U postgres -d postgres
+try {
+    Invoke-WebRequest -Uri "$SupabaseUrl/auth/v1/signup" -Method POST -Headers $headers -Body $body -ErrorAction Stop | Out-Null
+    Write-Host "✓ User account created" -ForegroundColor Green
+} catch {
+    Write-Host "WARNING: User creation failed or user already exists" -ForegroundColor Yellow
+}
+
+# Wait for triggers to complete
+Start-Sleep -Seconds 2
+
+# Assign admin role
+docker exec -i supabase-db psql -U postgres -d postgres -c "UPDATE public.user_roles SET role = 'admin'::app_role WHERE user_id = (SELECT id FROM auth.users WHERE email = '$AdminEmail');" | Out-Null
 
 Write-Host "✓ Admin user created" -ForegroundColor Green
 
@@ -236,13 +240,11 @@ if (Test-Path "$ScriptDir\npm-packages\node_modules.zip") {
 Write-Host "Installing Python packages..." -ForegroundColor Yellow
 pip3 install --no-index --find-links="$ScriptDir\python-packages" requests pyVim pyVmomi urllib3
 
-# Build application
+# Build application and create .env.local for local Supabase
 Write-Host "Building application..." -ForegroundColor Yellow
 Push-Location $InstallDir
-@"
-VITE_SUPABASE_URL=$SupabaseUrl
-VITE_SUPABASE_ANON_KEY=$AnonKey
-"@ | Out-File -FilePath ".env" -Encoding UTF8
+Copy-Item ".env.offline.template" ".env.local"
+(Get-Content ".env.local") -replace 'http://127.0.0.1:54321', "$SupabaseUrl" | Set-Content ".env.local"
 
 npm run build
 Pop-Location
