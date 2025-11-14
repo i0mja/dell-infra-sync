@@ -171,6 +171,12 @@ mkdir -p "$INSTALL_DIR"
 cp -r "$APP_DIR"/* "$INSTALL_DIR/"
 cd "$INSTALL_DIR"
 
+# Remove cloud .env if it exists (should not be in offline package, but safety check)
+if [ -f "$INSTALL_DIR/.env" ]; then
+  rm -f "$INSTALL_DIR/.env"
+  echo "✓ Removed cloud .env file"
+fi
+
 # Extract and install npm packages
 echo "Installing npm dependencies..."
 cd "$SCRIPT_DIR/npm-packages"
@@ -191,9 +197,9 @@ pip3 install --no-index --find-links="$SCRIPT_DIR/python-packages" \
 echo "Building application..."
 cd "$INSTALL_DIR"
 
-# Create .env.local for local Supabase override
-cp .env.offline.template .env.local
-sed -i "s|http://127.0.0.1:54321|$SUPABASE_URL|g" .env.local
+# Create .env for local Supabase
+cp .env.offline.template .env
+sed -i "s|http://127.0.0.1:54321|$SUPABASE_URL|g" .env
 
 npm run build
 

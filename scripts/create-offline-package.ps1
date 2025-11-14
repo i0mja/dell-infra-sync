@@ -27,7 +27,7 @@ New-Item -ItemType Directory -Force -Path "$PackagePath\installers" | Out-Null
 
 # Copy application code
 Write-Host "Copying application code..." -ForegroundColor Yellow
-robocopy "$ProjectRoot" "$PackagePath\app" /E /XD node_modules dist .git offline-package supabase\.branches /XF *.log /NFL /NDL /NJH /NJS
+robocopy "$ProjectRoot" "$PackagePath\app" /E /XD node_modules dist .git offline-package supabase\.branches /XF *.log .env /NFL /NDL /NJH /NJS
 
 # Download npm dependencies
 Write-Host "Downloading npm dependencies..." -ForegroundColor Yellow

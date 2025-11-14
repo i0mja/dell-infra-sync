@@ -85,19 +85,30 @@ function Mask-SensitiveData {
 }
 
 function Get-DeploymentMode {
+    # Check .env file (primary config)
     if (Test-Path ".env") {
         $envContent = Get-Content ".env" -Raw
+        # Local deployment uses localhost or 127.0.0.1
+        if ($envContent -match "VITE_SUPABASE_URL=.*127\.0\.0\.1" -or 
+            $envContent -match "VITE_SUPABASE_URL=.*localhost") {
+            return "Local"
+        }
+        # Cloud deployment uses supabase.co
         if ($envContent -match "VITE_SUPABASE_URL=.*supabase\.co") {
             return "Cloud"
         }
     }
     
-    # Check if Docker is running and has Supabase containers
+    # Fallback: Check if Docker is running and has Supabase containers
     try {
         $containers = docker ps --filter "name=supabase" --format "{{.Names}}" 2>$null
         if ($containers) {
             return "Local"
         }
+    } catch {}
+    
+    return "Unknown"
+}
     } catch {}
     
     return "Unknown"

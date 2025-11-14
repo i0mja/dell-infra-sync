@@ -229,6 +229,12 @@ Write-Host "✓ Admin user created" -ForegroundColor Green
 Write-Host "Installing Dell Server Manager application..." -ForegroundColor Yellow
 Copy-Item -Path "$AppDir\*" -Destination $InstallDir -Recurse -Force
 
+# Remove cloud .env if it exists (should not be in offline package, but safety check)
+if (Test-Path "$InstallDir\.env") {
+    Remove-Item "$InstallDir\.env" -Force
+    Write-Host "✓ Removed cloud .env file" -ForegroundColor Green
+}
+
 # Extract npm packages
 Write-Host "Installing npm dependencies..." -ForegroundColor Yellow
 if (Test-Path "$ScriptDir\npm-packages\node_modules.zip") {
@@ -240,11 +246,11 @@ if (Test-Path "$ScriptDir\npm-packages\node_modules.zip") {
 Write-Host "Installing Python packages..." -ForegroundColor Yellow
 pip3 install --no-index --find-links="$ScriptDir\python-packages" requests pyVim pyVmomi urllib3
 
-# Build application and create .env.local for local Supabase
+# Build application and create .env for local Supabase
 Write-Host "Building application..." -ForegroundColor Yellow
 Push-Location $InstallDir
-Copy-Item ".env.offline.template" ".env.local"
-(Get-Content ".env.local") -replace 'http://127.0.0.1:54321', "$SupabaseUrl" | Set-Content ".env.local"
+Copy-Item ".env.offline.template" ".env"
+(Get-Content ".env") -replace 'http://127.0.0.1:54321', "$SupabaseUrl" | Set-Content ".env"
 
 npm run build
 Pop-Location
