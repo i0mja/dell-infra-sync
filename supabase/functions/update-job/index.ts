@@ -38,6 +38,22 @@ serve(async (req) => {
     const { job, task } = await req.json();
 
     if (job) {
+      // Accept either job_id or id
+      const jobId = job.job_id || job.id;
+      
+      if (!jobId) {
+        return new Response(
+          JSON.stringify({ 
+            success: false, 
+            error: 'job_id (or id) is required' 
+          }),
+          {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
+      }
+
       const updateData: any = {};
       if (job.status) updateData.status = job.status;
       if (job.started_at) updateData.started_at = job.started_at;
@@ -47,13 +63,13 @@ serve(async (req) => {
       const { data: jobData, error: jobError } = await supabase
         .from('jobs')
         .update(updateData)
-        .eq('id', job.job_id)
+        .eq('id', jobId)
         .select()
         .single();
 
       if (jobError) throw jobError;
 
-      console.log(`Job updated: ${job.job_id} - status: ${job.status}`);
+      console.log(`Job updated: ${jobId} - status: ${job.status}`);
 
       // If job is cancelled or failed, cascade to child jobs
       if (job.status && ['cancelled', 'failed'].includes(job.status)) {
@@ -66,13 +82,13 @@ serve(async (req) => {
               cancellation_reason: `Auto-cancelled: parent job ${job.status}`
             }
           })
-          .eq('parent_job_id', job.job_id)
+          .eq('parent_job_id', jobId)
           .in('status', ['pending', 'running']);
 
         if (childError) {
           console.error('Error cascading cancellation to child jobs:', childError);
         } else {
-          console.log(`Cascaded ${job.status} status to child jobs of ${job.job_id}`);
+          console.log(`Cascaded ${job.status} status to child jobs of ${jobId}`);
         }
       }
 
@@ -81,7 +97,7 @@ serve(async (req) => {
         try {
           const notificationResponse = await supabase.functions.invoke('send-notification', {
             body: {
-              jobId: job.job_id,
+              jobId: jobId,
               jobType: jobData.job_type,
               status: job.status,
               details: job.details,

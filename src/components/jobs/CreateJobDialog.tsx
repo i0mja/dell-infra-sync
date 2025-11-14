@@ -169,7 +169,7 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
         <DialogHeader>
           <DialogTitle>Create New Job</DialogTitle>
           <DialogDescription>
-            Configure a firmware update or discovery scan job
+            Configure and schedule a new job for firmware updates, server discovery, or vCenter synchronization.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">

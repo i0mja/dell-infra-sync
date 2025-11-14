@@ -12,6 +12,7 @@ interface CreateJobRequest {
   target_scope: any;
   details?: any;
   schedule_at?: string;
+  credential_set_ids?: string[];
 }
 
 serve(async (req) => {
@@ -20,44 +21,58 @@ serve(async (req) => {
   }
 
   try {
+    // Use user-scoped client instead of service role
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+    const authHeader = req.headers.get('Authorization') || '';
+    
+    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
 
-    // Verify authentication
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      throw new Error('Missing authorization header');
-    }
-
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    // Get authenticated user
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
     
     if (authError || !user) {
-      throw new Error('Unauthorized');
+      console.error('Authentication error:', authError);
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized' }),
+        { 
+          status: 401, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      );
     }
 
-    // Check permissions (admin or operator)
-    const { data: roles, error: roleError } = await supabase
-      .from('user_roles')
-      .select('role')
-      .eq('user_id', user.id);
-
-    if (roleError) throw roleError;
-
-    const hasPermission = roles?.some(r => r.role === 'admin' || r.role === 'operator');
-    if (!hasPermission) {
-      throw new Error('Insufficient permissions');
+    // Check user role
+    const { data: roleData } = await supabase.rpc('get_user_role', { _user_id: user.id });
+    
+    if (!roleData || !['admin', 'operator'].includes(roleData)) {
+      console.error('Permission denied for user:', user.id, 'role:', roleData);
+      return new Response(
+        JSON.stringify({ error: 'Permission denied. Admin or operator role required.' }),
+        { 
+          status: 403, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      );
     }
 
     const jobRequest: CreateJobRequest = await req.json();
+    console.log('Creating job:', jobRequest.job_type, 'by user:', user.id);
 
     // Validate request
     if (!jobRequest.job_type || !jobRequest.target_scope) {
-      throw new Error('Missing required fields: job_type and target_scope');
+      return new Response(
+        JSON.stringify({ error: 'job_type and target_scope are required' }),
+        { 
+          status: 400, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      );
     }
 
-    // Create the job
+    // Create the job with RLS permissions
     const { data: newJob, error: insertError } = await supabase
       .from('jobs')
       .insert([{
@@ -67,6 +82,7 @@ serve(async (req) => {
         details: jobRequest.details || {},
         created_by: user.id,
         schedule_at: jobRequest.schedule_at || null,
+        credential_set_ids: jobRequest.credential_set_ids || null,
       }])
       .select()
       .single();
