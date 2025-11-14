@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Search, RefreshCw, Link2, Wrench, RotateCw, Edit, History, Trash2, CheckCircle } from "lucide-react";
+import { Plus, Search, RefreshCw, Link2, Wrench, RotateCw, Edit, History, Trash2, CheckCircle, Info } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { AddServerDialog } from "@/components/servers/AddServerDialog";
@@ -51,6 +52,8 @@ interface Server {
 }
 
 const Servers = () => {
+  const isLocalMode = import.meta.env.VITE_SUPABASE_URL?.includes('127.0.0.1') || 
+                      import.meta.env.VITE_SUPABASE_URL?.includes('localhost');
   const [servers, setServers] = useState<Server[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -265,6 +268,16 @@ const Servers = () => {
         </div>
       </div>
 
+      {isLocalMode && (
+        <Alert className="mb-6">
+          <Info className="h-4 w-4" />
+          <AlertDescription>
+            Running in local mode. Network operations like "Test Connection" and "Refresh Info" use Edge Functions which may have limited access to your local network due to Docker isolation. 
+            For comprehensive testing, use the Job Executor with discovery jobs.
+          </AlertDescription>
+        </Alert>
+      )}
+
       <Card className="mb-6">
         <CardHeader>
           <CardTitle>Search Servers</CardTitle>
@@ -406,20 +419,46 @@ const Servers = () => {
                   Create Firmware Update Job
                 </ContextMenuItem>
                 <ContextMenuSeparator />
-                <ContextMenuItem 
-                  onClick={() => handleTestConnection(server)}
-                  disabled={refreshing === server.id}
-                >
-                  <CheckCircle className="mr-2 h-4 w-4" />
-                  Test iDRAC Connection
-                </ContextMenuItem>
-                <ContextMenuItem 
-                  onClick={() => handleRefreshInfo(server)}
-                  disabled={refreshing === server.id}
-                >
-                  <RotateCw className={`mr-2 h-4 w-4 ${refreshing === server.id ? 'animate-spin' : ''}`} />
-                  Refresh Server Information
-                </ContextMenuItem>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div>
+                        <ContextMenuItem 
+                          onClick={() => !isLocalMode && handleTestConnection(server)}
+                          disabled={refreshing === server.id || isLocalMode}
+                        >
+                          <CheckCircle className="mr-2 h-4 w-4" />
+                          Test iDRAC Connection
+                        </ContextMenuItem>
+                      </div>
+                    </TooltipTrigger>
+                    {isLocalMode && (
+                      <TooltipContent>
+                        Use Job Executor for network operations in local deployments
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
+                </TooltipProvider>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div>
+                        <ContextMenuItem 
+                          onClick={() => !isLocalMode && handleRefreshInfo(server)}
+                          disabled={refreshing === server.id || isLocalMode}
+                        >
+                          <RotateCw className={`mr-2 h-4 w-4 ${refreshing === server.id ? 'animate-spin' : ''}`} />
+                          Refresh Server Information
+                        </ContextMenuItem>
+                      </div>
+                    </TooltipTrigger>
+                    {isLocalMode && (
+                      <TooltipContent>
+                        Use Job Executor for network operations in local deployments
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
+                </TooltipProvider>
                 <ContextMenuItem onClick={() => handleEditServer(server)}>
                   <Edit className="mr-2 h-4 w-4" />
                   Edit Server Details
