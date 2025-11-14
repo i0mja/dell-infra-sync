@@ -114,38 +114,38 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
         requestBody.credential_set_id = selectedCredentialSetId;
       }
 
-      const { data, error } = await supabase.functions.invoke('refresh-server-info', {
-        body: requestBody,
-      });
+      const credentials = useCustomCredentials 
+        ? { username: customCredentials.username, password: customCredentials.password }
+        : { credential_set_id: selectedCredentialSetId };
 
-      if (error) throw error;
+      const result = await refreshServerInfo('temp-id', formData.ip_address, credentials);
 
-      if (data.success && data.server_info) {
-        // Auto-populate form fields
-        setFormData(prev => ({
-          ...prev,
-          hostname: data.server_info.hostname || prev.hostname,
-          model: data.server_info.model || prev.model,
-          service_tag: data.server_info.service_tag || prev.service_tag,
-          idrac_firmware: data.server_info.idrac_firmware || prev.idrac_firmware,
-          bios_version: data.server_info.bios_version || prev.bios_version,
-        }));
+      if (result.success) {
+        // Populate form with fetched data
+        setFormData({
+          ...formData,
+          hostname: result.hostname || "",
+          model: result.model || "",
+          service_tag: result.service_tag || "",
+          idrac_firmware: result.idrac_firmware || "",
+          bios_version: result.bios_version || "",
+        });
 
         setFetchResult({
           success: true,
-          message: "Server details retrieved successfully",
-          responseTime: data.response_time_ms,
-          idracVersion: data.server_info.idrac_firmware,
+          message: `Successfully fetched server details (${result.response_time}ms)`,
+          responseTime: result.response_time,
+          idracVersion: result.idrac_firmware,
         });
 
         toast({
-          title: "Success",
-          description: "Server information retrieved from iDRAC",
+          title: "Server details fetched",
+          description: "Form populated with server information",
         });
       } else {
         setFetchResult({
           success: false,
-          message: data.error || "Failed to retrieve server details",
+          message: result.error || "Failed to fetch server details",
         });
       }
     } catch (error: any) {

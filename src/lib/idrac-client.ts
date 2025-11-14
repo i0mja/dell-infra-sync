@@ -16,6 +16,12 @@ interface RefreshInfoResult {
   success: boolean;
   message: string;
   error?: string;
+  hostname?: string;
+  model?: string;
+  service_tag?: string;
+  idrac_firmware?: string;
+  bios_version?: string;
+  response_time?: number;
 }
 
 async function logIdracCommand(params: {
@@ -294,6 +300,8 @@ export async function refreshServerInfo(
     
     if (updateError) throw updateError;
     
+    const responseTime = Date.now() - startTime;
+    
     // Log successful refresh
     await logIdracCommand({
       serverId,
@@ -301,7 +309,7 @@ export async function refreshServerInfo(
       endpoint: '/redfish/v1/Systems/System.Embedded.1',
       fullUrl: systemUrl,
       statusCode: 200,
-      responseTime: Date.now() - startTime,
+      responseTime,
       success: true,
     });
     
@@ -315,7 +323,16 @@ export async function refreshServerInfo(
       });
     }
     
-    return { success: true, message: 'Server information refreshed successfully' };
+    return { 
+      success: true, 
+      message: 'Server information refreshed successfully',
+      hostname: updateData.hostname,
+      model: updateData.model,
+      service_tag: updateData.service_tag,
+      idrac_firmware: updateData.idrac_firmware,
+      bios_version: updateData.bios_version,
+      response_time: responseTime,
+    };
   } catch (error: any) {
     await logIdracCommand({
       serverId,

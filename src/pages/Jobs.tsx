@@ -251,17 +251,16 @@ const Jobs = () => {
     }
 
     try {
-      const { error } = await supabase.functions.invoke('update-job', {
-        body: {
-          job: {
-            job_id: jobId,
-            status: 'cancelled',
-            completed_at: new Date().toISOString(),
-          }
-        }
+      const result = await updateJobUtil({
+        job_id: jobId,
+        status: 'cancelled',
+        completed_at: new Date().toISOString(),
       });
 
-      if (error) throw error;
+      if (!result.success) {
+        throw new Error('Failed to cancel job');
+      }
+
 
       toast({
         title: "Job cancelled",

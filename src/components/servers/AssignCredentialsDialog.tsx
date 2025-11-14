@@ -67,20 +67,15 @@ export function AssignCredentialsDialog({ open, onOpenChange, server, onSuccess 
     setTestResult(null);
 
     try {
-      const { data, error } = await supabase.functions.invoke("test-idrac-connection", {
-        body: {
-          ip_address: server.ip_address,
-          credential_set_id: selectedSetId,
-        },
+      const result = await testIdracConnection(server.ip_address, {
+        credential_set_id: selectedSetId,
       });
 
-      if (error) throw error;
-
-      if (data.success) {
+      if (result.success) {
         setTestResult({
           success: true,
-          message: `Successfully connected to iDRAC ${data.idrac_version || ""}`,
-          responseTime: data.response_time,
+          message: `Successfully connected to iDRAC ${result.version || ""}`,
+          responseTime: result.responseTime,
         });
 
         // Update server record with successful credential set
@@ -110,7 +105,7 @@ export function AssignCredentialsDialog({ open, onOpenChange, server, onSuccess 
       } else {
         setTestResult({
           success: false,
-          message: data.error || "Authentication failed",
+          message: result.error || "Authentication failed",
         });
       }
     } catch (error: any) {
