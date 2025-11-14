@@ -119,8 +119,9 @@ Deno.serve(async (req) => {
           'Authorization': authHeader,
           'Accept': 'application/json',
         },
-        // @ts-ignore - Deno-specific option to skip SSL verification
-        signal: undefined,
+        signal: AbortSignal.timeout(10000),
+        // @ts-ignore - Deno-specific option to bypass SSL verification for self-signed certs
+        insecure: true,
       });
 
       systemResponseTime = Date.now() - systemStartTime;
@@ -172,8 +173,9 @@ Deno.serve(async (req) => {
           'Authorization': authHeader,
           'Accept': 'application/json',
         },
-        // @ts-ignore
-        signal: undefined,
+        signal: AbortSignal.timeout(10000),
+        // @ts-ignore - Deno-specific option to bypass SSL verification for self-signed certs
+        insecure: true,
       });
 
       const managerResponseTime = Date.now() - managerStartTime;

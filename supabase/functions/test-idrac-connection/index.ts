@@ -68,6 +68,8 @@ Deno.serve(async (req) => {
           'Accept': 'application/json',
         },
         signal: AbortSignal.timeout(10000), // 10 second timeout
+        // @ts-ignore - Deno-specific option to bypass SSL verification for self-signed certs
+        insecure: true,
       });
 
       const responseTime = Date.now() - startTime;
