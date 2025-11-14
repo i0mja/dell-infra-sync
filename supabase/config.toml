@@ -1,4 +1,4 @@
-project_id = "local"
+project_id = "ylwkczjqvymshktuuqkx"
 
 [functions.update-job]
 verify_jwt = false  # Called by local job executor with service role key
