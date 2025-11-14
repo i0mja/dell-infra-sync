@@ -62,7 +62,10 @@ Deno.serve(async (req) => {
     const { ip_address, username, password, credential_set_id }: PreviewRequest = await req.json();
 
     if (!ip_address) {
-      return new Response(JSON.stringify({ error: 'Missing ip_address' }), {
+      return new Response(JSON.stringify({ 
+        success: false,
+        error: 'Missing ip_address' 
+      }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -84,7 +87,11 @@ Deno.serve(async (req) => {
 
       if (credError || !credSet) {
         console.error('[ERROR] Failed to fetch credential set:', credError);
-        return new Response(JSON.stringify({ error: 'Invalid credential set' }), {
+        return new Response(JSON.stringify({ 
+          success: false,
+          error: 'Invalid credential set',
+          details: credError?.message 
+        }), {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -103,6 +110,7 @@ Deno.serve(async (req) => {
     const authHeader = `Basic ${btoa(`${idracUsername}:${idracPassword}`)}`;
 
     let systemData;
+    let systemResponseTime = 0;
     const systemStartTime = Date.now();
     try {
       const response = await fetch(systemUrl, {
@@ -115,7 +123,7 @@ Deno.serve(async (req) => {
         signal: undefined,
       });
 
-      const systemResponseTime = Date.now() - systemStartTime;
+      systemResponseTime = Date.now() - systemStartTime;
       const responseData = response.ok ? await response.json() : null;
 
       // Log the command (without server_id since we're previewing)
@@ -143,6 +151,7 @@ Deno.serve(async (req) => {
     } catch (error: any) {
       console.error('[ERROR] Failed to fetch system info:', error);
       return new Response(JSON.stringify({ 
+        success: false,
         error: 'Failed to connect to iDRAC',
         details: error.message 
       }), {
@@ -197,6 +206,7 @@ Deno.serve(async (req) => {
 
     // Extract server details
     const serverInfo = {
+      success: true,
       hostname: systemData?.HostName || null,
       model: systemData?.Model || null,
       service_tag: systemData?.SKU || null,
@@ -204,6 +214,7 @@ Deno.serve(async (req) => {
       bios_version: systemData?.BiosVersion || null,
       cpu_count: systemData?.ProcessorSummary?.Count || null,
       memory_gb: systemData?.MemorySummary?.TotalSystemMemoryGiB || null,
+      response_time: systemResponseTime,
     };
 
     console.log('[INFO] Successfully previewed server info:', serverInfo);
@@ -215,6 +226,7 @@ Deno.serve(async (req) => {
   } catch (error: any) {
     console.error('[ERROR] Unexpected error in preview-server-info:', error);
     return new Response(JSON.stringify({ 
+      success: false,
       error: 'Internal server error',
       details: error.message 
     }), {
