@@ -190,7 +190,7 @@ export default function Settings() {
     const { data: vcenterData } = await supabase
       .from('vcenter_settings')
       .select('*')
-      .single();
+      .maybeSingle();
     if (vcenterData) setVCenterSettings(vcenterData);
   };
 
@@ -2904,19 +2904,16 @@ export default function Settings() {
                     <div className="space-y-3 p-4 border rounded-lg">
                       <div className="flex items-center justify-between">
                         <h4 className="font-medium">Validation Results</h4>
-                        <Badge variant={prereqResults.overall.passed ? "default" : "destructive"}>
-                          {prereqResults.overall.passed ? "All Checks Passed" : "Issues Found"}
+                        <Badge variant={prereqResults.overallStatus === 'passed' ? "default" : "destructive"}>
+                          {prereqResults.overallStatus === 'passed' ? "All Checks Passed" : "Issues Found"}
                         </Badge>
                       </div>
 
-                      {prereqResults.overall.criticalFailures.length > 0 && (
+                      {prereqResults.overallStatus === 'failed' && (
                         <div className="space-y-2">
-                          <p className="text-sm font-medium text-destructive">Critical Issues:</p>
-                          <ul className="list-disc list-inside text-sm text-destructive space-y-1">
-                            {prereqResults.overall.criticalFailures.map((failure: string, idx: number) => (
-                              <li key={idx}>{failure}</li>
-                            ))}
-                          </ul>
+                          <p className="text-sm font-medium text-destructive">
+                            Some tests failed. Check the logs below for details.
+                          </p>
                         </div>
                       )}
 

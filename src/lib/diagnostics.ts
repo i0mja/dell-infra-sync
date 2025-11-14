@@ -350,9 +350,9 @@ export async function generateDiagnosticsReport(): Promise<DiagnosticsReport> {
   // 8. System settings
   try {
     const [activitySettings, notificationSettings, vcenterSettings] = await Promise.all([
-      supabase.from('activity_settings').select('log_level, log_retention_days, auto_cleanup_enabled, job_retention_days, job_auto_cleanup_enabled, stale_pending_hours, stale_running_hours').single(),
-      supabase.from('notification_settings').select('smtp_host, teams_webhook_url').single(),
-      supabase.from('vcenter_settings').select('host, last_sync').single(),
+      supabase.from('activity_settings').select('log_level, log_retention_days, auto_cleanup_enabled, job_retention_days, job_auto_cleanup_enabled, stale_pending_hours, stale_running_hours').maybeSingle(),
+      supabase.from('notification_settings').select('smtp_host, teams_webhook_url').maybeSingle(),
+      supabase.from('vcenter_settings').select('host, last_sync').maybeSingle(),
     ]);
 
     if (activitySettings.data) {

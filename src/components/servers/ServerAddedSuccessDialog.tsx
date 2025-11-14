@@ -30,7 +30,7 @@ export const ServerAddedSuccessDialog = ({
             <DialogTitle>Server Added Successfully!</DialogTitle>
           </div>
           <DialogDescription>
-            Server IP: <span className="font-semibold text-foreground">{serverIp}</span>
+            The server at IP {serverIp} has been added. Create a discovery job to fetch complete details from iDRAC.
           </DialogDescription>
         </DialogHeader>
 
