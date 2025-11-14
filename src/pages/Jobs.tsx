@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { updateJob as updateJobUtil, createJob } from "@/lib/job-manager";
+import { createJob } from "@/lib/job-manager";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Briefcase, Plus, RefreshCw, Clock, CheckCircle, XCircle, PlayCircle, RotateCcw, FileText, Settings, Calendar, Filter, BarChart3 } from "lucide-react";
@@ -251,15 +251,17 @@ const Jobs = () => {
     }
 
     try {
-      const result = await updateJobUtil({
-        job_id: jobId,
-        status: 'cancelled',
-        completed_at: new Date().toISOString(),
+      const { error } = await supabase.functions.invoke('update-job', {
+        body: {
+          job: {
+            id: jobId,
+            status: 'cancelled',
+            completed_at: new Date().toISOString(),
+          }
+        }
       });
 
-      if (!result.success) {
-        throw new Error('Failed to cancel job');
-      }
+      if (error) throw error;
 
 
       toast({

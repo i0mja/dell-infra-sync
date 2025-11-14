@@ -6,7 +6,6 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
-import { refreshServerInfo } from "@/lib/idrac-client";
 import { useToast } from "@/hooks/use-toast";
 import { CheckCircle, XCircle, Loader2, RefreshCw } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -114,11 +113,11 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
         requestBody.credential_set_id = selectedCredentialSetId;
       }
 
-      const credentials = useCustomCredentials 
-        ? { username: customCredentials.username, password: customCredentials.password }
-        : { credential_set_id: selectedCredentialSetId };
+      const { data: result, error: invokeError } = await supabase.functions.invoke('refresh-server-info', {
+        body: requestBody,
+      });
 
-      const result = await refreshServerInfo('temp-id', formData.ip_address, credentials);
+      if (invokeError) throw invokeError;
 
       if (result.success) {
         // Populate form with fetched data

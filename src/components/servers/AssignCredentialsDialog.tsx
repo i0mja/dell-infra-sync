@@ -5,7 +5,6 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { supabase } from "@/integrations/supabase/client";
-import { testIdracConnection } from "@/lib/idrac-client";
 import { useToast } from "@/hooks/use-toast";
 import { CheckCircle, XCircle, Loader2 } from "lucide-react";
 
@@ -67,15 +66,20 @@ export function AssignCredentialsDialog({ open, onOpenChange, server, onSuccess 
     setTestResult(null);
 
     try {
-      const result = await testIdracConnection(server.ip_address, {
-        credential_set_id: selectedSetId,
+      const { data: result, error: invokeError } = await supabase.functions.invoke('test-idrac-connection', {
+        body: {
+          ip_address: server.ip_address,
+          credential_set_id: selectedSetId,
+        },
       });
+
+      if (invokeError) throw invokeError;
 
       if (result.success) {
         setTestResult({
           success: true,
-          message: `Successfully connected to iDRAC ${result.version || ""}`,
-          responseTime: result.responseTime,
+          message: `Successfully connected to iDRAC ${result.idrac_version || ""}`,
+          responseTime: result.response_time_ms,
         });
 
         // Update server record with successful credential set
