@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
-import { testNotification } from "@/lib/notification-client";
 import { validateNetworkPrerequisites } from "@/lib/network-validator";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -443,16 +442,20 @@ export default function Settings() {
 
     setTestingTeams(true);
     try {
-      const result = await testNotification();
+      const { data: result, error } = await supabase.functions.invoke('send-notification', {
+        body: { event_type: 'test', is_test: true }
+      });
+      
+      if (error) throw error;
 
-      if (result.success) {
+      if (result?.success) {
         toast({
           title: "Test Notification Sent",
           description: "Check your Teams channel for the test message",
         });
         await loadRecentNotifications();
       } else {
-        throw new Error(result.error || 'Failed to send notification');
+        throw new Error(result?.error || 'Failed to send notification');
       }
     } catch (error: any) {
       toast({
@@ -780,10 +783,11 @@ export default function Settings() {
     setLoadingDiagnostics(true);
 
     try {
-      const { runNetworkDiagnostics } = await import('@/lib/network-diagnostics');
-      const result = await runNetworkDiagnostics();
+      const { data: diagnosticsResult, error } = await supabase.functions.invoke('network-diagnostics');
+      
+      if (error) throw error;
 
-      setDiagnosticsData(result);
+      setDiagnosticsData(diagnosticsResult);
     } catch (error: any) {
       console.error("Diagnostics error:", error);
       toast({
@@ -1021,8 +1025,9 @@ export default function Settings() {
 
     setJobCleaningUp(true);
     try {
-      const { cleanupOldJobs } = await import('@/lib/cleanup-utils');
-      await cleanupOldJobs();
+      const { error } = await supabase.functions.invoke('cleanup-old-jobs');
+      
+      if (error) throw error;
       
       // Query to get the actual counts
       const deletedCount = 0; // Will be shown in activity logs

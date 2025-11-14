@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { testIdracConnection, refreshServerInfo } from "@/lib/idrac-client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Plus, Search, RefreshCw, Link2, Wrench, RotateCw, Edit, History, Trash2, CheckCircle } from "lucide-react";
@@ -104,7 +103,11 @@ const Servers = () => {
   const handleTestConnection = async (server: Server) => {
     try {
       setRefreshing(server.id);
-      const result = await testIdracConnection(server.ip_address);
+      const { data: result, error } = await supabase.functions.invoke('test-idrac-connection', {
+        body: { ip_address: server.ip_address }
+      });
+      
+      if (error) throw error;
 
       if (result.success) {
         toast({
@@ -135,7 +138,11 @@ const Servers = () => {
   const handleRefreshInfo = async (server: Server) => {
     try {
       setRefreshing(server.id);
-      const result = await refreshServerInfo(server.id, server.ip_address);
+      const { data: result, error } = await supabase.functions.invoke('refresh-server-info', {
+        body: { server_id: server.id, ip_address: server.ip_address }
+      });
+      
+      if (error) throw error;
 
       if (!result.success) {
         toast({

@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { createJob } from "@/lib/job-manager";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Briefcase, Plus, RefreshCw, Clock, CheckCircle, XCircle, PlayCircle, RotateCcw, FileText, Settings, Calendar, Filter, BarChart3 } from "lucide-react";
@@ -289,13 +288,19 @@ const Jobs = () => {
     }
 
     try {
-      const result = await createJob({
-        job_type: job.job_type as "firmware_update" | "discovery_scan" | "vcenter_sync" | "full_server_update",
-        target_scope: job.target_scope,
-        details: job.details
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      const { data: result, error } = await supabase.functions.invoke('create-job', {
+        body: {
+          job_type: job.job_type as "firmware_update" | "discovery_scan" | "vcenter_sync" | "full_server_update",
+          created_by: user?.id,
+          target_scope: job.target_scope,
+          details: job.details
+        }
       });
 
-      if (!result.success) throw new Error(result.error);
+      if (error) throw error;
+      if (!result?.success) throw new Error(result?.error || 'Failed to create job');
 
       toast({
         title: "Job retried",
