@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { syncVCenter } from "@/lib/vcenter-client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Database, RefreshCw, Link as LinkIcon, Search, Settings, RefreshCcw } from "lucide-react";

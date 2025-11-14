@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
+import { createJob } from "@/lib/job-manager";
 import { useToast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -107,17 +108,15 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
         details.credential_set_ids = selectedCredentialSets;
       }
 
-      const { data, error } = await supabase.functions.invoke('create-job', {
-        body: {
-          job_type: jobType,
-          target_scope,
-          details,
-          schedule_at: scheduleAt || null,
-          credential_set_ids: jobType === 'discovery_scan' ? selectedCredentialSets : undefined,
-        },
+      const result = await createJob({
+        job_type: jobType as "firmware_update" | "discovery_scan" | "vcenter_sync" | "full_server_update",
+        target_scope,
+        details,
+        schedule_at: scheduleAt || null,
+        credential_set_ids: jobType === 'discovery_scan' ? selectedCredentialSets : undefined,
       });
 
-      if (error) throw error;
+      if (!result.success) throw new Error(result.error);
 
       toast({
         title: "Job Created",

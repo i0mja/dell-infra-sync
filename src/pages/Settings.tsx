@@ -1,6 +1,12 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
+import { testIdracConnection } from "@/lib/idrac-client";
+import { testVCenterConnection } from "@/lib/vcenter-client";
+import { testNotification } from "@/lib/notification-client";
+import { validateNetworkPrerequisites } from "@/lib/network-validator";
+import { runNetworkDiagnostics } from "@/lib/network-diagnostics";
+import { cleanupActivityLogs, cleanupOldJobs } from "@/lib/cleanup-utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -199,24 +205,19 @@ export default function Settings() {
     
     try {
       const startTime = Date.now();
-      const { data, error } = await supabase.functions.invoke('test-idrac-connection', {
-        body: {
-          ip_address: server.ip_address,
-          username: server.idrac_username,
-          password: server.idrac_password_encrypted,
-        },
+      const result = await testIdracConnection(server.ip_address, {
+        username: server.idrac_username,
+        password: server.idrac_password_encrypted,
       });
 
       const responseTime = Date.now() - startTime;
 
-      if (error) throw error;
-
-      const result = {
-        success: data?.success || false,
-        response_time_ms: data?.response_time_ms || responseTime,
+      const testResult = {
+        success: result.success,
+        response_time_ms: result.responseTime || responseTime,
         last_tested: new Date().toISOString(),
-        error: data?.error,
-        version: data?.idrac_version,
+        error: result.error,
+        version: result.server_info?.idrac_firmware,
       };
 
       setServerTestResults(new Map(serverTestResults.set(serverId, result)));
@@ -288,30 +289,26 @@ export default function Settings() {
     
     try {
       const startTime = Date.now();
-      const { data, error } = await supabase.functions.invoke('test-vcenter-connection', {
-        body: {},
-      });
+      const result = await testVCenterConnection();
 
       const responseTime = Date.now() - startTime;
 
-      if (error) throw error;
-
-      const result = {
-        success: data?.success || false,
-        response_time_ms: data?.response_time_ms || responseTime,
+      const testResult = {
+        success: result.success,
+        response_time_ms: result.responseTime || responseTime,
         last_tested: new Date().toISOString(),
-        error: data?.error,
-        version: data?.version,
+        error: result.error,
+        version: result.version,
       };
 
-      setVCenterTestResult(result);
+      setVCenterTestResult(testResult);
 
       toast({
-        title: result.success ? "vCenter Connection Successful" : "vCenter Connection Failed",
-        description: result.success 
-          ? `Connected to ${vcenterSettings.host} (${result.response_time_ms}ms)${result.version ? ` - Version: ${result.version}` : ''}`
-          : result.error || "Failed to connect to vCenter",
-        variant: result.success ? "default" : "destructive",
+        title: testResult.success ? "vCenter Connection Successful" : "vCenter Connection Failed",
+        description: testResult.success 
+          ? `Connected to vCenter (${testResult.response_time_ms}ms)${testResult.version ? ` - Version: ${testResult.version}` : ''}`
+          : testResult.error || "Failed to connect to vCenter",
+        variant: testResult.success ? "default" : "destructive",
       });
     } catch (error: any) {
       const result = {
@@ -415,16 +412,9 @@ export default function Settings() {
 
     setTestingTeams(true);
     try {
-      const { data, error } = await supabase.functions.invoke('send-notification', {
-        body: {
-          isTest: true,
-          testMessage: 'This is a test notification from your Server Management System',
-        },
-      });
+      const result = await testNotification();
 
-      if (error) throw error;
-
-      if (data?.results?.teams?.success) {
+      if (result.success) {
         toast({
           title: "Test Notification Sent",
           description: "Check your Teams channel for the test message",
@@ -716,15 +706,13 @@ export default function Settings() {
     setExecutionLog([]);
 
     try {
-      const { data, error } = await supabase.functions.invoke('validate-network-prerequisites');
+      const result = await validateNetworkPrerequisites();
 
-      if (error) throw error;
-
-      setPrereqResults(data.results);
-      setExecutionLog(data.executionLog || []);
+      setPrereqResults(result.results);
+      setExecutionLog(result.executionLog || []);
       setShowExecutionLog(true);
 
-      if (data.results.overall.passed) {
+      if (result.results.overall.passed) {
         toast({
           title: "Validation Passed",
           description: "All network prerequisites are met",
@@ -732,7 +720,7 @@ export default function Settings() {
       } else {
         toast({
           title: "Validation Issues",
-          description: `${data.results.overall.criticalFailures.length} critical issue(s) found`,
+          description: `${result.results.overall.criticalFailures.length} critical issue(s) found`,
           variant: "destructive",
         });
       }
@@ -970,13 +958,11 @@ export default function Settings() {
 
     setCleaningUp(true);
     try {
-      const { data, error } = await supabase.functions.invoke('cleanup-activity-logs');
-      
-      if (error) throw error;
+      await cleanupActivityLogs();
 
       toast({
         title: "Cleanup Complete",
-        description: `Deleted ${data.deleted_count || 0} old log entries`,
+        description: "Old activity log entries have been deleted",
       });
       
       // Reload settings to get updated last_cleanup_at
@@ -1089,14 +1075,11 @@ export default function Settings() {
 
     setJobCleaningUp(true);
     try {
-      const { data, error } = await supabase.functions.invoke('cleanup-old-jobs');
-      
-      if (error) throw error;
+      await cleanupOldJobs();
 
-      const cancelledCount = data.stale_cancelled_count || 0;
       toast({
         title: "Stale Jobs Cancelled",
-        description: `Cancelled ${cancelledCount} stale jobs`,
+        description: "Stale jobs have been cancelled",
       });
       
       fetchStaleJobCount();
@@ -1499,23 +1482,19 @@ export default function Settings() {
 
     setTestingCredential(credentialSet.id);
     try {
-      const { data, error } = await supabase.functions.invoke('test-idrac-connection', {
-        body: {
-          ip_address: testIp,
-          username: credentialSet.username,
-          password: credentialSet.password_encrypted,
-        },
+    try {
+      const result = await testIdracConnection(testIp, {
+        username: credentialSet.username,
+        password: credentialSet.password_encrypted,
       });
 
-      if (error) throw error;
-
-      if (data.success) {
+      if (result.success) {
         toast({
           title: "Connection Successful",
-          description: `Connected to ${testIp} successfully. Model: ${data.model || 'Unknown'}`,
+          description: `Connected to ${testIp} successfully`,
         });
       } else {
-        throw new Error(data.error || 'Connection failed');
+        throw new Error(result.error || 'Connection failed');
       }
     } catch (error: any) {
       toast({
