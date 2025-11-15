@@ -391,8 +391,57 @@ class JobExecutor:
             self.log(f"Error fetching tasks: {e}", "ERROR")
             return []
 
+    def get_comprehensive_server_info(self, ip: str, username: str, password: str) -> Optional[Dict]:
+        """Get comprehensive server information from iDRAC Redfish API"""
+        try:
+            # Get system information
+            system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
+            system_response = requests.get(
+                system_url,
+                auth=(username, password),
+                verify=False,
+                timeout=10
+            )
+            
+            if system_response.status_code != 200:
+                return None
+            
+            system_data = system_response.json()
+            
+            # Get manager (iDRAC) information for firmware version
+            manager_url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1"
+            manager_response = requests.get(
+                manager_url,
+                auth=(username, password),
+                verify=False,
+                timeout=10
+            )
+            
+            manager_data = manager_response.json() if manager_response.status_code == 200 else {}
+            
+            # Extract comprehensive info
+            processor_summary = system_data.get("ProcessorSummary", {})
+            memory_summary = system_data.get("MemorySummary", {})
+            
+            return {
+                "manufacturer": system_data.get("Manufacturer", "Unknown"),
+                "model": system_data.get("Model", "Unknown"),
+                "service_tag": system_data.get("SKU", None),  # Dell reports Service Tag as SKU
+                "serial": system_data.get("SerialNumber", None),
+                "hostname": system_data.get("HostName", None),
+                "bios_version": system_data.get("BiosVersion", None),
+                "cpu_count": processor_summary.get("Count", None),
+                "memory_gb": memory_summary.get("TotalSystemMemoryGiB", None),
+                "idrac_firmware": manager_data.get("FirmwareVersion", None),
+                "username": username,
+                "password": password,
+            }
+        except Exception as e:
+            self.log(f"Error getting server info from {ip}: {e}", "DEBUG")
+            return None
+
     def test_idrac_connection(self, ip: str, username: str, password: str) -> Optional[Dict]:
-        """Test iDRAC connection and get basic info"""
+        """Test iDRAC connection and get basic info (lightweight version)"""
         try:
             url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
             response = requests.get(
@@ -417,6 +466,128 @@ class JobExecutor:
         except Exception as e:
             self.log(f"Error testing iDRAC {ip}: {e}", "DEBUG")
             return None
+
+    def refresh_existing_servers(self, job: Dict, server_ids: List[str]):
+        """Refresh information for existing servers by querying iDRAC"""
+        self.log(f"Refreshing {len(server_ids)} existing server(s)")
+        
+        try:
+            headers = {"apikey": SERVICE_ROLE_KEY, "Authorization": f"Bearer {SERVICE_ROLE_KEY}"}
+            
+            # Fetch server records
+            servers_url = f"{DSM_URL}/rest/v1/servers"
+            servers_params = {"id": f"in.({','.join(server_ids)})", "select": "*"}
+            servers_response = requests.get(servers_url, headers=headers, params=servers_params, verify=VERIFY_SSL)
+            
+            if servers_response.status_code != 200:
+                raise Exception(f"Failed to fetch servers: {servers_response.status_code}")
+            
+            servers = servers_response.json()
+            self.log(f"Found {len(servers)} server(s) to refresh")
+            
+            refreshed_count = 0
+            failed_count = 0
+            
+            for server in servers:
+                ip = server['ip_address']
+                self.log(f"Refreshing server {ip}...")
+                
+                # Get credentials
+                username = None
+                password = None
+                
+                # Try credential_set_id first
+                if server.get('credential_set_id'):
+                    cred_sets = self.get_credential_sets([server['credential_set_id']])
+                    if cred_sets:
+                        cred = cred_sets[0]
+                        username = cred['username']
+                        password = cred.get('password')
+                        if not password and cred.get('password_encrypted'):
+                            password = self.decrypt_password(cred['password_encrypted'])
+                
+                # Fallback to manual credentials
+                if not username and server.get('idrac_username'):
+                    username = server['idrac_username']
+                    if server.get('idrac_password_encrypted'):
+                        password = self.decrypt_password(server['idrac_password_encrypted'])
+                
+                # Fallback to environment defaults
+                if not username:
+                    username = IDRAC_DEFAULT_USER
+                    password = IDRAC_DEFAULT_PASSWORD
+                
+                if not username or not password:
+                    self.log(f"  ✗ No credentials available for {ip}", "WARN")
+                    failed_count += 1
+                    continue
+                
+                # Query iDRAC for comprehensive info
+                info = self.get_comprehensive_server_info(ip, username, password)
+                
+                if info:
+                    # Update server record with fetched info
+                    update_data = {
+                        'hostname': info.get('hostname'),
+                        'model': info.get('model'),
+                        'service_tag': info.get('service_tag'),
+                        'idrac_firmware': info.get('idrac_firmware'),
+                        'bios_version': info.get('bios_version'),
+                        'cpu_count': info.get('cpu_count'),
+                        'memory_gb': info.get('memory_gb'),
+                        'connection_status': 'online',
+                        'connection_error': None,
+                        'last_seen': datetime.now().isoformat(),
+                        'credential_test_status': 'valid',
+                        'credential_last_tested': datetime.now().isoformat(),
+                    }
+                    
+                    update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server['id']}"
+                    update_response = requests.patch(update_url, headers=headers, json=update_data, verify=VERIFY_SSL)
+                    
+                    if update_response.status_code in [200, 204]:
+                        self.log(f"  ✓ Refreshed {ip}: {info.get('model')} - {info.get('hostname')}")
+                        refreshed_count += 1
+                    else:
+                        self.log(f"  ✗ Failed to update DB for {ip}: {update_response.status_code}", "ERROR")
+                        failed_count += 1
+                else:
+                    # Update as offline
+                    update_data = {
+                        'connection_status': 'offline',
+                        'connection_error': 'Failed to query iDRAC - check credentials',
+                        'last_connection_test': datetime.now().isoformat(),
+                        'credential_test_status': 'invalid',
+                    }
+                    
+                    update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server['id']}"
+                    requests.patch(update_url, headers=headers, json=update_data, verify=VERIFY_SSL)
+                    
+                    self.log(f"  ✗ Failed to connect to {ip}", "WARN")
+                    failed_count += 1
+            
+            # Complete the job
+            summary = f"Refreshed {refreshed_count} server(s)"
+            if failed_count > 0:
+                summary += f", {failed_count} failed"
+            
+            self.update_job_status(
+                job['id'],
+                'completed',
+                completed_at=datetime.now().isoformat(),
+                details={'summary': summary, 'refreshed': refreshed_count, 'failed': failed_count}
+            )
+            
+            self.log(f"Server refresh complete: {summary}")
+            
+        except Exception as e:
+            self.log(f"Error refreshing servers: {e}", "ERROR")
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e)}
+            )
 
     def get_credential_sets(self, credential_set_ids: List[str]) -> List[Dict]:
         """Fetch credential sets from database"""
@@ -579,7 +750,7 @@ class JobExecutor:
             self.log(f"Error inserting auth-failed server {ip}: {e}", "ERROR")
 
     def execute_discovery_scan(self, job: Dict):
-        """Execute IP discovery scan with multi-credential support"""
+        """Execute IP discovery scan with multi-credential support OR refresh existing servers"""
         self.log(f"Starting discovery scan job {job['id']}")
         
         self.update_job_status(
@@ -589,7 +760,15 @@ class JobExecutor:
         )
         
         try:
-            ip_range = job['target_scope'].get('ip_range', '')
+            target_scope = job['target_scope']
+            
+            # Check if this is a per-server refresh (when adding individual servers)
+            if 'server_ids' in target_scope and target_scope['server_ids']:
+                self.refresh_existing_servers(job, target_scope['server_ids'])
+                return
+            
+            # Otherwise, proceed with IP range discovery
+            ip_range = target_scope.get('ip_range', '')
             credential_set_ids = job.get('credential_set_ids', [])
             
             self.log(f"Scanning IP range: {ip_range}")
