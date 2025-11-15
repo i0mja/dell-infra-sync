@@ -14,6 +14,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Loader2, Info, Server, Key, Search } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { LocalModeHelper } from "./LocalModeHelper";
 
 interface AddServerDialogProps {
   open: boolean;
@@ -54,6 +55,11 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
     details?: any;
   } | null>(null);
   const [testJobId, setTestJobId] = useState<string | null>(null);
+  const [showLocalHelper, setShowLocalHelper] = useState(false);
+
+  // Detect local mode
+  const isLocalMode = import.meta.env.VITE_SUPABASE_URL?.includes('127.0.0.1') || 
+                      import.meta.env.VITE_SUPABASE_URL?.includes('localhost');
 
   // Fetch credential sets on mount
   useEffect(() => {
@@ -240,6 +246,7 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
         if (updatedJob?.status === 'completed') {
           clearInterval(pollInterval);
           setTestingConnection(false);
+          setShowLocalHelper(false); // Hide helper on success
           const details = updatedJob.details as any;
           setTestResult({
             status: 'success',
@@ -264,6 +271,7 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
         } else if (pollAttempts >= maxAttempts) {
           clearInterval(pollInterval);
           setTestingConnection(false);
+          setShowLocalHelper(isLocalMode); // Show helper in local mode
           setTestResult({ 
             status: 'failed', 
             message: 'Test timed out - check Job Executor is running' 
@@ -515,6 +523,9 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
                       </AlertDescription>
                     </Alert>
                   )}
+                  
+                  {/* Show helper banner in local mode when job times out */}
+                  <LocalModeHelper show={showLocalHelper} />
                 </div>
 
                 <div className="flex gap-2">

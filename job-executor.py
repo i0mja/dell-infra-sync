@@ -41,7 +41,7 @@ from datetime import datetime
 # ============================================================================
 
 # Dell Server Manager URL
-DSM_URL = "https://your-app.lovable.app"  # Change this
+DSM_URL = os.getenv("DSM_URL", "http://127.0.0.1:54321")  # Defaults to local Supabase
 
 # Supabase Service Role Key (for update-job endpoint)
 # This is a SECRET - do not commit to version control!
@@ -318,7 +318,7 @@ class JobExecutor:
             return []
         
         try:
-            headers = {"apikey": API_KEY, "Authorization": f"Bearer {API_KEY}"}
+            headers = {"apikey": SERVICE_ROLE_KEY, "Authorization": f"Bearer {SERVICE_ROLE_KEY}"}
             url = f"{DSM_URL}/rest/v1/credential_sets"
             params = {"id": f"in.({','.join(credential_set_ids)})", "order": "priority.asc"}
             response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
@@ -1245,14 +1245,18 @@ class JobExecutor:
         self.log("="*70)
         self.log("Dell Server Manager - Job Executor")
         self.log("="*70)
+        self.log(f"DSM_URL: {DSM_URL}")
         self.log(f"Polling interval: {POLL_INTERVAL} seconds")
-        self.log(f"Target URL: {DSM_URL}")
+        self.log(f"SSL Verification: {VERIFY_SSL}")
         self.log("="*70)
         
         if not SERVICE_ROLE_KEY:
             self.log("ERROR: SERVICE_ROLE_KEY not set!", "ERROR")
-            self.log("Set it via environment variable or update the script", "ERROR")
+            self.log("Set via: export SERVICE_ROLE_KEY='your-key-here'", "ERROR")
+            self.log("Get your key from Lovable Cloud -> Settings", "ERROR")
             return
+        
+        self.log("✓ Configuration validated", "INFO")
         
         self.log("Job executor started. Polling for jobs...")
         

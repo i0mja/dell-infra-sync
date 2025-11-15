@@ -162,59 +162,82 @@ When Job Executor mode is enabled, network validation is skipped in the cloud UI
 
 #### Step 3: Configure the Script
 
-Edit `job-executor.py` and update these settings:
+Edit `job-executor.py` and update these settings (or use environment variables):
 
 ```python
-# Your Dell Server Manager URL
-DSM_URL = "https://your-app.lovable.app"  # Change this
+# Dell Server Manager URL - defaults to local Supabase
+DSM_URL = os.getenv("DSM_URL", "http://127.0.0.1:54321")
 
 # Firmware repository URL
-FIRMWARE_REPO_URL = "http://firmware.example.com:8080/dell"
+FIRMWARE_REPO_URL = os.getenv("FIRMWARE_REPO_URL", "http://firmware.example.com:8080/dell")
 
 # vCenter connection
-VCENTER_HOST = "vcenter.example.com"
-VCENTER_USER = "administrator@vsphere.local"
+VCENTER_HOST = os.getenv("VCENTER_HOST", "vcenter.example.com")
+VCENTER_USER = os.getenv("VCENTER_USER", "administrator@vsphere.local")
 
 # iDRAC credentials (for discovery and firmware updates)
-IDRAC_DEFAULT_USER = "root"
-IDRAC_DEFAULT_PASSWORD = "calvin"
-
-# Polling interval (seconds)
-POLL_INTERVAL = 10  # Check for jobs every 10 seconds
+IDRAC_DEFAULT_USER = os.getenv("IDRAC_USER", "root")
+IDRAC_DEFAULT_PASSWORD = os.getenv("IDRAC_PASSWORD", "calvin")
 ```
 
-#### Step 4: Set Environment Variables (Recommended)
+#### Step 4: Run Job Executor
 
-For security, use environment variables:
+**For Local Development (Supabase running on localhost):**
 
 ```bash
-# Linux/Mac
-export SERVICE_ROLE_KEY="your-service-role-key-here"
-export FIRMWARE_REPO_URL="http://your-firmware-server:8080/dell"
-export VCENTER_PASSWORD="your-vcenter-password"
-export IDRAC_PASSWORD="your-idrac-password"
+# Linux/macOS
+export DSM_URL="http://127.0.0.1:54321"
+export SERVICE_ROLE_KEY="your-service-role-key"
+python3 job-executor.py
 
 # Windows PowerShell
-$env:SERVICE_ROLE_KEY="your-service-role-key-here"
-$env:FIRMWARE_REPO_URL="http://your-firmware-server:8080/dell"
-$env:VCENTER_PASSWORD="your-vcenter-password"
-$env:IDRAC_PASSWORD="your-idrac-password"
-```
-
-#### Step 5: Run the Executor
-
-```bash
+$env:DSM_URL="http://127.0.0.1:54321"
+$env:SERVICE_ROLE_KEY="your-service-role-key"
 python job-executor.py
 ```
 
-Output:
+**For Cloud/Production Deployments:**
+
+```bash
+# Linux/macOS
+export DSM_URL="https://ylwkczjqvymshktuuqkx.supabase.co"
+export SERVICE_ROLE_KEY="your-service-role-key"
+python3 job-executor.py
+
+# Windows PowerShell
+$env:DSM_URL="https://ylwkczjqvymshktuuqkx.supabase.co"
+$env:SERVICE_ROLE_KEY="your-service-role-key"
+python job-executor.py
+```
+
+**Additional Environment Variables (Optional):**
+
+```bash
+# Firmware repository
+export FIRMWARE_REPO_URL="http://your-firmware-server:8080/dell"
+
+# vCenter credentials
+export VCENTER_HOST="vcenter.example.com"
+export VCENTER_USER="administrator@vsphere.local"
+export VCENTER_PASSWORD="your-vcenter-password"
+
+# iDRAC default credentials
+export IDRAC_USER="root"
+export IDRAC_PASSWORD="your-idrac-password"
+```
+
+**Expected Output:**
+
 ```
 ======================================================================
 Dell Server Manager - Job Executor
 ======================================================================
+DSM_URL: http://127.0.0.1:54321
 Polling interval: 10 seconds
-Target URL: https://your-app.lovable.app
+SSL Verification: False
 ======================================================================
+✓ Configuration validated
+✓ Configuration validated
 Job executor started. Polling for jobs...
 ```
 
