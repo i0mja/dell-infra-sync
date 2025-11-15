@@ -52,8 +52,7 @@ interface Server {
 }
 
 const Servers = () => {
-  const isLocalMode = import.meta.env.VITE_SUPABASE_URL?.includes('127.0.0.1') || 
-                      import.meta.env.VITE_SUPABASE_URL?.includes('localhost');
+  const [useJobExecutorForIdrac, setUseJobExecutorForIdrac] = useState(true);
   const [servers, setServers] = useState<Server[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -92,6 +91,25 @@ const Servers = () => {
 
   useEffect(() => {
     fetchServers();
+    
+    // Load Job Executor setting
+    const loadJobExecutorSetting = async () => {
+      try {
+        const { data } = await supabase
+          .from('activity_settings')
+          .select('use_job_executor_for_idrac')
+          .limit(1)
+          .maybeSingle();
+        
+        if (data) {
+          setUseJobExecutorForIdrac(data.use_job_executor_for_idrac ?? true);
+        }
+      } catch (error) {
+        console.error('Error loading Job Executor setting:', error);
+      }
+    };
+    
+    loadJobExecutorSetting();
   }, []);
 
   const handleLinkToVCenter = (server: Server) => {
@@ -268,7 +286,7 @@ const Servers = () => {
         </div>
       </div>
 
-      {isLocalMode && (
+      {useJobExecutorForIdrac && (
         <Alert className="mb-6">
           <Info className="h-4 w-4" />
           <AlertDescription>
@@ -424,15 +442,15 @@ const Servers = () => {
                     <TooltipTrigger asChild>
                       <div>
                         <ContextMenuItem 
-                          onClick={() => !isLocalMode && handleTestConnection(server)}
-                          disabled={refreshing === server.id || isLocalMode}
+                          onClick={() => !useJobExecutorForIdrac && handleTestConnection(server)}
+                          disabled={refreshing === server.id || useJobExecutorForIdrac}
                         >
                           <CheckCircle className="mr-2 h-4 w-4" />
                           Test iDRAC Connection
                         </ContextMenuItem>
                       </div>
                     </TooltipTrigger>
-                    {isLocalMode && (
+                    {useJobExecutorForIdrac && (
                       <TooltipContent>
                         Use Job Executor for network operations in local deployments
                       </TooltipContent>
@@ -444,15 +462,15 @@ const Servers = () => {
                     <TooltipTrigger asChild>
                       <div>
                         <ContextMenuItem 
-                          onClick={() => !isLocalMode && handleRefreshInfo(server)}
-                          disabled={refreshing === server.id || isLocalMode}
+                          onClick={() => !useJobExecutorForIdrac && handleRefreshInfo(server)}
+                          disabled={refreshing === server.id || useJobExecutorForIdrac}
                         >
                           <RotateCw className={`mr-2 h-4 w-4 ${refreshing === server.id ? 'animate-spin' : ''}`} />
                           Refresh Server Information
                         </ContextMenuItem>
                       </div>
                     </TooltipTrigger>
-                    {isLocalMode && (
+                    {useJobExecutorForIdrac && (
                       <TooltipContent>
                         Use Job Executor for network operations in local deployments
                       </TooltipContent>

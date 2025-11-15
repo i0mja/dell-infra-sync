@@ -36,6 +36,7 @@ export type Database = {
           stale_running_hours: number | null
           statistics_retention_days: number
           updated_at: string
+          use_job_executor_for_idrac: boolean | null
         }
         Insert: {
           alert_on_failures?: boolean
@@ -58,6 +59,7 @@ export type Database = {
           stale_running_hours?: number | null
           statistics_retention_days?: number
           updated_at?: string
+          use_job_executor_for_idrac?: boolean | null
         }
         Update: {
           alert_on_failures?: boolean
@@ -80,6 +82,7 @@ export type Database = {
           stale_running_hours?: number | null
           statistics_retention_days?: number
           updated_at?: string
+          use_job_executor_for_idrac?: boolean | null
         }
         Relationships: []
       }
