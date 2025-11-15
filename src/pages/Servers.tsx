@@ -52,7 +52,8 @@ interface Server {
 }
 
 const Servers = () => {
-  const [useJobExecutorForIdrac, setUseJobExecutorForIdrac] = useState(true);
+  // Job Executor is always enabled - iDRACs are always on private networks
+  const useJobExecutorForIdrac = true;
   const [servers, setServers] = useState<Server[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -91,25 +92,7 @@ const Servers = () => {
 
   useEffect(() => {
     fetchServers();
-    
-    // Load Job Executor setting
-    const loadJobExecutorSetting = async () => {
-      try {
-        const { data } = await supabase
-          .from('activity_settings')
-          .select('use_job_executor_for_idrac')
-          .limit(1)
-          .maybeSingle();
-        
-        if (data) {
-          setUseJobExecutorForIdrac(data.use_job_executor_for_idrac ?? true);
-        }
-      } catch (error) {
-        console.error('Error loading Job Executor setting:', error);
-      }
-    };
-    
-    loadJobExecutorSetting();
+    // Job Executor is always enabled - no need to load setting from database
   }, []);
 
   const handleLinkToVCenter = (server: Server) => {

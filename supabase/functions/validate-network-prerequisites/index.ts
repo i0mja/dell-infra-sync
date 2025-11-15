@@ -30,14 +30,8 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Check if Job Executor mode is enabled
-    const { data: settings } = await supabaseClient
-      .from('activity_settings')
-      .select('use_job_executor_for_idrac')
-      .limit(1)
-      .maybeSingle();
-
-    const useJobExecutor = settings?.use_job_executor_for_idrac ?? true;
+    // Job Executor is always enabled - iDRACs are always on private networks
+    const useJobExecutor = true;
 
     const results = {
       servers: { tested: 0, reachable: 0, unreachable: 0, errors: [] as any[] },

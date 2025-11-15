@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,7 +24,8 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess, onRequestDiscov
   const [showSuccessDialog, setShowSuccessDialog] = useState(false);
   const [addedServerIp, setAddedServerIp] = useState("");
   const [showQuickStartGuide, setShowQuickStartGuide] = useState(true);
-  const [useJobExecutorForIdrac, setUseJobExecutorForIdrac] = useState(true);
+  // Job Executor is always enabled - iDRACs are always on private networks
+  const useJobExecutorForIdrac = true;
   
   const [formData, setFormData] = useState({
     ip_address: "",
@@ -33,29 +34,6 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess, onRequestDiscov
   });
   
   const { toast } = useToast();
-
-  // Load Job Executor setting
-  useEffect(() => {
-    const loadJobExecutorSetting = async () => {
-      try {
-        const { data } = await supabase
-          .from('activity_settings')
-          .select('use_job_executor_for_idrac')
-          .limit(1)
-          .maybeSingle();
-        
-        if (data) {
-          setUseJobExecutorForIdrac(data.use_job_executor_for_idrac ?? true);
-        }
-      } catch (error) {
-        console.error('Error loading Job Executor setting:', error);
-      }
-    };
-    
-    if (open) {
-      loadJobExecutorSetting();
-    }
-  }, [open]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

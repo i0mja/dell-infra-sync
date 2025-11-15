@@ -74,7 +74,8 @@ export default function Settings() {
 
   // Activity Monitor Settings
   const [activitySettingsId, setActivitySettingsId] = useState<string | null>(null);
-  const [useJobExecutorForIdrac, setUseJobExecutorForIdrac] = useState(true);
+  // Job Executor is always enabled - iDRACs are always on private networks
+  const useJobExecutorForIdrac = true;
   const [logRetentionDays, setLogRetentionDays] = useState(30);
   const [autoCleanupEnabled, setAutoCleanupEnabled] = useState(true);
   const [lastCleanupAt, setLastCleanupAt] = useState<string | null>(null);
@@ -620,7 +621,7 @@ export default function Settings() {
         setStalePendingHours(activityData.stale_pending_hours ?? 24);
         setStaleRunningHours(activityData.stale_running_hours ?? 48);
         setAutoCancelStaleJobs(activityData.auto_cancel_stale_jobs ?? true);
-        setUseJobExecutorForIdrac(activityData.use_job_executor_for_idrac ?? true);
+        // useJobExecutorForIdrac is hardcoded to true - no longer stored in database
       }
     } catch (error: any) {
       console.error("Error loading activity settings:", error);
@@ -917,7 +918,7 @@ export default function Settings() {
         stale_pending_hours: stalePendingHours,
         stale_running_hours: staleRunningHours,
         auto_cancel_stale_jobs: autoCancelStaleJobs,
-        use_job_executor_for_idrac: useJobExecutorForIdrac,
+        // use_job_executor_for_idrac removed - always true
       };
 
       if (activitySettingsId) {
@@ -2704,68 +2705,41 @@ export default function Settings() {
                 </CardContent>
               </Card>
 
-              {/* Private Network Mode Setting */}
+              {/* iDRAC Operations Architecture - Informational Only */}
               <Card className="mb-6">
                 <CardHeader>
-                  <CardTitle>iDRAC Operation Mode</CardTitle>
+                  <CardTitle>iDRAC Operations Architecture</CardTitle>
                   <CardDescription>
-                    Control how this application connects to iDRAC devices
+                    How this application connects to iDRAC devices
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-start justify-between space-x-4">
-                    <div className="flex-1 space-y-1">
-                      <Label htmlFor="use-job-executor" className="text-base font-medium">
-                        Use Job Executor for iDRAC Operations
-                      </Label>
-                      <p className="text-sm text-muted-foreground">
-                        Enable when iDRACs are on a private network unreachable from cloud edge functions. 
-                        This routes all iDRAC operations through the Job Executor running on your local network.
-                      </p>
-                      <p className="text-sm text-muted-foreground mt-2">
-                        <strong>Enable for:</strong> Air-gapped deployments, private networks, hybrid cloud scenarios
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        <strong>Disable for:</strong> Cloud deployments where iDRACs have public IP addresses
-                      </p>
-                    </div>
-                    <Switch
-                      id="use-job-executor"
-                      checked={useJobExecutorForIdrac}
-                      onCheckedChange={setUseJobExecutorForIdrac}
-                      disabled={userRole !== 'admin'}
-                    />
-                  </div>
-                  
-                  {useJobExecutorForIdrac && (
-                    <Alert>
-                      <Terminal className="h-4 w-4" />
-                      <AlertDescription>
-                        Job Executor mode is enabled. All iDRAC operations (connection tests, server discovery, firmware updates) 
-                        will be processed through the Job Executor running on your local network. Make sure the Job Executor 
-                        service is running and has network access to your iDRAC devices.
-                      </AlertDescription>
-                    </Alert>
-                  )}
-                  
-                  {!useJobExecutorForIdrac && (
-                    <Alert>
-                      <Globe className="h-4 w-4" />
-                      <AlertDescription>
-                        Cloud mode is enabled. iDRAC operations will use edge functions that require direct network access 
-                        to iDRAC IP addresses. This only works if your iDRACs are accessible from the cloud (public IPs or VPN).
-                      </AlertDescription>
-                    </Alert>
-                  )}
-                  
-                  <Button 
-                    onClick={handleSaveActivitySettings} 
-                    disabled={loading || userRole !== 'admin'}
-                    className="mt-2"
-                  >
-                    {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
-                    Save Operation Mode
-                  </Button>
+                <CardContent>
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertDescription>
+                      <strong>All iDRAC operations use the Job Executor</strong>
+                      <br />
+                      <br />
+                      iDRACs are always on private networks that edge functions cannot reach. 
+                      The Job Executor runs on your local network with full access to iDRAC devices.
+                      <br />
+                      <br />
+                      <strong>Supported operations:</strong>
+                      <ul className="list-disc ml-4 mt-2 space-y-1">
+                        <li>Firmware updates and full server updates</li>
+                        <li>Network discovery scans</li>
+                        <li>Credential testing</li>
+                        <li>Server information refresh</li>
+                      </ul>
+                      <br />
+                      <strong>Requirements:</strong>
+                      <ul className="list-disc ml-4 space-y-1">
+                        <li>Job Executor service running on a machine with network access to iDRACs</li>
+                        <li>Proper network configuration to reach iDRAC IP addresses</li>
+                        <li>Valid iDRAC credentials configured in credential sets</li>
+                      </ul>
+                    </AlertDescription>
+                  </Alert>
                 </CardContent>
               </Card>
 
@@ -2929,32 +2903,24 @@ export default function Settings() {
                     />
                   </div>
 
-                  {!useJobExecutorForIdrac ? (
-                    <Button 
-                      onClick={handleValidatePrerequisites}
-                      disabled={validatingPrereqs}
-                      className="w-full"
-                    >
-                      {validatingPrereqs ? "Validating..." : "Test All Prerequisites"}
-                    </Button>
-                  ) : (
-                    <Alert>
-                      <Info className="h-4 w-4" />
-                      <AlertDescription>
-                        <strong>Job Executor Mode Enabled</strong>
-                        <br />
-                        Network validation requires edge functions to reach iDRACs directly, which cannot access private networks.
-                        <br />
-                        <br />
-                        <strong>To test iDRAC connectivity:</strong>
-                        <ol className="list-decimal ml-4 mt-2 space-y-1">
-                          <li>Run the Job Executor on a machine with network access to iDRACs</li>
-                          <li>Use a discovery job to test multiple servers automatically</li>
-                          <li>Check the Activity Monitor to verify successful iDRAC commands</li>
-                        </ol>
-                      </AlertDescription>
-                    </Alert>
-                  )}
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertDescription>
+                      <strong>Network Validation via Job Executor</strong>
+                      <br />
+                      <br />
+                      Network validation requires edge functions to reach iDRACs directly, which cannot access private networks.
+                      <br />
+                      <br />
+                      <strong>To test iDRAC connectivity:</strong>
+                      <ol className="list-decimal ml-4 mt-2 space-y-1">
+                        <li>Ensure Job Executor is running on a machine with network access to iDRACs</li>
+                        <li>Use a discovery job to test multiple servers automatically</li>
+                        <li>Check the Activity Monitor to verify successful iDRAC commands</li>
+                        <li>Manual testing: See <code>docs/JOB_EXECUTOR_GUIDE.md</code> for curl commands</li>
+                      </ol>
+                    </AlertDescription>
+                  </Alert>
 
                   {prereqResults && (
                     <div className="space-y-3 p-4 border rounded-lg">
