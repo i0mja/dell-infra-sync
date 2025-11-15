@@ -609,9 +609,70 @@ if ($DeployMode -eq "1") {
     # Set variables for cloud mode
     $SupabaseUrl = "https://ylwkczjqvymshktuuqkx.supabase.co"
     $AnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlsd2tjempxdnltc2hrdHV1cWt4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjIxODQ0OTMsImV4cCI6MjA3Nzc2MDQ5M30.hIkDV2AAos-Z9hvQLfZmiQ7UvGCpGqwG5kzd1VBRx0w"
-    $ServiceRoleKey = "[Service role key managed in Lovable Cloud]"
+    
+    # Prompt for SERVICE_ROLE_KEY
+    Write-Host ""
+    Write-Host "[CLOUD] Lovable Cloud Backend Configuration" -ForegroundColor Cyan
+    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "The Job Executor requires your Lovable Cloud SERVICE_ROLE_KEY to access the backend." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "To get your SERVICE_ROLE_KEY:" -ForegroundColor White
+    Write-Host "  1. Open your project in Lovable" -ForegroundColor White
+    Write-Host "  2. Click the Backend button (Cloud icon) in the top-right" -ForegroundColor White
+    Write-Host "  3. Go to Settings → API" -ForegroundColor White
+    Write-Host "  4. Copy the 'service_role' key (starts with 'eyJ...')" -ForegroundColor White
+    Write-Host ""
+    Write-Host "WARNING: This key has admin access - keep it secure!" -ForegroundColor Red
+    Write-Host ""
+    
+    # Read SERVICE_ROLE_KEY with validation
+    do {
+        $ServiceRoleKey = Read-Host "Enter your SERVICE_ROLE_KEY"
+        
+        if ([string]::IsNullOrWhiteSpace($ServiceRoleKey)) {
+            Write-Host "[ERROR] SERVICE_ROLE_KEY cannot be empty" -ForegroundColor Red
+            Write-Host ""
+            continue
+        }
+        
+        # Basic JWT validation (should start with eyJ)
+        if (-not $ServiceRoleKey.StartsWith("eyJ")) {
+            Write-Host "[WARN] Key doesn't look like a valid JWT token (should start with 'eyJ')" -ForegroundColor Yellow
+            $confirm = Read-Host "Continue anyway? (y/n)"
+            if ($confirm -ne "y") {
+                continue
+            }
+        }
+        
+        # Test the key by making a simple API call
+        Write-Host "[CHECK] Validating SERVICE_ROLE_KEY..." -ForegroundColor Yellow
+        try {
+            $headers = @{
+                "apikey" = $AnonKey
+                "Authorization" = "Bearer $ServiceRoleKey"
+                "Content-Type" = "application/json"
+            }
+            
+            $response = Invoke-RestMethod -Uri "$SupabaseUrl/rest/v1/" -Headers $headers -Method Get -TimeoutSec 10
+            Write-Host "[OK] SERVICE_ROLE_KEY validated successfully!" -ForegroundColor Green
+            break
+        } catch {
+            Write-Host "[ERROR] Failed to validate SERVICE_ROLE_KEY" -ForegroundColor Red
+            Write-Host "[ERROR] $_" -ForegroundColor Red
+            Write-Host ""
+            $retry = Read-Host "Try again? (y/n)"
+            if ($retry -ne "y") {
+                Write-Host "[ERROR] Cannot proceed without valid SERVICE_ROLE_KEY" -ForegroundColor Red
+                Stop-Transcript
+                exit 1
+            }
+        }
+    } while ($true)
+    
     $ServerIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.InterfaceAlias -notlike "*Loopback*"} | Select-Object -First 1).IPAddress
     
+    Write-Host ""
     Write-Host "[INFO] Using Lovable Cloud backend" -ForegroundColor Green
     Write-Host "[INFO] Database management available through Lovable Cloud interface" -ForegroundColor Cyan
 }
@@ -825,7 +886,10 @@ if ($DeployMode -eq "1") {
 } else {
     # Cloud-connected deployment info
     Write-Host "[INFO] Deployment Mode: Cloud-connected" -ForegroundColor Cyan
-    Write-Host "[INFO] Backend: Lovable Cloud (centrally managed)" -ForegroundColor Cyan
+    Write-Host "[INFO] Backend: Lovable Cloud" -ForegroundColor Cyan
+    Write-Host "[INFO] Supabase URL: $SupabaseUrl" -ForegroundColor Cyan
+    Write-Host "[INFO] Note: SERVICE_ROLE_KEY configured for Job Executor" -ForegroundColor Cyan
+    Write-Host "[INFO] Manage backend at: https://lovable.dev (Backend button)" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "[WEB] Dell Server Manager: $SslUrl" -ForegroundColor Cyan
     Write-Host ""
@@ -880,18 +944,63 @@ Dell Server Manager Deployment Credentials
 Generated: $(Get-Date)
 Deployment Mode: Cloud-connected
 
-Backend: Lovable Cloud
-API URL: $SupabaseUrl
+Lovable Cloud Backend:
+---------------------
+Supabase URL: $SupabaseUrl
+Anon Key: $AnonKey
+Service Role Key: [Configured for Job Executor - keep secure]
+
+Backend Management:
+------------------
+Access your backend through Lovable:
+1. Open your project in Lovable
+2. Click the Backend button (Cloud icon)
+3. Manage database, users, and settings
 
 Application URL: $SslUrl
 
-Note: Database and user management handled through Lovable Cloud interface.
-Create and manage users through the Lovable Cloud backend dashboard.
+Services:
+---------
+Dell Server Manager: Running on port 3000
+Job Executor: Running in background (processing iDRAC jobs)
+
+Service Management:
+------------------
+Check status: nssm status DellServerManager
+Check Job Executor: nssm status DellServerManagerJobExecutor
+View logs: notepad C:\dell-server-manager\job-executor-output.log
+
+SECURITY WARNING:
+----------------
+- Keep this file secure - it contains sensitive credentials
+- Do not commit this file to version control
+- Store SERVICE_ROLE_KEY securely (has full admin access)
+
+Note: Use your Lovable account credentials to access the backend.
 "@ | Out-File -FilePath $CredsPath -Encoding ASCII
 }
 
 Write-Host "[SAVED] Credentials saved to: $CredsPath" -ForegroundColor Green
 Write-Host ""
+
+# Job Executor Cloud Mode Troubleshooting
+if ($DeployMode -eq "2") {
+    Write-Host "[INFO] Job Executor Cloud Mode Setup" -ForegroundColor Cyan
+    Write-Host "=====================================" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "The Job Executor is configured to use Lovable Cloud." -ForegroundColor White
+    Write-Host ""
+    Write-Host "Verify it's working:" -ForegroundColor Yellow
+    Write-Host "  1. Go to Settings → Network Connectivity" -ForegroundColor White
+    Write-Host "  2. Click 'Run All Tests' in Job Executor Diagnostics" -ForegroundColor White
+    Write-Host "  3. All tests should pass (green)" -ForegroundColor White
+    Write-Host ""
+    Write-Host "If Job Executor tests fail:" -ForegroundColor Yellow
+    Write-Host "  - Check logs: notepad C:\dell-server-manager\job-executor-error.log" -ForegroundColor White
+    Write-Host "  - Verify SERVICE_ROLE_KEY in service: nssm get DellServerManagerJobExecutor AppEnvironmentExtra" -ForegroundColor White
+    Write-Host "  - Restart service: nssm restart DellServerManagerJobExecutor" -ForegroundColor White
+    Write-Host ""
+}
 
 # Stop transcript logging
 Stop-Transcript
