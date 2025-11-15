@@ -111,7 +111,7 @@ echo "✓ Database is ready"
 
 # Apply database migrations
 echo "Applying database migrations..."
-for migration in "$SCRIPT_DIR/app/scripts/air-gapped-migrations"/*.sql; do
+for migration in "$SCRIPT_DIR/app/supabase/migrations"/*.sql; do
   echo "Applying $(basename "$migration")..."
   docker exec -i supabase-db psql -U postgres -d postgres < "$migration"
 done
