@@ -45,6 +45,15 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
   
   // Discovery state
   const [autoDiscover, setAutoDiscover] = useState(true);
+  
+  // Test connection state
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    status: 'idle' | 'success' | 'failed';
+    message?: string;
+    details?: any;
+  } | null>(null);
+  const [testJobId, setTestJobId] = useState<string | null>(null);
 
   // Fetch credential sets on mount
   useEffect(() => {
@@ -172,6 +181,106 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
     setCredentialName("");
     setAutoDiscover(true);
     setCurrentTab("info");
+    setTestingConnection(false);
+    setTestResult(null);
+    setTestJobId(null);
+  };
+
+  const handleTestConnection = async () => {
+    if (!formData.ip_address) {
+      toast({ title: "Enter an IP address first", variant: "destructive" });
+      return;
+    }
+    
+    setTestingConnection(true);
+    setTestResult({ status: 'idle' });
+    
+    try {
+      // Create test_credentials job
+      const jobPayload: any = {
+        job_type: 'test_credentials' as const,
+        target_scope: { ip_address: formData.ip_address },
+        created_by: user?.id,
+        status: 'pending' as const,
+      };
+      
+      if (credentialMode === 'saved' && selectedCredentialSetId) {
+        jobPayload.credential_set_ids = [selectedCredentialSetId];
+      } else {
+        // Pass manual credentials in details
+        jobPayload.details = {
+          username: manualUsername,
+          password: manualPassword
+        };
+      }
+      
+      const { data: job, error } = await supabase
+        .from('jobs')
+        .insert([jobPayload])
+        .select()
+        .single();
+      
+      if (error) throw error;
+      
+      setTestJobId(job.id);
+      
+      // Poll job status
+      let pollAttempts = 0;
+      const maxAttempts = 15; // 30 seconds
+      
+      const pollInterval = setInterval(async () => {
+        pollAttempts++;
+        
+        const { data: updatedJob } = await supabase
+          .from('jobs')
+          .select('*')
+          .eq('id', job.id)
+          .single();
+        
+        if (updatedJob?.status === 'completed') {
+          clearInterval(pollInterval);
+          setTestingConnection(false);
+          const details = updatedJob.details as any;
+          setTestResult({
+            status: 'success',
+            message: details?.message || 'Connection successful',
+            details: details
+          });
+          toast({ title: "✓ Connection successful", variant: "default" });
+        } else if (updatedJob?.status === 'failed') {
+          clearInterval(pollInterval);
+          setTestingConnection(false);
+          const details = updatedJob.details as any;
+          setTestResult({
+            status: 'failed',
+            message: details?.message || 'Connection failed',
+            details: details
+          });
+          toast({ 
+            title: "✗ Connection failed", 
+            description: details?.message || 'Connection failed',
+            variant: "destructive" 
+          });
+        } else if (pollAttempts >= maxAttempts) {
+          clearInterval(pollInterval);
+          setTestingConnection(false);
+          setTestResult({ 
+            status: 'failed', 
+            message: 'Test timed out - check Job Executor is running' 
+          });
+          toast({
+            title: "Test timed out",
+            description: "Make sure Job Executor is running",
+            variant: "destructive"
+          });
+        }
+      }, 2000); // Poll every 2 seconds
+      
+    } catch (error: any) {
+      setTestingConnection(false);
+      setTestResult({ status: 'failed', message: error.message });
+      toast({ title: "Test failed", description: error.message, variant: "destructive" });
+    }
   };
 
   const canProceedToCredentials = formData.ip_address.trim() !== "";
@@ -364,6 +473,49 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
                     )}
                   </div>
                 )}
+
+                {/* Test Connection */}
+                <div className="mt-6 space-y-3 pt-4 border-t">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleTestConnection}
+                    disabled={testingConnection || !formData.ip_address || 
+                      (credentialMode === 'saved' && !selectedCredentialSetId) ||
+                      (credentialMode === 'manual' && (!manualUsername || !manualPassword))}
+                    className="w-full"
+                  >
+                    {testingConnection ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Testing Connection...
+                      </>
+                    ) : (
+                      <>
+                        <Key className="mr-2 h-4 w-4" />
+                        Test Connection
+                      </>
+                    )}
+                  </Button>
+                  
+                  {testResult && testResult.status !== 'idle' && (
+                    <Alert variant={testResult.status === 'success' ? 'default' : 'destructive'}>
+                      <AlertDescription>
+                        {testResult.status === 'success' ? '✓' : '✗'} {testResult.message}
+                        {testResult.details?.idrac_version && (
+                          <div className="mt-1 text-xs opacity-80">
+                            iDRAC Version: {testResult.details.idrac_version}
+                          </div>
+                        )}
+                        {testResult.details?.product && (
+                          <div className="text-xs opacity-80">
+                            Product: {testResult.details.product}
+                          </div>
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </div>
 
                 <div className="flex gap-2">
                   <Button
