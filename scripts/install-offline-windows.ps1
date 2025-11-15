@@ -172,7 +172,7 @@ Write-Host "✓ Database is ready" -ForegroundColor Green
 
 # Apply migrations
 Write-Host "Applying database migrations..." -ForegroundColor Yellow
-Get-ChildItem "$ScriptDir\app\scripts\air-gapped-migrations" -Filter "*.sql" | Sort-Object Name | ForEach-Object {
+Get-ChildItem "$ScriptDir\app\supabase\migrations" -Filter "*.sql" | Sort-Object Name | ForEach-Object {
     Write-Host "Applying $($_.Name)..." -ForegroundColor Gray
     Get-Content $_.FullName | docker exec -i supabase-db psql -U postgres -d postgres
 }

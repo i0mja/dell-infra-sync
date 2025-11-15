@@ -178,25 +178,18 @@ Dell Server Manager supports two deployment modes to accommodate different infra
 
 ## Database Migrations
 
-For **air-gapped deployments**, the deployment scripts automatically apply database migrations that create the complete schema. These migrations are located in `scripts/air-gapped-migrations/` and include:
-
-- **01_initial_schema.sql** - Creates 10 tables, 5 functions, 6 triggers, and 3 custom enum types
-- **02_rls_policies.sql** - Applies 20+ Row Level Security policies for data protection
-- **03_indexes.sql** - Creates performance indexes on frequently queried columns
+For **air-gapped deployments**, the deployment scripts automatically apply every SQL migration from `supabase/migrations/`. This keeps your local schema in lockstep with the Lovable Cloud backend so new features (credential pools, activity monitor, job automation, etc.) work immediately after an update.
 
 ### What Gets Created
 
 **Tables:**
-- `profiles` - User profile information
-- `user_roles` - Role-based access control (admin, operator, viewer)
-- `servers` - Dell server inventory and connection status
-- `vcenter_hosts` - VMware vCenter ESXi host information
-- `jobs` - Job queue and execution tracking
-- `job_tasks` - Individual task execution for each job
-- `audit_logs` - Security and compliance audit trail
-- `notification_settings` - SMTP and Teams notification configuration
-- `openmanage_settings` - Dell OpenManage Enterprise integration
-- `api_tokens` - API authentication tokens
+- `profiles` / `user_roles` - User metadata and RBAC
+- `servers` / `vcenter_hosts` - Inventory sources
+- `jobs` / `job_tasks` / `idrac_commands` - Job engine with detailed execution history
+- `notification_settings` / `activity_settings` - Notification and activity monitor configuration
+- `credential_sets` / `credential_ip_ranges` - Credential pooling for automated discovery
+- `openmanage_settings` / `vcenter_settings` - External integrations
+- `api_tokens` - Personal access tokens for automation
 
 **Critical Functions:**
 - `handle_new_user()` - Automatically creates user profiles and assigns default viewer role
@@ -227,12 +220,10 @@ cd /opt/supabase
 
 The verification script validates:
 - ✓ Database connectivity
-- ✓ 3 custom enum types (app_role, job_status, job_type)
-- ✓ All 10 tables exist
-- ✓ All 5 functions configured
-- ✓ All 6 triggers active
-- ✓ RLS enabled on every table
-- ✓ 20+ RLS policies enforcing security
+- ✓ Custom enum types (app_role, job_status, job_type)
+- ✓ Core tables (servers, jobs, credential_sets, activity_settings, etc.)
+- ✓ Required functions and triggers
+- ✓ Row Level Security and policies on every user-facing table
 
 ### Troubleshooting Login Issues
 
@@ -250,18 +241,19 @@ POST http://127.0.0.1:54321/auth/v1/token?grant_type=password 500
    docker exec supabase-db psql -U postgres -d postgres -c "\dt public.*"
    ```
    
-   Should show 10 tables. If empty or incomplete:
+   Should show the core tables (servers, jobs, credential_sets, etc.). If empty or incomplete:
 
 2. **Reapply migrations manually:**
    ```bash
    # Navigate to project directory
    cd /opt/supabase  # RHEL
    cd C:\dell-supabase  # Windows
-   
-   # Apply each migration
-   docker exec -i supabase-db psql -U postgres -d postgres < scripts/air-gapped-migrations/01_initial_schema.sql
-   docker exec -i supabase-db psql -U postgres -d postgres < scripts/air-gapped-migrations/02_rls_policies.sql
-   docker exec -i supabase-db psql -U postgres -d postgres < scripts/air-gapped-migrations/03_indexes.sql
+
+   # Apply each migration in order
+   for file in supabase/migrations/*.sql; do
+     echo "Applying ${file}"
+     docker exec -i supabase-db psql -U postgres -d postgres < "$file"
+   done
    ```
 
 3. **Verify trigger exists:**

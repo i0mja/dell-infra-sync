@@ -324,18 +324,18 @@ if ($DeployMode -eq "1") {
 
     Write-Host "[OK] Supabase services started" -ForegroundColor Green
 
-    # Apply database migrations for air-gapped deployment
-    Write-Host "[DATABASE] Applying air-gapped database migrations..." -ForegroundColor Yellow
-    $MigrationsPath = Join-Path $PSScriptRoot "air-gapped-migrations"
+    # Apply repository Supabase migrations for local deployment
+    Write-Host "[DATABASE] Applying Supabase migrations..." -ForegroundColor Yellow
+    $MigrationsPath = Join-Path $PSScriptRoot "..\supabase\migrations"
     
     if (-not (Test-Path $MigrationsPath)) {
-        Write-Host "[ERROR] Critical: Air-gapped migrations not found!" -ForegroundColor Red
+        Write-Host "[ERROR] Critical: Supabase migrations not found!" -ForegroundColor Red
         Write-Host "[ERROR] Expected location: $MigrationsPath" -ForegroundColor Red
         Write-Host "[ERROR] Without migrations, authentication will not work!" -ForegroundColor Red
         Write-Host "" -ForegroundColor Yellow
         Write-Host "[FIX] To resolve this issue:" -ForegroundColor Yellow
         Write-Host "  1. Ensure you have the latest code: git pull" -ForegroundColor White
-        Write-Host "  2. Check that scripts/air-gapped-migrations/ exists" -ForegroundColor White
+        Write-Host "  2. Check that supabase/migrations/ exists" -ForegroundColor White
         Write-Host "  3. Download missing migrations from the repository" -ForegroundColor White
         Write-Host "" -ForegroundColor Yellow
         Stop-Transcript

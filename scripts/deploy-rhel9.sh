@@ -76,18 +76,18 @@ echo "⏳ Waiting for services to start (60 seconds)..."
 sleep 60
 echo "✅ Supabase is running"
 
-# Apply database migrations for air-gapped deployment
-echo "📊 Applying air-gapped database migrations..."
-MIGRATIONS_DIR="$(dirname "$0")/air-gapped-migrations"
+# Apply Supabase migrations from the repository for local deployment
+echo "📊 Applying Supabase migrations..."
+MIGRATIONS_DIR="$(dirname "$0")/../supabase/migrations"
 
 if [ ! -d "$MIGRATIONS_DIR" ]; then
-    echo "❌ CRITICAL: Air-gapped migrations not found!"
+    echo "❌ CRITICAL: Supabase migrations not found!"
     echo "Expected location: $MIGRATIONS_DIR"
     echo "Without migrations, authentication will not work!"
     echo ""
     echo "To resolve this issue:"
     echo "  1. Ensure you have the latest code: git pull"
-    echo "  2. Check that scripts/air-gapped-migrations/ exists"
+    echo "  2. Check that supabase/migrations/ exists"
     echo "  3. Download missing migrations from the repository"
     exit 1
 fi
