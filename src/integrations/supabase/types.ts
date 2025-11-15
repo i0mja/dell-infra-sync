@@ -918,6 +918,7 @@ export type Database = {
         | "discovery_scan"
         | "vcenter_sync"
         | "full_server_update"
+        | "test_credentials"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1052,6 +1053,7 @@ export const Constants = {
         "discovery_scan",
         "vcenter_sync",
         "full_server_update",
+        "test_credentials",
       ],
     },
   },

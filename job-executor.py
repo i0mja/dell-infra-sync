@@ -1141,6 +1141,84 @@ class JobExecutor:
                 details={"error": str(e)}
             )
 
+    def execute_test_credentials(self, job: Dict):
+        """Test credentials against a single iDRAC - lightweight connection test"""
+        self.log(f"Testing credentials for job {job['id']}")
+        
+        try:
+            ip_address = job['target_scope'].get('ip_address')
+            credential_set_ids = job.get('credential_set_ids', [])
+            
+            # Get credentials
+            if credential_set_ids and credential_set_ids[0]:
+                creds = self.get_credential_sets([credential_set_ids[0]])[0]
+                username = creds['username']
+                password = creds['password_encrypted']
+            else:
+                # Manual credentials passed in job details
+                username = job['details'].get('username')
+                password = job['details'].get('password')
+            
+            if not username or not password:
+                raise Exception("No credentials provided")
+            
+            # Test connection with simple GET to /redfish/v1/
+            url = f"https://{ip_address}/redfish/v1/"
+            self.log(f"  Testing connection to {url}")
+            
+            response = requests.get(
+                url,
+                auth=(username, password),
+                verify=False,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                result = {
+                    "success": True,
+                    "message": "Connection successful",
+                    "idrac_version": data.get("RedfishVersion"),
+                    "product": data.get("Product"),
+                    "vendor": data.get("Vendor")
+                }
+                self.log(f"  ✓ Connection successful - {data.get('Product', 'Unknown')}")
+            elif response.status_code == 401:
+                result = {
+                    "success": False,
+                    "message": "Authentication failed - invalid credentials"
+                }
+                self.log(f"  ✗ Authentication failed", "ERROR")
+            else:
+                result = {
+                    "success": False,
+                    "message": f"Connection failed: HTTP {response.status_code}"
+                }
+                self.log(f"  ✗ Connection failed: HTTP {response.status_code}", "ERROR")
+            
+            # Update job with result
+            self.update_job_status(
+                job['id'],
+                'completed' if result['success'] else 'failed',
+                completed_at=datetime.now().isoformat(),
+                details=result
+            )
+            
+        except requests.exceptions.Timeout:
+            self.log(f"  ✗ Connection timeout", "ERROR")
+            self.update_job_status(
+                job['id'], 'failed',
+                completed_at=datetime.now().isoformat(),
+                details={"success": False, "message": "Connection timeout - iDRAC not reachable"}
+            )
+        except Exception as e:
+            self.log(f"  ✗ Test failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'], 'failed',
+                completed_at=datetime.now().isoformat(),
+                details={"success": False, "message": f"Error: {str(e)}"}
+            )
+
     def execute_job(self, job: Dict):
         """Execute a job based on its type"""
         job_type = job['job_type']
@@ -1151,6 +1229,8 @@ class JobExecutor:
             self.execute_firmware_update(job)
         elif job_type == 'full_server_update':
             self.execute_full_server_update(job)
+        elif job_type == 'test_credentials':
+            self.execute_test_credentials(job)
         else:
             self.log(f"Unknown job type: {job_type}", "ERROR")
             self.update_job_status(
