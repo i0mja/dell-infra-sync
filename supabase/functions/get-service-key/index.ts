@@ -12,28 +12,40 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Create Supabase client
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_ANON_KEY')!;
-    const authHeader = req.headers.get('Authorization')!;
-    
-    const supabase = createClient(supabaseUrl, supabaseKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const authHeader = req.headers.get('Authorization') || '';
 
-    // Get the authenticated user
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    
-    if (userError || !user) {
+    // Extract JWT token and decode to get user ID
+    // Since verify_jwt=true, we know the JWT is already valid
+    let userId: string;
+    try {
+      const token = authHeader.replace('Bearer ', '');
+      if (!token) {
+        throw new Error('No token provided');
+      }
+      
+      // Decode JWT to get user ID (JWT is already verified by Deno)
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      userId = payload.sub;
+      
+      if (!userId) {
+        throw new Error('Invalid token payload');
+      }
+    } catch (error) {
+      console.error('Token extraction failed:', error);
       return new Response(
-        JSON.stringify({ error: 'Unauthorized' }), 
+        JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
+    // Create admin client for role check
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+
     // Check if user has admin role
-    const { data: hasAdminRole, error: roleError } = await supabase.rpc('has_role', {
-      _user_id: user.id,
+    const { data: hasAdminRole, error: roleError } = await supabaseAdmin.rpc('has_role', {
+      _user_id: userId,
       _role: 'admin'
     });
 
@@ -44,19 +56,10 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Retrieve the SERVICE_ROLE_KEY from environment
-    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-
-    if (!serviceRoleKey) {
-      return new Response(
-        JSON.stringify({ error: 'SERVICE_ROLE_KEY not found in environment' }), 
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
+    // Return the service role key (already retrieved at top of try block)
     return new Response(
       JSON.stringify({ 
-        service_role_key: serviceRoleKey,
+        service_role_key: supabaseServiceKey,
         message: 'Copy this key to your Job Executor .env file'
       }), 
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
