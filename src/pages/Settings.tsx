@@ -168,6 +168,11 @@ export default function Settings() {
   const [latencyAlertThreshold, setLatencyAlertThreshold] = useState(1000);
   const [validatingPrereqs, setValidatingPrereqs] = useState(false);
   const [prereqResults, setPrereqResults] = useState<any | null>(null);
+
+  // Job Executor Configuration
+  const [serviceRoleKey, setServiceRoleKey] = useState<string | null>(null);
+  const [loadingServiceKey, setLoadingServiceKey] = useState(false);
+  const [serviceKeyCopied, setServiceKeyCopied] = useState(false);
   const [executionLog, setExecutionLog] = useState<any[]>([]);
   const [showExecutionLog, setShowExecutionLog] = useState(true);
   const [diagnosticsData, setDiagnosticsData] = useState<any | null>(null);
@@ -1626,6 +1631,41 @@ export default function Settings() {
     }
   };
 
+  const fetchServiceRoleKey = async () => {
+    setLoadingServiceKey(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('get-service-key');
+      
+      if (error) throw error;
+      
+      setServiceRoleKey(data.service_role_key);
+      toast({
+        title: "Service Role Key Retrieved",
+        description: "Copy this key to your Job Executor .env file",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to retrieve service role key",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingServiceKey(false);
+    }
+  };
+
+  const copyServiceRoleKey = () => {
+    if (serviceRoleKey) {
+      navigator.clipboard.writeText(serviceRoleKey);
+      setServiceKeyCopied(true);
+      toast({
+        title: "Copied!",
+        description: "Service role key copied to clipboard",
+      });
+      setTimeout(() => setServiceKeyCopied(false), 2000);
+    }
+  };
+
   const handleMovePriority = async (id: string, direction: 'up' | 'down') => {
     const index = credentialSets.findIndex(cs => cs.id === id);
     if (index === -1) return;
@@ -2843,6 +2883,108 @@ export default function Settings() {
                       </ul>
                     </AlertDescription>
                   </Alert>
+                </CardContent>
+              </Card>
+
+              {/* Job Executor Configuration */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Terminal className="h-5 w-5" />
+                    Job Executor Configuration
+                  </CardTitle>
+                  <CardDescription>
+                    Retrieve your SERVICE_ROLE_KEY for local Job Executor setup
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertDescription>
+                      The Job Executor requires a SERVICE_ROLE_KEY to access the database and perform administrative operations.
+                      This key should be added to your Job Executor <code className="text-xs bg-muted px-1 py-0.5 rounded">.env</code> file.
+                    </AlertDescription>
+                  </Alert>
+
+                  {!serviceRoleKey ? (
+                    <Button 
+                      onClick={fetchServiceRoleKey} 
+                      disabled={loadingServiceKey}
+                      className="w-full"
+                    >
+                      {loadingServiceKey ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Retrieving Key...
+                        </>
+                      ) : (
+                        <>
+                          <Terminal className="mr-2 h-4 w-4" />
+                          Retrieve SERVICE_ROLE_KEY
+                        </>
+                      )}
+                    </Button>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label className="text-xs font-medium">SERVICE_ROLE_KEY</Label>
+                        <div className="relative">
+                          <Input
+                            value={serviceRoleKey}
+                            readOnly
+                            className="font-mono text-xs pr-10"
+                            type="password"
+                          />
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="absolute right-1 top-1 h-7"
+                            onClick={copyServiceRoleKey}
+                          >
+                            {serviceKeyCopied ? (
+                              <CheckCircle2 className="h-4 w-4 text-green-500" />
+                            ) : (
+                              <Copy className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+
+                      <Alert className="bg-muted">
+                        <Terminal className="h-4 w-4" />
+                        <AlertDescription className="text-xs space-y-2">
+                          <div>
+                            <strong>Add this to your Job Executor .env file:</strong>
+                          </div>
+                          <code className="block bg-background p-2 rounded text-xs overflow-x-auto">
+                            SUPABASE_SERVICE_ROLE_KEY={serviceRoleKey}
+                          </code>
+                          <div className="text-muted-foreground mt-2">
+                            ⚠️ Keep this key secure - it grants full database access
+                          </div>
+                        </AlertDescription>
+                      </Alert>
+
+                      <div className="flex gap-2">
+                        <Button 
+                          onClick={copyServiceRoleKey} 
+                          variant="outline"
+                          className="flex-1"
+                        >
+                          <Copy className="mr-2 h-4 w-4" />
+                          {serviceKeyCopied ? "Copied!" : "Copy Key"}
+                        </Button>
+                        <Button 
+                          onClick={() => setServiceRoleKey(null)}
+                          variant="outline"
+                          className="flex-1"
+                        >
+                          <XCircle className="mr-2 h-4 w-4" />
+                          Hide Key
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
