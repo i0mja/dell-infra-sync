@@ -74,11 +74,64 @@ Deno.serve(async (req) => {
     const username = idrac_username || 'root';
     const password = idrac_password || 'calvin';
 
-    // Query iDRAC Redfish API
-    const redfishUrl = `https://${ip_address}/redfish/v1/Systems/System.Embedded.1`;
-    
-    // Encode credentials for Basic Auth
+    // Query iDRAC Redfish API for root service info first
+    const rootUrl = `https://${ip_address}/redfish/v1/`;
     const authHeader = `Basic ${btoa(`${username}:${password}`)}`;
+
+    let rootData;
+    let rootResponseTime = 0;
+    const rootStartTime = Date.now();
+    try {
+      const response = await fetch(rootUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': authHeader,
+          'Accept': 'application/json',
+        },
+        signal: AbortSignal.timeout(10000),
+        // @ts-ignore - Deno-specific option to bypass SSL verification for self-signed certs
+        insecure: true,
+      });
+
+      rootResponseTime = Date.now() - rootStartTime;
+      const responseData = response.ok ? await response.json() : null;
+
+      // Log the root command
+      await logIdracCommand({
+        supabase: supabaseClient,
+        serverId: server_id,
+        commandType: 'GET',
+        endpoint: '/redfish/v1/',
+        fullUrl: rootUrl,
+        requestHeaders: { 'Accept': 'application/json' },
+        statusCode: response.status,
+        responseTimeMs: rootResponseTime,
+        responseBody: responseData,
+        success: response.ok,
+        errorMessage: !response.ok ? `iDRAC responded with status ${response.status}` : undefined,
+        initiatedBy: user.id,
+        source: 'edge_function',
+      });
+
+      if (!response.ok) {
+        throw new Error(`iDRAC responded with status ${response.status}`);
+      }
+
+      rootData = responseData;
+    } catch (error: any) {
+      console.error('[ERROR] Failed to fetch root service info:', error);
+      return new Response(JSON.stringify({ 
+        success: false,
+        error: 'Failed to connect to iDRAC',
+        details: error.message 
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Query iDRAC Redfish API for system info
+    const redfishUrl = `https://${ip_address}/redfish/v1/Systems/System.Embedded.1`;
 
     let redfishData;
     const systemStartTime = Date.now();
@@ -205,20 +258,41 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Extract server information
+    // Extract comprehensive server information
     const hostname = redfishData.HostName || null;
     const model = redfishData.Model || null;
-    const service_tag = redfishData.SKU || redfishData.SerialNumber || null;
+    const service_tag = rootData?.Oem?.Dell?.ServiceTag || redfishData.SKU || redfishData.SerialNumber || null;
     const bios_version = redfishData.BiosVersion || null;
+    const manager_mac_address = rootData?.Oem?.Dell?.ManagerMACAddress || null;
+    const product_name = rootData?.Product || null;
+    const manufacturer = 'Dell';
+    const redfish_version = rootData?.RedfishVersion || null;
+    const supported_endpoints = {
+      systems: rootData?.Systems?.['@odata.id'] || null,
+      chassis: rootData?.Chassis?.['@odata.id'] || null,
+      managers: rootData?.Managers?.['@odata.id'] || null,
+      updateService: rootData?.UpdateService?.['@odata.id'] || null,
+      taskService: rootData?.Tasks?.['@odata.id'] || null,
+      eventService: rootData?.EventService?.['@odata.id'] || null,
+    };
+    const cpu_count = redfishData.ProcessorSummary?.Count || null;
+    const memory_gb = redfishData.MemorySummary?.TotalSystemMemoryGiB || null;
 
-    // Update server record
+    // Update server record with all comprehensive details
     const { error: updateError } = await supabaseClient
       .from('servers')
       .update({
         hostname,
         model,
         service_tag,
+        manager_mac_address,
+        product_name,
+        manufacturer,
+        redfish_version,
+        supported_endpoints,
         bios_version,
+        cpu_count,
+        memory_gb,
         idrac_firmware: idracFirmware,
         last_seen: new Date().toISOString(),
         connection_status: 'online',

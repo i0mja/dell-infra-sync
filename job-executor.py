@@ -736,11 +736,16 @@ class JobExecutor:
                 info = self.get_comprehensive_server_info(ip, username, password, server_id=server['id'], job_id=job['id'])
                 
                 if info:
-                    # Update server record with fetched info
+                    # Update server record with comprehensive fetched info including new fields
                     update_data = {
                         'hostname': info.get('hostname'),
                         'model': info.get('model'),
                         'service_tag': info.get('service_tag'),
+                        'manager_mac_address': info.get('manager_mac_address'),
+                        'product_name': info.get('product_name'),
+                        'manufacturer': info.get('manufacturer', 'Dell'),
+                        'redfish_version': info.get('redfish_version'),
+                        'supported_endpoints': info.get('supported_endpoints'),
                         'idrac_firmware': info.get('idrac_firmware'),
                         'bios_version': info.get('bios_version'),
                         'cpu_count': info.get('cpu_count'),
@@ -900,6 +905,15 @@ class JobExecutor:
                 'hostname': server.get('hostname'),
                 'model': server.get('model'),
                 'service_tag': server.get('service_tag'),
+                'manager_mac_address': server.get('manager_mac_address'),
+                'product_name': server.get('product_name'),
+                'manufacturer': server.get('manufacturer', 'Dell'),
+                'redfish_version': server.get('redfish_version'),
+                'idrac_firmware': server.get('idrac_firmware'),
+                'bios_version': server.get('bios_version'),
+                'cpu_count': server.get('cpu_count'),
+                'memory_gb': server.get('memory_gb'),
+                'supported_endpoints': server.get('supported_endpoints'),
                 'connection_status': 'online',
                 'last_seen': datetime.now().isoformat(),
                 'idrac_username': server.get('username'),
