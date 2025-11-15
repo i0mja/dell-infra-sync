@@ -24,6 +24,7 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess, onRequestDiscov
   const [showSuccessDialog, setShowSuccessDialog] = useState(false);
   const [addedServerIp, setAddedServerIp] = useState("");
   const [showQuickStartGuide, setShowQuickStartGuide] = useState(true);
+  const [useJobExecutorForIdrac, setUseJobExecutorForIdrac] = useState(true);
   
   const [formData, setFormData] = useState({
     ip_address: "",
@@ -33,9 +34,28 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess, onRequestDiscov
   
   const { toast } = useToast();
 
-  // Detect if running in local mode
-  const isLocalMode = import.meta.env.VITE_SUPABASE_URL?.includes('localhost') || 
-                      import.meta.env.VITE_SUPABASE_URL?.includes('127.0.0.1');
+  // Load Job Executor setting
+  useEffect(() => {
+    const loadJobExecutorSetting = async () => {
+      try {
+        const { data } = await supabase
+          .from('activity_settings')
+          .select('use_job_executor_for_idrac')
+          .limit(1)
+          .maybeSingle();
+        
+        if (data) {
+          setUseJobExecutorForIdrac(data.use_job_executor_for_idrac ?? true);
+        }
+      } catch (error) {
+        console.error('Error loading Job Executor setting:', error);
+      }
+    };
+    
+    if (open) {
+      loadJobExecutorSetting();
+    }
+  }, [open]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,8 +73,8 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess, onRequestDiscov
 
       if (error) throw error;
 
-      // In local mode, show success dialog with option to create discovery job
-      if (isLocalMode) {
+      // In Job Executor mode, show success dialog with option to create discovery job
+      if (useJobExecutorForIdrac) {
         setAddedServerIp(formData.ip_address);
         setShowSuccessDialog(true);
       } else {
@@ -96,19 +116,19 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess, onRequestDiscov
           <DialogHeader>
             <DialogTitle>Add New Server</DialogTitle>
             <DialogDescription>
-              {isLocalMode 
+              {useJobExecutorForIdrac 
                 ? "Add server by IP address, then run a discovery scan to fetch details"
                 : "Enter server details to add to inventory"}
             </DialogDescription>
           </DialogHeader>
 
-          {isLocalMode && (
+          {useJobExecutorForIdrac && (
             <Collapsible open={showQuickStartGuide} onOpenChange={setShowQuickStartGuide}>
               <CollapsibleTrigger asChild>
                 <Button variant="outline" size="sm" className="w-full justify-between">
                   <span className="flex items-center gap-2">
                     <BookOpen className="h-4 w-4" />
-                    Local Deployment Quick Start
+                    Private Network Mode Quick Start
                   </span>
                   <span className="text-xs text-muted-foreground">
                     {showQuickStartGuide ? "Hide" : "Show"}

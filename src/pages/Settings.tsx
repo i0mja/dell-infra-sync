@@ -74,6 +74,7 @@ export default function Settings() {
 
   // Activity Monitor Settings
   const [activitySettingsId, setActivitySettingsId] = useState<string | null>(null);
+  const [useJobExecutorForIdrac, setUseJobExecutorForIdrac] = useState(true);
   const [logRetentionDays, setLogRetentionDays] = useState(30);
   const [autoCleanupEnabled, setAutoCleanupEnabled] = useState(true);
   const [lastCleanupAt, setLastCleanupAt] = useState<string | null>(null);
@@ -619,6 +620,7 @@ export default function Settings() {
         setStalePendingHours(activityData.stale_pending_hours ?? 24);
         setStaleRunningHours(activityData.stale_running_hours ?? 48);
         setAutoCancelStaleJobs(activityData.auto_cancel_stale_jobs ?? true);
+        setUseJobExecutorForIdrac(activityData.use_job_executor_for_idrac ?? true);
       }
     } catch (error: any) {
       console.error("Error loading activity settings:", error);
@@ -915,6 +917,7 @@ export default function Settings() {
         stale_pending_hours: stalePendingHours,
         stale_running_hours: staleRunningHours,
         auto_cancel_stale_jobs: autoCancelStaleJobs,
+        use_job_executor_for_idrac: useJobExecutorForIdrac,
       };
 
       if (activitySettingsId) {
@@ -2701,15 +2704,70 @@ export default function Settings() {
                 </CardContent>
               </Card>
 
-              {isLocalMode && (
-                <Alert className="mb-6">
-                  <Info className="h-4 w-4" />
-                  <AlertDescription>
-                    Running in local mode. Network tests use Edge Functions which may have limited access to your local network due to Docker isolation. 
-                    For comprehensive network validation and testing, use the Job Executor with discovery jobs which runs directly on the host with full network access.
-                  </AlertDescription>
-                </Alert>
-              )}
+              {/* Private Network Mode Setting */}
+              <Card className="mb-6">
+                <CardHeader>
+                  <CardTitle>iDRAC Operation Mode</CardTitle>
+                  <CardDescription>
+                    Control how this application connects to iDRAC devices
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-start justify-between space-x-4">
+                    <div className="flex-1 space-y-1">
+                      <Label htmlFor="use-job-executor" className="text-base font-medium">
+                        Use Job Executor for iDRAC Operations
+                      </Label>
+                      <p className="text-sm text-muted-foreground">
+                        Enable when iDRACs are on a private network unreachable from cloud edge functions. 
+                        This routes all iDRAC operations through the Job Executor running on your local network.
+                      </p>
+                      <p className="text-sm text-muted-foreground mt-2">
+                        <strong>Enable for:</strong> Air-gapped deployments, private networks, hybrid cloud scenarios
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        <strong>Disable for:</strong> Cloud deployments where iDRACs have public IP addresses
+                      </p>
+                    </div>
+                    <Switch
+                      id="use-job-executor"
+                      checked={useJobExecutorForIdrac}
+                      onCheckedChange={setUseJobExecutorForIdrac}
+                      disabled={userRole !== 'admin'}
+                    />
+                  </div>
+                  
+                  {useJobExecutorForIdrac && (
+                    <Alert>
+                      <Terminal className="h-4 w-4" />
+                      <AlertDescription>
+                        Job Executor mode is enabled. All iDRAC operations (connection tests, server discovery, firmware updates) 
+                        will be processed through the Job Executor running on your local network. Make sure the Job Executor 
+                        service is running and has network access to your iDRAC devices.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  
+                  {!useJobExecutorForIdrac && (
+                    <Alert>
+                      <Globe className="h-4 w-4" />
+                      <AlertDescription>
+                        Cloud mode is enabled. iDRAC operations will use edge functions that require direct network access 
+                        to iDRAC IP addresses. This only works if your iDRACs are accessible from the cloud (public IPs or VPN).
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  
+                  <Button 
+                    onClick={handleSaveActivitySettings} 
+                    disabled={loading || userRole !== 'admin'}
+                    className="mt-2"
+                  >
+                    {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+                    Save Operation Mode
+                  </Button>
+                </CardContent>
+              </Card>
 
               {/* Network Resilience Settings */}
               <Card>
