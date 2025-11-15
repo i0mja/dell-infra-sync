@@ -36,6 +36,23 @@ import json
 import os
 from datetime import datetime
 
+# Best-effort: prefer UTF-8 output if available, but never crash if not
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+UNICODE_FALLBACKS = {
+    "\u2713": "[OK]",   # ✓
+    "\u2717": "[X]",    # ✗
+    "\u2026": "...",    # …
+    "\u2013": "-",      # –
+    "\u2014": "-",      # —
+}
+
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -74,6 +91,20 @@ VERIFY_SSL = False
 # Job Executor Class
 # ============================================================================
 
+def _normalize_unicode(text: str) -> str:
+    """Replace problematic Unicode characters with ASCII equivalents"""
+    for bad, repl in UNICODE_FALLBACKS.items():
+        text = text.replace(bad, repl)
+    return text
+
+def _safe_to_stdout(text: str) -> str:
+    """Ensure text can be encoded to stdout without exceptions"""
+    enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        return text.encode(enc, errors="replace").decode(enc, errors="replace")
+    except Exception:
+        return text.encode("ascii", errors="replace").decode("ascii", errors="replace")
+
 class JobExecutor:
     def __init__(self):
         self.vcenter_conn = None
@@ -83,7 +114,9 @@ class JobExecutor:
     def log(self, message: str, level: str = "INFO"):
         """Log with timestamp"""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{timestamp}] [{level}] {message}")
+        msg = _safe_to_stdout(_normalize_unicode(message))
+        line = f"[{timestamp}] [{level}] {msg}"
+        print(_safe_to_stdout(line))
 
     def get_encryption_key(self) -> Optional[str]:
         """Fetch the encryption key from activity_settings (cached)"""
@@ -1342,7 +1375,7 @@ class JobExecutor:
             self.log("Get your key from Lovable Cloud -> Settings", "ERROR")
             return
         
-        self.log("✓ Configuration validated", "INFO")
+        self.log("[OK] Configuration validated", "INFO")
         
         self.log("Job executor started. Polling for jobs...")
         

@@ -298,8 +298,8 @@ if ($PythonPath) {
     nssm set DellServerManagerJobExecutor Description "Processes iDRAC and vCenter jobs"
     nssm set DellServerManagerJobExecutor Start SERVICE_AUTO_START
     
-    # Set environment variables
-    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "SERVICE_ROLE_KEY=$ServiceRoleKey" "DSM_URL=$SupabaseUrl"
+    # Set environment variables (including PYTHONUTF8=1 for Unicode support)
+    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "SERVICE_ROLE_KEY=$ServiceRoleKey" "DSM_URL=$SupabaseUrl" "PYTHONUTF8=1"
     
     # Log files
     New-Item -ItemType Directory -Path "$InstallDir\logs" -Force | Out-Null
