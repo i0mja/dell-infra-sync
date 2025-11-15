@@ -30,6 +30,15 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Check if Job Executor mode is enabled
+    const { data: settings } = await supabaseClient
+      .from('activity_settings')
+      .select('use_job_executor_for_idrac')
+      .limit(1)
+      .maybeSingle();
+
+    const useJobExecutor = settings?.use_job_executor_for_idrac ?? true;
+
     const results = {
       servers: { tested: 0, reachable: 0, unreachable: 0, errors: [] as any[] },
       vcenter: { configured: false, reachable: false, error: null as string | null },
@@ -83,18 +92,47 @@ Deno.serve(async (req) => {
 
     if (servers && servers.length > 0) {
       results.servers.tested = servers.length;
-      executionLog.push({
-        timestamp: new Date().toISOString(),
-        step: stepCounter++,
-        test_type: 'server_connectivity',
-        target: `${servers.length} servers`,
-        method: 'INFO',
-        status: 'success',
-        response_time_ms: 0,
-        details: `Found ${servers.length} server(s) to test`
-      });
+      
+      // Skip iDRAC connectivity tests if Job Executor mode is enabled
+      if (useJobExecutor) {
+        executionLog.push({
+          timestamp: new Date().toISOString(),
+          step: stepCounter++,
+          test_type: 'server_connectivity',
+          target: 'job_executor',
+          method: 'SKIP',
+          status: 'warning',
+          response_time_ms: 0,
+          details: `Job Executor mode enabled - skipping iDRAC connectivity tests for ${servers.length} server(s). iDRAC operations require the Job Executor running on your local network.`
+        });
+        
+        // Log to Activity Monitor
+        await logIdracCommand({
+          supabase: supabaseClient,
+          initiatedBy: user.id,
+          commandType: 'network_validation',
+          endpoint: '/validate-prerequisites',
+          fullUrl: 'job-executor-mode',
+          success: true,
+          statusCode: 200,
+          responseTimeMs: 0,
+          source: 'edge_function',
+          requestBody: { mode: 'job_executor', servers_found: servers.length },
+          responseBody: { skipped: true, reason: 'Job Executor mode enabled' }
+        });
+      } else {
+        executionLog.push({
+          timestamp: new Date().toISOString(),
+          step: stepCounter++,
+          test_type: 'server_connectivity',
+          target: `${servers.length} servers`,
+          method: 'INFO',
+          status: 'success',
+          response_time_ms: 0,
+          details: `Found ${servers.length} server(s) to test`
+        });
 
-      for (const server of servers) {
+        for (const server of servers) {
         const startTime = Date.now();
         try {
           const testUrl = `https://${server.ip_address}/redfish/v1/`;
@@ -204,6 +242,7 @@ Deno.serve(async (req) => {
 
       if (results.servers.unreachable > 0) {
         results.overall.criticalFailures.push(`${results.servers.unreachable} server(s) unreachable`);
+      }
       }
     } else {
       executionLog.push({
