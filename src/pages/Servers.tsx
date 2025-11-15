@@ -43,6 +43,7 @@ interface Server {
   idrac_firmware: string | null;
   vcenter_host_id: string | null;
   discovery_job_id: string | null;
+  credential_set_id: string | null;
   last_seen: string | null;
   created_at: string;
   notes: string | null;
@@ -118,71 +119,200 @@ const Servers = () => {
 
   const handleTestConnection = async (server: Server) => {
     try {
+      // Check if server has credentials assigned
+      if (!server.credential_set_id) {
+        toast({
+          title: "Credentials Required",
+          description: "Assign credentials to this server first",
+          variant: "destructive",
+        });
+        setSelectedServer(server);
+        setAssignCredentialsDialogOpen(true);
+        return;
+      }
+
       setRefreshing(server.id);
-      const { data: result, error } = await supabase.functions.invoke('test-idrac-connection', {
-        body: { ip_address: server.ip_address }
-      });
+      
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+      
+      // Create test_credentials job
+      const { data: job, error } = await supabase
+        .from('jobs')
+        .insert([{
+          job_type: 'test_credentials',
+          target_scope: { ip_address: server.ip_address },
+          credential_set_ids: [server.credential_set_id],
+          created_by: user.id,
+          status: 'pending'
+        }])
+        .select()
+        .single();
       
       if (error) throw error;
-
-      if (result.success) {
-        toast({
-          title: "Connection Successful",
-          description: `${server.hostname || server.ip_address} is reachable (${result.responseTime}ms)`,
-        });
-      } else {
+      
       toast({
-        title: "Connection Failed",
-        description: result.error,
-        variant: "destructive",
+        title: "Testing Connection",
+        description: "Job created - checking connection via Job Executor...",
       });
-    }
-    
-    // Refresh server list to show updated status
-    fetchServers();
-  } catch (error: any) {
+      
+      // Poll job status
+      const pollInterval = setInterval(async () => {
+        const { data: updatedJob } = await supabase
+          .from('jobs')
+          .select('*')
+          .eq('id', job.id)
+          .single();
+        
+        if (updatedJob?.status === 'completed') {
+          clearInterval(pollInterval);
+          setRefreshing(null);
+          const details = updatedJob.details as any;
+          toast({
+            title: "✓ Connection Successful",
+            description: `${server.hostname || server.ip_address} is reachable - ${details?.message || ''}`,
+          });
+          fetchServers();
+        } else if (updatedJob?.status === 'failed') {
+          clearInterval(pollInterval);
+          setRefreshing(null);
+          const details = updatedJob.details as any;
+          toast({
+            title: "✗ Connection Failed",
+            description: details?.message || 'Connection test failed',
+            variant: "destructive",
+          });
+          fetchServers();
+        }
+      }, 2000);
+      
+      // Timeout after 30 seconds
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        if (refreshing === server.id) {
+          setRefreshing(null);
+          toast({
+            title: "Test Timed Out",
+            description: "Job Executor may not be running - check Activity Monitor",
+            variant: "destructive",
+          });
+        }
+      }, 30000);
+      
+    } catch (error: any) {
+      setRefreshing(null);
       toast({
         title: "Error testing connection",
         description: error.message,
         variant: "destructive",
       });
-    } finally {
-      setRefreshing(null);
     }
   };
 
   const handleRefreshInfo = async (server: Server) => {
     try {
-      setRefreshing(server.id);
-      const { data: result, error } = await supabase.functions.invoke('refresh-server-info', {
-        body: { server_id: server.id, ip_address: server.ip_address }
-      });
-      
-      if (error) throw error;
-
-      if (!result.success) {
+      // Check if server has credentials assigned
+      if (!server.credential_set_id) {
         toast({
-          title: "Error refreshing server",
-          description: result.error,
+          title: "Credentials Required",
+          description: "Assign credentials to this server first",
           variant: "destructive",
         });
+        setSelectedServer(server);
+        setAssignCredentialsDialogOpen(true);
         return;
       }
 
+      setRefreshing(server.id);
+      
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+      
+      // Create discovery_scan job for this single server
+      const { data: job, error: jobError } = await supabase
+        .from('jobs')
+        .insert([{
+          job_type: 'discovery_scan',
+          target_scope: { 
+            target_type: 'specific_servers',
+            server_ids: [server.id]
+          },
+          credential_set_ids: [server.credential_set_id],
+          created_by: user.id,
+          status: 'pending'
+        }])
+        .select()
+        .single();
+      
+      if (jobError) throw jobError;
+      
+      // Create job task for this server
+      const { error: taskError } = await supabase
+        .from('job_tasks')
+        .insert({
+          job_id: job.id,
+          server_id: server.id,
+          status: 'pending'
+        });
+      
+      if (taskError) throw taskError;
+      
       toast({
-        title: "Server refreshed",
-        description: "Server information has been updated from iDRAC",
+        title: "Fetching Server Details",
+        description: "Job created - collecting information via Job Executor...",
       });
-
-      fetchServers();
+      
+      // Poll job status
+      const pollInterval = setInterval(async () => {
+        const { data: updatedJob } = await supabase
+          .from('jobs')
+          .select('*')
+          .eq('id', job.id)
+          .single();
+        
+        if (updatedJob?.status === 'completed') {
+          clearInterval(pollInterval);
+          setRefreshing(null);
+          toast({
+            title: "✓ Server Information Updated",
+            description: `${server.hostname || server.ip_address} details refreshed successfully`,
+          });
+          fetchServers();
+        } else if (updatedJob?.status === 'failed') {
+          clearInterval(pollInterval);
+          setRefreshing(null);
+          const details = updatedJob.details as any;
+          toast({
+            title: "✗ Refresh Failed",
+            description: details?.error || 'Failed to fetch server information',
+            variant: "destructive",
+          });
+          fetchServers();
+        }
+      }, 3000);
+      
+      // Timeout after 60 seconds
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        if (refreshing === server.id) {
+          setRefreshing(null);
+          toast({
+            title: "Refresh Timed Out",
+            description: "Job Executor may not be running - check Jobs page for status",
+            variant: "destructive",
+          });
+        }
+      }, 60000);
+      
     } catch (error: any) {
+      setRefreshing(null);
       toast({
         title: "Error refreshing server",
         description: error.message,
         variant: "destructive",
       });
-    } finally {
-      setRefreshing(null);
     }
   };
 
@@ -429,46 +559,20 @@ const Servers = () => {
                   Create Firmware Update Job
                 </ContextMenuItem>
                 <ContextMenuSeparator />
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div>
-                        <ContextMenuItem 
-                          onClick={() => !useJobExecutorForIdrac && handleTestConnection(server)}
-                          disabled={refreshing === server.id || useJobExecutorForIdrac}
-                        >
-                          <CheckCircle className="mr-2 h-4 w-4" />
-                          Test iDRAC Connection
-                        </ContextMenuItem>
-                      </div>
-                    </TooltipTrigger>
-                    {useJobExecutorForIdrac && (
-                      <TooltipContent>
-                        Use Job Executor for network operations in local deployments
-                      </TooltipContent>
-                    )}
-                  </Tooltip>
-                </TooltipProvider>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div>
-                        <ContextMenuItem 
-                          onClick={() => !useJobExecutorForIdrac && handleRefreshInfo(server)}
-                          disabled={refreshing === server.id || useJobExecutorForIdrac}
-                        >
-                          <RotateCw className={`mr-2 h-4 w-4 ${refreshing === server.id ? 'animate-spin' : ''}`} />
-                          Refresh Server Information
-                        </ContextMenuItem>
-                      </div>
-                    </TooltipTrigger>
-                    {useJobExecutorForIdrac && (
-                      <TooltipContent>
-                        Use Job Executor for network operations in local deployments
-                      </TooltipContent>
-                    )}
-                  </Tooltip>
-                </TooltipProvider>
+                <ContextMenuItem 
+                  onClick={() => handleTestConnection(server)}
+                  disabled={refreshing === server.id}
+                >
+                  <CheckCircle className="mr-2 h-4 w-4" />
+                  Test iDRAC Connection
+                </ContextMenuItem>
+                <ContextMenuItem 
+                  onClick={() => handleRefreshInfo(server)}
+                  disabled={refreshing === server.id}
+                >
+                  <RotateCw className={`mr-2 h-4 w-4 ${refreshing === server.id ? 'animate-spin' : ''}`} />
+                  Refresh Server Information
+                </ContextMenuItem>
                 <ContextMenuItem onClick={() => handleEditServer(server)}>
                   <Edit className="mr-2 h-4 w-4" />
                   Edit Server Details
