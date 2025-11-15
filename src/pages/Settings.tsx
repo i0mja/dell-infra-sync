@@ -1417,21 +1417,17 @@ export default function Settings() {
 
     setLoading(true);
     try {
-      const payload: any = {
-        name: credentialForm.name,
-        username: credentialForm.username,
-        description: credentialForm.description || null,
-        priority: credentialForm.priority,
-        is_default: credentialForm.is_default,
-      };
-
-      // Only include password if it's provided
-      if (credentialForm.password) {
-        payload.password_encrypted = credentialForm.password;
-      }
-
       if (editingCredential) {
-        // Update existing
+        // Update existing credential set
+        const payload: any = {
+          name: credentialForm.name,
+          username: credentialForm.username,
+          description: credentialForm.description || null,
+          priority: credentialForm.priority,
+          is_default: credentialForm.is_default,
+        };
+
+        // Update basic fields (without password)
         const { error } = await supabase
           .from('credential_sets')
           .update(payload)
@@ -1439,14 +1435,29 @@ export default function Settings() {
         
         if (error) throw error;
 
+        // If password provided, encrypt it separately
+        if (credentialForm.password) {
+          const { error: encryptError } = await supabase.functions.invoke('encrypt-credentials', {
+            body: {
+              type: 'credential_set',
+              credential_set_id: editingCredential.id,
+              password: credentialForm.password,
+            }
+          });
+
+          if (encryptError) {
+            throw new Error('Failed to encrypt password: ' + encryptError.message);
+          }
+        }
+
         // Handle IP ranges - delete existing and insert new ones
-        await (supabase as any)
+        await supabase
           .from('credential_ip_ranges')
           .delete()
           .eq('credential_set_id', editingCredential.id);
 
         if (tempIpRanges.length > 0) {
-          const { error: rangeError } = await (supabase as any)
+          const { error: rangeError } = await supabase
             .from('credential_ip_ranges')
             .insert(
               tempIpRanges.map((range, idx) => ({
@@ -1466,7 +1477,16 @@ export default function Settings() {
           description: `${credentialForm.name} has been updated successfully`,
         });
       } else {
-        // Create new
+        // Create new credential set WITHOUT password first
+        const payload: any = {
+          name: credentialForm.name,
+          username: credentialForm.username,
+          description: credentialForm.description || null,
+          priority: credentialForm.priority,
+          is_default: credentialForm.is_default,
+          password_encrypted: null, // Will be encrypted via edge function
+        };
+
         const { data: newCred, error } = await supabase
           .from('credential_sets')
           .insert(payload)
@@ -1475,9 +1495,24 @@ export default function Settings() {
         
         if (error) throw error;
 
+        // Encrypt password via edge function
+        const { error: encryptError } = await supabase.functions.invoke('encrypt-credentials', {
+          body: {
+            type: 'credential_set',
+            credential_set_id: newCred.id,
+            password: credentialForm.password,
+          }
+        });
+
+        if (encryptError) {
+          // Clean up credential set if encryption fails
+          await supabase.from("credential_sets").delete().eq('id', newCred.id);
+          throw new Error('Failed to encrypt credentials: ' + encryptError.message);
+        }
+
         // Insert IP ranges if any
-        if (tempIpRanges.length > 0 && newCred) {
-          const { error: rangeError } = await (supabase as any)
+        if (tempIpRanges.length > 0) {
+          const { error: rangeError } = await supabase
             .from('credential_ip_ranges')
             .insert(
               tempIpRanges.map((range, idx) => ({
