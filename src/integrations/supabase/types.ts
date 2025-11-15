@@ -21,6 +21,7 @@ export type Database = {
           auto_cancel_stale_jobs: boolean | null
           auto_cleanup_enabled: boolean
           created_at: string
+          encryption_key: string | null
           id: string
           job_auto_cleanup_enabled: boolean | null
           job_last_cleanup_at: string | null
@@ -44,6 +45,7 @@ export type Database = {
           auto_cancel_stale_jobs?: boolean | null
           auto_cleanup_enabled?: boolean
           created_at?: string
+          encryption_key?: string | null
           id?: string
           job_auto_cleanup_enabled?: boolean | null
           job_last_cleanup_at?: string | null
@@ -67,6 +69,7 @@ export type Database = {
           auto_cancel_stale_jobs?: boolean | null
           auto_cleanup_enabled?: boolean
           created_at?: string
+          encryption_key?: string | null
           id?: string
           job_auto_cleanup_enabled?: boolean | null
           job_last_cleanup_at?: string | null
@@ -199,7 +202,7 @@ export type Database = {
           id: string
           is_default: boolean | null
           name: string
-          password_encrypted: string
+          password_encrypted: string | null
           priority: number | null
           updated_at: string | null
           username: string
@@ -210,7 +213,7 @@ export type Database = {
           id?: string
           is_default?: boolean | null
           name: string
-          password_encrypted: string
+          password_encrypted?: string | null
           priority?: number | null
           updated_at?: string | null
           username: string
@@ -221,7 +224,7 @@ export type Database = {
           id?: string
           is_default?: boolean | null
           name?: string
-          password_encrypted?: string
+          password_encrypted?: string | null
           priority?: number | null
           updated_at?: string | null
           username?: string
@@ -596,7 +599,7 @@ export type Database = {
           host: string
           id: string
           last_sync: string | null
-          password: string
+          password: string | null
           port: number
           sync_enabled: boolean
           updated_at: string
@@ -608,7 +611,7 @@ export type Database = {
           host: string
           id?: string
           last_sync?: string | null
-          password: string
+          password?: string | null
           port?: number
           sync_enabled?: boolean
           updated_at?: string
@@ -620,7 +623,7 @@ export type Database = {
           host?: string
           id?: string
           last_sync?: string | null
-          password?: string
+          password?: string | null
           port?: number
           sync_enabled?: boolean
           updated_at?: string
@@ -857,7 +860,7 @@ export type Database = {
           host: string
           id: string
           last_sync: string | null
-          password: string
+          password: string | null
           port: number
           sync_enabled: boolean
           updated_at: string
@@ -869,7 +872,7 @@ export type Database = {
           host: string
           id?: string
           last_sync?: string | null
-          password: string
+          password?: string | null
           port?: number
           sync_enabled?: boolean
           updated_at?: string
@@ -881,7 +884,7 @@ export type Database = {
           host?: string
           id?: string
           last_sync?: string | null
-          password?: string
+          password?: string | null
           port?: number
           sync_enabled?: boolean
           updated_at?: string
@@ -897,6 +900,15 @@ export type Database = {
     Functions: {
       cleanup_activity_logs: { Args: never; Returns: undefined }
       cleanup_old_jobs: { Args: never; Returns: undefined }
+      decrypt_password: {
+        Args: { encrypted: string; key: string }
+        Returns: string
+      }
+      encrypt_password: {
+        Args: { key: string; password: string }
+        Returns: string
+      }
+      get_encryption_key: { Args: never; Returns: string }
       get_user_role: {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["app_role"]

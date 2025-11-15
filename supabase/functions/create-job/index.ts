@@ -15,6 +15,76 @@ interface CreateJobRequest {
   credential_set_ids?: string[];
 }
 
+// Validation functions
+function validateIPAddress(ip: string): boolean {
+  const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+  const cidrRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\/(?:[0-9]|[12][0-9]|3[0-2])$/;
+  return ipRegex.test(ip) || cidrRegex.test(ip);
+}
+
+function validateUUID(uuid: string): boolean {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(uuid);
+}
+
+function validateJobRequest(request: CreateJobRequest): { valid: boolean; error?: string } {
+  // Validate job type
+  const validTypes = ['firmware_update', 'discovery_scan', 'vcenter_sync', 'full_server_update'];
+  if (!request.job_type || !validTypes.includes(request.job_type)) {
+    return { valid: false, error: 'Invalid job_type. Must be one of: firmware_update, discovery_scan, vcenter_sync, full_server_update' };
+  }
+
+  // Validate target_scope
+  if (!request.target_scope || typeof request.target_scope !== 'object') {
+    return { valid: false, error: 'target_scope is required and must be an object' };
+  }
+
+  // Validate server_ids if present
+  if (request.target_scope.server_ids && Array.isArray(request.target_scope.server_ids)) {
+    for (const id of request.target_scope.server_ids) {
+      if (!validateUUID(id)) {
+        return { valid: false, error: `Invalid server UUID: ${id}` };
+      }
+    }
+  }
+
+  // Validate vcenter_host_ids if present
+  if (request.target_scope.vcenter_host_ids && Array.isArray(request.target_scope.vcenter_host_ids)) {
+    for (const id of request.target_scope.vcenter_host_ids) {
+      if (!validateUUID(id)) {
+        return { valid: false, error: `Invalid vCenter host UUID: ${id}` };
+      }
+    }
+  }
+
+  // Validate credential_set_ids if present
+  if (request.credential_set_ids && Array.isArray(request.credential_set_ids)) {
+    for (const id of request.credential_set_ids) {
+      if (!validateUUID(id)) {
+        return { valid: false, error: `Invalid credential set UUID: ${id}` };
+      }
+    }
+  }
+
+  // Validate details object size (prevent DoS)
+  if (request.details) {
+    const detailsStr = JSON.stringify(request.details);
+    if (detailsStr.length > 10000) {
+      return { valid: false, error: 'Job details object is too large (max 10KB)' };
+    }
+  }
+
+  // Validate schedule_at if present
+  if (request.schedule_at) {
+    const scheduleDate = new Date(request.schedule_at);
+    if (isNaN(scheduleDate.getTime())) {
+      return { valid: false, error: 'Invalid schedule_at date format' };
+    }
+  }
+
+  return { valid: true };
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -34,7 +104,7 @@ serve(async (req) => {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     
     if (authError || !user) {
-      console.error('Authentication error:', authError);
+      console.error('Authentication failed');
       return new Response(
         JSON.stringify({ error: 'Unauthorized' }),
         { 
@@ -48,7 +118,7 @@ serve(async (req) => {
     const { data: roleData } = await supabase.rpc('get_user_role', { _user_id: user.id });
     
     if (!roleData || !['admin', 'operator'].includes(roleData)) {
-      console.error('Permission denied for user:', user.id, 'role:', roleData);
+      console.error('Permission denied - insufficient role');
       return new Response(
         JSON.stringify({ error: 'Permission denied. Admin or operator role required.' }),
         { 
@@ -59,12 +129,13 @@ serve(async (req) => {
     }
 
     const jobRequest: CreateJobRequest = await req.json();
-    console.log('Creating job:', jobRequest.job_type, 'by user:', user.id);
+    console.log('Job creation request received');
 
     // Validate request
-    if (!jobRequest.job_type || !jobRequest.target_scope) {
+    const validation = validateJobRequest(jobRequest);
+    if (!validation.valid) {
       return new Response(
-        JSON.stringify({ error: 'job_type and target_scope are required' }),
+        JSON.stringify({ error: validation.error }),
         { 
           status: 400, 
           headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
