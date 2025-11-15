@@ -408,6 +408,225 @@ export async function generateDiagnosticsReport(): Promise<DiagnosticsReport> {
   return report;
 }
 
+/**
+ * Test Job Executor connectivity by creating a ping job
+ */
+export async function testJobExecutorConnectivity(): Promise<{
+  online: boolean;
+  responseTime: number;
+  error?: string;
+}> {
+  const startTime = Date.now();
+  
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+    
+    // Create a minimal test job
+    const { data: job, error: createError } = await supabase
+      .from('jobs')
+      .insert({
+        job_type: 'test_credentials',
+        target_scope: { test_ping: true },
+        credential_set_ids: [],
+        status: 'pending',
+        created_by: user.id
+      })
+      .select()
+      .single();
+    
+    if (createError || !job) {
+      return {
+        online: false,
+        responseTime: Date.now() - startTime,
+        error: `Failed to create test job: ${createError?.message}`
+      };
+    }
+    
+    // Poll for 15 seconds
+    for (let i = 0; i < 15; i++) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      const { data: updatedJob } = await supabase
+        .from('jobs')
+        .select('status')
+        .eq('id', job.id)
+        .single();
+      
+      if (updatedJob?.status !== 'pending') {
+        return {
+          online: true,
+          responseTime: Date.now() - startTime,
+        };
+      }
+    }
+    
+    // Timeout - executor not running
+    return {
+      online: false,
+      responseTime: Date.now() - startTime,
+      error: 'Job Executor did not pick up test job within 15 seconds'
+    };
+  } catch (error: any) {
+    return {
+      online: false,
+      responseTime: Date.now() - startTime,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Test credential access
+ */
+export async function testCredentialAccess(): Promise<{
+  success: boolean;
+  credentialCount: number;
+  error?: string;
+}> {
+  try {
+    const { data: credentials, error } = await supabase
+      .from('credential_sets')
+      .select('id, name');
+    
+    if (error) {
+      return { success: false, credentialCount: 0, error: error.message };
+    }
+    
+    return {
+      success: true,
+      credentialCount: credentials?.length || 0
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      credentialCount: 0,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Test iDRAC reachability for all servers with credentials
+ */
+export async function testIdracReachability(): Promise<{
+  total: number;
+  reachable: number;
+  unreachable: number;
+  results: Array<{
+    server_id: string;
+    ip_address: string;
+    hostname?: string;
+    status: 'success' | 'failed';
+    responseTime?: number;
+    error?: string;
+  }>;
+}> {
+  try {
+    const { data: servers } = await supabase
+      .from('servers')
+      .select('id, ip_address, hostname, credential_set_id')
+      .not('credential_set_id', 'is', null);
+    
+    if (!servers || servers.length === 0) {
+      return { total: 0, reachable: 0, unreachable: 0, results: [] };
+    }
+    
+    const results = [];
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    if (!user) throw new Error('Not authenticated');
+    
+    for (const server of servers) {
+      const startTime = Date.now();
+      
+      // Create test_credentials job
+      const { data: job, error: createError } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'test_credentials',
+          target_scope: { ip_address: server.ip_address },
+          credential_set_ids: [server.credential_set_id],
+          created_by: user.id,
+          status: 'pending'
+        })
+        .select()
+        .single();
+      
+      if (createError || !job) {
+        results.push({
+          server_id: server.id,
+          ip_address: server.ip_address,
+          hostname: server.hostname || undefined,
+          status: 'failed' as const,
+          error: 'Failed to create test job'
+        });
+        continue;
+      }
+      
+      // Poll for 30 seconds
+      let testResult: {
+        server_id: string;
+        ip_address: string;
+        hostname?: string;
+        status: 'success' | 'failed';
+        responseTime?: number;
+        error?: string;
+      } = {
+        server_id: server.id,
+        ip_address: server.ip_address,
+        hostname: server.hostname || undefined,
+        status: 'failed',
+        error: 'Timeout'
+      };
+      
+      for (let i = 0; i < 30; i++) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        const { data: updatedJob } = await supabase
+          .from('jobs')
+          .select('status, details')
+          .eq('id', job.id)
+          .single();
+        
+        if (updatedJob?.status === 'completed') {
+          testResult = {
+            ...testResult,
+            status: 'success',
+            responseTime: Date.now() - startTime,
+            error: undefined
+          };
+          break;
+        } else if (updatedJob?.status === 'failed') {
+          testResult = {
+            ...testResult,
+            status: 'failed',
+            responseTime: Date.now() - startTime,
+            error: (updatedJob.details as any)?.message || 'Connection failed'
+          };
+          break;
+        }
+      }
+      
+      results.push(testResult);
+    }
+    
+    return {
+      total: results.length,
+      reachable: results.filter(r => r.status === 'success').length,
+      unreachable: results.filter(r => r.status === 'failed').length,
+      results
+    };
+  } catch (error: any) {
+    return {
+      total: 0,
+      reachable: 0,
+      unreachable: 0,
+      results: [],
+    };
+  }
+}
+
 export function formatDiagnosticsAsMarkdown(report: DiagnosticsReport): string {
   let markdown = `# System Diagnostics Report\n`;
   markdown += `Generated: ${new Date(report.timestamp).toLocaleString()}\n\n`;
