@@ -12,6 +12,7 @@ import { AddServerDialog } from "@/components/servers/AddServerDialog";
 import { LinkVCenterDialog } from "@/components/servers/LinkVCenterDialog";
 import { EditServerDialog } from "@/components/servers/EditServerDialog";
 import { ServerAuditDialog } from "@/components/servers/ServerAuditDialog";
+import { ServerPropertiesDialog } from "@/components/servers/ServerPropertiesDialog";
 import { CreateJobDialog } from "@/components/jobs/CreateJobDialog";
 import { AssignCredentialsDialog } from "@/components/servers/AssignCredentialsDialog";
 import { ConnectionStatusBadge } from "@/components/servers/ConnectionStatusBadge";
@@ -41,6 +42,9 @@ interface Server {
   model: string | null;
   service_tag: string | null;
   idrac_firmware: string | null;
+  bios_version: string | null;
+  cpu_count: number | null;
+  memory_gb: number | null;
   vcenter_host_id: string | null;
   discovery_job_id: string | null;
   credential_set_id: string | null;
@@ -51,6 +55,7 @@ interface Server {
   connection_status: 'online' | 'offline' | 'unknown' | null;
   connection_error: string | null;
   credential_test_status: string | null;
+  credential_last_tested: string | null;
 }
 
 const Servers = () => {
@@ -63,6 +68,7 @@ const Servers = () => {
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [auditDialogOpen, setAuditDialogOpen] = useState(false);
+  const [propertiesDialogOpen, setPropertiesDialogOpen] = useState(false);
   const [jobDialogOpen, setJobDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [assignCredentialsDialogOpen, setAssignCredentialsDialogOpen] = useState(false);
@@ -326,6 +332,11 @@ const Servers = () => {
     setAuditDialogOpen(true);
   };
 
+  const handleViewProperties = (server: Server) => {
+    setSelectedServer(server);
+    setPropertiesDialogOpen(true);
+  };
+
   const handleDeleteServer = (server: Server) => {
     setSelectedServer(server);
     setDeleteDialogOpen(true);
@@ -581,6 +592,10 @@ const Servers = () => {
                   <History className="mr-2 h-4 w-4" />
                   View Audit History
                 </ContextMenuItem>
+                <ContextMenuItem onClick={() => handleViewProperties(server)}>
+                  <Info className="mr-2 h-4 w-4" />
+                  View Properties
+                </ContextMenuItem>
                 <ContextMenuSeparator />
                 <ContextMenuItem 
                   onClick={() => handleDeleteServer(server)}
@@ -619,6 +634,15 @@ const Servers = () => {
             open={auditDialogOpen}
             onOpenChange={setAuditDialogOpen}
             server={selectedServer}
+          />
+          <ServerPropertiesDialog
+            open={propertiesDialogOpen}
+            onOpenChange={setPropertiesDialogOpen}
+            server={selectedServer}
+            onEdit={() => {
+              setPropertiesDialogOpen(false);
+              setEditDialogOpen(true);
+            }}
           />
           <CreateJobDialog
             open={jobDialogOpen}
