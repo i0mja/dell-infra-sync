@@ -26,25 +26,36 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const authHeader = req.headers.get('Authorization') || '';
-    
-    // Create client for user authentication
-    const supabaseClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY')!, {
-      global: { headers: { Authorization: authHeader } },
-    });
 
-    // Verify user is authenticated
-    const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
-    
-    if (authError || !user) {
-      console.error('Authentication failed');
+    // Extract JWT token and decode to get user ID
+    // Since verify_jwt=true, we know the JWT is already valid
+    let userId: string;
+    try {
+      const token = authHeader.replace('Bearer ', '');
+      if (!token) {
+        throw new Error('No token provided');
+      }
+      
+      // Decode JWT to get user ID (JWT is already verified by Deno)
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      userId = payload.sub;
+      
+      if (!userId) {
+        throw new Error('Invalid token payload');
+      }
+    } catch (error) {
+      console.error('Token extraction failed:', error);
       return new Response(
         JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
+    // Create admin client for role check
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+
     // Check user has admin or operator role
-    const { data: roleData } = await supabaseClient.rpc('get_user_role', { _user_id: user.id });
+    const { data: roleData } = await supabaseAdmin.rpc('get_user_role', { _user_id: userId });
     
     if (!roleData || !['admin', 'operator'].includes(roleData)) {
       return new Response(
@@ -70,10 +81,7 @@ serve(async (req) => {
       );
     }
 
-    // Create service role client for encryption (needs access to encryption_key)
-    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
-
-    // Get encryption key
+    // Get encryption key (using supabaseAdmin already created above)
     const { data: settings, error: settingsError } = await supabaseAdmin
       .from('activity_settings')
       .select('encryption_key')
