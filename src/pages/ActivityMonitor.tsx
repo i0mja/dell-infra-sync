@@ -83,7 +83,7 @@ export default function ActivityMonitor() {
   };
 
   // Fetch commands
-  const { data: commandsData, refetch, isError, error } = useQuery({
+  const { data: commandsData, refetch, isError, error, isFetching } = useQuery({
     queryKey: ['idrac-commands', serverFilter, commandTypeFilter, statusFilter, timeRangeFilter],
     queryFn: async () => {
       let query = supabase
@@ -114,6 +114,8 @@ export default function ActivityMonitor() {
       }
       return data as IdracCommand[];
     },
+    staleTime: 0, // Data immediately stale, always refetch when needed
+    refetchOnWindowFocus: false, // Don't auto-refetch on window focus
   });
 
   useEffect(() => {
@@ -207,6 +209,14 @@ export default function ActivityMonitor() {
     } finally {
       setIsRunningTest(false);
     }
+  };
+
+  const handleManualRefresh = async () => {
+    setLastRefresh(new Date());
+    await refetch();
+    toast.success('Activity feed refreshed', {
+      description: `${commands.length} commands loaded`
+    });
   };
 
   const filteredCommands = commands.filter(cmd => {
@@ -304,9 +314,14 @@ export default function ActivityMonitor() {
             Run Live Test
           </Button>
           
-          <Button onClick={() => refetch()} variant="outline" size="sm">
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
+          <Button 
+            onClick={handleManualRefresh} 
+            variant="outline" 
+            size="sm"
+            disabled={isFetching}
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? 'animate-spin' : ''}`} />
+            {isFetching ? 'Refreshing...' : 'Refresh'}
           </Button>
         </div>
       </div>
