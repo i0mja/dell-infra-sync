@@ -42,6 +42,7 @@ interface Server {
   service_tag: string | null;
   idrac_firmware: string | null;
   vcenter_host_id: string | null;
+  discovery_job_id: string | null;
   last_seen: string | null;
   created_at: string;
   notes: string | null;
@@ -68,6 +69,16 @@ const Servers = () => {
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [quickScanIp, setQuickScanIp] = useState<string>("");
   const { toast } = useToast();
+  
+  const getServerStatus = (server: any) => {
+    if (server.discovery_job_id) {
+      return { status: "discovering", label: "Discovering", variant: "secondary" as const };
+    }
+    if (server.model && server.service_tag && server.idrac_firmware) {
+      return { status: "discovered", label: "Discovered", variant: "default" as const };
+    }
+    return { status: "minimal", label: "Minimal Info", variant: "outline" as const };
+  };
 
   const fetchServers = async () => {
     try {
@@ -102,11 +113,6 @@ const Servers = () => {
 
   const handleCreateJob = (server: Server) => {
     setSelectedServer(server);
-    setJobDialogOpen(true);
-  };
-
-  const handleRequestDiscoveryJob = (serverIp: string) => {
-    setQuickScanIp(serverIp);
     setJobDialogOpen(true);
   };
 
@@ -341,6 +347,9 @@ const Servers = () => {
                             error={server.connection_error}
                             credentialTestStatus={server.credential_test_status}
                           />
+                          <Badge variant={getServerStatus(server).variant}>
+                            {getServerStatus(server).label}
+                          </Badge>
                           {server.vcenter_host_id ? (
                             <Badge variant="secondary">
                               <CheckCircle className="mr-1 h-3 w-3" />
@@ -486,7 +495,6 @@ const Servers = () => {
         open={dialogOpen} 
         onOpenChange={setDialogOpen} 
         onSuccess={fetchServers}
-        onRequestDiscoveryJob={handleRequestDiscoveryJob}
       />
       
       {selectedServer && (

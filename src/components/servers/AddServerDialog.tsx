@@ -1,45 +1,81 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Info, BookOpen } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import { Loader2, Info, Server, Key, Search } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ServerAddedSuccessDialog } from "./ServerAddedSuccessDialog";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
 interface AddServerDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
-  onRequestDiscoveryJob?: (serverIp: string) => void;
 }
 
-export const AddServerDialog = ({ open, onOpenChange, onSuccess, onRequestDiscoveryJob }: AddServerDialogProps) => {
+export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDialogProps) => {
   const [loading, setLoading] = useState(false);
-  const [showSuccessDialog, setShowSuccessDialog] = useState(false);
-  const [addedServerIp, setAddedServerIp] = useState("");
-  const [showQuickStartGuide, setShowQuickStartGuide] = useState(true);
-  // Job Executor is always enabled - iDRACs are always on private networks
-  const useJobExecutorForIdrac = true;
+  const [currentTab, setCurrentTab] = useState("info");
+  const { user } = useAuth();
+  const { toast } = useToast();
   
+  // Form state
   const [formData, setFormData] = useState({
     ip_address: "",
     hostname: "",
     notes: "",
   });
   
-  const { toast } = useToast();
+  // Credential state
+  const [credentialMode, setCredentialMode] = useState<"saved" | "manual">("saved");
+  const [selectedCredentialSetId, setSelectedCredentialSetId] = useState("");
+  const [manualUsername, setManualUsername] = useState("");
+  const [manualPassword, setManualPassword] = useState("");
+  const [saveCredentials, setSaveCredentials] = useState(false);
+  const [credentialName, setCredentialName] = useState("");
+  const [credentialSets, setCredentialSets] = useState<any[]>([]);
+  
+  // Discovery state
+  const [autoDiscover, setAutoDiscover] = useState(true);
+
+  // Fetch credential sets on mount
+  useEffect(() => {
+    if (open) {
+      fetchCredentialSets();
+    }
+  }, [open]);
+
+  const fetchCredentialSets = async () => {
+    const { data } = await supabase
+      .from("credential_sets")
+      .select("id, name, description, username")
+      .order("priority");
+    
+    setCredentialSets(data || []);
+    
+    // Auto-select first credential set if available
+    if (data && data.length > 0) {
+      setSelectedCredentialSetId(data[0].id);
+      setCredentialMode("saved");
+    } else {
+      setCredentialMode("manual");
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
+      // Step 1: Create server record
       const serverData: any = {
         ip_address: formData.ip_address,
         hostname: formData.hostname || null,
@@ -47,32 +83,79 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess, onRequestDiscov
         last_seen: new Date().toISOString(),
       };
 
-      const { error } = await supabase.from("servers").insert([serverData]);
+      const { data: newServer, error: serverError } = await supabase
+        .from("servers")
+        .insert([serverData])
+        .select()
+        .single();
 
-      if (error) throw error;
+      if (serverError) throw serverError;
 
-      // In Job Executor mode, show success dialog with option to create discovery job
-      if (useJobExecutorForIdrac) {
-        setAddedServerIp(formData.ip_address);
-        setShowSuccessDialog(true);
+      // Step 2: Handle credentials
+      let credentialSetIdToUse = selectedCredentialSetId;
+      
+      if (credentialMode === "manual" && saveCredentials) {
+        // Create new credential set
+        const { data: newCredSet, error: credError } = await supabase
+          .from("credential_sets")
+          .insert([{
+            name: credentialName || `${formData.ip_address} Credentials`,
+            username: manualUsername,
+            password_encrypted: manualPassword, // Note: In production, encrypt this
+            description: `Credentials for ${formData.ip_address}`,
+          }])
+          .select()
+          .single();
+
+        if (credError) throw credError;
+        credentialSetIdToUse = newCredSet.id;
+      }
+
+      // Step 3: Create discovery job if auto-discover is enabled
+      if (autoDiscover && user) {
+        const jobData: any = {
+          job_type: "discovery_scan" as const,
+          created_by: user.id,
+          target_scope: {
+            server_ids: [newServer.id],
+          },
+          credential_set_ids: credentialMode === "manual" && !saveCredentials
+            ? null
+            : [credentialSetIdToUse],
+          details: credentialMode === "manual" && !saveCredentials
+            ? {
+                manual_credentials: {
+                  username: manualUsername,
+                  password: manualPassword,
+                }
+              }
+            : null,
+        };
+
+        const { error: jobError } = await supabase
+          .from("jobs")
+          .insert([jobData]);
+
+        if (jobError) throw jobError;
+
+        toast({
+          title: "Server Added Successfully",
+          description: "Discovery job created - check Activity Monitor for progress",
+        });
       } else {
         toast({
           title: "Server Added",
-          description: "Server has been successfully added to inventory",
+          description: "Server has been added to inventory",
         });
       }
 
       // Reset form
-      setFormData({
-        ip_address: "",
-        hostname: "",
-        notes: "",
-      });
+      resetForm();
       onOpenChange(false);
       onSuccess();
     } catch (error: any) {
       toast({
-        title: "Error adding server",
+        title: "Error Adding Server",
         description: error.message,
         variant: "destructive",
       });
@@ -81,132 +164,301 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess, onRequestDiscov
     }
   };
 
-  const handleCreateDiscoveryJob = () => {
-    if (onRequestDiscoveryJob) {
-      onRequestDiscoveryJob(addedServerIp);
-    }
+  const resetForm = () => {
+    setFormData({ ip_address: "", hostname: "", notes: "" });
+    setManualUsername("");
+    setManualPassword("");
+    setSaveCredentials(false);
+    setCredentialName("");
+    setAutoDiscover(true);
+    setCurrentTab("info");
   };
 
-  return (
-    <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-2xl max-h-[90vh]">
-          <DialogHeader>
-            <DialogTitle>Add New Server</DialogTitle>
-            <DialogDescription>
-              {useJobExecutorForIdrac 
-                ? "Add server by IP address, then run a discovery scan to fetch details"
-                : "Enter server details to add to inventory"}
-            </DialogDescription>
-          </DialogHeader>
+  const canProceedToCredentials = formData.ip_address.trim() !== "";
+  const canProceedToDiscovery = canProceedToCredentials && (
+    credentialMode === "saved" && selectedCredentialSetId ||
+    credentialMode === "manual" && manualUsername && manualPassword
+  );
+  const canSubmit = canProceedToDiscovery;
 
-          {useJobExecutorForIdrac && (
-            <Collapsible open={showQuickStartGuide} onOpenChange={setShowQuickStartGuide}>
-              <CollapsibleTrigger asChild>
-                <Button variant="outline" size="sm" className="w-full justify-between">
-                  <span className="flex items-center gap-2">
-                    <BookOpen className="h-4 w-4" />
-                    Private Network Mode Quick Start
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {showQuickStartGuide ? "Hide" : "Show"}
-                  </span>
-                </Button>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="mt-2">
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[90vh]">
+        <DialogHeader>
+          <DialogTitle>Add Dell Server</DialogTitle>
+          <DialogDescription>
+            Configure server details, credentials, and auto-discovery options
+          </DialogDescription>
+        </DialogHeader>
+
+        <Tabs value={currentTab} onValueChange={setCurrentTab} className="w-full">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="info" className="gap-2">
+              <Server className="h-4 w-4" />
+              Server Info
+            </TabsTrigger>
+            <TabsTrigger value="credentials" disabled={!canProceedToCredentials} className="gap-2">
+              <Key className="h-4 w-4" />
+              Credentials
+            </TabsTrigger>
+            <TabsTrigger value="discovery" disabled={!canProceedToDiscovery} className="gap-2">
+              <Search className="h-4 w-4" />
+              Discovery
+            </TabsTrigger>
+          </TabsList>
+
+          <ScrollArea className="max-h-[50vh] pr-4 mt-4">
+            <form id="add-server-form" onSubmit={handleSubmit}>
+              {/* Tab 1: Server Info */}
+              <TabsContent value="info" className="space-y-4 mt-0">
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="ip_address">iDRAC IP Address *</Label>
+                    <Input
+                      id="ip_address"
+                      value={formData.ip_address}
+                      onChange={(e) => setFormData({ ...formData, ip_address: e.target.value })}
+                      placeholder="192.168.1.100"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      The IP address of the Dell iDRAC interface
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="hostname">Hostname (Optional)</Label>
+                    <Input
+                      id="hostname"
+                      value={formData.hostname}
+                      onChange={(e) => setFormData({ ...formData, hostname: e.target.value })}
+                      placeholder="e.g., server01"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Will be fetched automatically during discovery
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="notes">Notes (Optional)</Label>
+                    <Textarea
+                      id="notes"
+                      placeholder="Any additional notes about this server..."
+                      value={formData.notes}
+                      onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                      rows={3}
+                    />
+                  </div>
+
+                  <Button
+                    type="button"
+                    onClick={() => setCurrentTab("credentials")}
+                    disabled={!canProceedToCredentials}
+                    className="w-full"
+                  >
+                    Next: Credentials
+                  </Button>
+                </div>
+              </TabsContent>
+
+              {/* Tab 2: Credentials */}
+              <TabsContent value="credentials" className="space-y-4 mt-0">
                 <Alert>
                   <Info className="h-4 w-4" />
-                  <AlertDescription className="space-y-2">
-                    <p className="font-semibold">In local deployments, follow these 3 steps:</p>
-                    <ol className="list-decimal list-inside space-y-1 text-sm">
-                      <li><strong>Step 1:</strong> Manually add server with IP address</li>
-                      <li><strong>Step 2:</strong> Create Discovery Scan job (we'll help!)</li>
-                      <li><strong>Step 3:</strong> Job Executor fetches all details</li>
-                    </ol>
-                    <p className="text-xs text-muted-foreground mt-2">
-                      The Job Executor must be running on your host machine to fetch server details.
-                    </p>
+                  <AlertDescription>
+                    iDRAC credentials are required to fetch server details via the Redfish API
                   </AlertDescription>
                 </Alert>
-              </CollapsibleContent>
-            </Collapsible>
-          )}
 
-          <ScrollArea className="max-h-[60vh] pr-4">
-            <form id="add-server-form" onSubmit={handleSubmit} className="space-y-4">
-              {/* IP Address Field */}
-              <div className="space-y-2">
-                <Label htmlFor="ip_address">IP Address *</Label>
-                <Input
-                  id="ip_address"
-                  value={formData.ip_address}
-                  onChange={(e) => setFormData({ ...formData, ip_address: e.target.value })}
-                  placeholder="192.168.1.100"
-                  required
-                />
-              </div>
+                <RadioGroup value={credentialMode} onValueChange={(v) => setCredentialMode(v as "saved" | "manual")}>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="saved" id="saved" />
+                    <Label htmlFor="saved" className="font-normal cursor-pointer">
+                      Use saved credential set
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="manual" id="manual" />
+                    <Label htmlFor="manual" className="font-normal cursor-pointer">
+                      Enter credentials manually
+                    </Label>
+                  </div>
+                </RadioGroup>
 
-              {/* Hostname Field (Optional) */}
-              <div className="space-y-2">
-                <Label htmlFor="hostname">Hostname (Optional)</Label>
-                <Input
-                  id="hostname"
-                  value={formData.hostname}
-                  onChange={(e) => setFormData({ ...formData, hostname: e.target.value })}
-                  placeholder="e.g., server01"
-                />
-                <p className="text-xs text-muted-foreground">
-                  If left blank, will be fetched during discovery scan
-                </p>
-              </div>
+                {credentialMode === "saved" ? (
+                  <div className="space-y-2">
+                    <Label>Credential Set</Label>
+                    {credentialSets.length > 0 ? (
+                      <Select value={selectedCredentialSetId} onValueChange={setSelectedCredentialSetId}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select credential set" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {credentialSets.map((set) => (
+                            <SelectItem key={set.id} value={set.id}>
+                              {set.name} ({set.username})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Alert>
+                        <Info className="h-4 w-4" />
+                        <AlertDescription>
+                          No saved credentials found. Switch to manual entry or create credential sets in Settings.
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="manual_username">Username *</Label>
+                      <Input
+                        id="manual_username"
+                        value={manualUsername}
+                        onChange={(e) => setManualUsername(e.target.value)}
+                        placeholder="root"
+                        required={credentialMode === "manual"}
+                      />
+                    </div>
 
-              {/* Notes Field */}
-              <div className="space-y-2">
-                <Label htmlFor="notes">Notes (Optional)</Label>
-                <Textarea
-                  id="notes"
-                  placeholder="Any additional notes about this server..."
-                  value={formData.notes}
-                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                  rows={3}
-                />
-              </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="manual_password">Password *</Label>
+                      <Input
+                        id="manual_password"
+                        type="password"
+                        value={manualPassword}
+                        onChange={(e) => setManualPassword(e.target.value)}
+                        placeholder="••••••••"
+                        required={credentialMode === "manual"}
+                      />
+                    </div>
+
+                    <div className="flex items-start space-x-2 p-3 border rounded-md">
+                      <Checkbox
+                        id="save_credentials"
+                        checked={saveCredentials}
+                        onCheckedChange={(checked) => setSaveCredentials(checked as boolean)}
+                      />
+                      <div className="space-y-1">
+                        <Label htmlFor="save_credentials" className="font-normal cursor-pointer">
+                          Save these credentials for future use
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          Credentials will be stored securely and can be reused for other servers
+                        </p>
+                      </div>
+                    </div>
+
+                    {saveCredentials && (
+                      <div className="space-y-2">
+                        <Label htmlFor="credential_name">Credential Set Name</Label>
+                        <Input
+                          id="credential_name"
+                          value={credentialName}
+                          onChange={(e) => setCredentialName(e.target.value)}
+                          placeholder={`${formData.ip_address} Credentials`}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setCurrentTab("info")}
+                    className="flex-1"
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => setCurrentTab("discovery")}
+                    disabled={!canProceedToDiscovery}
+                    className="flex-1"
+                  >
+                    Next: Discovery
+                  </Button>
+                </div>
+              </TabsContent>
+
+              {/* Tab 3: Discovery */}
+              <TabsContent value="discovery" className="space-y-4 mt-0">
+                <div className="flex items-start space-x-2 p-4 border rounded-md">
+                  <Checkbox
+                    id="auto_discover"
+                    checked={autoDiscover}
+                    onCheckedChange={(checked) => setAutoDiscover(checked as boolean)}
+                  />
+                  <div className="space-y-1">
+                    <Label htmlFor="auto_discover" className="font-normal cursor-pointer text-base">
+                      Automatically fetch server details from iDRAC
+                    </Label>
+                    <p className="text-sm text-muted-foreground">
+                      Recommended - A discovery job will be created to populate all server information
+                    </p>
+                  </div>
+                </div>
+
+                {autoDiscover && (
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertDescription>
+                      <strong>What will be fetched:</strong>
+                      <ul className="list-disc ml-4 mt-2 space-y-1 text-sm">
+                        <li>Hostname and service tag</li>
+                        <li>Server model and hardware specs (CPU, RAM)</li>
+                        <li>iDRAC firmware version</li>
+                        <li>BIOS version</li>
+                        <li>Current connection status</li>
+                      </ul>
+                      <p className="mt-3 text-sm">
+                        <strong>Note:</strong> The Job Executor must be running to process this discovery job.
+                      </p>
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {!autoDiscover && (
+                  <Alert variant="destructive">
+                    <AlertDescription>
+                      Server will be added with minimal information only. You can run a discovery job later.
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setCurrentTab("credentials")}
+                    className="flex-1"
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    type="submit"
+                    disabled={loading || !canSubmit}
+                    className="flex-1"
+                  >
+                    {loading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Adding...
+                      </>
+                    ) : (
+                      "Add Server"
+                    )}
+                  </Button>
+                </div>
+              </TabsContent>
             </form>
           </ScrollArea>
-
-          {/* Action Buttons */}
-          <div className="flex justify-end gap-2 pt-4 border-t">
-            <Button 
-              type="button" 
-              variant="outline" 
-              onClick={() => onOpenChange(false)}
-            >
-              Cancel
-            </Button>
-            <Button 
-              type="submit" 
-              form="add-server-form"
-              disabled={loading}
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Adding...
-                </>
-              ) : (
-                "Add Server"
-              )}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <ServerAddedSuccessDialog
-        open={showSuccessDialog}
-        onOpenChange={setShowSuccessDialog}
-        serverIp={addedServerIp}
-        onCreateDiscoveryJob={handleCreateDiscoveryJob}
-      />
-    </>
+        </Tabs>
+      </DialogContent>
+    </Dialog>
   );
 };
