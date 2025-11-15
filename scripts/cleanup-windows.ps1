@@ -63,6 +63,26 @@ try {
     Write-Host "[WARN] Failed to remove service: $($_.Exception.Message)" -ForegroundColor Yellow
 }
 
+# Step 2b: Stop Job Executor service
+Write-Host "[STEP 2b/7] Stopping Job Executor service..." -ForegroundColor Yellow
+try {
+    $jobExecutorService = Get-Service -Name "DellServerManagerJobExecutor" -ErrorAction SilentlyContinue
+    if ($jobExecutorService) {
+        if (Get-Command nssm -ErrorAction SilentlyContinue) {
+            nssm stop DellServerManagerJobExecutor 2>&1 | Out-Null
+            Start-Sleep -Seconds 2
+            nssm remove DellServerManagerJobExecutor confirm 2>&1 | Out-Null
+            Write-Host "[OK] Job Executor service stopped and removed" -ForegroundColor Green
+        } else {
+            Write-Host "[SKIP] NSSM not found, Job Executor service may need manual removal" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "[OK] No Job Executor service found to remove" -ForegroundColor Green
+    }
+} catch {
+    Write-Host "[WARN] Failed to remove Job Executor service: $($_.Exception.Message)" -ForegroundColor Yellow
+}
+
 # Step 3: Stop and remove Docker containers
 Write-Host "[STEP 3/7] Cleaning up Docker containers..." -ForegroundColor Yellow
 

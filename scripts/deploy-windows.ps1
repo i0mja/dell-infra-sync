@@ -669,6 +669,50 @@ nssm set DellServerManager AppStderr "$AppPath\service-error.log"
 # Start service
 nssm start DellServerManager
 
+# Step 8b: Setup Job Executor Service
+Write-Host "[CONFIG] Setting up Job Executor service..." -ForegroundColor Yellow
+
+# Install Python if not present
+if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+    Write-Host "[ERROR] Python 3 is required but not installed" -ForegroundColor Red
+    Write-Host "[INFO] Install Python 3.11+ from https://www.python.org/downloads/" -ForegroundColor Yellow
+    exit 1
+}
+
+# Install Python dependencies
+Push-Location $AppPath
+pip install -r requirements.txt --quiet
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[WARN] Some Python packages may have failed to install" -ForegroundColor Yellow
+}
+Pop-Location
+
+# Create Job Executor service with NSSM
+$PythonPath = (Get-Command python).Source
+$JobExecutorScript = Join-Path $AppPath "job-executor.py"
+
+nssm install DellServerManagerJobExecutor $PythonPath $JobExecutorScript
+nssm set DellServerManagerJobExecutor AppDirectory $AppPath
+nssm set DellServerManagerJobExecutor DisplayName "Dell Server Manager - Job Executor"
+nssm set DellServerManagerJobExecutor Description "Processes iDRAC and vCenter jobs for Dell Server Manager"
+nssm set DellServerManagerJobExecutor Start SERVICE_AUTO_START
+
+# Set environment variables for Job Executor
+if ($DeployMode -eq "1") {
+    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "SERVICE_ROLE_KEY=$ServiceRoleKey" "DSM_URL=http://127.0.0.1:54321"
+} else {
+    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "SERVICE_ROLE_KEY=$ServiceRoleKey" "DSM_URL=$SupabaseUrl"
+}
+
+# Log files
+nssm set DellServerManagerJobExecutor AppStdout "$AppPath\job-executor-output.log"
+nssm set DellServerManagerJobExecutor AppStderr "$AppPath\job-executor-error.log"
+
+# Start Job Executor service
+nssm start DellServerManagerJobExecutor
+
+Write-Host "[OK] Job Executor service created and started" -ForegroundColor Green
+
 # Wait for service to start and verify port 3000 is listening
 Write-Host "[CHECK] Waiting for service to start on port 3000..." -ForegroundColor Yellow
 $maxWaitSeconds = 30
