@@ -15,6 +15,7 @@ import { useTheme } from "next-themes";
 import { Activity, AlertCircle, Bell, Briefcase, CheckCircle2, ChevronDown, ChevronRight, Copy, Database, FileText, Globe, Info, Loader2, Mail, MessageSquare, Monitor, Moon, Network, Palette, Plus, RefreshCw, Save, Server, Settings as SettingsIcon, Shield, Sun, Terminal, Users, X, XCircle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { DiagnosticsDialog } from "@/components/settings/DiagnosticsDialog";
+import { JobExecutorDiagnostics } from "@/components/settings/JobExecutorDiagnostics";
 import { useSearchParams } from "react-router-dom";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -2842,6 +2843,22 @@ export default function Settings() {
                       </ul>
                     </AlertDescription>
                   </Alert>
+                </CardContent>
+              </Card>
+
+              {/* Job Executor Diagnostics */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Terminal className="h-5 w-5" />
+                    Job Executor Diagnostics
+                  </CardTitle>
+                  <CardDescription>
+                    Test Job Executor connectivity, credential access, and iDRAC reachability
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <JobExecutorDiagnostics />
                 </CardContent>
               </Card>
 
