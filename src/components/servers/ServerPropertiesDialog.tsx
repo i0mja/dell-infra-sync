@@ -11,6 +11,11 @@ interface Server {
   hostname: string | null;
   model: string | null;
   service_tag: string | null;
+  manager_mac_address: string | null;
+  product_name: string | null;
+  manufacturer: string | null;
+  redfish_version: string | null;
+  supported_endpoints: any | null;
   idrac_firmware: string | null;
   bios_version: string | null;
   cpu_count: number | null;
@@ -97,7 +102,7 @@ export function ServerPropertiesDialog({
         </DialogHeader>
 
         <Tabs defaultValue="hardware" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="hardware">
               <Cpu className="h-4 w-4 mr-2" />
               Hardware
@@ -109,6 +114,10 @@ export function ServerPropertiesDialog({
             <TabsTrigger value="network">
               <Network className="h-4 w-4 mr-2" />
               Network
+            </TabsTrigger>
+            <TabsTrigger value="capabilities">
+              <Wifi className="h-4 w-4 mr-2" />
+              Capabilities
             </TabsTrigger>
           </TabsList>
 
@@ -210,6 +219,51 @@ export function ServerPropertiesDialog({
                 <p className="text-sm text-red-600 dark:text-red-400 font-mono">{server.connection_error}</p>
               </div>
             )}
+          </TabsContent>
+
+          <TabsContent value="capabilities" className="space-y-4 mt-4">
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold">Product Information</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <p className="text-sm text-muted-foreground">Product</p>
+                    <p className="font-medium text-sm">{server.product_name || "N/A"}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm text-muted-foreground">Manufacturer</p>
+                    <p className="font-medium text-sm">{server.manufacturer || "N/A"}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm text-muted-foreground">MAC Address</p>
+                    <p className="font-medium text-sm font-mono">{server.manager_mac_address || "N/A"}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm text-muted-foreground">Redfish Version</p>
+                    <p className="font-medium text-sm">{server.redfish_version || "N/A"}</p>
+                  </div>
+                </div>
+              </div>
+
+              {server.supported_endpoints && (
+                <div className="space-y-2 pt-4 border-t">
+                  <h3 className="text-sm font-semibold">Available Endpoints</h3>
+                  <div className="space-y-2">
+                    {Object.entries(server.supported_endpoints).map(([key, value]) => (
+                      value && (
+                        <div key={key} className="flex items-start justify-between gap-2 text-sm">
+                          <span className="text-muted-foreground capitalize min-w-[100px]">{key}</span>
+                          <code className="text-xs bg-muted px-2 py-1 rounded flex-1 break-all">{value as string}</code>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                  {!Object.values(server.supported_endpoints).some(v => v) && (
+                    <p className="text-sm text-muted-foreground italic">No endpoint information available</p>
+                  )}
+                </div>
+              )}
+            </div>
           </TabsContent>
         </Tabs>
 

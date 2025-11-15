@@ -41,6 +41,11 @@ interface Server {
   hostname: string | null;
   model: string | null;
   service_tag: string | null;
+  manager_mac_address: string | null;
+  product_name: string | null;
+  manufacturer: string | null;
+  redfish_version: string | null;
+  supported_endpoints: any | null;
   idrac_firmware: string | null;
   bios_version: string | null;
   cpu_count: number | null;

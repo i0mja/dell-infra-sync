@@ -677,11 +677,16 @@ export type Database = {
           last_connection_test: string | null
           last_openmanage_sync: string | null
           last_seen: string | null
+          manager_mac_address: string | null
+          manufacturer: string | null
           memory_gb: number | null
           model: string | null
           notes: string | null
           openmanage_device_id: string | null
+          product_name: string | null
+          redfish_version: string | null
           service_tag: string | null
+          supported_endpoints: Json | null
           updated_at: string
           vcenter_host_id: string | null
         }
@@ -705,11 +710,16 @@ export type Database = {
           last_connection_test?: string | null
           last_openmanage_sync?: string | null
           last_seen?: string | null
+          manager_mac_address?: string | null
+          manufacturer?: string | null
           memory_gb?: number | null
           model?: string | null
           notes?: string | null
           openmanage_device_id?: string | null
+          product_name?: string | null
+          redfish_version?: string | null
           service_tag?: string | null
+          supported_endpoints?: Json | null
           updated_at?: string
           vcenter_host_id?: string | null
         }
@@ -733,11 +743,16 @@ export type Database = {
           last_connection_test?: string | null
           last_openmanage_sync?: string | null
           last_seen?: string | null
+          manager_mac_address?: string | null
+          manufacturer?: string | null
           memory_gb?: number | null
           model?: string | null
           notes?: string | null
           openmanage_device_id?: string | null
+          product_name?: string | null
+          redfish_version?: string | null
           service_tag?: string | null
+          supported_endpoints?: Json | null
           updated_at?: string
           vcenter_host_id?: string | null
         }

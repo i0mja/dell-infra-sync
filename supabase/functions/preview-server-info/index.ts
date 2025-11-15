@@ -105,10 +105,64 @@ Deno.serve(async (req) => {
     idracUsername = idracUsername || 'root';
     idracPassword = idracPassword || 'calvin';
 
-    // Query iDRAC Redfish API for system info
-    const systemUrl = `https://${ip_address}/redfish/v1/Systems/System.Embedded.1`;
+    // Query iDRAC Redfish API for root service info first
+    const rootUrl = `https://${ip_address}/redfish/v1/`;
     const authHeader = `Basic ${btoa(`${idracUsername}:${idracPassword}`)}`;
 
+    let rootData;
+    let rootResponseTime = 0;
+    const rootStartTime = Date.now();
+    try {
+      const response = await fetch(rootUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': authHeader,
+          'Accept': 'application/json',
+        },
+        signal: AbortSignal.timeout(10000),
+        // @ts-ignore - Deno-specific option to bypass SSL verification for self-signed certs
+        insecure: true,
+      });
+
+      rootResponseTime = Date.now() - rootStartTime;
+      const responseData = response.ok ? await response.json() : null;
+
+      // Log the root command
+      await logIdracCommand({
+        supabase: supabaseClient,
+        serverId: undefined,
+        commandType: 'GET',
+        endpoint: '/redfish/v1/',
+        fullUrl: rootUrl,
+        requestHeaders: { 'Accept': 'application/json' },
+        statusCode: response.status,
+        responseTimeMs: rootResponseTime,
+        responseBody: responseData,
+        success: response.ok,
+        errorMessage: !response.ok ? `iDRAC responded with status ${response.status}` : undefined,
+        initiatedBy: user.id,
+        source: 'edge_function',
+      });
+
+      if (!response.ok) {
+        throw new Error(`iDRAC responded with status ${response.status}`);
+      }
+
+      rootData = responseData;
+    } catch (error: any) {
+      console.error('[ERROR] Failed to fetch root service info:', error);
+      return new Response(JSON.stringify({ 
+        success: false,
+        error: 'Failed to connect to iDRAC',
+        details: error.message 
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Query system info
+    const systemUrl = `https://${ip_address}/redfish/v1/Systems/System.Embedded.1`;
     let systemData;
     let systemResponseTime = 0;
     const systemStartTime = Date.now();
@@ -206,16 +260,28 @@ Deno.serve(async (req) => {
       // Continue without firmware info
     }
 
-    // Extract server details
+    // Extract comprehensive server details
     const serverInfo = {
       success: true,
       hostname: systemData?.HostName || null,
       model: systemData?.Model || null,
-      service_tag: systemData?.SKU || null,
+      service_tag: rootData?.Oem?.Dell?.ServiceTag || systemData?.SKU || null,
+      manager_mac_address: rootData?.Oem?.Dell?.ManagerMACAddress || null,
+      product_name: rootData?.Product || null,
+      manufacturer: 'Dell',
+      redfish_version: rootData?.RedfishVersion || null,
       idrac_firmware: idracFirmware,
       bios_version: systemData?.BiosVersion || null,
       cpu_count: systemData?.ProcessorSummary?.Count || null,
       memory_gb: systemData?.MemorySummary?.TotalSystemMemoryGiB || null,
+      supported_endpoints: {
+        systems: rootData?.Systems?.['@odata.id'] || null,
+        chassis: rootData?.Chassis?.['@odata.id'] || null,
+        managers: rootData?.Managers?.['@odata.id'] || null,
+        updateService: rootData?.UpdateService?.['@odata.id'] || null,
+        taskService: rootData?.Tasks?.['@odata.id'] || null,
+        eventService: rootData?.EventService?.['@odata.id'] || null,
+      },
       response_time: systemResponseTime,
     };
 
