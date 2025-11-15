@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Activity, ChevronDown, ChevronRight, Search, RefreshCw, Filter } from "lucide-react";
+import { Activity, ChevronDown, ChevronRight, Search, RefreshCw, Filter, Wifi, WifiOff, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { CommandDetailDialog } from "@/components/activity/CommandDetailDialog";
 import { format } from "date-fns";
@@ -47,6 +47,11 @@ export default function ActivityMonitor() {
   const [timeRangeFilter, setTimeRangeFilter] = useState<string>("24h");
   const [searchTerm, setSearchTerm] = useState("");
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+
+  // Connection state
+  const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+  const [lastEventAt, setLastEventAt] = useState<Date>(new Date());
+  const [isRunningTest, setIsRunningTest] = useState(false);
 
   // Detect deployment mode
   const isLocalMode = import.meta.env.VITE_SUPABASE_URL?.includes('localhost') || 
@@ -127,7 +132,7 @@ export default function ActivityMonitor() {
     }
   }, [isError, error]);
 
-  // Set up realtime subscription
+  // Set up realtime subscription with connection tracking
   useEffect(() => {
     const channel = supabase
       .channel('idrac-commands-realtime')
@@ -139,6 +144,7 @@ export default function ActivityMonitor() {
           table: 'idrac_commands'
         },
         async (payload) => {
+          setLastEventAt(new Date());
           // Fetch the full record with server info
           const { data } = await supabase
             .from('idrac_commands')
@@ -155,12 +161,53 @@ export default function ActivityMonitor() {
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          setRealtimeStatus('connected');
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setRealtimeStatus('disconnected');
+          toast.error('Realtime connection lost, using polling fallback');
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  // Polling fallback - refetch if realtime is disconnected or stale
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const timeSinceLastEvent = Date.now() - lastEventAt.getTime();
+      const shouldPoll = realtimeStatus === 'disconnected' || timeSinceLastEvent > 60000;
+      
+      if (shouldPoll) {
+        refetch();
+      }
+    }, 15000); // Check every 15 seconds
+
+    return () => clearInterval(interval);
+  }, [realtimeStatus, lastEventAt, refetch]);
+
+  // Run live test to validate activity logging
+  const runLiveTest = async () => {
+    setIsRunningTest(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('validate-network-prerequisites');
+      
+      if (error) throw error;
+      
+      toast.success('Live test completed', {
+        description: 'Check for new validation logs in the activity feed'
+      });
+    } catch (error) {
+      toast.error('Live test failed', {
+        description: error instanceof Error ? error.message : 'Unknown error'
+      });
+    } finally {
+      setIsRunningTest(false);
+    }
+  };
 
   const filteredCommands = commands.filter(cmd => {
     if (!searchTerm) return true;
@@ -187,12 +234,14 @@ export default function ActivityMonitor() {
       POST: 'bg-green-600',
       PATCH: 'bg-yellow-600',
       DELETE: 'bg-red-600',
+      network_validation: 'bg-purple-600',
       network_validation_server: 'bg-purple-600',
       network_validation_vcenter: 'bg-purple-600',
       network_validation_dns: 'bg-purple-600',
     };
     
     const labels: Record<string, string> = {
+      network_validation: 'NET:TEST',
       network_validation_server: 'NET:SERVER',
       network_validation_vcenter: 'NET:VCENTER',
       network_validation_dns: 'NET:DNS',
@@ -214,10 +263,47 @@ export default function ActivityMonitor() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          {/* Connection Status Indicator */}
+          <div className="flex items-center gap-2">
+            {realtimeStatus === 'connected' && (
+              <>
+                <Wifi className="h-4 w-4 text-green-600" />
+                <span className="text-xs text-green-600 font-medium">Live</span>
+              </>
+            )}
+            {realtimeStatus === 'connecting' && (
+              <>
+                <Loader2 className="h-4 w-4 text-yellow-600 animate-spin" />
+                <span className="text-xs text-yellow-600 font-medium">Connecting</span>
+              </>
+            )}
+            {realtimeStatus === 'disconnected' && (
+              <>
+                <WifiOff className="h-4 w-4 text-red-600" />
+                <span className="text-xs text-red-600 font-medium">Polling</span>
+              </>
+            )}
+          </div>
+          
           <span className="text-xs text-muted-foreground">
             Last updated: {format(lastRefresh, 'HH:mm:ss')}
           </span>
+          
+          <Button 
+            onClick={runLiveTest} 
+            variant="outline" 
+            size="sm"
+            disabled={isRunningTest}
+          >
+            {isRunningTest ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Activity className="h-4 w-4 mr-2" />
+            )}
+            Run Live Test
+          </Button>
+          
           <Button onClick={() => refetch()} variant="outline" size="sm">
             <RefreshCw className="h-4 w-4 mr-2" />
             Refresh
@@ -266,6 +352,7 @@ export default function ActivityMonitor() {
               <SelectItem value="POST">POST</SelectItem>
               <SelectItem value="PATCH">PATCH</SelectItem>
               <SelectItem value="DELETE">DELETE</SelectItem>
+              <SelectItem value="network_validation">Network: Validation</SelectItem>
               <SelectItem value="network_validation_server">Network: Server Test</SelectItem>
               <SelectItem value="network_validation_vcenter">Network: vCenter Test</SelectItem>
               <SelectItem value="network_validation_dns">Network: DNS Test</SelectItem>
@@ -300,20 +387,45 @@ export default function ActivityMonitor() {
       {/* Commands Table */}
       <Card>
         {filteredCommands.length === 0 ? (
-          <div className="p-12 text-center">
+          <div className="p-12 text-center space-y-4">
             <Activity className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
             <h3 className="text-lg font-semibold mb-2">No Activity Logs Found</h3>
             <p className="text-muted-foreground mb-4">
-              Logs are created when edge functions or Job Executor interact with iDRAC servers.
+              Activity logs are created when iDRAC operations are performed.
             </p>
+            
             {isLocalMode && (
-              <Alert className="max-w-md mx-auto">
-                <AlertDescription>
-                  <strong>Local Mode:</strong> Use the Job Executor for iDRAC operations in local deployments. 
-                  Edge functions running in Docker may have limited network access to local iDRAC IPs.
+              <Alert className="max-w-md mx-auto mb-4">
+                <AlertDescription className="space-y-2">
+                  <div>
+                    <strong>Local Mode Detected:</strong> Activity logs come from the Job Executor in local deployments.
+                  </div>
+                  <div className="text-sm">
+                    If no updates appear, ensure the Job Executor is running. Check status in{' '}
+                    <a href="/settings" className="underline">Settings → Diagnostics</a>.
+                  </div>
                 </AlertDescription>
               </Alert>
             )}
+            
+            <div>
+              <Button onClick={runLiveTest} disabled={isRunningTest}>
+                {isRunningTest ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Running Test...
+                  </>
+                ) : (
+                  <>
+                    <Activity className="h-4 w-4 mr-2" />
+                    Run Live Test
+                  </>
+                )}
+              </Button>
+              <p className="text-xs text-muted-foreground mt-2">
+                Generates a test log entry to verify Activity Monitor is working
+              </p>
+            </div>
           </div>
         ) : (
           <Table>
