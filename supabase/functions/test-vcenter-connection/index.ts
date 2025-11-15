@@ -21,32 +21,38 @@ serve(async (req) => {
   }
 
   try {
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      {
-        global: {
-          headers: { Authorization: req.headers.get('Authorization')! },
-        },
-      }
-    );
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const authHeader = req.headers.get('Authorization') || '';
 
-    const {
-      data: { user },
-    } = await supabaseClient.auth.getUser();
-
-    if (!user) {
-      throw new Error('Not authenticated');
+    // Extract JWT token and decode to get user ID
+    let userId: string;
+    try {
+      const token = authHeader.replace('Bearer ', '');
+      if (!token) throw new Error('No token provided');
+      
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      userId = payload.sub;
+      
+      if (!userId) throw new Error('Invalid token payload');
+    } catch (error) {
+      console.error('Token extraction failed:', error);
+      return new Response(
+        JSON.stringify({ error: 'Not authenticated' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
-    // Check if user is admin
-    const { data: userRole } = await supabaseClient
-      .from('user_roles')
-      .select('role')
-      .eq('user_id', user.id)
-      .single();
+    // Create admin client for role check
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-    if (!userRole || userRole.role !== 'admin') {
+    // Check if user is admin
+    const { data: hasAdminRole } = await supabaseAdmin.rpc('has_role', {
+      _user_id: userId,
+      _role: 'admin'
+    });
+
+    if (!hasAdminRole) {
       throw new Error('Unauthorized: Admin role required');
     }
 
@@ -60,7 +66,7 @@ serve(async (req) => {
     let verify_ssl = requestData.verify_ssl;
 
     if (!host) {
-      const { data: settings, error: settingsError } = await supabaseClient
+      const { data: settings, error: settingsError } = await supabaseAdmin
         .from('vcenter_settings')
         .select('*')
         .single();
@@ -120,7 +126,7 @@ serve(async (req) => {
         }
 
         // Update last connection test timestamp
-        await supabaseClient
+        await supabaseAdmin
           .from('vcenter_settings')
           .update({ last_sync: new Date().toISOString() })
           .eq('host', host);

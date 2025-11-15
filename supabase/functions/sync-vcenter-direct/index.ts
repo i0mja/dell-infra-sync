@@ -34,34 +34,38 @@ serve(async (req) => {
   try {
     console.log('vCenter direct sync request received');
 
-    // Initialize Supabase client
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const authHeader = req.headers.get('Authorization') || '';
+
+    // Extract JWT token and decode to get user ID
+    let userId: string;
+    try {
+      const token = authHeader.replace('Bearer ', '');
+      if (!token) throw new Error('No token provided');
+      
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      userId = payload.sub;
+      
+      if (!userId) throw new Error('Invalid token payload');
+    } catch (error) {
+      console.error('Token extraction failed:', error);
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Create admin client
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Verify JWT from authenticated user (admin only)
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      throw new Error('Missing authorization header');
-    }
-
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-    
-    if (authError || !user) {
-      throw new Error('Unauthorized');
-    }
-
     // Check if user has admin role
-    const { data: roles, error: roleError } = await supabase
-      .from('user_roles')
-      .select('role')
-      .eq('user_id', user.id);
+    const { data: hasAdminRole } = await supabase.rpc('has_role', {
+      _user_id: userId,
+      _role: 'admin'
+    });
 
-    if (roleError) throw roleError;
-
-    const isAdmin = roles?.some(r => r.role === 'admin');
-    if (!isAdmin) {
+    if (!hasAdminRole) {
       throw new Error('Insufficient permissions - admin role required');
     }
 
@@ -250,7 +254,7 @@ serve(async (req) => {
 
               // Log the auto-link event
               await supabase.from('audit_logs').insert([{
-                user_id: user.id,
+                user_id: userId,
                 action: 'auto_link_server',
                 details: {
                   vcenter_host: host.name,
@@ -290,7 +294,7 @@ serve(async (req) => {
 
     // Log the sync event
     await supabase.from('audit_logs').insert([{
-      user_id: user.id,
+      user_id: userId,
       action: 'vcenter_direct_sync',
       details: {
         new_hosts: newHosts,
