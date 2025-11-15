@@ -284,18 +284,22 @@ Deno.serve(async (req) => {
 
       const startTime = Date.now();
       try {
-        const vcenterUrl = `https://${vcenterSettings.host}:${vcenterSettings.port}/api`;
+        const vcenterUrl = `https://${vcenterSettings.host}:${vcenterSettings.port}/api/session`;
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 10000);
 
         const response = await fetch(vcenterUrl, {
-          method: 'GET',
+          method: 'POST',
+          headers: {
+            'Authorization': 'Basic ' + btoa(`${vcenterSettings.username}:${vcenterSettings.password}`),
+            'Content-Type': 'application/json',
+          },
           signal: controller.signal,
         });
         clearTimeout(timeoutId);
         const responseTime = Date.now() - startTime;
 
-        results.vcenter.reachable = response.ok || response.status === 401;
+        results.vcenter.reachable = response.ok;
         if (!results.vcenter.reachable) {
           results.vcenter.error = `HTTP ${response.status}`;
           results.overall.criticalFailures.push('vCenter unreachable');
@@ -303,7 +307,7 @@ Deno.serve(async (req) => {
             stepCounter++,
             'vcenter_connectivity',
             vcenterUrl,
-            'GET',
+            'POST',
             'failed',
             responseTime,
             response.status,
@@ -313,7 +317,7 @@ Deno.serve(async (req) => {
           await logIdracCommand({
             supabase: supabaseClient,
             commandType: 'network_validation_vcenter',
-            endpoint: '/api',
+            endpoint: '/api/session',
             fullUrl: vcenterUrl,
             statusCode: response.status,
             responseTimeMs: responseTime,
@@ -327,18 +331,18 @@ Deno.serve(async (req) => {
             stepCounter++,
             'vcenter_connectivity',
             vcenterUrl,
-            'GET',
+            'POST',
             'success',
             responseTime,
             response.status,
-            `vCenter reachable (${response.status === 401 ? 'auth required - expected' : 'OK'})`
+            'vCenter authentication successful'
           );
           
           // Log to Activity Monitor
           await logIdracCommand({
             supabase: supabaseClient,
             commandType: 'network_validation_vcenter',
-            endpoint: '/api',
+            endpoint: '/api/session',
             fullUrl: vcenterUrl,
             statusCode: response.status,
             responseTimeMs: responseTime,
@@ -355,8 +359,8 @@ Deno.serve(async (req) => {
         logStep(
           stepCounter++,
           'vcenter_connectivity',
-          `https://${vcenterSettings.host}:${vcenterSettings.port}/api`,
-          'GET',
+          `https://${vcenterSettings.host}:${vcenterSettings.port}/api/session`,
+          'POST',
           'failed',
           responseTime,
           undefined,
@@ -367,8 +371,8 @@ Deno.serve(async (req) => {
         await logIdracCommand({
           supabase: supabaseClient,
           commandType: 'network_validation_vcenter',
-          endpoint: '/api',
-          fullUrl: `https://${vcenterSettings.host}:${vcenterSettings.port}/api`,
+          endpoint: '/api/session',
+          fullUrl: `https://${vcenterSettings.host}:${vcenterSettings.port}/api/session`,
           responseTimeMs: responseTime,
           success: false,
           errorMessage: errorMsg,
