@@ -72,6 +72,52 @@ Cloud (Dell Server Manager)         Local Network (Your Infrastructure)
    - vCenter credentials
    - iDRAC default credentials
 
+### Troubleshooting Network Connectivity
+
+Before running the Job Executor, verify that the machine where it will run has network access to your iDRACs.
+
+#### Test iDRAC Connectivity Manually
+
+**From PowerShell (Windows):**
+```powershell
+# Basic connectivity test (use curl.exe, not the PowerShell alias)
+curl.exe -k -u "root:password" https://10.207.125.193/redfish/v1/
+
+# Verbose test with full response
+curl.exe -k -v -u "root:password" https://10.207.125.193/redfish/v1/
+
+# Or using Invoke-WebRequest
+$cred = Get-Credential
+Invoke-WebRequest -Uri "https://10.207.125.193/redfish/v1/" -Credential $cred -SkipCertificateCheck
+```
+
+**From Bash (Linux/Mac):**
+```bash
+# Basic connectivity test
+curl -k -u root:password https://10.207.125.193/redfish/v1/
+
+# Verbose test with timing
+time curl -k -v -u root:password https://10.207.125.193/redfish/v1/
+```
+
+**Expected Response:**
+- HTTP status: `200 OK` or `401 Unauthorized` (both indicate reachability)
+- JSON response with `"@odata.id":"/redfish/v1"`
+- Response time: < 2 seconds typical
+
+**If connectivity fails, check:**
+- Network routing to iDRAC subnet (e.g., `ping 10.207.125.193`)
+- Firewall rules allowing port 443
+- iDRAC network configuration (check iDRAC web console)
+- Credentials are correct
+- iDRAC is powered on and responsive
+
+**Why Network Validation Doesn't Work in Cloud Mode:**
+
+The "Test All Prerequisites" button in Settings uses edge functions that run in the cloud. These cannot reach your private iDRAC network (e.g., 10.x.x.x, 192.168.x.x). This is expected and correct behavior for security.
+
+When Job Executor mode is enabled, network validation is skipped in the cloud UI. Use the Job Executor running on your local network for all iDRAC operations.
+
 ### Setup Instructions
 
 #### Step 1: Get Service Role Key

@@ -2929,13 +2929,32 @@ export default function Settings() {
                     />
                   </div>
 
-                  <Button 
-                    onClick={handleValidatePrerequisites}
-                    disabled={validatingPrereqs}
-                    className="w-full"
-                  >
-                    {validatingPrereqs ? "Validating..." : "Test All Prerequisites"}
-                  </Button>
+                  {!useJobExecutorForIdrac ? (
+                    <Button 
+                      onClick={handleValidatePrerequisites}
+                      disabled={validatingPrereqs}
+                      className="w-full"
+                    >
+                      {validatingPrereqs ? "Validating..." : "Test All Prerequisites"}
+                    </Button>
+                  ) : (
+                    <Alert>
+                      <Info className="h-4 w-4" />
+                      <AlertDescription>
+                        <strong>Job Executor Mode Enabled</strong>
+                        <br />
+                        Network validation requires edge functions to reach iDRACs directly, which cannot access private networks.
+                        <br />
+                        <br />
+                        <strong>To test iDRAC connectivity:</strong>
+                        <ol className="list-decimal ml-4 mt-2 space-y-1">
+                          <li>Run the Job Executor on a machine with network access to iDRACs</li>
+                          <li>Use a discovery job to test multiple servers automatically</li>
+                          <li>Check the Activity Monitor to verify successful iDRAC commands</li>
+                        </ol>
+                      </AlertDescription>
+                    </Alert>
+                  )}
 
                   {prereqResults && (
                     <div className="space-y-3 p-4 border rounded-lg">
