@@ -216,7 +216,7 @@ export async function generateDiagnosticsReport(): Promise<DiagnosticsReport> {
 
   // 3. Test edge functions
   const edgeFunctions = [
-    'test-idrac-connection',
+    // 'test-idrac-connection', // REMOVED - now using Job Executor
     'refresh-server-info',
     'preview-server-info',
     'network-diagnostics',

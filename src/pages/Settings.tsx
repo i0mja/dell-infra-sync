@@ -203,39 +203,103 @@ export default function Settings() {
     const server = servers.find(s => s.id === serverId);
     if (!server) return;
 
+    // Check if server has credentials assigned
+    if (!server.credential_set_id) {
+      toast({
+        title: "Credentials Required",
+        description: "Assign credentials to this server first",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setTestingServers(new Map(testingServers.set(serverId, true)));
     
     try {
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+
       const startTime = Date.now();
-      const { data: result, error: invokeError } = await supabase.functions.invoke('test-idrac-connection', {
-        body: {
-          ip_address: server.ip_address,
-          username: server.idrac_username,
-          password: server.idrac_password_encrypted,
-        },
-      });
+      
+      // Create test_credentials job
+      const { data: job, error: jobError } = await supabase
+        .from('jobs')
+        .insert([{
+          job_type: 'test_credentials',
+          target_scope: { ip_address: server.ip_address },
+          credential_set_ids: [server.credential_set_id],
+          created_by: user.id,
+          status: 'pending'
+        }])
+        .select()
+        .single();
 
-      if (invokeError) throw invokeError;
+      if (jobError) throw jobError;
 
-      const responseTime = Date.now() - startTime;
+      // Poll job status
+      const pollInterval = setInterval(async () => {
+        const { data: updatedJob } = await supabase
+          .from('jobs')
+          .select('*')
+          .eq('id', job.id)
+          .single();
 
-      const testResult = {
-        success: result.success,
-        response_time_ms: result.response_time_ms || responseTime,
-        last_tested: new Date().toISOString(),
-        error: result.error,
-        version: result.idrac_version,
-      };
+        if (updatedJob?.status === 'completed') {
+          clearInterval(pollInterval);
+          const responseTime = Date.now() - startTime;
+          const details = updatedJob.details as any;
+          
+          const testResult = {
+            success: true,
+            response_time_ms: details?.response_time_ms || responseTime,
+            last_tested: new Date().toISOString(),
+            error: undefined,
+            version: details?.idrac_version,
+          };
 
-      setServerTestResults(new Map(serverTestResults.set(serverId, testResult)));
+          setServerTestResults(new Map(serverTestResults.set(serverId, testResult)));
+          setTestingServers(new Map(testingServers.set(serverId, false)));
 
-      toast({
-        title: testResult.success ? "Connection Successful" : "Connection Failed",
-        description: testResult.success 
-          ? `${server.hostname || server.ip_address} is online (${testResult.response_time_ms}ms)`
-          : testResult.error || "Failed to connect to iDRAC",
-        variant: testResult.success ? "default" : "destructive",
-      });
+          toast({
+            title: "Connection Successful",
+            description: `${server.hostname || server.ip_address} is online (${testResult.response_time_ms}ms)`,
+          });
+        } else if (updatedJob?.status === 'failed') {
+          clearInterval(pollInterval);
+          const details = updatedJob.details as any;
+          
+          const testResult = {
+            success: false,
+            response_time_ms: 0,
+            last_tested: new Date().toISOString(),
+            error: details?.message || 'Connection failed',
+          };
+          
+          setServerTestResults(new Map(serverTestResults.set(serverId, testResult)));
+          setTestingServers(new Map(testingServers.set(serverId, false)));
+
+          toast({
+            title: "Connection Failed",
+            description: testResult.error,
+            variant: "destructive",
+          });
+        }
+      }, 2000);
+
+      // Timeout after 30 seconds
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        if (testingServers.get(serverId)) {
+          setTestingServers(new Map(testingServers.set(serverId, false)));
+          toast({
+            title: "Test Timed Out",
+            description: "Job Executor may not be running",
+            variant: "destructive",
+          });
+        }
+      }, 30000);
+
     } catch (error: any) {
       const result = {
         success: false,
@@ -244,14 +308,13 @@ export default function Settings() {
         error: error.message,
       };
       setServerTestResults(new Map(serverTestResults.set(serverId, result)));
+      setTestingServers(new Map(testingServers.set(serverId, false)));
       
       toast({
         title: "Connection Failed",
         description: error.message,
         variant: "destructive",
       });
-    } finally {
-      setTestingServers(new Map(testingServers.set(serverId, false)));
     }
   };
 
@@ -1493,33 +1556,72 @@ export default function Settings() {
     }
 
     setTestingCredential(credentialSet.id);
+    
     try {
-      const { data: result, error: invokeError } = await supabase.functions.invoke('test-idrac-connection', {
-        body: {
-          ip_address: testIp,
-          username: credentialSet.username,
-          password: credentialSet.password_encrypted,
-        },
-      });
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
 
-      if (invokeError) throw invokeError;
+      // Create test_credentials job
+      const { data: job, error: jobError } = await supabase
+        .from('jobs')
+        .insert([{
+          job_type: 'test_credentials',
+          target_scope: { ip_address: testIp },
+          credential_set_ids: [credentialSet.id],
+          created_by: user.id,
+          status: 'pending'
+        }])
+        .select()
+        .single();
 
-      if (result.success) {
-        toast({
-          title: "Connection Successful",
-          description: `Connected to ${testIp} successfully`,
-        });
-      } else {
-        throw new Error(result.error || 'Connection failed');
-      }
+      if (jobError) throw jobError;
+
+      // Poll job status
+      const pollInterval = setInterval(async () => {
+        const { data: updatedJob } = await supabase
+          .from('jobs')
+          .select('*')
+          .eq('id', job.id)
+          .single();
+
+        if (updatedJob?.status === 'completed') {
+          clearInterval(pollInterval);
+          setTestingCredential(null);
+          
+          toast({
+            title: "Connection Successful",
+            description: `Connected to ${testIp} successfully`,
+          });
+        } else if (updatedJob?.status === 'failed') {
+          clearInterval(pollInterval);
+          setTestingCredential(null);
+          
+          const details = updatedJob.details as any;
+          throw new Error(details?.message || 'Connection failed');
+        }
+      }, 2000);
+
+      // Timeout after 30 seconds
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        if (testingCredential === credentialSet.id) {
+          setTestingCredential(null);
+          toast({
+            title: "Test Timed Out",
+            description: "Job Executor may not be running - check Activity Monitor",
+            variant: "destructive",
+          });
+        }
+      }, 30000);
+
     } catch (error: any) {
+      setTestingCredential(null);
       toast({
         title: "Connection Failed",
         description: error.message || "Failed to connect with these credentials",
         variant: "destructive",
       });
-    } finally {
-      setTestingCredential(null);
     }
   };
 
