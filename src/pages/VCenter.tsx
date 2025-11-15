@@ -10,6 +10,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { InfoIcon, Loader2 } from "lucide-react";
 import { VCenterSettingsDialog } from "@/components/vcenter/VCenterSettingsDialog";
+import { useAuth } from "@/hooks/useAuth";
+import { useNavigate } from "react-router-dom";
 
 interface VCenterHost {
   id: string;
@@ -31,12 +33,18 @@ interface ClusterGroup {
 }
 
 const VCenter = () => {
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const [hosts, setHosts] = useState<VCenterHost[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { toast } = useToast();
+  
+  // Detect local mode
+  const isLocalMode = import.meta.env.VITE_SUPABASE_URL?.includes('127.0.0.1') || 
+                      import.meta.env.VITE_SUPABASE_URL?.includes('localhost');
 
   const fetchHosts = async () => {
     try {
@@ -110,21 +118,60 @@ const VCenter = () => {
   const unlinkedHosts = totalHosts - linkedHosts;
 
   const handleSyncNow = async () => {
+    if (!user) {
+      toast({
+        title: "Authentication required",
+        description: "You must be logged in to sync vCenter",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setSyncing(true);
     try {
-      const { data: result, error: invokeError } = await supabase.functions.invoke('sync-vcenter-direct');
+      // In local mode, vCenter is on private network - use Job Executor
+      if (isLocalMode) {
+        const { data: job, error: jobError } = await supabase
+          .from('jobs')
+          .insert({
+            job_type: 'vcenter_sync',
+            created_by: user.id,
+            status: 'pending',
+            details: {
+              description: 'vCenter sync job created from UI',
+              sync_type: 'full'
+            }
+          })
+          .select()
+          .single();
 
-      if (invokeError) throw invokeError;
+        if (jobError) throw jobError;
 
-      if (result.success) {
         toast({
-          title: "Sync completed",
-          description: `New: ${result.hosts_added || 0}, Updated: ${result.hosts_updated || 0}, Linked: ${result.linked || 0}`,
+          title: "Sync job created",
+          description: "vCenter sync job has been queued. Monitor progress in Jobs page.",
+          action: (
+            <Button variant="outline" size="sm" onClick={() => navigate('/jobs')}>
+              View Jobs
+            </Button>
+          ),
         });
-        fetchHosts();
       } else {
-        const errorMsg = result.errors?.length > 0 ? result.errors[0] : "Sync failed";
-        throw new Error(errorMsg);
+        // Cloud mode - edge function can reach public vCenter
+        const { data: result, error: invokeError } = await supabase.functions.invoke('sync-vcenter-direct');
+
+        if (invokeError) throw invokeError;
+
+        if (result.success) {
+          toast({
+            title: "Sync completed",
+            description: `New: ${result.hosts_added || 0}, Updated: ${result.hosts_updated || 0}, Linked: ${result.linked || 0}`,
+          });
+          fetchHosts();
+        } else {
+          const errorMsg = result.errors?.length > 0 ? result.errors[0] : "Sync failed";
+          throw new Error(errorMsg);
+        }
       }
     } catch (error: any) {
       console.error("Sync error:", error);
@@ -184,11 +231,30 @@ const VCenter = () => {
 
       <Alert className="mb-6">
         <InfoIcon className="h-4 w-4" />
-        <AlertTitle>Native vCenter Integration</AlertTitle>
+        <AlertTitle>
+          {isLocalMode ? "Local Mode - Job Executor Required" : "Native vCenter Integration"}
+        </AlertTitle>
         <AlertDescription>
-          Configure vCenter connection in Settings and click "Sync Now" to directly sync ESXi host data from your vCenter server. 
-          For air-gapped deployments, ensure this app and vCenter are on the same network. 
-          Alternatively, use the Python sync script (see <code className="text-xs bg-muted px-1 py-0.5 rounded">docs/VCENTER_SYNC_GUIDE.md</code>).
+          {isLocalMode ? (
+            <>
+              Your vCenter server is on a private network. Clicking "Sync Now" will create a job for the Job Executor to process.
+              Ensure the Job Executor is running on your local network to sync vCenter data. Check{" "}
+              <Button 
+                variant="link" 
+                className="h-auto p-0 text-xs" 
+                onClick={() => navigate('/settings?tab=diagnostics')}
+              >
+                Settings → Diagnostics
+              </Button>{" "}
+              for Job Executor status.
+            </>
+          ) : (
+            <>
+              Configure vCenter connection in Settings and click "Sync Now" to directly sync ESXi host data from your vCenter server. 
+              For air-gapped deployments, ensure this app and vCenter are on the same network. 
+              Alternatively, use the Python sync script (see <code className="text-xs bg-muted px-1 py-0.5 rounded">docs/VCENTER_SYNC_GUIDE.md</code>).
+            </>
+          )}
         </AlertDescription>
       </Alert>
 
