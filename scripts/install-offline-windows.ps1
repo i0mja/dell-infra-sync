@@ -255,6 +255,17 @@ Copy-Item ".env.offline.template" ".env"
 npm run build
 Pop-Location
 
+# Install Python dependencies
+Write-Host "Installing Python dependencies..." -ForegroundColor Yellow
+if (Test-Path "$InstallDir\requirements.txt") {
+    pip3 install -r "$InstallDir\requirements.txt" --quiet
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "✓ Python dependencies installed" -ForegroundColor Green
+    } else {
+        Write-Host "⚠ Some Python packages may have failed to install" -ForegroundColor Yellow
+    }
+}
+
 # Create Windows service
 Write-Host "Creating Windows service..." -ForegroundColor Yellow
 if (-not (Get-Command nssm -ErrorAction SilentlyContinue)) {
@@ -270,6 +281,38 @@ nssm set DellServerManager Start SERVICE_AUTO_START
 nssm set DellServerManager AppStdout "$InstallDir\logs\service.log"
 nssm set DellServerManager AppStderr "$InstallDir\logs\service-error.log"
 nssm start DellServerManager
+
+# Setup Job Executor service
+Write-Host "Setting up Job Executor service..." -ForegroundColor Yellow
+$PythonPath = (Get-Command python -ErrorAction SilentlyContinue).Source
+if (-not $PythonPath) {
+    $PythonPath = (Get-Command python3 -ErrorAction SilentlyContinue).Source
+}
+
+if ($PythonPath) {
+    $JobExecutorScript = Join-Path $InstallDir "job-executor.py"
+    
+    nssm install DellServerManagerJobExecutor $PythonPath $JobExecutorScript
+    nssm set DellServerManagerJobExecutor AppDirectory $InstallDir
+    nssm set DellServerManagerJobExecutor DisplayName "Dell Server Manager - Job Executor"
+    nssm set DellServerManagerJobExecutor Description "Processes iDRAC and vCenter jobs"
+    nssm set DellServerManagerJobExecutor Start SERVICE_AUTO_START
+    
+    # Set environment variables
+    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "SERVICE_ROLE_KEY=$ServiceRoleKey" "DSM_URL=$SupabaseUrl"
+    
+    # Log files
+    New-Item -ItemType Directory -Path "$InstallDir\logs" -Force | Out-Null
+    nssm set DellServerManagerJobExecutor AppStdout "$InstallDir\logs\job-executor-output.log"
+    nssm set DellServerManagerJobExecutor AppStderr "$InstallDir\logs\job-executor-error.log"
+    
+    # Start service
+    nssm start DellServerManagerJobExecutor
+    Write-Host "✓ Job Executor service started" -ForegroundColor Green
+} else {
+    Write-Host "⚠ Python not found - Job Executor service not created" -ForegroundColor Yellow
+    Write-Host "  Install Python 3.11+ and re-run setup" -ForegroundColor Gray
+}
 
 # Configure firewall
 Write-Host "Configuring Windows Firewall..." -ForegroundColor Yellow

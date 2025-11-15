@@ -20,7 +20,7 @@ sudo bash scripts/deploy-rhel9.sh
 - ✅ Setup and configure Supabase
 - ✅ Create your admin user account
 - ✅ Build and deploy the application
-- ✅ Create systemd service
+- ✅ Create systemd services (frontend + Job Executor)
 - ✅ **Optionally setup SSL/TLS with Let's Encrypt** (if you have a domain)
 - ✅ Configure firewall
 
@@ -43,7 +43,7 @@ cd C:\dell-server-manager
 - ✅ Initialize and start Supabase services
 - ✅ Create your admin user account
 - ✅ Build and deploy the application
-- ✅ Create Windows service
+- ✅ Create Windows services (frontend + Job Executor)
 - ✅ **Optionally setup SSL/TLS with Let's Encrypt** (if you have a domain)
 - ✅ Configure firewall
 
@@ -443,7 +443,8 @@ Both deployment scripts provide a complete, production-ready setup:
 
 | Component | Description | Port (RHEL) | Port (Windows CLI) |
 |-----------|-------------|-------------|---------------------|
-| **Dell Server Manager** | Main application | 3000 | 3000 |
+| **Dell Server Manager** | Main application (frontend) | 3000 | 3000 |
+| **Job Executor** | Background job processor (iDRAC/vCenter) | - | - |
 | **Supabase Studio** | Database admin UI | 8000 | 54323 |
 | **PostgreSQL** | Database server | 5432 | 54322 |
 | **PostgREST API** | RESTful API | 3000* | 54321* |
@@ -765,11 +766,17 @@ The Supabase CLI manages Docker configuration automatically. To customize resour
 ### RHEL 9
 
 ```bash
-# Application service
+# Application service (frontend)
 sudo systemctl status dell-server-manager
 sudo systemctl restart dell-server-manager
 sudo systemctl stop dell-server-manager
 sudo journalctl -u dell-server-manager -f
+
+# Job Executor service (background jobs)
+sudo systemctl status dell-job-executor
+sudo systemctl restart dell-job-executor
+sudo systemctl stop dell-job-executor
+sudo journalctl -u dell-job-executor -f
 
 # Supabase services
 cd /opt/supabase/docker
@@ -782,10 +789,19 @@ docker compose stop
 ### Windows Server 2022
 
 ```powershell
-# Application service
+# Application service (frontend)
 nssm status DellServerManager
 nssm restart DellServerManager
 nssm stop DellServerManager
+
+# Job Executor service (background jobs)
+nssm status DellServerManagerJobExecutor
+nssm restart DellServerManagerJobExecutor
+nssm stop DellServerManagerJobExecutor
+
+# View service logs
+Get-Content C:\dell-server-manager\service-output.log -Tail 50
+Get-Content C:\dell-server-manager\job-executor-output.log -Tail 50
 
 # Supabase services (via CLI)
 cd C:\dell-supabase
@@ -807,21 +823,29 @@ docker logs supabase-db -f         # Database logs only
 ```bash
 # RHEL
 sudo systemctl status dell-server-manager
+sudo systemctl status dell-job-executor
 docker ps
 
 # Windows
 nssm status DellServerManager
+nssm status DellServerManagerJobExecutor
 docker ps
 ```
 
 ### Check application logs
 
 ```bash
-# RHEL
+# RHEL - Frontend logs
 sudo journalctl -u dell-server-manager -n 100
 
-# Windows
-# Logs are in Windows Event Viewer → Application
+# RHEL - Job Executor logs
+sudo journalctl -u dell-job-executor -n 100
+
+# Windows - Frontend logs
+Get-Content C:\dell-server-manager\service-output.log -Tail 100
+
+# Windows - Job Executor logs
+Get-Content C:\dell-server-manager\job-executor-output.log -Tail 100
 ```
 
 ### Database connection issues
@@ -877,11 +901,72 @@ supabase stop
 supabase start
 ```
 
+### Job Executor not processing jobs
+
+If iDRAC operations (discovery, firmware updates, credential tests) are not working:
+
+**Check Job Executor status:**
+
+```bash
+# RHEL
+sudo systemctl status dell-job-executor
+sudo journalctl -u dell-job-executor -n 100
+
+# Windows
+nssm status DellServerManagerJobExecutor
+Get-Content C:\dell-server-manager\job-executor-output.log -Tail 100
+```
+
+**Common issues:**
+
+1. **Service not running:**
+   ```bash
+   # RHEL
+   sudo systemctl start dell-job-executor
+   
+   # Windows
+   nssm start DellServerManagerJobExecutor
+   ```
+
+2. **Python dependencies missing:**
+   ```bash
+   # RHEL
+   cd /opt/dell-server-manager
+   pip3 install -r requirements.txt
+   
+   # Windows
+   cd C:\dell-server-manager
+   pip install -r requirements.txt
+   ```
+
+3. **Environment variables not set:**
+   ```bash
+   # RHEL - check service file
+   sudo cat /etc/systemd/system/dell-job-executor.service
+   # Should have SERVICE_ROLE_KEY and DSM_URL
+   
+   # Windows - check NSSM config
+   nssm get DellServerManagerJobExecutor AppEnvironmentExtra
+   ```
+
+4. **Network connectivity issues:**
+   - Job Executor must be able to reach iDRAC IPs
+   - Test connectivity: `ping <idrac-ip>` or `curl -k https://<idrac-ip>`
+   - Check firewall rules on the host running Job Executor
+
+**Test Job Executor:**
+
+Use the diagnostics tool in Settings → Network Connectivity → Job Executor Diagnostics to verify:
+- Job Executor is online and processing jobs
+- Credentials are accessible
+- iDRAC devices are reachable
+
 ### Reset everything and start fresh
 
 **RHEL:**
 ```bash
 sudo systemctl stop dell-server-manager
+sudo systemctl stop dell-job-executor
 cd /opt/supabase/docker
 docker compose down -v
 sudo rm -rf /opt/supabase
@@ -917,6 +1002,7 @@ cd C:\dell-server-manager
 
 The cleanup script will:
 - ✅ Stop and remove the Dell Server Manager Windows service
+- ✅ Stop and remove the Job Executor Windows service
 - ✅ Stop and remove all Docker containers and volumes
 - ✅ Prune Docker images
 - ✅ Remove all installation directories (C:\supabase, C:\dell-supabase, C:\dell-server-manager)

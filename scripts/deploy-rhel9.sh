@@ -231,6 +231,43 @@ systemctl daemon-reload
 systemctl start dell-server-manager
 systemctl enable dell-server-manager
 
+# Step 7b: Setup Job Executor systemd service
+echo "🔧 Setting up Job Executor service..."
+
+# Install Python dependencies
+if [ -f "requirements.txt" ]; then
+    pip3 install -r requirements.txt --quiet
+    echo "✅ Python dependencies installed"
+else
+    echo "⚠️ requirements.txt not found - skipping Python dependencies"
+fi
+
+# Create systemd service for Job Executor
+cat > /etc/systemd/system/dell-job-executor.service << EOF
+[Unit]
+Description=Dell Server Manager - Job Executor
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$(pwd)
+Environment="SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY"
+Environment="DSM_URL=http://$SERVER_IP:8000"
+ExecStart=/usr/bin/python3 job-executor.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable dell-job-executor.service
+systemctl start dell-job-executor.service
+
+echo "✅ Job Executor service created and started"
+
 # Open firewall ports
 # Step 8: Optional SSL/TLS Setup
 echo "🔒 Step 8/8: SSL/TLS Setup (Optional)..."
