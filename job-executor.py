@@ -117,6 +117,102 @@ class JobExecutor:
         msg = _safe_to_stdout(_normalize_unicode(message))
         line = f"[{timestamp}] [{level}] {msg}"
         print(_safe_to_stdout(line))
+    
+    def log_idrac_command(
+        self,
+        server_id: Optional[str],
+        job_id: Optional[str],
+        task_id: Optional[str],
+        command_type: str,
+        endpoint: str,
+        full_url: str,
+        request_headers: Optional[dict],
+        request_body: Optional[dict],
+        status_code: Optional[int],
+        response_time_ms: int,
+        response_body: Optional[dict],
+        success: bool,
+        error_message: Optional[str] = None
+    ):
+        """Log iDRAC command to activity monitor"""
+        try:
+            # Redact sensitive data from headers
+            headers_safe = None
+            if request_headers:
+                headers_safe = {**request_headers}
+                if 'Authorization' in headers_safe:
+                    headers_safe['Authorization'] = '[REDACTED]'
+                if 'authorization' in headers_safe:
+                    headers_safe['authorization'] = '[REDACTED]'
+            
+            # Redact passwords from request body
+            body_safe = None
+            if request_body:
+                body_safe = json.loads(json.dumps(request_body))
+                if isinstance(body_safe, dict) and 'Password' in body_safe:
+                    body_safe['Password'] = '[REDACTED]'
+            
+            # Truncate large payloads
+            max_request_kb = 100
+            max_response_kb = 100
+            
+            if body_safe:
+                body_size_kb = len(json.dumps(body_safe)) / 1024
+                if body_size_kb > max_request_kb:
+                    body_safe = {
+                        '_truncated': True,
+                        '_original_size_kb': int(body_size_kb),
+                        '_limit_kb': max_request_kb
+                    }
+            
+            response_safe = response_body
+            if response_safe:
+                response_size_kb = len(json.dumps(response_safe)) / 1024
+                if response_size_kb > max_response_kb:
+                    response_safe = {
+                        '_truncated': True,
+                        '_original_size_kb': int(response_size_kb),
+                        '_limit_kb': max_response_kb
+                    }
+            
+            log_entry = {
+                'server_id': server_id,
+                'job_id': job_id,
+                'task_id': task_id,
+                'command_type': command_type,
+                'endpoint': endpoint,
+                'full_url': full_url,
+                'request_headers': headers_safe,
+                'request_body': body_safe,
+                'status_code': status_code,
+                'response_time_ms': response_time_ms,
+                'response_body': response_safe,
+                'success': success,
+                'error_message': error_message,
+                'initiated_by': None,
+                'source': 'job_executor'
+            }
+            
+            # Insert via Supabase REST API
+            response = requests.post(
+                f"{DSM_URL}/rest/v1/idrac_commands",
+                headers={
+                    "apikey": SERVICE_ROLE_KEY,
+                    "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=minimal"
+                },
+                json=log_entry,
+                verify=VERIFY_SSL,
+                timeout=5
+            )
+            
+            if response.status_code not in [200, 201]:
+                self.log(f"Failed to log iDRAC command: {response.status_code}", "DEBUG")
+                
+        except Exception as e:
+            # Don't let logging failures break job execution
+            self.log(f"Logging exception: {e}", "DEBUG")
 
     def get_encryption_key(self) -> Optional[str]:
         """Fetch the encryption key from activity_settings (cached)"""
@@ -391,33 +487,111 @@ class JobExecutor:
             self.log(f"Error fetching tasks: {e}", "ERROR")
             return []
 
-    def get_comprehensive_server_info(self, ip: str, username: str, password: str) -> Optional[Dict]:
+    def get_comprehensive_server_info(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None) -> Optional[Dict]:
         """Get comprehensive server information from iDRAC Redfish API"""
         try:
             # Get system information
             system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
-            system_response = requests.get(
-                system_url,
-                auth=(username, password),
-                verify=False,
-                timeout=10
-            )
+            start_time = time.time()
             
-            if system_response.status_code != 200:
-                return None
-            
-            system_data = system_response.json()
+            try:
+                system_response = requests.get(
+                    system_url,
+                    auth=(username, password),
+                    verify=False,
+                    timeout=10
+                )
+                response_time_ms = int((time.time() - start_time) * 1000)
+                
+                # Log the system info request
+                self.log_idrac_command(
+                    server_id=server_id,
+                    job_id=job_id,
+                    task_id=None,
+                    command_type='GET',
+                    endpoint='/redfish/v1/Systems/System.Embedded.1',
+                    full_url=system_url,
+                    request_headers={'Authorization': f'Basic {username}:***'},
+                    request_body=None,
+                    status_code=system_response.status_code,
+                    response_time_ms=response_time_ms,
+                    response_body=system_response.json() if system_response.content else None,
+                    success=system_response.status_code == 200,
+                    error_message=None if system_response.status_code == 200 else f"HTTP {system_response.status_code}"
+                )
+                
+                if system_response.status_code != 200:
+                    return None
+                
+                system_data = system_response.json()
+            except Exception as e:
+                response_time_ms = int((time.time() - start_time) * 1000)
+                self.log_idrac_command(
+                    server_id=server_id,
+                    job_id=job_id,
+                    task_id=None,
+                    command_type='GET',
+                    endpoint='/redfish/v1/Systems/System.Embedded.1',
+                    full_url=system_url,
+                    request_headers={'Authorization': f'Basic {username}:***'},
+                    request_body=None,
+                    status_code=None,
+                    response_time_ms=response_time_ms,
+                    response_body=None,
+                    success=False,
+                    error_message=str(e)
+                )
+                raise
             
             # Get manager (iDRAC) information for firmware version
             manager_url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1"
-            manager_response = requests.get(
-                manager_url,
-                auth=(username, password),
-                verify=False,
-                timeout=10
-            )
+            start_time = time.time()
             
-            manager_data = manager_response.json() if manager_response.status_code == 200 else {}
+            try:
+                manager_response = requests.get(
+                    manager_url,
+                    auth=(username, password),
+                    verify=False,
+                    timeout=10
+                )
+                response_time_ms = int((time.time() - start_time) * 1000)
+                
+                # Log the manager info request
+                self.log_idrac_command(
+                    server_id=server_id,
+                    job_id=job_id,
+                    task_id=None,
+                    command_type='GET',
+                    endpoint='/redfish/v1/Managers/iDRAC.Embedded.1',
+                    full_url=manager_url,
+                    request_headers={'Authorization': f'Basic {username}:***'},
+                    request_body=None,
+                    status_code=manager_response.status_code,
+                    response_time_ms=response_time_ms,
+                    response_body=manager_response.json() if manager_response.content else None,
+                    success=manager_response.status_code == 200,
+                    error_message=None if manager_response.status_code == 200 else f"HTTP {manager_response.status_code}"
+                )
+                
+                manager_data = manager_response.json() if manager_response.status_code == 200 else {}
+            except Exception as e:
+                response_time_ms = int((time.time() - start_time) * 1000)
+                self.log_idrac_command(
+                    server_id=server_id,
+                    job_id=job_id,
+                    task_id=None,
+                    command_type='GET',
+                    endpoint='/redfish/v1/Managers/iDRAC.Embedded.1',
+                    full_url=manager_url,
+                    request_headers={'Authorization': f'Basic {username}:***'},
+                    request_body=None,
+                    status_code=None,
+                    response_time_ms=response_time_ms,
+                    response_body=None,
+                    success=False,
+                    error_message=str(e)
+                )
+                manager_data = {}
             
             # Extract comprehensive info
             processor_summary = system_data.get("ProcessorSummary", {})
@@ -440,15 +614,35 @@ class JobExecutor:
             self.log(f"Error getting server info from {ip}: {e}", "DEBUG")
             return None
 
-    def test_idrac_connection(self, ip: str, username: str, password: str) -> Optional[Dict]:
+    def test_idrac_connection(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None) -> Optional[Dict]:
         """Test iDRAC connection and get basic info (lightweight version)"""
+        url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
+        start_time = time.time()
+        
         try:
-            url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
             response = requests.get(
                 url,
                 auth=(username, password),
                 verify=False,
                 timeout=5
+            )
+            response_time_ms = int((time.time() - start_time) * 1000)
+            
+            # Log the test connection request
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                task_id=None,
+                command_type='GET',
+                endpoint='/redfish/v1/Systems/System.Embedded.1',
+                full_url=url,
+                request_headers={'Authorization': f'Basic {username}:***'},
+                request_body=None,
+                status_code=response.status_code,
+                response_time_ms=response_time_ms,
+                response_body=response.json() if response.content else None,
+                success=response.status_code == 200,
+                error_message=None if response.status_code == 200 else f"HTTP {response.status_code}"
             )
             
             if response.status_code == 200:
@@ -456,7 +650,7 @@ class JobExecutor:
                 return {
                     "manufacturer": data.get("Manufacturer", "Unknown"),
                     "model": data.get("Model", "Unknown"),
-                    "service_tag": data.get("SKU", None),  # Dell reports Service Tag as SKU
+                    "service_tag": data.get("SKU", None),
                     "serial": data.get("SerialNumber", None),
                     "hostname": data.get("HostName", None),
                     "username": username,
@@ -464,6 +658,22 @@ class JobExecutor:
                 }
             return None
         except Exception as e:
+            response_time_ms = int((time.time() - start_time) * 1000)
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                task_id=None,
+                command_type='GET',
+                endpoint='/redfish/v1/Systems/System.Embedded.1',
+                full_url=url,
+                request_headers={'Authorization': f'Basic {username}:***'},
+                request_body=None,
+                status_code=None,
+                response_time_ms=response_time_ms,
+                response_body=None,
+                success=False,
+                error_message=str(e)
+            )
             self.log(f"Error testing iDRAC {ip}: {e}", "DEBUG")
             return None
 
@@ -523,7 +733,7 @@ class JobExecutor:
                     continue
                 
                 # Query iDRAC for comprehensive info
-                info = self.get_comprehensive_server_info(ip, username, password)
+                info = self.get_comprehensive_server_info(ip, username, password, server_id=server['id'], job_id=job['id'])
                 
                 if info:
                     # Update server record with fetched info
@@ -651,7 +861,9 @@ class JobExecutor:
                 result = self.test_idrac_connection(
                     ip,
                     cred_set['username'],
-                    password
+                    password,
+                    server_id=None,
+                    job_id=job_id
                 )
                 
                 if result:
@@ -1245,7 +1457,7 @@ class JobExecutor:
                         system_online = False
                         for attempt in range(SYSTEM_ONLINE_CHECK_ATTEMPTS):
                             try:
-                                test_result = self.test_idrac_connection(ip, username, password)
+                                test_result = self.test_idrac_connection(ip, username, password, server_id=task.get('server_id'), job_id=job['id'])
                                 if test_result:
                                     system_online = True
                                     self.log(f"  System back online")
@@ -1464,35 +1676,73 @@ class JobExecutor:
             url = f"https://{ip_address}/redfish/v1/"
             self.log(f"  Testing connection to {url}")
             
-            response = requests.get(
-                url,
-                auth=(username, password),
-                verify=False,
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                result = {
-                    "success": True,
-                    "message": "Connection successful",
-                    "idrac_version": data.get("RedfishVersion"),
-                    "product": data.get("Product"),
-                    "vendor": data.get("Vendor")
-                }
-                self.log(f"  ✓ Connection successful - {data.get('Product', 'Unknown')}")
-            elif response.status_code == 401:
-                result = {
-                    "success": False,
-                    "message": "Authentication failed - invalid credentials"
-                }
-                self.log(f"  ✗ Authentication failed", "ERROR")
-            else:
-                result = {
-                    "success": False,
-                    "message": f"Connection failed: HTTP {response.status_code}"
-                }
-                self.log(f"  ✗ Connection failed: HTTP {response.status_code}", "ERROR")
+            start_time = time.time()
+            try:
+                response = requests.get(
+                    url,
+                    auth=(username, password),
+                    verify=False,
+                    timeout=10
+                )
+                response_time_ms = int((time.time() - start_time) * 1000)
+                
+                # Log the test request
+                self.log_idrac_command(
+                    server_id=None,
+                    job_id=job['id'],
+                    task_id=None,
+                    command_type='GET',
+                    endpoint='/redfish/v1/',
+                    full_url=url,
+                    request_headers={'Authorization': f'Basic {username}:***'},
+                    request_body=None,
+                    status_code=response.status_code,
+                    response_time_ms=response_time_ms,
+                    response_body=response.json() if response.content else None,
+                    success=response.status_code == 200,
+                    error_message=None if response.status_code == 200 else f"HTTP {response.status_code}"
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    result = {
+                        "success": True,
+                        "message": "Connection successful",
+                        "idrac_version": data.get("RedfishVersion"),
+                        "product": data.get("Product"),
+                        "vendor": data.get("Vendor")
+                    }
+                    self.log(f"  ✓ Connection successful - {data.get('Product', 'Unknown')}")
+                elif response.status_code == 401:
+                    result = {
+                        "success": False,
+                        "message": "Authentication failed - invalid credentials"
+                    }
+                    self.log(f"  ✗ Authentication failed", "ERROR")
+                else:
+                    result = {
+                        "success": False,
+                        "message": f"Connection failed: HTTP {response.status_code}"
+                    }
+                    self.log(f"  ✗ Connection failed: HTTP {response.status_code}", "ERROR")
+            except Exception as e:
+                response_time_ms = int((time.time() - start_time) * 1000)
+                self.log_idrac_command(
+                    server_id=None,
+                    job_id=job['id'],
+                    task_id=None,
+                    command_type='GET',
+                    endpoint='/redfish/v1/',
+                    full_url=url,
+                    request_headers={'Authorization': f'Basic {username}:***'},
+                    request_body=None,
+                    status_code=None,
+                    response_time_ms=response_time_ms,
+                    response_body=None,
+                    success=False,
+                    error_message=str(e)
+                )
+                raise
             
             # Update job with result
             self.update_job_status(
