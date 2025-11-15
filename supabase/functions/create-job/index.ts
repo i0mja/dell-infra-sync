@@ -91,36 +91,38 @@ serve(async (req) => {
   }
 
   try {
-    // Use user-scoped client instead of service role
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const authHeader = req.headers.get('Authorization') || '';
-    
-    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
 
-    // Get authenticated user
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
-    if (authError || !user) {
-      console.error('Authentication failed');
+    // Extract JWT token and decode to get user ID
+    let userId: string;
+    try {
+      const token = authHeader.replace('Bearer ', '');
+      if (!token) throw new Error('No token provided');
+      
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      userId = payload.sub;
+      
+      if (!userId) throw new Error('Invalid token payload');
+    } catch (error) {
+      console.error('Token extraction failed:', error);
       return new Response(
         JSON.stringify({ error: 'Unauthorized' }),
-        { 
-          status: 401, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-        }
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
+    // Create admin client for role check
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
     // Check user role
-    const { data: roleData } = await supabase.rpc('get_user_role', { _user_id: user.id });
-    
+    const { data: roleData } = await supabase.rpc('get_user_role', { _user_id: userId });
+
     if (!roleData || !['admin', 'operator'].includes(roleData)) {
-      console.error('Permission denied - insufficient role');
+      console.error('Insufficient permissions');
       return new Response(
-        JSON.stringify({ error: 'Permission denied. Admin or operator role required.' }),
+        JSON.stringify({ error: 'Insufficient permissions' }),
         { 
           status: 403, 
           headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
@@ -151,7 +153,7 @@ serve(async (req) => {
         status: jobRequest.schedule_at ? 'pending' : 'pending',
         target_scope: jobRequest.target_scope,
         details: jobRequest.details || {},
-        created_by: user.id,
+        created_by: userId,
         schedule_at: jobRequest.schedule_at || null,
         credential_set_ids: jobRequest.credential_set_ids || null,
       }])
@@ -185,7 +187,7 @@ serve(async (req) => {
           // firmware_uri omitted - each sub-job will auto-construct its own URI
           // e.g., {FIRMWARE_REPO_URL}/iDRAC_latest.exe, {FIRMWARE_REPO_URL}/BIOS_latest.exe
         },
-        created_by: user.id,
+        created_by: userId,
         parent_job_id: newJob.id,
         component_order: order
       }));
@@ -223,7 +225,7 @@ serve(async (req) => {
 
     // Log the action
     await supabase.from('audit_logs').insert([{
-      user_id: user.id,
+      user_id: userId,
       action: 'job_created',
       details: {
         job_id: newJob.id,
@@ -232,7 +234,7 @@ serve(async (req) => {
       },
     }]);
 
-    console.log(`Job created: ${newJob.id} by user ${user.email}`);
+    console.log(`Job created: ${newJob.id}`);
 
     return new Response(JSON.stringify({ 
       success: true,
