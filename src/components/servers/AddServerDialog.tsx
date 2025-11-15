@@ -15,6 +15,7 @@ import { Loader2, Info, Server, Key, Search } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { LocalModeHelper } from "./LocalModeHelper";
+import { serverSchema, credentialSchema, safeValidateInput } from "@/lib/validations";
 
 interface AddServerDialogProps {
   open: boolean;
@@ -90,11 +91,44 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
     setLoading(true);
 
     try {
-      // Step 1: Create server record
+      // Validate server data
+      const serverValidation = safeValidateInput(serverSchema, formData);
+      if (serverValidation.success === false) {
+        toast({
+          title: "Validation Error",
+          description: serverValidation.errors.join(', '),
+          variant: "destructive",
+        });
+        setLoading(false);
+        return;
+      }
+
+      // Validate credentials if manual entry
+      if (credentialMode === 'manual') {
+        const credValidation = safeValidateInput(credentialSchema, {
+          name: credentialName || 'Manual Entry',
+          username: manualUsername,
+          password: manualPassword,
+          description: ''
+        });
+        
+        if (credValidation.success === false) {
+          toast({
+            title: "Credential Validation Error",
+            description: credValidation.errors.join(', '),
+            variant: "destructive",
+          });
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Step 1: Create server record using validated data
+      const validatedData = serverValidation.data;
       const serverData: any = {
-        ip_address: formData.ip_address,
-        hostname: formData.hostname || null,
-        notes: formData.notes || null,
+        ip_address: validatedData.ip_address,
+        hostname: validatedData.hostname || null,
+        notes: validatedData.notes || null,
         last_seen: new Date().toISOString(),
       };
 
@@ -106,24 +140,59 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
 
       if (serverError) throw serverError;
 
-      // Step 2: Handle credentials
+      // Step 2: Handle credentials with encryption
       let credentialSetIdToUse = selectedCredentialSetId;
       
-      if (credentialMode === "manual" && saveCredentials) {
-        // Create new credential set
-        const { data: newCredSet, error: credError } = await supabase
-          .from("credential_sets")
-          .insert([{
-            name: credentialName || `${formData.ip_address} Credentials`,
-            username: manualUsername,
-            password_encrypted: manualPassword, // Note: In production, encrypt this
-            description: `Credentials for ${formData.ip_address}`,
-          }])
-          .select()
-          .single();
+      if (credentialMode === "manual") {
+        if (saveCredentials) {
+          // Create new credential set without password
+          const { data: newCredSet, error: credError } = await supabase
+            .from("credential_sets")
+            .insert([{
+              name: credentialName || `${validatedData.ip_address} Credentials`,
+              username: manualUsername,
+              password_encrypted: null, // Will be encrypted via edge function
+              description: `Credentials for ${validatedData.ip_address}`,
+            }])
+            .select()
+            .single();
 
-        if (credError) throw credError;
-        credentialSetIdToUse = newCredSet.id;
+          if (credError) throw credError;
+
+          // Encrypt and store password via edge function
+          const { error: encryptError } = await supabase.functions.invoke('encrypt-credentials', {
+            body: {
+              type: 'credential_set',
+              credential_set_id: newCredSet.id,
+              password: manualPassword,
+            }
+          });
+
+          if (encryptError) {
+            // Clean up credential set if encryption fails
+            await supabase.from("credential_sets").delete().eq('id', newCredSet.id);
+            throw new Error('Failed to encrypt credentials: ' + encryptError.message);
+          }
+
+          credentialSetIdToUse = newCredSet.id;
+        } else {
+          // For manual credentials without save, encrypt for server record
+          if (newServer?.id) {
+            const { error: encryptError } = await supabase.functions.invoke('encrypt-credentials', {
+              body: {
+                type: 'server',
+                server_id: newServer.id,
+                username: manualUsername,
+                password: manualPassword,
+              }
+            });
+
+            if (encryptError) {
+              console.error('Failed to encrypt server credentials:', encryptError);
+              // Don't throw - server was created successfully
+            }
+          }
+        }
       }
 
       // Step 3: Create discovery job if auto-discover is enabled

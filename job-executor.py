@@ -78,11 +78,79 @@ class JobExecutor:
     def __init__(self):
         self.vcenter_conn = None
         self.running = True
+        self.encryption_key = None  # Will be fetched on first use
         
     def log(self, message: str, level: str = "INFO"):
         """Log with timestamp"""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{timestamp}] [{level}] {message}")
+
+    def get_encryption_key(self) -> Optional[str]:
+        """Fetch the encryption key from activity_settings (cached)"""
+        if self.encryption_key:
+            return self.encryption_key
+            
+        try:
+            url = f"{DSM_URL}/rest/v1/activity_settings"
+            headers = {
+                "apikey": SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+            }
+            params = {"select": "encryption_key", "limit": "1"}
+            
+            response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
+            if response.status_code == 200:
+                settings = response.json()
+                if settings and len(settings) > 0:
+                    self.encryption_key = settings[0].get('encryption_key')
+                    if self.encryption_key:
+                        self.log("Encryption key loaded successfully", "INFO")
+                    return self.encryption_key
+            
+            self.log("Failed to load encryption key", "WARN")
+            return None
+        except Exception as e:
+            self.log(f"Error loading encryption key: {e}", "ERROR")
+            return None
+
+    def decrypt_password(self, encrypted_password: str) -> Optional[str]:
+        """Decrypt a password using the database decrypt function"""
+        if not encrypted_password:
+            return None
+            
+        try:
+            encryption_key = self.get_encryption_key()
+            if not encryption_key:
+                self.log("Cannot decrypt: encryption key not available", "ERROR")
+                return None
+            
+            # Call the decrypt_password database function
+            url = f"{DSM_URL}/rest/v1/rpc/decrypt_password"
+            headers = {
+                "apikey": SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "encrypted": encrypted_password,
+                "key": encryption_key
+            }
+            
+            response = requests.post(url, headers=headers, json=payload, verify=VERIFY_SSL)
+            if response.status_code == 200:
+                # RPC returns the decrypted string directly
+                decrypted = response.json()
+                if decrypted:
+                    return decrypted
+                else:
+                    self.log("Decryption returned null - possibly corrupted data", "WARN")
+                    return None
+            else:
+                self.log(f"Decryption failed: {response.status_code} - {response.text}", "ERROR")
+                return None
+        except Exception as e:
+            self.log(f"Error decrypting password: {e}", "ERROR")
+            return None
 
     def ip_in_range(self, ip_address: str, ip_range: str) -> bool:
         """
@@ -147,7 +215,7 @@ class JobExecutor:
                         'id': cred_set['id'],
                         'name': cred_set['name'],
                         'username': cred_set['username'],
-                        'password': cred_set['password_encrypted'],
+                        'password': self.decrypt_password(cred_set['password_encrypted']),
                         'priority': ip_range_entry['priority'],
                         'matched_range': ip_range
                     })
@@ -184,7 +252,12 @@ class JobExecutor:
                     server = servers[0]
                     # Use server-specific credentials if available, otherwise use defaults
                     username = server.get('idrac_username') or IDRAC_DEFAULT_USER
-                    password = server.get('idrac_password_encrypted') or IDRAC_DEFAULT_PASSWORD
+                    encrypted_password = server.get('idrac_password_encrypted')
+                    
+                    if encrypted_password:
+                        password = self.decrypt_password(encrypted_password) or IDRAC_DEFAULT_PASSWORD
+                    else:
+                        password = IDRAC_DEFAULT_PASSWORD
                     
                     if server.get('idrac_username'):
                         self.log(f"Using server-specific credentials for server {server_id}", "INFO")
@@ -360,7 +433,16 @@ class JobExecutor:
                 
                 # For range-based creds, password is already decrypted
                 # For global creds from DB, it may be in 'password_encrypted' field
-                password = cred_set.get('password') or cred_set.get('password_encrypted')
+                password = cred_set.get('password')
+                if not password:
+                    # Decrypt if password_encrypted exists
+                    encrypted = cred_set.get('password_encrypted')
+                    if encrypted:
+                        password = self.decrypt_password(encrypted)
+                
+                if not password:
+                    self.log(f"No valid password for {cred_set['name']}", "WARN")
+                    continue
                 
                 result = self.test_idrac_connection(
                     ip,
@@ -1149,13 +1231,17 @@ class JobExecutor:
             ip_address = job['target_scope'].get('ip_address')
             credential_set_ids = job.get('credential_set_ids', [])
             
-            # Get credentials
+            # Get credentials - decrypt if needed
             if credential_set_ids and credential_set_ids[0]:
                 creds = self.get_credential_sets([credential_set_ids[0]])[0]
                 username = creds['username']
-                password = creds['password_encrypted']
+                encrypted_password = creds.get('password_encrypted')
+                if encrypted_password:
+                    password = self.decrypt_password(encrypted_password)
+                else:
+                    password = creds.get('password')  # Fallback for env defaults
             else:
-                # Manual credentials passed in job details
+                # Manual credentials passed in job details (already decrypted)
                 username = job['details'].get('username')
                 password = job['details'].get('password')
             
