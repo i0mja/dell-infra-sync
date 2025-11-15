@@ -66,59 +66,98 @@ export function AssignCredentialsDialog({ open, onOpenChange, server, onSuccess 
     setTestResult(null);
 
     try {
-      const { data: result, error: invokeError } = await supabase.functions.invoke('test-idrac-connection', {
-        body: {
-          ip_address: server.ip_address,
-          credential_set_id: selectedSetId,
-        },
-      });
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
 
-      if (invokeError) throw invokeError;
+      // Create test_credentials job
+      const { data: job, error: jobError } = await supabase
+        .from('jobs')
+        .insert([{
+          job_type: 'test_credentials',
+          target_scope: { ip_address: server.ip_address },
+          credential_set_ids: [selectedSetId],
+          created_by: user.id,
+          status: 'pending'
+        }])
+        .select()
+        .single();
 
-      if (result.success) {
-        setTestResult({
-          success: true,
-          message: `Successfully connected to iDRAC ${result.idrac_version || ""}`,
-          responseTime: result.response_time_ms,
-        });
+      if (jobError) throw jobError;
 
-        // Update server record with successful credential set
-        const { error: updateError } = await supabase
-          .from("servers")
-          .update({
-            credential_set_id: selectedSetId,
-            credential_test_status: "valid",
-            credential_last_tested: new Date().toISOString(),
-            connection_status: "online",
-            connection_error: null,
-            last_connection_test: new Date().toISOString(),
-          })
-          .eq("id", server.id);
+      // Poll job status
+      const pollInterval = setInterval(async () => {
+        const { data: updatedJob } = await supabase
+          .from('jobs')
+          .select('*')
+          .eq('id', job.id)
+          .single();
 
-        if (updateError) throw updateError;
+        if (updatedJob?.status === 'completed') {
+          clearInterval(pollInterval);
+          setTesting(false);
+          
+          const details = updatedJob.details as any;
+          setTestResult({
+            success: true,
+            message: `Successfully connected to iDRAC ${details?.idrac_version || ""}`,
+            responseTime: details?.response_time_ms,
+          });
 
-        toast({
-          title: "Credentials Assigned",
-          description: `Successfully assigned credentials to ${server.hostname || server.ip_address}`,
-        });
+          // Update server record with successful credential set
+          const { error: updateError } = await supabase
+            .from("servers")
+            .update({
+              credential_set_id: selectedSetId,
+              credential_test_status: "valid",
+              credential_last_tested: new Date().toISOString(),
+              connection_status: "online",
+              connection_error: null,
+              last_connection_test: new Date().toISOString(),
+            })
+            .eq("id", server.id);
 
-        setTimeout(() => {
-          onSuccess?.();
-          onOpenChange(false);
-        }, 1500);
-      } else {
-        setTestResult({
-          success: false,
-          message: result.error || "Authentication failed",
-        });
-      }
+          if (updateError) throw updateError;
+
+          toast({
+            title: "Credentials Assigned",
+            description: `Successfully assigned credentials to ${server.hostname || server.ip_address}`,
+          });
+
+          setTimeout(() => {
+            onSuccess?.();
+            onOpenChange(false);
+          }, 1500);
+        } else if (updatedJob?.status === 'failed') {
+          clearInterval(pollInterval);
+          setTesting(false);
+          
+          const details = updatedJob.details as any;
+          setTestResult({
+            success: false,
+            message: details?.message || "Authentication failed",
+          });
+        }
+      }, 2000);
+
+      // Timeout after 30 seconds
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        if (testing) {
+          setTesting(false);
+          setTestResult({
+            success: false,
+            message: "Test timed out - check Job Executor is running",
+          });
+        }
+      }, 30000);
+
     } catch (error: any) {
       console.error("Error testing credentials:", error);
       setTestResult({
         success: false,
         message: error.message || "Failed to test credentials",
       });
-    } finally {
       setTesting(false);
     }
   };
