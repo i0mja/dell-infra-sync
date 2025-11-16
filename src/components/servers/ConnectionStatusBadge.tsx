@@ -8,11 +8,12 @@ interface ConnectionStatusBadgeProps {
   lastTest: string | null;
   error: string | null;
   credentialTestStatus?: string | null;
+  isIncomplete?: boolean;
 }
 
-export function ConnectionStatusBadge({ status, lastTest, error, credentialTestStatus }: ConnectionStatusBadgeProps) {
+export function ConnectionStatusBadge({ status, lastTest, error, credentialTestStatus, isIncomplete }: ConnectionStatusBadgeProps) {
   const getStatusConfig = () => {
-    // Priority: Show credential status if invalid
+    // Priority 1: Show credential status if invalid
     if (credentialTestStatus === 'invalid') {
       return {
         icon: XCircle,
@@ -21,7 +22,18 @@ export function ConnectionStatusBadge({ status, lastTest, error, credentialTestS
         className: 'bg-yellow-600 hover:bg-yellow-700 text-white border-transparent',
       };
     }
+
+    // Priority 2: Show incomplete data warning
+    if (isIncomplete) {
+      return {
+        icon: HelpCircle,
+        label: 'Incomplete Data',
+        variant: 'secondary' as const,
+        className: 'bg-yellow-500 hover:bg-yellow-600 text-white border-transparent',
+      };
+    }
     
+    // Priority 3: Show connection status
     switch (status) {
       case 'online':
         return {
@@ -53,6 +65,10 @@ export function ConnectionStatusBadge({ status, lastTest, error, credentialTestS
   const tooltipContent = () => {
     if (credentialTestStatus === 'invalid') {
       return "iDRAC detected but authentication failed with all credential sets.\nAssign valid credentials to access this server.";
+    }
+
+    if (isIncomplete) {
+      return "Server information is incomplete (missing model, service tag, or firmware).\nRight-click and select 'Refresh Server Information' to update.";
     }
     
     if (!lastTest) return "Connection not tested yet";
