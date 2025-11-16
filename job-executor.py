@@ -765,6 +765,81 @@ class JobExecutor:
             self.log(f"Error testing iDRAC {ip}: {e}", "DEBUG")
             return None
 
+    def resolve_credentials_for_server(self, server: Dict) -> tuple:
+        """
+        Resolve credentials for a server following priority order.
+        Returns: (username, password, source, used_cred_set_id)
+        Sources: 'credential_set_id', 'server_specific', 'discovered_by_credential_set_id', 
+                 'ip_range', 'defaults', 'decrypt_failed'
+        """
+        ip = server.get('ip_address', 'unknown')
+        
+        # 1) Explicit server.credential_set_id
+        if server.get('credential_set_id'):
+            cred_sets = self.get_credential_sets([server['credential_set_id']])
+            if cred_sets:
+                cred = cred_sets[0]
+                username = cred.get('username')
+                password = cred.get('password')
+                if not password and cred.get('password_encrypted'):
+                    password = self.decrypt_password(cred['password_encrypted'])
+                    if password is None:
+                        self.log(f"  Credential resolution for {ip}: decrypt_failed (credential_set_id)", "ERROR")
+                        return (None, None, 'decrypt_failed', None)
+                if username and password:
+                    self.log(f"  Credential resolution for {ip}: using credential_set_id", "DEBUG")
+                    return (username, password, 'credential_set_id', server['credential_set_id'])
+        
+        # 2) Server-specific idrac_username + idrac_password_encrypted
+        if server.get('idrac_username') and server.get('idrac_password_encrypted'):
+            username = server['idrac_username']
+            password = self.decrypt_password(server['idrac_password_encrypted'])
+            if password is None:
+                self.log(f"  Credential resolution for {ip}: decrypt_failed (server_specific)", "ERROR")
+                return (None, None, 'decrypt_failed', None)
+            self.log(f"  Credential resolution for {ip}: using server_specific credentials", "DEBUG")
+            return (username, password, 'server_specific', None)
+        
+        # 3) Fallback to discovered_by_credential_set_id
+        if server.get('discovered_by_credential_set_id'):
+            cred_sets = self.get_credential_sets([server['discovered_by_credential_set_id']])
+            if cred_sets:
+                cred = cred_sets[0]
+                username = cred.get('username')
+                password = cred.get('password')
+                if not password and cred.get('password_encrypted'):
+                    password = self.decrypt_password(cred['password_encrypted'])
+                    if password is None:
+                        self.log(f"  Credential resolution for {ip}: decrypt_failed (discovered_by_credential_set_id)", "ERROR")
+                        return (None, None, 'decrypt_failed', None)
+                if username and password:
+                    self.log(f"  Credential resolution for {ip}: using discovered_by_credential_set_id", "DEBUG")
+                    return (username, password, 'discovered_by_credential_set_id', server['discovered_by_credential_set_id'])
+        
+        # 4) IP-range mapped credentials
+        matching_sets = self.get_credential_sets_for_ip(server.get('ip_address', ''))
+        if matching_sets:
+            cred = matching_sets[0]  # Highest priority
+            username = cred.get('username')
+            password = cred.get('password')
+            if not password and cred.get('password_encrypted'):
+                password = self.decrypt_password(cred['password_encrypted'])
+                if password is None:
+                    self.log(f"  Credential resolution for {ip}: decrypt_failed (ip_range)", "ERROR")
+                    return (None, None, 'decrypt_failed', None)
+            if username and password:
+                self.log(f"  Credential resolution for {ip}: using ip_range credentials", "DEBUG")
+                return (username, password, 'ip_range', cred.get('id'))
+        
+        # 5) Final fallback: environment defaults
+        if IDRAC_DEFAULT_USER and IDRAC_DEFAULT_PASSWORD:
+            self.log(f"  Credential resolution for {ip}: using environment defaults", "DEBUG")
+            return (IDRAC_DEFAULT_USER, IDRAC_DEFAULT_PASSWORD, 'defaults', None)
+        
+        # No credentials available
+        self.log(f"  Credential resolution for {ip}: no credentials available", "WARN")
+        return (None, None, 'none', None)
+
     def refresh_existing_servers(self, job: Dict, server_ids: List[str]):
         """Refresh information for existing servers by querying iDRAC"""
         self.log(f"Refreshing {len(server_ids)} existing server(s)")
@@ -795,30 +870,23 @@ class JobExecutor:
                 ip = server['ip_address']
                 self.log(f"Refreshing server {ip}...")
                 
-                # Get credentials
-                username = None
-                password = None
+                # Resolve credentials using priority order
+                username, password, cred_source, used_cred_set_id = self.resolve_credentials_for_server(server)
                 
-                # Try credential_set_id first
-                if server.get('credential_set_id'):
-                    cred_sets = self.get_credential_sets([server['credential_set_id']])
-                    if cred_sets:
-                        cred = cred_sets[0]
-                        username = cred['username']
-                        password = cred.get('password')
-                        if not password and cred.get('password_encrypted'):
-                            password = self.decrypt_password(cred['password_encrypted'])
-                
-                # Fallback to manual credentials
-                if not username and server.get('idrac_username'):
-                    username = server['idrac_username']
-                    if server.get('idrac_password_encrypted'):
-                        password = self.decrypt_password(server['idrac_password_encrypted'])
-                
-                # Fallback to environment defaults
-                if not username:
-                    username = IDRAC_DEFAULT_USER
-                    password = IDRAC_DEFAULT_PASSWORD
+                # Handle credential resolution failures
+                if cred_source == 'decrypt_failed':
+                    # Update server with decryption error
+                    update_data = {
+                        'connection_status': 'offline',
+                        'connection_error': 'Encryption key not configured; cannot decrypt credentials',
+                        'credential_test_status': 'invalid',
+                        'credential_last_tested': datetime.now().isoformat()
+                    }
+                    update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server['id']}"
+                    requests.patch(update_url, headers=headers, json=update_data, verify=VERIFY_SSL)
+                    self.log(f"  ✗ Cannot decrypt credentials for {ip}", "ERROR")
+                    failed_count += 1
+                    continue
                 
                 if not username or not password:
                     self.log(f"  ✗ No credentials available for {ip}", "WARN")
@@ -848,6 +916,11 @@ class JobExecutor:
                         'credential_last_tested': datetime.now().isoformat(),
                     })
                     
+                    # Promote credential_set_id if we used discovered_by or ip_range and server doesn't have one
+                    if not server.get('credential_set_id') and used_cred_set_id and cred_source in ['discovered_by_credential_set_id', 'ip_range']:
+                        update_data['credential_set_id'] = used_cred_set_id
+                        self.log(f"  → Promoting credential_set_id {used_cred_set_id} from {cred_source}", "INFO")
+                    
                     # Mirror model to product_name if missing
                     if 'product_name' not in update_data and info.get('model'):
                         update_data['product_name'] = info['model']
@@ -864,10 +937,10 @@ class JobExecutor:
                         self.log(f"  ✗ Failed to update DB for {ip}: {update_response.status_code} {update_response.text}", "ERROR")
                         failed_count += 1
                 else:
-                    # Update as offline
+                    # Update as offline - failed to query iDRAC
                     update_data = {
                         'connection_status': 'offline',
-                        'connection_error': 'Failed to query iDRAC - check credentials',
+                        'connection_error': f'Failed to query iDRAC using {cred_source} credentials - check network or credentials',
                         'last_connection_test': datetime.now().isoformat(),
                         'credential_test_status': 'invalid',
                     }
@@ -875,7 +948,7 @@ class JobExecutor:
                     update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server['id']}"
                     requests.patch(update_url, headers=headers, json=update_data, verify=VERIFY_SSL)
                     
-                    self.log(f"  ✗ Failed to connect to {ip}", "WARN")
+                    self.log(f"  ✗ Failed to connect to {ip} (tried {cred_source})", "WARN")
                     failed_count += 1
             
             # Complete the job
