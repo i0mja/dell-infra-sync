@@ -305,6 +305,7 @@ export type Database = {
           id: string
           initiated_by: string | null
           job_id: string | null
+          operation_type: Database["public"]["Enums"]["operation_type"]
           request_body: Json | null
           request_headers: Json | null
           response_body: Json | null
@@ -325,6 +326,7 @@ export type Database = {
           id?: string
           initiated_by?: string | null
           job_id?: string | null
+          operation_type: Database["public"]["Enums"]["operation_type"]
           request_body?: Json | null
           request_headers?: Json | null
           response_body?: Json | null
@@ -345,6 +347,7 @@ export type Database = {
           id?: string
           initiated_by?: string | null
           job_id?: string | null
+          operation_type?: Database["public"]["Enums"]["operation_type"]
           request_body?: Json | null
           request_headers?: Json | null
           response_body?: Json | null
@@ -1382,6 +1385,7 @@ export type Database = {
         | "scp_export"
         | "scp_import"
         | "vcenter_connectivity_test"
+      operation_type: "idrac_api" | "vcenter_api" | "openmanage_api"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1529,6 +1533,7 @@ export const Constants = {
         "scp_import",
         "vcenter_connectivity_test",
       ],
+      operation_type: ["idrac_api", "vcenter_api", "openmanage_api"],
     },
   },
 } as const

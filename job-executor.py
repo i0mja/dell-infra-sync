@@ -4204,6 +4204,45 @@ class JobExecutor:
                 'message': 'API query failed'
             }
     
+    def log_vcenter_activity(self, operation: str, endpoint: str, success: bool, 
+                           server_id: str = None, job_id: str = None, 
+                           response_time_ms: int = None, details: Dict = None, 
+                           error_message: str = None):
+        """Log vCenter API activity to unified activity log"""
+        try:
+            log_entry = {
+                'operation_type': 'vcenter_api',
+                'command_type': operation,
+                'endpoint': endpoint,
+                'full_url': f"vcenter://{endpoint}",
+                'server_id': server_id,
+                'job_id': job_id,
+                'success': success,
+                'response_time_ms': response_time_ms,
+                'error_message': error_message,
+                'source': 'job_executor',
+                'timestamp': datetime.now().isoformat(),
+                'request_body': details if details else None,
+                'response_body': None  # Don't log large vCenter responses
+            }
+            
+            response = requests.post(
+                f"{DSM_URL}/rest/v1/idrac_commands",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json'
+                },
+                json=log_entry,
+                verify=VERIFY_SSL
+            )
+            
+            if response.status_code not in [200, 201]:
+                self.log(f"Failed to log vCenter activity: {response.text}", "WARNING")
+                
+        except Exception as e:
+            self.log(f"Error logging vCenter activity: {e}", "WARNING")
+
     def execute_vcenter_connectivity_test(self, job: Dict):
         """Execute comprehensive vCenter connectivity test"""
         try:
@@ -4235,11 +4274,22 @@ class JobExecutor:
                 'tests': {}
             }
             
-            # Test 1: DNS Resolution
-            self.log(f"Test 1/5: DNS resolution for {hostname}")
-            results['tests']['dns'] = self.test_dns_resolution(hostname)
-            
-            if not results['tests']['dns']['success']:
+        # Test 1: DNS Resolution
+        self.log(f"Test 1/5: DNS resolution for {hostname}")
+        start_time = time.time()
+        results['tests']['dns'] = self.test_dns_resolution(hostname)
+        dns_time = int((time.time() - start_time) * 1000)
+        
+        self.log_vcenter_activity(
+            operation='DNS_RESOLUTION',
+            endpoint=f'/dns/{hostname}',
+            success=results['tests']['dns']['success'],
+            job_id=job['id'],
+            response_time_ms=dns_time,
+            details={'hostname': hostname, 'result': results['tests']['dns']}
+        )
+        
+        if not results['tests']['dns']['success']:
                 # Critical failure - can't proceed
                 self.update_job_status(
                     job['id'], 'failed',
@@ -4250,11 +4300,22 @@ class JobExecutor:
             
             resolved_ip = results['tests']['dns']['resolved_ips'][0]
             
-            # Test 2: TCP Port Connectivity
-            self.log(f"Test 2/5: TCP port {port} connectivity to {resolved_ip}")
-            results['tests']['port'] = self.test_port_connectivity(resolved_ip, port)
-            
-            if not results['tests']['port']['success']:
+        # Test 2: TCP Port Connectivity
+        self.log(f"Test 2/5: TCP port {port} connectivity to {resolved_ip}")
+        start_time = time.time()
+        results['tests']['port'] = self.test_port_connectivity(resolved_ip, port)
+        port_time = int((time.time() - start_time) * 1000)
+        
+        self.log_vcenter_activity(
+            operation='PORT_CONNECTIVITY',
+            endpoint=f'/tcp/{resolved_ip}:{port}',
+            success=results['tests']['port']['success'],
+            job_id=job['id'],
+            response_time_ms=port_time,
+            details={'host': resolved_ip, 'port': port, 'result': results['tests']['port']}
+        )
+        
+        if not results['tests']['port']['success']:
                 # Critical failure
                 self.update_job_status(
                     job['id'], 'failed',
@@ -4263,15 +4324,38 @@ class JobExecutor:
                 )
                 return
             
-            # Test 3: SSL Certificate Validation
-            self.log(f"Test 3/5: SSL certificate validation")
-            results['tests']['ssl'] = self.test_ssl_certificate(hostname, port, verify_ssl)
-            
-            # Test 4: vCenter Authentication
-            self.log(f"Test 4/5: vCenter authentication")
-            results['tests']['auth'] = self.test_vcenter_authentication(settings)
-            
-            if not results['tests']['auth']['success']:
+        # Test 3: SSL Certificate Validation
+        self.log(f"Test 3/5: SSL certificate validation")
+        start_time = time.time()
+        results['tests']['ssl'] = self.test_ssl_certificate(hostname, port, verify_ssl)
+        ssl_time = int((time.time() - start_time) * 1000)
+        
+        self.log_vcenter_activity(
+            operation='SSL_VALIDATION',
+            endpoint=f'/ssl/{hostname}:{port}',
+            success=results['tests']['ssl']['success'],
+            job_id=job['id'],
+            response_time_ms=ssl_time,
+            details={'verify_ssl': verify_ssl, 'result': results['tests']['ssl']}
+        )
+        
+        # Test 4: vCenter Authentication
+        self.log(f"Test 4/5: vCenter authentication")
+        start_time = time.time()
+        results['tests']['auth'] = self.test_vcenter_authentication(settings)
+        auth_time = int((time.time() - start_time) * 1000)
+        
+        self.log_vcenter_activity(
+            operation='AUTHENTICATION',
+            endpoint=f'/api/session',
+            success=results['tests']['auth']['success'],
+            job_id=job['id'],
+            response_time_ms=auth_time,
+            details={'username': settings['username'], 'result': results['tests']['auth']},
+            error_message=results['tests']['auth'].get('error')
+        )
+        
+        if not results['tests']['auth']['success']:
                 # Authentication failure
                 self.update_job_status(
                     job['id'], 'failed',
@@ -4280,9 +4364,20 @@ class JobExecutor:
                 )
                 return
             
-            # Test 5: API Functionality (cluster/host count)
-            self.log(f"Test 5/5: API functionality test")
-            results['tests']['api'] = self.test_vcenter_api_functionality(settings)
+        # Test 5: API Functionality (cluster/host count)
+        self.log(f"Test 5/5: API functionality test")
+        start_time = time.time()
+        results['tests']['api'] = self.test_vcenter_api_functionality(settings)
+        api_time = int((time.time() - start_time) * 1000)
+        
+        self.log_vcenter_activity(
+            operation='API_FUNCTIONALITY',
+            endpoint='/api/vcenter/clusters',
+            success=results['tests']['api']['success'],
+            job_id=job['id'],
+            response_time_ms=api_time,
+            details={'result': results['tests']['api']}
+        )
             
             # Determine overall status
             all_passed = all(test.get('success', False) for test in results['tests'].values())

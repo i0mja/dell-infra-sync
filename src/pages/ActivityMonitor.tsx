@@ -31,6 +31,7 @@ interface IdracCommand {
   error_message: string | null;
   initiated_by: string | null;
   source: string;
+  operation_type: 'idrac_api' | 'vcenter_api' | 'openmanage_api';
   servers?: { hostname: string | null; ip_address: string };
 }
 
@@ -44,6 +45,7 @@ export default function ActivityMonitor() {
   const [serverFilter, setServerFilter] = useState<string>("all");
   const [commandTypeFilter, setCommandTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [operationTypeFilter, setOperationTypeFilter] = useState<string>("all");
   const [timeRangeFilter, setTimeRangeFilter] = useState<string>("24h");
   const [searchTerm, setSearchTerm] = useState("");
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
@@ -84,7 +86,7 @@ export default function ActivityMonitor() {
 
   // Fetch commands
   const { data: commandsData, refetch, isError, error, isFetching } = useQuery({
-    queryKey: ['idrac-commands', serverFilter, commandTypeFilter, statusFilter, timeRangeFilter],
+    queryKey: ['idrac-commands', serverFilter, commandTypeFilter, statusFilter, operationTypeFilter, timeRangeFilter],
     queryFn: async () => {
       let query = supabase
         .from('idrac_commands')
@@ -106,13 +108,16 @@ export default function ActivityMonitor() {
       if (statusFilter !== 'all') {
         query = query.eq('success', statusFilter === 'success');
       }
+      if (operationTypeFilter !== 'all') {
+        query = query.eq('operation_type', operationTypeFilter as 'idrac_api' | 'vcenter_api' | 'openmanage_api');
+      }
 
       const { data, error } = await query;
       if (error) {
         console.error('Error fetching commands:', error);
         throw error;
       }
-      return data as IdracCommand[];
+      return data as unknown as IdracCommand[];
     },
     staleTime: 0, // Data immediately stale, always refetch when needed
     refetchOnWindowFocus: false, // Don't auto-refetch on window focus
@@ -260,6 +265,22 @@ export default function ActivityMonitor() {
     return <Badge className={colors[type] || 'bg-gray-600'}>{labels[type] || type}</Badge>;
   };
 
+  const getOperationTypeBadge = (type: 'idrac_api' | 'vcenter_api' | 'openmanage_api') => {
+    const colorMap = {
+      idrac_api: "bg-blue-500/10 text-blue-500 border-blue-500/20",
+      vcenter_api: "bg-purple-500/10 text-purple-500 border-purple-500/20",
+      openmanage_api: "bg-orange-500/10 text-orange-500 border-orange-500/20",
+    };
+    
+    const labelMap = {
+      idrac_api: "iDRAC",
+      vcenter_api: "vCenter",
+      openmanage_api: "OpenManage",
+    };
+    
+    return { color: colorMap[type], label: labelMap[type] };
+  };
+
   return (
     <div className="container mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -268,7 +289,7 @@ export default function ActivityMonitor() {
           <div>
             <h1 className="text-3xl font-bold">Activity Monitor</h1>
             <p className="text-muted-foreground">
-              Live iDRAC command viewer
+              Unified activity log for iDRAC and vCenter operations
               {isLocalMode && <Badge variant="outline" className="ml-2">Local Mode</Badge>}
             </p>
           </div>
@@ -332,7 +353,7 @@ export default function ActivityMonitor() {
           <Filter className="h-4 w-4 text-muted-foreground" />
           <h2 className="font-semibold">Filters</h2>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
           <div className="relative">
             <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
             <Input
@@ -342,6 +363,18 @@ export default function ActivityMonitor() {
               className="pl-9"
             />
           </div>
+
+          <Select value={operationTypeFilter} onValueChange={setOperationTypeFilter}>
+            <SelectTrigger>
+              <SelectValue placeholder="Operation Type" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Operations</SelectItem>
+              <SelectItem value="idrac_api">iDRAC API</SelectItem>
+              <SelectItem value="vcenter_api">vCenter API</SelectItem>
+              <SelectItem value="openmanage_api">OpenManage API</SelectItem>
+            </SelectContent>
+          </Select>
           
           <Select value={serverFilter} onValueChange={setServerFilter}>
             <SelectTrigger>
@@ -474,8 +507,17 @@ export default function ActivityMonitor() {
                     <TableCell className="text-xs">
                       {format(new Date(cmd.timestamp), 'MMM dd, HH:mm:ss')}
                     </TableCell>
+                    <TableCell>
+                      <Badge 
+                        variant="outline" 
+                        className={getOperationTypeBadge(cmd.operation_type).color}
+                      >
+                        {getOperationTypeBadge(cmd.operation_type).label}
+                      </Badge>
+                    </TableCell>
                     <TableCell className="text-sm">
-                      {cmd.servers?.hostname || cmd.servers?.ip_address || '-'}
+                      {cmd.servers?.hostname || cmd.servers?.ip_address || 
+                       (cmd.operation_type === 'vcenter_api' ? 'vCenter' : '-')}
                     </TableCell>
                     <TableCell>{getCommandTypeBadge(cmd.command_type)}</TableCell>
                     <TableCell className="font-mono text-xs max-w-xs truncate">
