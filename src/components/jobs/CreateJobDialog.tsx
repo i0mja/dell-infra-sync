@@ -36,7 +36,7 @@ interface CredentialSet {
 
 export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServerId, quickScanIp }: CreateJobDialogProps) => {
   const [loading, setLoading] = useState(false);
-  const [jobType, setJobType] = useState<'firmware_update' | 'discovery_scan' | 'full_server_update' | ''>("");
+  const [jobType, setJobType] = useState<'firmware_update' | 'discovery_scan' | 'full_server_update' | 'boot_configuration' | ''>("");
   const [servers, setServers] = useState<Server[]>([]);
   const [selectedServers, setSelectedServers] = useState<string[]>([]);
   const [scanRange, setScanRange] = useState("");
@@ -92,7 +92,7 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
       let target_scope: any = {};
       let details: any = { notes };
 
-      if (jobType === 'firmware_update' || jobType === 'full_server_update') {
+      if (jobType === 'firmware_update' || jobType === 'full_server_update' || jobType === 'boot_configuration') {
         if (selectedServers.length === 0) {
           throw new Error('Please select at least one server');
         }
@@ -183,6 +183,7 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
                 <SelectItem value="firmware_update">Firmware Update (Single Component)</SelectItem>
                 <SelectItem value="full_server_update">Full Server Update (All Components)</SelectItem>
                 <SelectItem value="discovery_scan">IP Discovery Scan</SelectItem>
+                <SelectItem value="boot_configuration">Boot Configuration</SelectItem>
               </SelectContent>
             </Select>
           </div>

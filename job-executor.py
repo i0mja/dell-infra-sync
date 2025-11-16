@@ -2166,6 +2166,229 @@ class JobExecutor:
                 completed_at=datetime.now().isoformat(),
                 details={"error": str(e)}
             )
+    
+    def fetch_boot_configuration(self, ip: str, username: str, password: str, server_id: str, job_id: str = None) -> Dict:
+        """Fetch current boot configuration from iDRAC"""
+        system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
+        
+        start_time = time.time()
+        response = requests.get(
+            system_url,
+            auth=(username, password),
+            verify=False,
+            timeout=30
+        )
+        response_time_ms = int((time.time() - start_time) * 1000)
+        
+        if job_id:
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                command_type='GET',
+                endpoint='/redfish/v1/Systems/System.Embedded.1',
+                full_url=system_url,
+                status_code=response.status_code,
+                response_time_ms=response_time_ms,
+                success=response.status_code == 200
+            )
+        
+        if response.status_code != 200:
+            raise Exception(f"Failed to fetch boot config: {response.status_code}")
+        
+        data = response.json()
+        boot_data = data.get('Boot', {})
+        
+        return {
+            'boot_mode': boot_data.get('BootSourceOverrideMode', 'Unknown'),
+            'boot_source_override_enabled': boot_data.get('BootSourceOverrideEnabled', 'Disabled'),
+            'boot_source_override_target': boot_data.get('BootSourceOverrideTarget', 'None'),
+            'boot_order': boot_data.get('BootOrder', []),
+            'uefi_target': boot_data.get('UefiTargetBootSourceOverride', None)
+        }
+    
+    def set_boot_override(self, ip: str, username: str, password: str, server_id: str, job_id: str,
+                          target: str, mode: str, enabled: str, uefi_target: str = None):
+        """Set boot source override (one-time or continuous boot)"""
+        system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
+        
+        payload = {
+            "Boot": {
+                "BootSourceOverrideTarget": target,
+                "BootSourceOverrideMode": mode,
+                "BootSourceOverrideEnabled": enabled
+            }
+        }
+        
+        if target == 'UefiTarget' and uefi_target:
+            payload["Boot"]["UefiTargetBootSourceOverride"] = uefi_target
+        
+        start_time = time.time()
+        response = requests.patch(
+            system_url,
+            auth=(username, password),
+            json=payload,
+            verify=False,
+            timeout=30
+        )
+        response_time_ms = int((time.time() - start_time) * 1000)
+        
+        self.log_idrac_command(
+            server_id=server_id,
+            job_id=job_id,
+            command_type='PATCH',
+            endpoint='/redfish/v1/Systems/System.Embedded.1',
+            full_url=system_url,
+            request_body=payload,
+            response_body=response.text if response.status_code != 204 else None,
+            status_code=response.status_code,
+            response_time_ms=response_time_ms,
+            success=response.status_code in [200, 204]
+        )
+        
+        if response.status_code not in [200, 204]:
+            raise Exception(f"Failed to set boot override: {response.status_code} - {response.text}")
+    
+    def update_server_boot_config(self, server_id: str, boot_config: Dict):
+        """Update server's boot configuration in database"""
+        try:
+            update_data = {
+                'boot_mode': boot_config.get('boot_mode'),
+                'boot_source_override_enabled': boot_config.get('boot_source_override_enabled'),
+                'boot_source_override_target': boot_config.get('boot_source_override_target'),
+                'boot_order': boot_config.get('boot_order'),
+                'last_boot_config_check': datetime.now().isoformat()
+            }
+            
+            url = f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}"
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            }
+            
+            response = requests.patch(url, headers=headers, json=update_data, verify=VERIFY_SSL)
+            
+            if response.status_code not in [200, 204]:
+                self.log(f"Failed to update server boot config: {response.status_code}", "WARN")
+        
+        except Exception as e:
+            self.log(f"Error updating server boot config: {e}", "ERROR")
+    
+    def execute_boot_configuration(self, job: Dict):
+        """Execute boot configuration changes on servers"""
+        try:
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            target_scope = job.get('target_scope', {})
+            details = job.get('details', {})
+            action = details.get('action', 'fetch_config')
+            
+            self.log(f"Executing boot configuration action: {action}")
+            
+            # Get target servers
+            server_ids = target_scope.get('server_ids', [])
+            if not server_ids:
+                self.log("Boot configuration requires specific server selection", "ERROR")
+                raise ValueError("Boot configuration requires specific server selection")
+            
+            # Fetch servers from DB
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            servers_url = f"{DSM_URL}/rest/v1/servers?id=in.({','.join(server_ids)})"
+            servers_response = requests.get(servers_url, headers=headers, verify=VERIFY_SSL)
+            servers = servers_response.json() if servers_response.status_code == 200 else []
+            
+            success_count = 0
+            failed_count = 0
+            results = []
+            
+            for server in servers:
+                ip = server['ip_address']
+                self.log(f"Processing boot configuration for {ip}...")
+                
+                # Get credentials
+                username, password = self.get_server_credentials(server)
+                if not username or not password:
+                    self.log(f"  ✗ No credentials for {ip}", "WARN")
+                    failed_count += 1
+                    results.append({'server': ip, 'success': False, 'error': 'No credentials'})
+                    continue
+                
+                try:
+                    # Fetch current boot configuration
+                    current_config = self.fetch_boot_configuration(ip, username, password, server['id'], job['id'])
+                    self.log(f"  Current boot mode: {current_config['boot_mode']}")
+                    self.log(f"  Boot override: {current_config['boot_source_override_enabled']} -> {current_config['boot_source_override_target']}")
+                    
+                    # Execute action
+                    if action == 'fetch_config':
+                        self.update_server_boot_config(server['id'], current_config)
+                        self.log(f"  ✓ Boot configuration fetched and updated")
+                        success_count += 1
+                        results.append({'server': ip, 'success': True, 'config': current_config})
+                    
+                    elif action == 'set_one_time_boot':
+                        target = details.get('boot_target', 'None')
+                        mode = details.get('boot_mode', current_config['boot_mode'])
+                        uefi_target = details.get('uefi_target', None)
+                        
+                        self.set_boot_override(ip, username, password, server['id'], job['id'], 
+                                              target, mode, 'Once', uefi_target)
+                        
+                        updated_config = self.fetch_boot_configuration(ip, username, password, server['id'], job['id'])
+                        self.update_server_boot_config(server['id'], updated_config)
+                        
+                        self.log(f"  ✓ One-time boot set to {target}")
+                        success_count += 1
+                        results.append({'server': ip, 'success': True, 'action': 'one_time_boot', 'target': target})
+                    
+                    elif action == 'disable_override':
+                        self.set_boot_override(ip, username, password, server['id'], job['id'], 
+                                              'None', current_config['boot_mode'], 'Disabled', None)
+                        
+                        updated_config = self.fetch_boot_configuration(ip, username, password, server['id'], job['id'])
+                        self.update_server_boot_config(server['id'], updated_config)
+                        
+                        self.log(f"  ✓ Boot override disabled")
+                        success_count += 1
+                        results.append({'server': ip, 'success': True, 'action': 'disable_override'})
+                    
+                    else:
+                        raise ValueError(f"Unknown boot configuration action: {action}")
+                    
+                except Exception as e:
+                    self.log(f"  ✗ Error: {e}", "ERROR")
+                    failed_count += 1
+                    results.append({'server': ip, 'success': False, 'error': str(e)})
+            
+            # Update job status
+            self.update_job_status(
+                job['id'], 
+                'completed' if failed_count == 0 else 'failed',
+                completed_at=datetime.now().isoformat(),
+                details={
+                    'action': action,
+                    'success_count': success_count,
+                    'failed_count': failed_count,
+                    'results': results
+                }
+            )
+            
+            self.log(f"Boot configuration job completed: {success_count} succeeded, {failed_count} failed")
+            
+        except Exception as e:
+            self.log(f"Boot configuration job failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'], 
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e)}
+            )
 
     def execute_job(self, job: Dict):
         """Execute a job based on its type"""
@@ -2185,6 +2408,8 @@ class JobExecutor:
             self.execute_health_check(job)
         elif job_type == 'fetch_event_logs':
             self.execute_fetch_event_logs(job)
+        elif job_type == 'boot_configuration':
+            self.execute_boot_configuration(job)
         else:
             self.log(f"Unknown job type: {job_type}", "ERROR")
             self.update_job_status(
