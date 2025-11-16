@@ -656,6 +656,60 @@ export type Database = {
         }
         Relationships: []
       }
+      server_boot_config_history: {
+        Row: {
+          boot_mode: string | null
+          boot_order: Json | null
+          boot_source_override_enabled: string | null
+          boot_source_override_target: string | null
+          changed_by: string | null
+          created_at: string
+          id: string
+          job_id: string | null
+          server_id: string
+          timestamp: string
+        }
+        Insert: {
+          boot_mode?: string | null
+          boot_order?: Json | null
+          boot_source_override_enabled?: string | null
+          boot_source_override_target?: string | null
+          changed_by?: string | null
+          created_at?: string
+          id?: string
+          job_id?: string | null
+          server_id: string
+          timestamp?: string
+        }
+        Update: {
+          boot_mode?: string | null
+          boot_order?: Json | null
+          boot_source_override_enabled?: string | null
+          boot_source_override_target?: string | null
+          changed_by?: string | null
+          created_at?: string
+          id?: string
+          job_id?: string | null
+          server_id?: string
+          timestamp?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "server_boot_config_history_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "server_boot_config_history_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       server_event_logs: {
         Row: {
           category: string | null
@@ -765,6 +819,10 @@ export type Database = {
       servers: {
         Row: {
           bios_version: string | null
+          boot_mode: string | null
+          boot_order: Json | null
+          boot_source_override_enabled: string | null
+          boot_source_override_target: string | null
           connection_error: string | null
           connection_status: string | null
           cpu_count: number | null
@@ -780,6 +838,7 @@ export type Database = {
           idrac_password_encrypted: string | null
           idrac_username: string | null
           ip_address: string
+          last_boot_config_check: string | null
           last_connection_test: string | null
           last_health_check: string | null
           last_openmanage_sync: string | null
@@ -801,6 +860,10 @@ export type Database = {
         }
         Insert: {
           bios_version?: string | null
+          boot_mode?: string | null
+          boot_order?: Json | null
+          boot_source_override_enabled?: string | null
+          boot_source_override_target?: string | null
           connection_error?: string | null
           connection_status?: string | null
           cpu_count?: number | null
@@ -816,6 +879,7 @@ export type Database = {
           idrac_password_encrypted?: string | null
           idrac_username?: string | null
           ip_address: string
+          last_boot_config_check?: string | null
           last_connection_test?: string | null
           last_health_check?: string | null
           last_openmanage_sync?: string | null
@@ -837,6 +901,10 @@ export type Database = {
         }
         Update: {
           bios_version?: string | null
+          boot_mode?: string | null
+          boot_order?: Json | null
+          boot_source_override_enabled?: string | null
+          boot_source_override_target?: string | null
           connection_error?: string | null
           connection_status?: string | null
           cpu_count?: number | null
@@ -852,6 +920,7 @@ export type Database = {
           idrac_password_encrypted?: string | null
           idrac_username?: string | null
           ip_address?: string
+          last_boot_config_check?: string | null
           last_connection_test?: string | null
           last_health_check?: string | null
           last_openmanage_sync?: string | null
@@ -1064,6 +1133,7 @@ export type Database = {
         | "power_action"
         | "health_check"
         | "fetch_event_logs"
+        | "boot_configuration"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1202,6 +1272,7 @@ export const Constants = {
         "power_action",
         "health_check",
         "fetch_event_logs",
+        "boot_configuration",
       ],
     },
   },
