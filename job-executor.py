@@ -1781,6 +1781,392 @@ class JobExecutor:
                 details={"success": False, "message": f"Error: {str(e)}"}
             )
 
+    def execute_power_action(self, job: Dict):
+        """Execute power action on servers"""
+        try:
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            target_scope = job.get('target_scope', {})
+            action = job.get('details', {}).get('action', 'On')
+            
+            self.log(f"Executing power action: {action}")
+            
+            # Get target servers
+            if target_scope.get('type') == 'specific':
+                server_ids = target_scope.get('server_ids', [])
+            else:
+                self.log("Power action requires specific server selection", "ERROR")
+                raise ValueError("Power action requires specific server selection")
+            
+            # Fetch servers from DB
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            servers_url = f"{DSM_URL}/rest/v1/servers?id=in.({','.join(server_ids)})"
+            servers_response = requests.get(servers_url, headers=headers, verify=VERIFY_SSL)
+            servers = servers_response.json() if servers_response.status_code == 200 else []
+            
+            success_count = 0
+            failed_count = 0
+            
+            for server in servers:
+                ip = server['ip_address']
+                self.log(f"Executing {action} on {ip}...")
+                
+                # Get credentials
+                username, password = self.get_server_credentials(server)
+                if not username or not password:
+                    self.log(f"  ✗ No credentials for {ip}", "WARN")
+                    failed_count += 1
+                    continue
+                
+                try:
+                    # Get current power state
+                    system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
+                    start_time = time.time()
+                    response = requests.get(
+                        system_url,
+                        auth=(username, password),
+                        verify=False,
+                        timeout=30
+                    )
+                    response_time_ms = int((time.time() - start_time) * 1000)
+                    
+                    self.log_idrac_command(
+                        server_id=server['id'],
+                        job_id=job['id'],
+                        command_type='GET',
+                        endpoint='/redfish/v1/Systems/System.Embedded.1',
+                        full_url=system_url,
+                        status_code=response.status_code,
+                        response_time_ms=response_time_ms,
+                        success=response.status_code == 200
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        current_state = data.get('PowerState', 'Unknown')
+                        self.log(f"  Current power state: {current_state}")
+                        
+                        # Execute power action
+                        action_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset"
+                        action_payload = {"ResetType": action}
+                        
+                        start_time = time.time()
+                        action_response = requests.post(
+                            action_url,
+                            auth=(username, password),
+                            json=action_payload,
+                            verify=False,
+                            timeout=30
+                        )
+                        response_time_ms = int((time.time() - start_time) * 1000)
+                        
+                        self.log_idrac_command(
+                            server_id=server['id'],
+                            job_id=job['id'],
+                            command_type='POST',
+                            endpoint='/redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset',
+                            full_url=action_url,
+                            request_body=action_payload,
+                            status_code=action_response.status_code,
+                            response_time_ms=response_time_ms,
+                            success=action_response.status_code in [200, 202, 204]
+                        )
+                        
+                        if action_response.status_code in [200, 202, 204]:
+                            self.log(f"  ✓ Power action {action} successful")
+                            
+                            # Update server power state in DB
+                            expected_state = 'On' if action in ['On', 'ForceRestart'] else 'Off'
+                            update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server['id']}"
+                            requests.patch(update_url, headers=headers, json={'power_state': expected_state}, verify=VERIFY_SSL)
+                            
+                            success_count += 1
+                        else:
+                            self.log(f"  ✗ Power action failed: HTTP {action_response.status_code}", "ERROR")
+                            failed_count += 1
+                    else:
+                        self.log(f"  ✗ Failed to get power state: HTTP {response.status_code}", "ERROR")
+                        failed_count += 1
+                        
+                except Exception as e:
+                    self.log(f"  ✗ Error: {e}", "ERROR")
+                    failed_count += 1
+            
+            # Complete job
+            result = {
+                "action": action,
+                "success_count": success_count,
+                "failed_count": failed_count,
+                "total": len(servers)
+            }
+            
+            self.update_job_status(
+                job['id'],
+                'completed' if failed_count == 0 else 'failed',
+                completed_at=datetime.now().isoformat(),
+                details=result
+            )
+            
+            self.log(f"Power action complete: {success_count} succeeded, {failed_count} failed")
+            
+        except Exception as e:
+            self.log(f"Power action job failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'], 'failed',
+                completed_at=datetime.now().isoformat(),
+                details={"error": str(e)}
+            )
+    
+    def execute_health_check(self, job: Dict):
+        """Execute health check on servers"""
+        try:
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            target_scope = job.get('target_scope', {})
+            
+            self.log("Executing health check")
+            
+            # Get target servers
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            if target_scope.get('type') == 'specific':
+                server_ids = target_scope.get('server_ids', [])
+                servers_url = f"{DSM_URL}/rest/v1/servers?id=in.({','.join(server_ids)})"
+            else:
+                servers_url = f"{DSM_URL}/rest/v1/servers"
+            
+            servers_response = requests.get(servers_url, headers=headers, verify=VERIFY_SSL)
+            servers = servers_response.json() if servers_response.status_code == 200 else []
+            
+            success_count = 0
+            failed_count = 0
+            
+            for server in servers:
+                ip = server['ip_address']
+                self.log(f"Checking health for {ip}...")
+                
+                # Get credentials
+                username, password = self.get_server_credentials(server)
+                if not username or not password:
+                    self.log(f"  ✗ No credentials for {ip}", "WARN")
+                    failed_count += 1
+                    continue
+                
+                try:
+                    health_data = {
+                        'server_id': server['id'],
+                        'timestamp': datetime.now().isoformat()
+                    }
+                    
+                    # Get System health and power state
+                    system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
+                    response = requests.get(system_url, auth=(username, password), verify=False, timeout=30)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        health_data['power_state'] = data.get('PowerState')
+                        health_data['overall_health'] = data.get('Status', {}).get('Health', 'Unknown')
+                    
+                    # Get Thermal data (temperatures, fans)
+                    thermal_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/Thermal"
+                    response = requests.get(thermal_url, auth=(username, password), verify=False, timeout=30)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        temps = data.get('Temperatures', [])
+                        fans = data.get('Fans', [])
+                        
+                        if temps:
+                            valid_temps = [t.get('ReadingCelsius', 0) for t in temps if t.get('ReadingCelsius')]
+                            if valid_temps:
+                                avg_temp = sum(valid_temps) / len(valid_temps)
+                                health_data['temperature_celsius'] = round(avg_temp, 1)
+                        
+                        fan_statuses = [f.get('Status', {}).get('Health') for f in fans]
+                        health_data['fan_health'] = 'OK' if all(s == 'OK' for s in fan_statuses if s) else 'Warning'
+                        
+                        health_data['sensors'] = {'temperatures': temps[:5], 'fans': fans[:5]}  # Store subset
+                    
+                    # Get Power data (PSU)
+                    power_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/Power"
+                    response = requests.get(power_url, auth=(username, password), verify=False, timeout=30)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        psus = data.get('PowerSupplies', [])
+                        psu_statuses = [p.get('Status', {}).get('Health') for p in psus]
+                        health_data['psu_health'] = 'OK' if all(s == 'OK' for s in psu_statuses if s) else 'Warning'
+                    
+                    # Insert health record
+                    insert_url = f"{DSM_URL}/rest/v1/server_health"
+                    insert_response = requests.post(insert_url, headers=headers, json=health_data, verify=VERIFY_SSL)
+                    
+                    if insert_response.status_code in [200, 201]:
+                        # Update server record
+                        update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server['id']}"
+                        update_data = {
+                            'power_state': health_data.get('power_state'),
+                            'overall_health': health_data.get('overall_health'),
+                            'last_health_check': datetime.now().isoformat()
+                        }
+                        requests.patch(update_url, headers=headers, json=update_data, verify=VERIFY_SSL)
+                        
+                        self.log(f"  ✓ Health check complete: {health_data.get('overall_health')}")
+                        success_count += 1
+                    else:
+                        self.log(f"  ✗ Failed to store health data", "ERROR")
+                        failed_count += 1
+                        
+                except Exception as e:
+                    self.log(f"  ✗ Error: {e}", "ERROR")
+                    failed_count += 1
+            
+            # Complete job
+            result = {
+                "success_count": success_count,
+                "failed_count": failed_count,
+                "total": len(servers)
+            }
+            
+            self.update_job_status(
+                job['id'],
+                'completed' if failed_count == 0 else 'failed',
+                completed_at=datetime.now().isoformat(),
+                details=result
+            )
+            
+            self.log(f"Health check complete: {success_count} succeeded, {failed_count} failed")
+            
+        except Exception as e:
+            self.log(f"Health check job failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'], 'failed',
+                completed_at=datetime.now().isoformat(),
+                details={"error": str(e)}
+            )
+    
+    def execute_fetch_event_logs(self, job: Dict):
+        """Fetch System Event Log entries from iDRAC"""
+        try:
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            target_scope = job.get('target_scope', {})
+            limit = job.get('details', {}).get('limit', 100)
+            
+            self.log(f"Fetching event logs (limit: {limit})")
+            
+            # Get target servers
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            if target_scope.get('type') == 'specific':
+                server_ids = target_scope.get('server_ids', [])
+                servers_url = f"{DSM_URL}/rest/v1/servers?id=in.({','.join(server_ids)})"
+            else:
+                servers_url = f"{DSM_URL}/rest/v1/servers"
+            
+            servers_response = requests.get(servers_url, headers=headers, verify=VERIFY_SSL)
+            servers = servers_response.json() if servers_response.status_code == 200 else []
+            
+            total_events = 0
+            success_count = 0
+            failed_count = 0
+            
+            for server in servers:
+                ip = server['ip_address']
+                self.log(f"Fetching event logs from {ip}...")
+                
+                # Get credentials
+                username, password = self.get_server_credentials(server)
+                if not username or not password:
+                    self.log(f"  ✗ No credentials for {ip}", "WARN")
+                    failed_count += 1
+                    continue
+                
+                try:
+                    # Get SEL logs
+                    sel_url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1/Logs/Sel"
+                    response = requests.get(sel_url, auth=(username, password), verify=False, timeout=30)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        members = data.get('Members', [])
+                        
+                        events_to_insert = []
+                        for member in members[:limit]:
+                            event = {
+                                'server_id': server['id'],
+                                'event_id': member.get('Id'),
+                                'timestamp': member.get('Created', datetime.now().isoformat()),
+                                'severity': member.get('Severity', 'Unknown'),
+                                'message': member.get('Message', ''),
+                                'category': member.get('MessageId', '').split('.')[0] if '.' in member.get('MessageId', '') else 'Unknown',
+                                'sensor_type': member.get('SensorType'),
+                                'sensor_number': member.get('SensorNumber'),
+                                'raw_data': member
+                            }
+                            events_to_insert.append(event)
+                        
+                        if events_to_insert:
+                            # Bulk insert events
+                            insert_url = f"{DSM_URL}/rest/v1/server_event_logs"
+                            insert_response = requests.post(insert_url, headers=headers, json=events_to_insert, verify=VERIFY_SSL)
+                            
+                            if insert_response.status_code in [200, 201]:
+                                self.log(f"  ✓ Inserted {len(events_to_insert)} event log entries")
+                                total_events += len(events_to_insert)
+                                success_count += 1
+                            else:
+                                self.log(f"  ✗ Failed to insert events: HTTP {insert_response.status_code}", "ERROR")
+                                failed_count += 1
+                        else:
+                            self.log(f"  ⚠ No event log entries found")
+                            success_count += 1
+                    else:
+                        self.log(f"  ✗ Failed to fetch SEL: HTTP {response.status_code}", "ERROR")
+                        failed_count += 1
+                        
+                except Exception as e:
+                    self.log(f"  ✗ Error: {e}", "ERROR")
+                    failed_count += 1
+            
+            # Complete job
+            result = {
+                "total_events": total_events,
+                "success_count": success_count,
+                "failed_count": failed_count,
+                "total_servers": len(servers)
+            }
+            
+            self.update_job_status(
+                job['id'],
+                'completed' if failed_count == 0 else 'failed',
+                completed_at=datetime.now().isoformat(),
+                details=result
+            )
+            
+            self.log(f"Event log fetch complete: {total_events} events from {success_count} servers")
+            
+        except Exception as e:
+            self.log(f"Event log fetch job failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'], 'failed',
+                completed_at=datetime.now().isoformat(),
+                details={"error": str(e)}
+            )
+
     def execute_job(self, job: Dict):
         """Execute a job based on its type"""
         job_type = job['job_type']
@@ -1793,6 +2179,12 @@ class JobExecutor:
             self.execute_full_server_update(job)
         elif job_type == 'test_credentials':
             self.execute_test_credentials(job)
+        elif job_type == 'power_action':
+            self.execute_power_action(job)
+        elif job_type == 'health_check':
+            self.execute_health_check(job)
+        elif job_type == 'fetch_event_logs':
+            self.execute_fetch_event_logs(job)
         else:
             self.log(f"Unknown job type: {job_type}", "ERROR")
             self.update_job_status(

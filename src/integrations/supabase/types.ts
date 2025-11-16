@@ -656,6 +656,112 @@ export type Database = {
         }
         Relationships: []
       }
+      server_event_logs: {
+        Row: {
+          category: string | null
+          created_at: string
+          event_id: string | null
+          id: string
+          message: string | null
+          raw_data: Json | null
+          sensor_number: string | null
+          sensor_type: string | null
+          server_id: string
+          severity: string | null
+          timestamp: string
+        }
+        Insert: {
+          category?: string | null
+          created_at?: string
+          event_id?: string | null
+          id?: string
+          message?: string | null
+          raw_data?: Json | null
+          sensor_number?: string | null
+          sensor_type?: string | null
+          server_id: string
+          severity?: string | null
+          timestamp: string
+        }
+        Update: {
+          category?: string | null
+          created_at?: string
+          event_id?: string | null
+          id?: string
+          message?: string | null
+          raw_data?: Json | null
+          sensor_number?: string | null
+          sensor_type?: string | null
+          server_id?: string
+          severity?: string | null
+          timestamp?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "server_event_logs_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      server_health: {
+        Row: {
+          created_at: string
+          fan_health: string | null
+          id: string
+          memory_health: string | null
+          network_health: string | null
+          overall_health: string | null
+          power_state: string | null
+          psu_health: string | null
+          sensors: Json | null
+          server_id: string
+          storage_health: string | null
+          temperature_celsius: number | null
+          timestamp: string
+        }
+        Insert: {
+          created_at?: string
+          fan_health?: string | null
+          id?: string
+          memory_health?: string | null
+          network_health?: string | null
+          overall_health?: string | null
+          power_state?: string | null
+          psu_health?: string | null
+          sensors?: Json | null
+          server_id: string
+          storage_health?: string | null
+          temperature_celsius?: number | null
+          timestamp?: string
+        }
+        Update: {
+          created_at?: string
+          fan_health?: string | null
+          id?: string
+          memory_health?: string | null
+          network_health?: string | null
+          overall_health?: string | null
+          power_state?: string | null
+          psu_health?: string | null
+          sensors?: Json | null
+          server_id?: string
+          storage_health?: string | null
+          temperature_celsius?: number | null
+          timestamp?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "server_health_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       servers: {
         Row: {
           bios_version: string | null
@@ -675,6 +781,7 @@ export type Database = {
           idrac_username: string | null
           ip_address: string
           last_connection_test: string | null
+          last_health_check: string | null
           last_openmanage_sync: string | null
           last_seen: string | null
           manager_mac_address: string | null
@@ -683,6 +790,8 @@ export type Database = {
           model: string | null
           notes: string | null
           openmanage_device_id: string | null
+          overall_health: string | null
+          power_state: string | null
           product_name: string | null
           redfish_version: string | null
           service_tag: string | null
@@ -708,6 +817,7 @@ export type Database = {
           idrac_username?: string | null
           ip_address: string
           last_connection_test?: string | null
+          last_health_check?: string | null
           last_openmanage_sync?: string | null
           last_seen?: string | null
           manager_mac_address?: string | null
@@ -716,6 +826,8 @@ export type Database = {
           model?: string | null
           notes?: string | null
           openmanage_device_id?: string | null
+          overall_health?: string | null
+          power_state?: string | null
           product_name?: string | null
           redfish_version?: string | null
           service_tag?: string | null
@@ -741,6 +853,7 @@ export type Database = {
           idrac_username?: string | null
           ip_address?: string
           last_connection_test?: string | null
+          last_health_check?: string | null
           last_openmanage_sync?: string | null
           last_seen?: string | null
           manager_mac_address?: string | null
@@ -749,6 +862,8 @@ export type Database = {
           model?: string | null
           notes?: string | null
           openmanage_device_id?: string | null
+          overall_health?: string | null
+          power_state?: string | null
           product_name?: string | null
           redfish_version?: string | null
           service_tag?: string | null
@@ -946,6 +1061,9 @@ export type Database = {
         | "vcenter_sync"
         | "full_server_update"
         | "test_credentials"
+        | "power_action"
+        | "health_check"
+        | "fetch_event_logs"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1081,6 +1199,9 @@ export const Constants = {
         "vcenter_sync",
         "full_server_update",
         "test_credentials",
+        "power_action",
+        "health_check",
+        "fetch_event_logs",
       ],
     },
   },
