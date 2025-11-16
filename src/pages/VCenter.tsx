@@ -47,19 +47,29 @@ const VCenter = () => {
   const isLocalMode = import.meta.env.VITE_SUPABASE_URL?.includes('127.0.0.1') || 
                       import.meta.env.VITE_SUPABASE_URL?.includes('localhost');
 
-  // Check if IP is private (RFC 1918)
-  const isPrivateIP = (ip: string): boolean => {
-    if (!ip) return false;
-    // Remove any port number
-    const host = ip.split(':')[0];
-    // Private IP ranges: 10.x.x.x, 172.16-31.x.x, 192.168.x.x
-    return /^10\./.test(host) || 
-           /^192\.168\./.test(host) || 
-           /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host);
+  // Check if host is on private network (IP or hostname)
+  const isPrivateNetwork = (host: string): boolean => {
+    if (!host) return false;
+    const cleanHost = host.trim().split(':')[0].toLowerCase();
+    
+    // Check private IP ranges (RFC 1918)
+    if (/^10\./.test(cleanHost) || 
+        /^192\.168\./.test(cleanHost) || 
+        /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(cleanHost)) {
+      return true;
+    }
+    
+    // Check private hostname patterns
+    // Single-word hostnames (no dots) are typically private
+    if (!cleanHost.includes('.')) return true;
+    
+    // Common private domain suffixes
+    const privateDomains = ['.local', '.internal', '.lan', '.grp', '.corp', '.domain', '.private', '.home'];
+    return privateDomains.some(suffix => cleanHost.endsWith(suffix));
   };
 
-  const isPrivateNetwork = vcenterHost ? isPrivateIP(vcenterHost) : false;
-  const useJobExecutorPath = isLocalMode || isPrivateNetwork;
+  const isPrivateHost = vcenterHost ? isPrivateNetwork(vcenterHost) : false;
+  const useJobExecutorPath = isLocalMode || isPrivateHost;
 
   const fetchHosts = async () => {
     try {
@@ -168,7 +178,7 @@ const VCenter = () => {
         throw new Error("vCenter not configured. Please open Settings to configure.");
       }
 
-      const useJobExecutor = isLocalMode || isPrivateIP(settings.host.trim());
+      const useJobExecutor = isLocalMode || isPrivateNetwork(settings.host.trim());
 
       if (useJobExecutor) {
         // vCenter is on private network - force Job Executor
@@ -315,7 +325,7 @@ const VCenter = () => {
           {useJobExecutorPath ? (
             <>
               {isLocalMode && <span className="font-medium">Local deployment detected. </span>}
-              {isPrivateNetwork && vcenterHost && (
+              {isPrivateHost && vcenterHost && (
                 <span className="font-medium">Private vCenter detected ({vcenterHost}). </span>
               )}
               Clicking "Sync Now" will create a job for the Job Executor to process.

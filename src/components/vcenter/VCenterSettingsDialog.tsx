@@ -91,13 +91,22 @@ export function VCenterSettingsDialog({
     }
   };
 
-  // Check if IP is private (RFC 1918)
-  const isPrivateIP = (ip: string): boolean => {
-    if (!ip) return false;
-    const host = ip.trim().split(':')[0];
-    return /^10\./.test(host) || 
-           /^192\.168\./.test(host) || 
-           /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host);
+  // Check if host is on private network (IP or hostname)
+  const isPrivateNetwork = (host: string): boolean => {
+    if (!host) return false;
+    const cleanHost = host.trim().split(':')[0].toLowerCase();
+    
+    // Check private IP ranges
+    if (/^10\./.test(cleanHost) || 
+        /^192\.168\./.test(cleanHost) || 
+        /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(cleanHost)) {
+      return true;
+    }
+    
+    // Single-word hostnames or private domain suffixes
+    if (!cleanHost.includes('.')) return true;
+    const privateDomains = ['.local', '.internal', '.lan', '.grp', '.corp', '.domain', '.private', '.home'];
+    return privateDomains.some(suffix => cleanHost.endsWith(suffix));
   };
 
   const handleTestConnection = async () => {
@@ -107,7 +116,7 @@ export function VCenterSettingsDialog({
       setTesting(true);
 
       // Check if vCenter is on private network
-      if (isPrivateIP(validated.host)) {
+      if (isPrivateNetwork(validated.host)) {
         toast({
           title: "Private network detected",
           description: "This vCenter is on a private network. Use 'Sync Now' to create a job for the Job Executor to test connectivity.",
