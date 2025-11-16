@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Database, RefreshCw, Link as LinkIcon, Search, Settings, RefreshCcw } from "lucide-react";
+import { Database, RefreshCw, Link as LinkIcon, Search, Settings, RefreshCcw, Activity } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { InfoIcon, Loader2 } from "lucide-react";
 import { VCenterSettingsDialog } from "@/components/vcenter/VCenterSettingsDialog";
+import { VCenterConnectivityDialog } from "@/components/vcenter/VCenterConnectivityDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 
@@ -41,6 +42,9 @@ const VCenter = () => {
   const [syncing, setSyncing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [vcenterHost, setVCenterHost] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testResults, setTestResults] = useState<any>(null);
+  const [testDialogOpen, setTestDialogOpen] = useState(false);
   const { toast } = useToast();
   
   // Detect local mode
@@ -155,6 +159,88 @@ const VCenter = () => {
   const totalHosts = hosts.length;
   const linkedHosts = hosts.filter(h => h.server_id).length;
   const unlinkedHosts = totalHosts - linkedHosts;
+
+  const handleTestConnectivity = async () => {
+    try {
+      setTesting(true);
+      
+      // Check if vCenter is configured
+      const { data: settings, error: settingsError } = await supabase
+        .from('vcenter_settings')
+        .select('*')
+        .limit(1)
+        .single();
+
+      if (settingsError || !settings) {
+        throw new Error("vCenter not configured. Please open Settings to configure.");
+      }
+
+      // Create connectivity test job
+      const { data: job, error: jobError } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'vcenter_connectivity_test',
+          created_by: user?.id,
+          status: 'pending',
+          details: {}
+        })
+        .select()
+        .single();
+
+      if (jobError) throw jobError;
+
+      toast({
+        title: "Connectivity test started",
+        description: "Running comprehensive connectivity tests...",
+      });
+
+      // Poll for job completion
+      const pollInterval = setInterval(async () => {
+        const { data: updatedJob } = await supabase
+          .from('jobs')
+          .select('*')
+          .eq('id', job.id)
+          .single();
+
+        if (updatedJob && updatedJob.status !== 'pending' && updatedJob.status !== 'running') {
+          clearInterval(pollInterval);
+          setTesting(false);
+          
+          if (updatedJob.status === 'completed') {
+            setTestResults(updatedJob.details);
+            setTestDialogOpen(true);
+            const details = updatedJob.details as any;
+            toast({
+              title: "Connectivity test completed",
+              description: details?.message || "Tests completed successfully",
+            });
+          } else {
+            const details = updatedJob.details as any;
+            toast({
+              title: "Connectivity test failed",
+              description: details?.error || "Test failed",
+              variant: "destructive",
+            });
+          }
+        }
+      }, 2000);
+
+      // Cleanup after 2 minutes
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        setTesting(false);
+      }, 120000);
+
+    } catch (error: any) {
+      console.error('Error testing connectivity:', error);
+      toast({
+        title: "Error starting connectivity test",
+        description: error.message,
+        variant: "destructive",
+      });
+      setTesting(false);
+    }
+  };
 
   const handleSyncNow = async () => {
     if (!user) {
@@ -297,6 +383,23 @@ const VCenter = () => {
             <Settings className="mr-2 h-4 w-4" />
             Settings
           </Button>
+          <Button 
+            variant="outline"
+            onClick={handleTestConnectivity}
+            disabled={testing}
+          >
+            {testing ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Testing...
+              </>
+            ) : (
+              <>
+                <Activity className="h-4 w-4 mr-2" />
+                Test Connectivity
+              </>
+            )}
+          </Button>
           <Button onClick={handleSyncNow} disabled={syncing}>
             {syncing ? (
               <>
@@ -356,6 +459,12 @@ const VCenter = () => {
           fetchHosts();
           fetchVCenterSettings();
         }}
+      />
+
+      <VCenterConnectivityDialog
+        open={testDialogOpen}
+        onOpenChange={setTestDialogOpen}
+        results={testResults}
       />
 
       <div className="grid gap-6 md:grid-cols-3 mb-6">

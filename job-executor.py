@@ -3628,6 +3628,8 @@ class JobExecutor:
             self.execute_bios_config_write(job)
         elif job_type == 'vcenter_sync':
             self.execute_vcenter_sync(job)
+        elif job_type == 'vcenter_connectivity_test':
+            self.execute_vcenter_connectivity_test(job)
         else:
             self.log(f"Unknown job type: {job_type}", "ERROR")
             self.update_job_status(
@@ -4010,6 +4012,302 @@ class JobExecutor:
                 'failed',
                 completed_at=datetime.now().isoformat(),
                 details={'error': str(e)}
+            )
+    
+    def test_dns_resolution(self, hostname: str) -> dict:
+        """Test DNS resolution for vCenter hostname"""
+        import socket
+        try:
+            start = time.time()
+            ip_addresses = socket.getaddrinfo(hostname, None)
+            elapsed = (time.time() - start) * 1000
+            return {
+                'success': True,
+                'resolved_ips': [addr[4][0] for addr in ip_addresses],
+                'response_time_ms': round(elapsed, 2),
+                'message': f'Resolved to {len(ip_addresses)} address(es)'
+            }
+        except socket.gaierror as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'message': 'DNS resolution failed - check hostname or DNS server'
+            }
+    
+    def test_port_connectivity(self, host: str, port: int, timeout: int = 5) -> dict:
+        """Test TCP connectivity to vCenter port"""
+        import socket
+        try:
+            start = time.time()
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            result = sock.connect_ex((host, port))
+            elapsed = (time.time() - start) * 1000
+            sock.close()
+            
+            if result == 0:
+                return {
+                    'success': True,
+                    'response_time_ms': round(elapsed, 2),
+                    'message': f'Port {port} is accessible'
+                }
+            else:
+                return {
+                    'success': False,
+                    'error_code': result,
+                    'message': f'Port {port} is not accessible - check firewall rules'
+                }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'message': 'Network connectivity failed'
+            }
+    
+    def test_ssl_certificate(self, host: str, port: int, verify_ssl: bool) -> dict:
+        """Test SSL certificate validity"""
+        import ssl
+        import socket
+        from datetime import datetime
+        
+        try:
+            context = ssl.create_default_context()
+            if not verify_ssl:
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+            
+            with socket.create_connection((host, port), timeout=5) as sock:
+                with context.wrap_socket(sock, server_hostname=host) as ssock:
+                    cert = ssock.getpeercert()
+                    
+                    if cert:
+                        # Parse expiration date
+                        not_after = datetime.strptime(cert['notAfter'], '%b %d %H:%M:%S %Y %Z')
+                        days_until_expiry = (not_after - datetime.now()).days
+                        
+                        return {
+                            'success': True,
+                            'subject': dict(x[0] for x in cert['subject']),
+                            'issuer': dict(x[0] for x in cert['issuer']),
+                            'expires': cert['notAfter'],
+                            'days_until_expiry': days_until_expiry,
+                            'message': f'Valid certificate (expires in {days_until_expiry} days)'
+                        }
+                    else:
+                        return {
+                            'success': not verify_ssl,
+                            'message': 'No certificate (SSL verification disabled)' if not verify_ssl else 'Certificate required but not provided'
+                        }
+        except ssl.SSLCertVerificationError as e:
+            return {
+                'success': False,
+                'error': 'Certificate verification failed',
+                'details': str(e),
+                'message': 'SSL certificate is invalid or untrusted - check certificate or disable SSL verification'
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'message': 'SSL certificate test failed'
+            }
+    
+    def test_vcenter_authentication(self, settings: dict) -> dict:
+        """Test vCenter authentication and basic API access"""
+        import ssl
+        from pyVim.connect import SmartConnect, Disconnect
+        from pyVmomi import vim
+        
+        host = settings['host']
+        username = settings['username']
+        password = settings['password']
+        verify_ssl = settings.get('verify_ssl', True)
+        
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        if not verify_ssl:
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+        
+        try:
+            start = time.time()
+            si = SmartConnect(
+                host=host,
+                user=username,
+                pwd=password,
+                sslContext=context
+            )
+            elapsed = (time.time() - start) * 1000
+            
+            # Try to get basic info to verify API access
+            content = si.RetrieveContent()
+            about = content.about
+            
+            version_info = f"{about.fullName} (API {about.apiVersion})"
+            
+            Disconnect(si)
+            
+            return {
+                'success': True,
+                'response_time_ms': round(elapsed, 2),
+                'vcenter_version': about.version,
+                'vcenter_build': about.build,
+                'api_version': about.apiVersion,
+                'message': f'Authentication successful - {version_info}'
+            }
+        except vim.fault.InvalidLogin as e:
+            return {
+                'success': False,
+                'error': 'Invalid credentials',
+                'message': 'Authentication failed - check username and password'
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'message': f'vCenter API connection failed: {str(e)}'
+            }
+    
+    def test_vcenter_api_functionality(self, settings: dict) -> dict:
+        """Test basic vCenter API functionality"""
+        from pyVmomi import vim
+        try:
+            si = self.connect_vcenter(settings)
+            if not si:
+                return {'success': False, 'message': 'Could not connect to vCenter'}
+            
+            content = si.RetrieveContent()
+            
+            # Count clusters
+            cluster_view = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.ClusterComputeResource], True
+            )
+            cluster_count = len(cluster_view.view)
+            cluster_view.Destroy()
+            
+            # Count hosts
+            host_view = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.HostSystem], True
+            )
+            host_count = len(host_view.view)
+            host_view.Destroy()
+            
+            return {
+                'success': True,
+                'clusters_found': cluster_count,
+                'hosts_found': host_count,
+                'message': f'API functional - found {cluster_count} cluster(s) and {host_count} host(s)'
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'message': 'API query failed'
+            }
+    
+    def execute_vcenter_connectivity_test(self, job: Dict):
+        """Execute comprehensive vCenter connectivity test"""
+        try:
+            self.log(f"Starting vCenter connectivity test: {job['id']}")
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            # Fetch vCenter settings
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_settings?select=*&limit=1",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL
+            )
+            
+            if response.status_code != 200 or not response.json():
+                raise Exception("vCenter settings not configured")
+            
+            settings = response.json()[0]
+            host = settings['host']
+            port = settings.get('port', 443)
+            verify_ssl = settings.get('verify_ssl', True)
+            
+            # Extract hostname (remove protocol if present)
+            hostname = host.replace('https://', '').replace('http://', '').split(':')[0]
+            
+            results = {
+                'vcenter_host': host,
+                'vcenter_port': port,
+                'timestamp': datetime.now().isoformat(),
+                'tests': {}
+            }
+            
+            # Test 1: DNS Resolution
+            self.log(f"Test 1/5: DNS resolution for {hostname}")
+            results['tests']['dns'] = self.test_dns_resolution(hostname)
+            
+            if not results['tests']['dns']['success']:
+                # Critical failure - can't proceed
+                self.update_job_status(
+                    job['id'], 'failed',
+                    completed_at=datetime.now().isoformat(),
+                    details={**results, 'critical_failure': 'DNS resolution failed'}
+                )
+                return
+            
+            resolved_ip = results['tests']['dns']['resolved_ips'][0]
+            
+            # Test 2: TCP Port Connectivity
+            self.log(f"Test 2/5: TCP port {port} connectivity to {resolved_ip}")
+            results['tests']['port'] = self.test_port_connectivity(resolved_ip, port)
+            
+            if not results['tests']['port']['success']:
+                # Critical failure
+                self.update_job_status(
+                    job['id'], 'failed',
+                    completed_at=datetime.now().isoformat(),
+                    details={**results, 'critical_failure': f'Port {port} not accessible'}
+                )
+                return
+            
+            # Test 3: SSL Certificate Validation
+            self.log(f"Test 3/5: SSL certificate validation")
+            results['tests']['ssl'] = self.test_ssl_certificate(hostname, port, verify_ssl)
+            
+            # Test 4: vCenter Authentication
+            self.log(f"Test 4/5: vCenter authentication")
+            results['tests']['auth'] = self.test_vcenter_authentication(settings)
+            
+            if not results['tests']['auth']['success']:
+                # Authentication failure
+                self.update_job_status(
+                    job['id'], 'failed',
+                    completed_at=datetime.now().isoformat(),
+                    details={**results, 'critical_failure': 'Authentication failed'}
+                )
+                return
+            
+            # Test 5: API Functionality (cluster/host count)
+            self.log(f"Test 5/5: API functionality test")
+            results['tests']['api'] = self.test_vcenter_api_functionality(settings)
+            
+            # Determine overall status
+            all_passed = all(test.get('success', False) for test in results['tests'].values())
+            
+            if all_passed:
+                self.log("✓ All connectivity tests passed")
+                results['overall_status'] = 'passed'
+                results['message'] = 'vCenter is fully accessible and ready for sync'
+            else:
+                self.log("⚠ Some tests failed or have warnings")
+                results['overall_status'] = 'partial'
+                results['message'] = 'vCenter is accessible but some issues detected'
+            
+            self.update_job_status(
+                job['id'], 'completed',
+                completed_at=datetime.now().isoformat(),
+                details=results
+            )
+            
+        except Exception as e:
+            self.log(f"Connectivity test failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'], 'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e), 'message': 'Connectivity test execution failed'}
             )
 
     def run(self):
