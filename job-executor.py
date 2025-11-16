@@ -670,21 +670,36 @@ class JobExecutor:
             processor_summary = system_data.get("ProcessorSummary", {})
             memory_summary = system_data.get("MemorySummary", {})
             
+            # Extract Redfish version from @odata.type
+            redfish_version = None
+            if "@odata.type" in system_data:
+                odata_type = system_data.get("@odata.type", "")
+                # Extract version from something like "#ComputerSystem.v1_13_0.ComputerSystem"
+                if "." in odata_type:
+                    parts = odata_type.split(".")
+                    if len(parts) >= 2:
+                        redfish_version = parts[1].replace("v", "").replace("_", ".")
+            
             return {
                 "manufacturer": system_data.get("Manufacturer", "Unknown"),
                 "model": system_data.get("Model", "Unknown"),
-                "service_tag": system_data.get("SKU", None),  # Dell reports Service Tag as SKU
-                "serial": system_data.get("SerialNumber", None),
-                "hostname": system_data.get("HostName", None),
+                "service_tag": system_data.get("SerialNumber", None),  # Dell Service Tag is SerialNumber
+                "hostname": system_data.get("HostName", None) or None,  # Convert empty string to None
                 "bios_version": system_data.get("BiosVersion", None),
                 "cpu_count": processor_summary.get("Count", None),
                 "memory_gb": memory_summary.get("TotalSystemMemoryGiB", None),
-                "idrac_firmware": manager_data.get("FirmwareVersion", None),
+                "idrac_firmware": manager_data.get("FirmwareVersion", None) if manager_data else None,
+                "manager_mac_address": None,  # Would need to query EthernetInterfaces
+                "product_name": system_data.get("Model", None),
+                "redfish_version": redfish_version,
+                "supported_endpoints": None,  # Can be populated from Oem data if needed
                 "username": username,
                 "password": password,
             }
         except Exception as e:
             self.log(f"Error extracting server info from {ip}: {e}", "ERROR")
+            self.log(f"  system_data keys: {list(system_data.keys()) if system_data else 'None'}", "DEBUG")
+            self.log(f"  manager_data keys: {list(manager_data.keys()) if manager_data else 'None'}", "DEBUG")
             return None
 
     def test_idrac_connection(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None) -> Optional[Dict]:
