@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Search, RefreshCw, Link2, Wrench, RotateCw, Edit, History, Trash2, CheckCircle, Info } from "lucide-react";
+import { Plus, Search, RefreshCw, Link2, Wrench, RotateCw, Edit, History, Trash2, CheckCircle, Info, Power, Activity, FileText } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -16,6 +16,9 @@ import { ServerPropertiesDialog } from "@/components/servers/ServerPropertiesDia
 import { CreateJobDialog } from "@/components/jobs/CreateJobDialog";
 import { AssignCredentialsDialog } from "@/components/servers/AssignCredentialsDialog";
 import { ConnectionStatusBadge } from "@/components/servers/ConnectionStatusBadge";
+import { PowerControlDialog } from "@/components/servers/PowerControlDialog";
+import { ServerHealthDialog } from "@/components/servers/ServerHealthDialog";
+import { EventLogDialog } from "@/components/servers/EventLogDialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   ContextMenu,
@@ -61,6 +64,9 @@ interface Server {
   connection_error: string | null;
   credential_test_status: string | null;
   credential_last_tested: string | null;
+  power_state: string | null;
+  overall_health: string | null;
+  last_health_check: string | null;
 }
 
 const Servers = () => {
@@ -77,6 +83,9 @@ const Servers = () => {
   const [jobDialogOpen, setJobDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [assignCredentialsDialogOpen, setAssignCredentialsDialogOpen] = useState(false);
+  const [powerControlDialogOpen, setPowerControlDialogOpen] = useState(false);
+  const [healthDialogOpen, setHealthDialogOpen] = useState(false);
+  const [eventLogDialogOpen, setEventLogDialogOpen] = useState(false);
   const [selectedServer, setSelectedServer] = useState<Server | null>(null);
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [quickScanIp, setQuickScanIp] = useState<string>("");
@@ -566,6 +575,28 @@ const Servers = () => {
                     <ContextMenuSeparator />
                   </>
                 )}
+                <ContextMenuItem onClick={() => {
+                  setSelectedServer(server);
+                  setPowerControlDialogOpen(true);
+                }}>
+                  <Power className="mr-2 h-4 w-4" />
+                  Power Control
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => {
+                  setSelectedServer(server);
+                  setHealthDialogOpen(true);
+                }}>
+                  <Activity className="mr-2 h-4 w-4" />
+                  Health Status
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => {
+                  setSelectedServer(server);
+                  setEventLogDialogOpen(true);
+                }}>
+                  <FileText className="mr-2 h-4 w-4" />
+                  Event Logs
+                </ContextMenuItem>
+                <ContextMenuSeparator />
                 <ContextMenuItem onClick={() => handleLinkToVCenter(server)}>
                   <Link2 className="mr-2 h-4 w-4" />
                   Link to vCenter Host
@@ -664,6 +695,21 @@ const Servers = () => {
             onOpenChange={setAssignCredentialsDialogOpen}
             server={selectedServer}
             onSuccess={fetchServers}
+          />
+          <PowerControlDialog
+            open={powerControlDialogOpen}
+            onOpenChange={setPowerControlDialogOpen}
+            server={selectedServer}
+          />
+          <ServerHealthDialog
+            open={healthDialogOpen}
+            onOpenChange={setHealthDialogOpen}
+            server={selectedServer}
+          />
+          <EventLogDialog
+            open={eventLogDialogOpen}
+            onOpenChange={setEventLogDialogOpen}
+            server={selectedServer}
           />
         </>
       )}
