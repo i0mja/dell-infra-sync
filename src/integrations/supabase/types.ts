@@ -1381,6 +1381,7 @@ export type Database = {
         | "bios_config_write"
         | "scp_export"
         | "scp_import"
+        | "vcenter_connectivity_test"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1526,6 +1527,7 @@ export const Constants = {
         "bios_config_write",
         "scp_export",
         "scp_import",
+        "vcenter_connectivity_test",
       ],
     },
   },
