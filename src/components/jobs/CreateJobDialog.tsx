@@ -184,6 +184,8 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
                 <SelectItem value="full_server_update">Full Server Update (All Components)</SelectItem>
                 <SelectItem value="discovery_scan">IP Discovery Scan</SelectItem>
                 <SelectItem value="boot_configuration">Boot Configuration</SelectItem>
+                <SelectItem value="virtual_media_mount">Virtual Media - Mount</SelectItem>
+                <SelectItem value="virtual_media_unmount">Virtual Media - Unmount</SelectItem>
               </SelectContent>
             </Select>
           </div>
