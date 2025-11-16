@@ -157,6 +157,70 @@ export type Database = {
           },
         ]
       }
+      bios_configurations: {
+        Row: {
+          attributes: Json
+          bios_version: string | null
+          captured_at: string | null
+          created_at: string | null
+          created_by: string | null
+          id: string
+          job_id: string | null
+          notes: string | null
+          pending_attributes: Json | null
+          server_id: string
+          snapshot_type: string
+        }
+        Insert: {
+          attributes: Json
+          bios_version?: string | null
+          captured_at?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          job_id?: string | null
+          notes?: string | null
+          pending_attributes?: Json | null
+          server_id: string
+          snapshot_type: string
+        }
+        Update: {
+          attributes?: Json
+          bios_version?: string | null
+          captured_at?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          job_id?: string | null
+          notes?: string | null
+          pending_attributes?: Json | null
+          server_id?: string
+          snapshot_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bios_configurations_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bios_configurations_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bios_configurations_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       credential_ip_ranges: {
         Row: {
           created_at: string | null
@@ -656,6 +720,104 @@ export type Database = {
         }
         Relationships: []
       }
+      scp_backups: {
+        Row: {
+          backup_name: string
+          checksum: string | null
+          created_at: string | null
+          created_by: string | null
+          description: string | null
+          export_job_id: string | null
+          exported_at: string | null
+          id: string
+          import_job_id: string | null
+          include_bios: boolean | null
+          include_idrac: boolean | null
+          include_nic: boolean | null
+          include_raid: boolean | null
+          is_valid: boolean | null
+          last_imported_at: string | null
+          scp_content: Json | null
+          scp_file_path: string | null
+          scp_file_size_bytes: number | null
+          server_id: string
+          validation_errors: string | null
+        }
+        Insert: {
+          backup_name: string
+          checksum?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          export_job_id?: string | null
+          exported_at?: string | null
+          id?: string
+          import_job_id?: string | null
+          include_bios?: boolean | null
+          include_idrac?: boolean | null
+          include_nic?: boolean | null
+          include_raid?: boolean | null
+          is_valid?: boolean | null
+          last_imported_at?: string | null
+          scp_content?: Json | null
+          scp_file_path?: string | null
+          scp_file_size_bytes?: number | null
+          server_id: string
+          validation_errors?: string | null
+        }
+        Update: {
+          backup_name?: string
+          checksum?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          export_job_id?: string | null
+          exported_at?: string | null
+          id?: string
+          import_job_id?: string | null
+          include_bios?: boolean | null
+          include_idrac?: boolean | null
+          include_nic?: boolean | null
+          include_raid?: boolean | null
+          is_valid?: boolean | null
+          last_imported_at?: string | null
+          scp_content?: Json | null
+          scp_file_path?: string | null
+          scp_file_size_bytes?: number | null
+          server_id?: string
+          validation_errors?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scp_backups_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scp_backups_export_job_id_fkey"
+            columns: ["export_job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scp_backups_import_job_id_fkey"
+            columns: ["import_job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scp_backups_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       server_boot_config_history: {
         Row: {
           boot_mode: string | null
@@ -1092,6 +1254,85 @@ export type Database = {
         }
         Relationships: []
       }
+      virtual_media_sessions: {
+        Row: {
+          created_at: string | null
+          id: string
+          image_name: string
+          inserted: boolean | null
+          is_mounted: boolean | null
+          media_type: string
+          mount_job_id: string | null
+          mounted_at: string | null
+          remote_image_url: string
+          server_id: string
+          share_password_encrypted: string | null
+          share_username: string | null
+          unmount_job_id: string | null
+          unmounted_at: string | null
+          updated_at: string | null
+          write_protected: boolean | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          image_name: string
+          inserted?: boolean | null
+          is_mounted?: boolean | null
+          media_type: string
+          mount_job_id?: string | null
+          mounted_at?: string | null
+          remote_image_url: string
+          server_id: string
+          share_password_encrypted?: string | null
+          share_username?: string | null
+          unmount_job_id?: string | null
+          unmounted_at?: string | null
+          updated_at?: string | null
+          write_protected?: boolean | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          image_name?: string
+          inserted?: boolean | null
+          is_mounted?: boolean | null
+          media_type?: string
+          mount_job_id?: string | null
+          mounted_at?: string | null
+          remote_image_url?: string
+          server_id?: string
+          share_password_encrypted?: string | null
+          share_username?: string | null
+          unmount_job_id?: string | null
+          unmounted_at?: string | null
+          updated_at?: string | null
+          write_protected?: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "virtual_media_sessions_mount_job_id_fkey"
+            columns: ["mount_job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "virtual_media_sessions_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "virtual_media_sessions_unmount_job_id_fkey"
+            columns: ["unmount_job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -1134,6 +1375,12 @@ export type Database = {
         | "health_check"
         | "fetch_event_logs"
         | "boot_configuration"
+        | "virtual_media_mount"
+        | "virtual_media_unmount"
+        | "bios_config_read"
+        | "bios_config_write"
+        | "scp_export"
+        | "scp_import"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1273,6 +1520,12 @@ export const Constants = {
         "health_check",
         "fetch_event_logs",
         "boot_configuration",
+        "virtual_media_mount",
+        "virtual_media_unmount",
+        "bios_config_read",
+        "bios_config_write",
+        "scp_export",
+        "scp_import",
       ],
     },
   },

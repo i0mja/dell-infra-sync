@@ -2167,6 +2167,167 @@ class JobExecutor:
                 details={"error": str(e)}
             )
     
+    def mount_virtual_media(self, ip: str, username: str, password: str, 
+                           server_id: str, job_id: str, 
+                           image_url: str, media_type: str = 'CD',
+                           write_protected: bool = True):
+        """Mount virtual media (ISO image) to iDRAC via Redfish API"""
+        # Map media types to iDRAC virtual media slots
+        media_slot_map = {
+            'CD': 'CD',
+            'DVD': 'CD',  # Same slot as CD
+            'USBStick': 'RemovableDisk',
+            'Floppy': 'Floppy'
+        }
+        
+        media_slot = media_slot_map.get(media_type, 'CD')
+        vm_url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia/{media_slot}"
+        
+        # Payload to insert and mount the media
+        payload = {
+            "Image": image_url,
+            "Inserted": True,
+            "WriteProtected": write_protected
+        }
+        
+        start_time = time.time()
+        response = requests.patch(
+            vm_url,
+            auth=(username, password),
+            json=payload,
+            verify=False,
+            timeout=30
+        )
+        response_time_ms = int((time.time() - start_time) * 1000)
+        
+        # Log the command
+        self.log_idrac_command(
+            server_id=server_id,
+            job_id=job_id,
+            command_type='PATCH',
+            endpoint=f'/redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia/{media_slot}',
+            full_url=vm_url,
+            request_body=payload,
+            response_body=response.text if response.status_code not in [200, 204] else None,
+            status_code=response.status_code,
+            response_time_ms=response_time_ms,
+            success=response.status_code in [200, 204]
+        )
+        
+        if response.status_code not in [200, 204]:
+            error_msg = f"Failed to mount virtual media: {response.status_code}"
+            if response.text:
+                try:
+                    error_data = response.json()
+                    error_msg += f" - {error_data.get('error', {}).get('message', response.text)}"
+                except:
+                    error_msg += f" - {response.text}"
+            raise Exception(error_msg)
+        
+        self.log(f"  Virtual media mounted successfully: {image_url}")
+        return True
+    
+    def unmount_virtual_media(self, ip: str, username: str, password: str,
+                             server_id: str, job_id: str, media_type: str = 'CD'):
+        """Unmount/eject virtual media from iDRAC"""
+        media_slot_map = {
+            'CD': 'CD',
+            'DVD': 'CD',
+            'USBStick': 'RemovableDisk',
+            'Floppy': 'Floppy'
+        }
+        
+        media_slot = media_slot_map.get(media_type, 'CD')
+        vm_url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia/{media_slot}"
+        
+        # Payload to eject the media
+        payload = {
+            "Inserted": False
+        }
+        
+        start_time = time.time()
+        response = requests.patch(
+            vm_url,
+            auth=(username, password),
+            json=payload,
+            verify=False,
+            timeout=30
+        )
+        response_time_ms = int((time.time() - start_time) * 1000)
+        
+        # Log the command
+        self.log_idrac_command(
+            server_id=server_id,
+            job_id=job_id,
+            command_type='PATCH',
+            endpoint=f'/redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia/{media_slot}',
+            full_url=vm_url,
+            request_body=payload,
+            response_body=response.text if response.status_code not in [200, 204] else None,
+            status_code=response.status_code,
+            response_time_ms=response_time_ms,
+            success=response.status_code in [200, 204]
+        )
+        
+        if response.status_code not in [200, 204]:
+            error_msg = f"Failed to unmount virtual media: {response.status_code}"
+            if response.text:
+                try:
+                    error_data = response.json()
+                    error_msg += f" - {error_data.get('error', {}).get('message', response.text)}"
+                except:
+                    error_msg += f" - {response.text}"
+            raise Exception(error_msg)
+        
+        self.log(f"  Virtual media unmounted successfully")
+        return True
+    
+    def get_virtual_media_status(self, ip: str, username: str, password: str,
+                                server_id: str, job_id: str, media_type: str = 'CD'):
+        """Get current status of virtual media"""
+        media_slot_map = {
+            'CD': 'CD',
+            'DVD': 'CD',
+            'USBStick': 'RemovableDisk',
+            'Floppy': 'Floppy'
+        }
+        
+        media_slot = media_slot_map.get(media_type, 'CD')
+        vm_url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia/{media_slot}"
+        
+        start_time = time.time()
+        response = requests.get(
+            vm_url,
+            auth=(username, password),
+            verify=False,
+            timeout=30
+        )
+        response_time_ms = int((time.time() - start_time) * 1000)
+        
+        # Log the command
+        self.log_idrac_command(
+            server_id=server_id,
+            job_id=job_id,
+            command_type='GET',
+            endpoint=f'/redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia/{media_slot}',
+            full_url=vm_url,
+            response_body=response.json() if response.status_code == 200 else response.text,
+            status_code=response.status_code,
+            response_time_ms=response_time_ms,
+            success=response.status_code == 200
+        )
+        
+        if response.status_code != 200:
+            raise Exception(f"Failed to get virtual media status: {response.status_code}")
+        
+        data = response.json()
+        return {
+            'inserted': data.get('Inserted', False),
+            'write_protected': data.get('WriteProtected', True),
+            'image': data.get('Image', ''),
+            'media_types': data.get('MediaTypes', [])
+        }
+
     def fetch_boot_configuration(self, ip: str, username: str, password: str, server_id: str, job_id: str = None) -> Dict:
         """Fetch current boot configuration from iDRAC"""
         system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
@@ -2466,6 +2627,234 @@ class JobExecutor:
                 details={'error': str(e)}
             )
 
+    def execute_virtual_media_mount(self, job: Dict):
+        """Execute virtual media mount job"""
+        try:
+            self.log(f"Starting virtual media mount job: {job['id']}")
+            
+            details = job.get('details', {})
+            session_id = details.get('session_id')
+            image_url = details.get('image_url')
+            media_type = details.get('media_type', 'CD')
+            write_protected = details.get('write_protected', True)
+            
+            if not session_id or not image_url:
+                raise ValueError("session_id and image_url are required")
+            
+            # Update job status to running
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            # Get target servers from job
+            target_scope = job.get('target_scope', {})
+            server_ids = target_scope.get('server_ids', [])
+            
+            if not server_ids:
+                raise ValueError("No target servers specified")
+            
+            # Process each server
+            success_count = 0
+            failed_count = 0
+            results = []
+            
+            for server_id in server_ids:
+                try:
+                    # Get server details
+                    server = self.get_server_by_id(server_id)
+                    if not server:
+                        raise Exception(f"Server not found: {server_id}")
+                    
+                    ip = server['ip_address']
+                    username, password = self.get_credentials_for_server(server)
+                    
+                    self.log(f"  Mounting virtual media on {ip}...")
+                    
+                    # Mount the media
+                    self.mount_virtual_media(
+                        ip, username, password,
+                        server_id, job['id'],
+                        image_url, media_type, write_protected
+                    )
+                    
+                    # Verify mount status
+                    status = self.get_virtual_media_status(
+                        ip, username, password,
+                        server_id, job['id'],
+                        media_type
+                    )
+                    
+                    if status['inserted']:
+                        # Update session in database
+                        self.supabase.table('virtual_media_sessions').update({
+                            'is_mounted': True,
+                            'inserted': True,
+                            'mounted_at': datetime.now().isoformat()
+                        }).eq('id', session_id).execute()
+                        
+                        self.log(f"  [OK] Virtual media mounted successfully on {ip}")
+                        success_count += 1
+                        results.append({
+                            'server': ip,
+                            'success': True,
+                            'status': status
+                        })
+                    else:
+                        raise Exception("Media not showing as inserted after mount")
+                        
+                except Exception as e:
+                    self.log(f"  [X] Failed to mount on {ip}: {e}", "ERROR")
+                    failed_count += 1
+                    results.append({
+                        'server': ip,
+                        'success': False,
+                        'error': str(e)
+                    })
+            
+            # Update job status
+            if failed_count == 0:
+                self.update_job_status(
+                    job['id'],
+                    'completed',
+                    completed_at=datetime.now().isoformat(),
+                    details={
+                        'success_count': success_count,
+                        'results': results
+                    }
+                )
+                self.log(f"Virtual media mount job completed successfully")
+            else:
+                status = 'failed' if success_count == 0 else 'completed'
+                self.update_job_status(
+                    job['id'],
+                    status,
+                    completed_at=datetime.now().isoformat(),
+                    details={
+                        'success_count': success_count,
+                        'failed_count': failed_count,
+                        'results': results
+                    }
+                )
+                
+        except Exception as e:
+            self.log(f"Virtual media mount job failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e)}
+            )
+    
+    def execute_virtual_media_unmount(self, job: Dict):
+        """Execute virtual media unmount job"""
+        try:
+            self.log(f"Starting virtual media unmount job: {job['id']}")
+            
+            details = job.get('details', {})
+            session_id = details.get('session_id')
+            media_type = details.get('media_type', 'CD')
+            
+            if not session_id:
+                raise ValueError("session_id is required")
+            
+            # Update job status to running
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            # Get target servers
+            target_scope = job.get('target_scope', {})
+            server_ids = target_scope.get('server_ids', [])
+            
+            if not server_ids:
+                raise ValueError("No target servers specified")
+            
+            success_count = 0
+            failed_count = 0
+            results = []
+            
+            for server_id in server_ids:
+                try:
+                    server = self.get_server_by_id(server_id)
+                    if not server:
+                        raise Exception(f"Server not found: {server_id}")
+                    
+                    ip = server['ip_address']
+                    username, password = self.get_credentials_for_server(server)
+                    
+                    self.log(f"  Unmounting virtual media on {ip}...")
+                    
+                    # Unmount the media
+                    self.unmount_virtual_media(
+                        ip, username, password,
+                        server_id, job['id'],
+                        media_type
+                    )
+                    
+                    # Verify unmount status
+                    status = self.get_virtual_media_status(
+                        ip, username, password,
+                        server_id, job['id'],
+                        media_type
+                    )
+                    
+                    if not status['inserted']:
+                        # Update session in database
+                        self.supabase.table('virtual_media_sessions').update({
+                            'is_mounted': False,
+                            'inserted': False,
+                            'unmounted_at': datetime.now().isoformat()
+                        }).eq('id', session_id).execute()
+                        
+                        self.log(f"  [OK] Virtual media unmounted successfully on {ip}")
+                        success_count += 1
+                        results.append({
+                            'server': ip,
+                            'success': True,
+                            'status': status
+                        })
+                    else:
+                        raise Exception("Media still showing as inserted after unmount")
+                        
+                except Exception as e:
+                    self.log(f"  [X] Failed to unmount on {ip}: {e}", "ERROR")
+                    failed_count += 1
+                    results.append({
+                        'server': ip,
+                        'success': False,
+                        'error': str(e)
+                    })
+            
+            # Update job status
+            if failed_count == 0:
+                self.update_job_status(
+                    job['id'],
+                    'completed',
+                    completed_at=datetime.now().isoformat(),
+                    details={
+                        'success_count': success_count,
+                        'results': results
+                    }
+                )
+                self.log(f"Virtual media unmount job completed successfully")
+            else:
+                status = 'failed' if success_count == 0 else 'completed'
+                self.update_job_status(
+                    job['id'],
+                    status,
+                    completed_at=datetime.now().isoformat(),
+                    details={
+                        'success_count': success_count,
+                        'failed_count': failed_count,
+                        'results': results
+                    }
+                )
+                
+        except Exception as e:
+            self.log(f"Virtual media unmount job failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e)}
+            )
+
     def execute_job(self, job: Dict):
         """Execute a job based on its type"""
         job_type = job['job_type']
@@ -2486,6 +2875,10 @@ class JobExecutor:
             self.execute_fetch_event_logs(job)
         elif job_type == 'boot_configuration':
             self.execute_boot_configuration(job)
+        elif job_type == 'virtual_media_mount':
+            self.execute_virtual_media_mount(job)
+        elif job_type == 'virtual_media_unmount':
+            self.execute_virtual_media_unmount(job)
         else:
             self.log(f"Unknown job type: {job_type}", "ERROR")
             self.update_job_status(
