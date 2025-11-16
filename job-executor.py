@@ -680,14 +680,33 @@ class JobExecutor:
                     if len(parts) >= 2:
                         redfish_version = parts[1].replace("v", "").replace("_", ".")
             
+            # Sanitize types for database columns
+            cpu_count_val = processor_summary.get("Count")
+            if cpu_count_val is not None:
+                try:
+                    cpu_count = int(cpu_count_val) if isinstance(cpu_count_val, (int, float)) else (int(cpu_count_val) if str(cpu_count_val).replace('.','',1).isdigit() else None)
+                except (ValueError, TypeError):
+                    cpu_count = None
+            else:
+                cpu_count = None
+            
+            mem_gib_val = memory_summary.get("TotalSystemMemoryGiB")
+            if mem_gib_val is not None:
+                try:
+                    memory_gb = int(mem_gib_val) if isinstance(mem_gib_val, (int, float)) else (int(float(mem_gib_val)) if isinstance(mem_gib_val, str) and mem_gib_val.replace('.','',1).isdigit() else None)
+                except (ValueError, TypeError):
+                    memory_gb = None
+            else:
+                memory_gb = None
+            
             return {
                 "manufacturer": system_data.get("Manufacturer", "Unknown"),
                 "model": system_data.get("Model", "Unknown"),
                 "service_tag": system_data.get("SerialNumber", None),  # Dell Service Tag is SerialNumber
                 "hostname": system_data.get("HostName", None) or None,  # Convert empty string to None
                 "bios_version": system_data.get("BiosVersion", None),
-                "cpu_count": processor_summary.get("Count", None),
-                "memory_gb": memory_summary.get("TotalSystemMemoryGiB", None),
+                "cpu_count": cpu_count,
+                "memory_gb": memory_gb,
                 "idrac_firmware": manager_data.get("FirmwareVersion", None) if manager_data else None,
                 "manager_mac_address": None,  # Would need to query EthernetInterfaces
                 "product_name": system_data.get("Model", None),
@@ -865,6 +884,7 @@ class JobExecutor:
             
             refreshed_count = 0
             failed_count = 0
+            update_errors = []
             
             for server in servers:
                 ip = server['ip_address']
@@ -880,7 +900,7 @@ class JobExecutor:
                         'connection_status': 'offline',
                         'connection_error': 'Encryption key not configured; cannot decrypt credentials',
                         'credential_test_status': 'invalid',
-                        'credential_last_tested': datetime.now().isoformat()
+                        'credential_last_tested': datetime.utcnow().isoformat() + 'Z'
                     }
                     update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server['id']}"
                     requests.patch(update_url, headers=headers, json=update_data, verify=VERIFY_SSL)
@@ -911,9 +931,9 @@ class JobExecutor:
                     update_data.update({
                         'connection_status': 'online',
                         'connection_error': None,
-                        'last_seen': datetime.now().isoformat(),
+                        'last_seen': datetime.utcnow().isoformat() + 'Z',
                         'credential_test_status': 'valid',
-                        'credential_last_tested': datetime.now().isoformat(),
+                        'credential_last_tested': datetime.utcnow().isoformat() + 'Z',
                     })
                     
                     # Promote credential_set_id if we used discovered_by or ip_range and server doesn't have one
@@ -934,6 +954,12 @@ class JobExecutor:
                         self.log(f"  ✓ Refreshed {ip}: {info.get('model')} - {info.get('hostname')}")
                         refreshed_count += 1
                     else:
+                        error_detail = {
+                            'ip': ip,
+                            'status': update_response.status_code,
+                            'body': update_response.text[:500]
+                        }
+                        update_errors.append(error_detail)
                         self.log(f"  ✗ Failed to update DB for {ip}: {update_response.status_code} {update_response.text}", "ERROR")
                         failed_count += 1
                 else:
@@ -941,7 +967,7 @@ class JobExecutor:
                     update_data = {
                         'connection_status': 'offline',
                         'connection_error': f'Failed to query iDRAC using {cred_source} credentials - check network or credentials',
-                        'last_connection_test': datetime.now().isoformat(),
+                        'last_connection_test': datetime.utcnow().isoformat() + 'Z',
                         'credential_test_status': 'invalid',
                     }
                     
@@ -956,11 +982,19 @@ class JobExecutor:
             if failed_count > 0:
                 summary += f", {failed_count} failed"
             
+            job_details = {
+                'summary': summary,
+                'refreshed': refreshed_count,
+                'failed': failed_count
+            }
+            if update_errors:
+                job_details['update_errors'] = update_errors
+            
             self.update_job_status(
                 job['id'],
                 'completed',
                 completed_at=datetime.now().isoformat(),
-                details={'summary': summary, 'refreshed': refreshed_count, 'failed': failed_count}
+                details=job_details
             )
             
             self.log(f"Server refresh complete: {summary}")
