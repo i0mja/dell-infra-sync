@@ -40,6 +40,7 @@ const VCenter = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [vcenterHost, setVCenterHost] = useState<string | null>(null);
   const { toast } = useToast();
   
   // Detect local mode
@@ -56,6 +57,9 @@ const VCenter = () => {
            /^192\.168\./.test(host) || 
            /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host);
   };
+
+  const isPrivateNetwork = vcenterHost ? isPrivateIP(vcenterHost) : false;
+  const useJobExecutorPath = isLocalMode || isPrivateNetwork;
 
   const fetchHosts = async () => {
     try {
@@ -79,8 +83,22 @@ const VCenter = () => {
     }
   };
 
+  const fetchVCenterSettings = async () => {
+    try {
+      const { data } = await supabase
+        .from('vcenter_settings')
+        .select('host')
+        .maybeSingle();
+      
+      setVCenterHost(data?.host || null);
+    } catch (error) {
+      console.error('Error fetching vCenter settings:', error);
+    }
+  };
+
   useEffect(() => {
     fetchHosts();
+    fetchVCenterSettings();
 
     // Set up realtime subscription for vCenter hosts
     const channel = supabase
@@ -146,10 +164,16 @@ const VCenter = () => {
         .select('host')
         .maybeSingle();
 
-      const useJobExecutor = isLocalMode || (settings && isPrivateIP(settings.host));
+      if (!settings?.host) {
+        throw new Error("vCenter not configured. Please open Settings to configure.");
+      }
+
+      const useJobExecutor = isLocalMode || isPrivateIP(settings.host.trim());
 
       if (useJobExecutor) {
-        // vCenter is on private network - use Job Executor
+        // vCenter is on private network - force Job Executor
+        console.log(`Private network detected (${settings.host}) - using Job Executor`);
+        
         const { data: job, error: jobError } = await supabase
           .from('jobs')
           .insert({
@@ -157,7 +181,7 @@ const VCenter = () => {
             created_by: user.id,
             status: 'pending',
             details: {
-              description: 'vCenter sync job created from UI',
+              description: 'vCenter sync job created from UI (private network)',
               sync_type: 'full'
             }
           })
@@ -167,8 +191,8 @@ const VCenter = () => {
         if (jobError) throw jobError;
 
         toast({
-          title: "Sync job created",
-          description: "vCenter sync job has been queued. Job Executor will sync from your private network.",
+          title: "Job Executor sync started",
+          description: "Private network detected. Job queued for local Job Executor.",
           action: (
             <Button variant="outline" size="sm" onClick={() => navigate('/jobs')}>
               View Jobs
@@ -176,20 +200,54 @@ const VCenter = () => {
           ),
         });
       } else {
-        // Cloud mode with public vCenter - use edge function
-        const { data: result, error: invokeError } = await supabase.functions.invoke('sync-vcenter-direct');
+        // Public vCenter - try cloud edge function with fallback to Job Executor
+        console.log(`Public vCenter (${settings.host}) - attempting cloud sync`);
+        
+        try {
+          const { data: result, error: invokeError } = await supabase.functions.invoke('sync-vcenter-direct');
 
-        if (invokeError) throw invokeError;
+          if (invokeError) throw invokeError;
 
-        if (result.success) {
+          if (result.success) {
+            toast({
+              title: "Sync completed",
+              description: `New: ${result.hosts_added || 0}, Updated: ${result.hosts_updated || 0}, Linked: ${result.linked || 0}`,
+            });
+            fetchHosts();
+          } else {
+            const errorMsg = result.errors?.length > 0 ? result.errors[0] : "Sync failed";
+            throw new Error(errorMsg);
+          }
+        } catch (cloudError: any) {
+          // Cloud sync failed - fall back to Job Executor
+          console.log("Cloud sync failed, falling back to Job Executor:", cloudError.message);
+          
+          const { data: job, error: jobError } = await supabase
+            .from('jobs')
+            .insert({
+              job_type: 'vcenter_sync',
+              created_by: user.id,
+              status: 'pending',
+              details: {
+                description: 'vCenter sync job created from UI (cloud fallback)',
+                sync_type: 'full',
+                cloud_error: cloudError.message
+              }
+            })
+            .select()
+            .single();
+
+          if (jobError) throw jobError;
+
           toast({
-            title: "Sync completed",
-            description: `New: ${result.hosts_added || 0}, Updated: ${result.hosts_updated || 0}, Linked: ${result.linked || 0}`,
+            title: "Switched to Job Executor",
+            description: "Cloud could not reach vCenter. Job queued for local Job Executor.",
+            action: (
+              <Button variant="outline" size="sm" onClick={() => navigate('/jobs')}>
+                View Jobs
+              </Button>
+            ),
           });
-          fetchHosts();
-        } else {
-          const errorMsg = result.errors?.length > 0 ? result.errors[0] : "Sync failed";
-          throw new Error(errorMsg);
         }
       }
     } catch (error: any) {
@@ -251,13 +309,17 @@ const VCenter = () => {
       <Alert className="mb-6">
         <InfoIcon className="h-4 w-4" />
         <AlertTitle>
-          {isLocalMode ? "Local Mode - Job Executor Required" : "Native vCenter Integration"}
+          {useJobExecutorPath ? "Job Executor Mode" : "Cloud Sync Mode"}
         </AlertTitle>
         <AlertDescription>
-          {isLocalMode ? (
+          {useJobExecutorPath ? (
             <>
-              Your vCenter server is on a private network. Clicking "Sync Now" will create a job for the Job Executor to process.
-              Ensure the Job Executor is running on your local network to sync vCenter data. Check{" "}
+              {isLocalMode && <span className="font-medium">Local deployment detected. </span>}
+              {isPrivateNetwork && vcenterHost && (
+                <span className="font-medium">Private vCenter detected ({vcenterHost}). </span>
+              )}
+              Clicking "Sync Now" will create a job for the Job Executor to process.
+              Ensure the Job Executor is running on your local network. Check{" "}
               <Button 
                 variant="link" 
                 className="h-auto p-0 text-xs" 
@@ -269,9 +331,9 @@ const VCenter = () => {
             </>
           ) : (
             <>
-              Configure vCenter connection in Settings and click "Sync Now" to directly sync ESXi host data from your vCenter server. 
-              For air-gapped deployments, ensure this app and vCenter are on the same network. 
-              Alternatively, use the Python sync script (see <code className="text-xs bg-muted px-1 py-0.5 rounded">docs/VCENTER_SYNC_GUIDE.md</code>).
+              {vcenterHost && <span className="font-medium">Public vCenter configured ({vcenterHost}). </span>}
+              Click "Sync Now" to directly sync ESXi host data. If the cloud cannot reach your vCenter, 
+              the system will automatically fall back to using the Job Executor.
             </>
           )}
         </AlertDescription>
@@ -280,7 +342,10 @@ const VCenter = () => {
       <VCenterSettingsDialog 
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
-        onSaved={fetchHosts}
+        onSaved={() => {
+          fetchHosts();
+          fetchVCenterSettings();
+        }}
       />
 
       <div className="grid gap-6 md:grid-cols-3 mb-6">

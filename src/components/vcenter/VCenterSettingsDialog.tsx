@@ -91,18 +91,37 @@ export function VCenterSettingsDialog({
     }
   };
 
+  // Check if IP is private (RFC 1918)
+  const isPrivateIP = (ip: string): boolean => {
+    if (!ip) return false;
+    const host = ip.trim().split(':')[0];
+    return /^10\./.test(host) || 
+           /^192\.168\./.test(host) || 
+           /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host);
+  };
+
   const handleTestConnection = async () => {
     try {
       const validated = settingsSchema.parse(formData);
       
       setTesting(true);
+
+      // Check if vCenter is on private network
+      if (isPrivateIP(validated.host)) {
+        toast({
+          title: "Private network detected",
+          description: "This vCenter is on a private network. Use 'Sync Now' to create a job for the Job Executor to test connectivity.",
+        });
+        setTesting(false);
+        return;
+      }
+
       toast({
         title: "Testing connection...",
         description: "Attempting to connect to vCenter",
       });
 
-      // In a real implementation, this would call an edge function to test the connection
-      // For now, we'll simulate a test
+      // For public vCenter, simulate test (in production, call test-vcenter-connection edge function)
       await new Promise(resolve => setTimeout(resolve, 1500));
 
       toast({
