@@ -130,6 +130,7 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
         hostname: validatedData.hostname || null,
         notes: validatedData.notes || null,
         last_seen: new Date().toISOString(),
+        credential_set_id: credentialMode === "saved" ? selectedCredentialSetId : null,
       };
 
       const { data: newServer, error: serverError } = await supabase
@@ -193,6 +194,14 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
             }
           }
         }
+      }
+
+      // Step 2.5: Update server with credential_set_id if using saved credentials or created new credential set
+      if (credentialSetIdToUse && (credentialMode === "saved" || (credentialMode === "manual" && saveCredentials))) {
+        await supabase
+          .from("servers")
+          .update({ credential_set_id: credentialSetIdToUse })
+          .eq('id', newServer.id);
       }
 
       // Step 3: Create discovery job if auto-discover is enabled
