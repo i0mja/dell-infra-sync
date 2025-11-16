@@ -2855,6 +2855,323 @@ class JobExecutor:
                 details={'error': str(e)}
             )
 
+    def execute_bios_config_read(self, job: Dict):
+        """
+        Execute BIOS configuration read job - capture current and pending BIOS attributes
+        
+        Expected job details:
+        {
+            "server_id": "uuid",
+            "snapshot_type": "current" or "baseline",
+            "notes": "Optional description"
+        }
+        """
+        try:
+            self.log(f"Starting BIOS config read job: {job['id']}")
+            
+            # Update job status
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            # Get server and credentials
+            details = job.get('details', {})
+            server_id = details.get('server_id')
+            snapshot_type = details.get('snapshot_type', 'current')
+            notes = details.get('notes', '')
+            
+            if not server_id:
+                raise Exception("Missing server_id in job details")
+            
+            # Get server info
+            server = self.supabase.table('servers').select('*').eq('id', server_id).execute().data[0]
+            ip = server['ip_address']
+            username, password = self.get_credentials_for_server(server)
+            
+            self.log(f"  Reading BIOS configuration from {ip}...")
+            
+            # Get current BIOS attributes
+            current_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Bios"
+            start_time = time.time()
+            current_resp = requests.get(
+                current_url,
+                auth=HTTPBasicAuth(username, password),
+                verify=False,
+                timeout=30
+            )
+            response_time_ms = int((time.time() - start_time) * 1000)
+            
+            # Log activity
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job['id'],
+                command_type='BIOS_READ',
+                endpoint='/redfish/v1/Systems/System.Embedded.1/Bios',
+                full_url=current_url,
+                request_body=None,
+                request_headers={'Authorization': '[REDACTED]'},
+                status_code=current_resp.status_code,
+                response_body=current_resp.json() if current_resp.ok else None,
+                response_time_ms=response_time_ms,
+                success=current_resp.ok,
+                error_message=None if current_resp.ok else current_resp.text,
+                source='job_executor',
+                initiated_by=job['created_by']
+            )
+            
+            if not current_resp.ok:
+                raise Exception(f"Failed to read current BIOS: HTTP {current_resp.status_code}")
+            
+            current_data = current_resp.json()
+            current_attributes = current_data.get('Attributes', {})
+            bios_version = current_data.get('BiosVersion', 'Unknown')
+            
+            self.log(f"  [OK] Retrieved {len(current_attributes)} current BIOS attributes")
+            
+            # Get pending BIOS attributes
+            pending_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Bios/Settings"
+            start_time = time.time()
+            pending_resp = requests.get(
+                pending_url,
+                auth=HTTPBasicAuth(username, password),
+                verify=False,
+                timeout=30
+            )
+            response_time_ms = int((time.time() - start_time) * 1000)
+            
+            # Log activity
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job['id'],
+                command_type='BIOS_READ_PENDING',
+                endpoint='/redfish/v1/Systems/System.Embedded.1/Bios/Settings',
+                full_url=pending_url,
+                request_body=None,
+                request_headers={'Authorization': '[REDACTED]'},
+                status_code=pending_resp.status_code,
+                response_body=pending_resp.json() if pending_resp.ok else None,
+                response_time_ms=response_time_ms,
+                success=pending_resp.ok,
+                error_message=None if pending_resp.ok else pending_resp.text,
+                source='job_executor',
+                initiated_by=job['created_by']
+            )
+            
+            pending_attributes = None
+            if pending_resp.ok:
+                pending_data = pending_resp.json()
+                pending_attributes = pending_data.get('Attributes', {})
+                if pending_attributes:
+                    self.log(f"  [OK] Retrieved {len(pending_attributes)} pending BIOS attributes")
+                else:
+                    self.log(f"  No pending BIOS changes")
+            
+            # Save to database
+            config_data = {
+                'server_id': server_id,
+                'job_id': job['id'],
+                'attributes': current_attributes,
+                'pending_attributes': pending_attributes,
+                'bios_version': bios_version,
+                'snapshot_type': snapshot_type,
+                'created_by': job['created_by'],
+                'notes': notes,
+                'captured_at': datetime.now().isoformat()
+            }
+            
+            self.supabase.table('bios_configurations').insert(config_data).execute()
+            self.log(f"  [OK] BIOS configuration saved to database")
+            
+            # Update job status
+            self.update_job_status(
+                job['id'],
+                'completed',
+                completed_at=datetime.now().isoformat(),
+                details={
+                    'attribute_count': len(current_attributes),
+                    'pending_count': len(pending_attributes) if pending_attributes else 0,
+                    'bios_version': bios_version,
+                    'snapshot_type': snapshot_type
+                }
+            )
+            self.log(f"BIOS config read job completed successfully")
+            
+        except Exception as e:
+            self.log(f"BIOS config read job failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e)}
+            )
+    
+    def execute_bios_config_write(self, job: Dict):
+        """
+        Execute BIOS configuration write job - apply BIOS attribute changes
+        
+        Expected job details:
+        {
+            "server_id": "uuid",
+            "attributes": {"ProcVirtualization": "Enabled", ...},
+            "reboot_type": "none" | "graceful" | "forced",
+            "create_snapshot": true/false,
+            "snapshot_notes": "Optional description"
+        }
+        """
+        try:
+            self.log(f"Starting BIOS config write job: {job['id']}")
+            
+            # Update job status
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            # Get server and credentials
+            details = job.get('details', {})
+            server_id = details.get('server_id')
+            attributes = details.get('attributes', {})
+            reboot_type = details.get('reboot_type', 'none')
+            create_snapshot = details.get('create_snapshot', False)
+            snapshot_notes = details.get('snapshot_notes', '')
+            
+            if not server_id:
+                raise Exception("Missing server_id in job details")
+            
+            if not attributes:
+                raise Exception("No attributes to apply")
+            
+            # Get server info
+            server = self.supabase.table('servers').select('*').eq('id', server_id).execute().data[0]
+            ip = server['ip_address']
+            username, password = self.get_credentials_for_server(server)
+            
+            self.log(f"  Applying {len(attributes)} BIOS changes to {ip}...")
+            
+            # Optional: Create pre-change snapshot
+            if create_snapshot:
+                self.log(f"  Creating pre-change snapshot...")
+                snapshot_job = {
+                    'id': f"snapshot-{job['id']}",
+                    'job_type': 'bios_config_read',
+                    'created_by': job['created_by'],
+                    'details': {
+                        'server_id': server_id,
+                        'snapshot_type': 'current',
+                        'notes': snapshot_notes or 'Pre-change snapshot'
+                    }
+                }
+                self.execute_bios_config_read(snapshot_job)
+            
+            # Apply BIOS settings
+            settings_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Bios/Settings"
+            payload = {"Attributes": attributes}
+            
+            start_time = time.time()
+            settings_resp = requests.patch(
+                settings_url,
+                auth=HTTPBasicAuth(username, password),
+                headers={'Content-Type': 'application/json'},
+                json=payload,
+                verify=False,
+                timeout=60
+            )
+            response_time_ms = int((time.time() - start_time) * 1000)
+            
+            # Log activity
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job['id'],
+                command_type='BIOS_WRITE',
+                endpoint='/redfish/v1/Systems/System.Embedded.1/Bios/Settings',
+                full_url=settings_url,
+                request_body=payload,
+                request_headers={'Authorization': '[REDACTED]', 'Content-Type': 'application/json'},
+                status_code=settings_resp.status_code,
+                response_body=settings_resp.json() if settings_resp.ok and settings_resp.text else None,
+                response_time_ms=response_time_ms,
+                success=settings_resp.ok,
+                error_message=None if settings_resp.ok else settings_resp.text,
+                source='job_executor',
+                initiated_by=job['created_by']
+            )
+            
+            if not settings_resp.ok:
+                error_msg = f"Failed to apply BIOS settings: HTTP {settings_resp.status_code}"
+                if settings_resp.text:
+                    try:
+                        error_data = settings_resp.json()
+                        if 'error' in error_data:
+                            error_msg = f"{error_msg} - {error_data['error'].get('message', error_data['error'])}"
+                    except:
+                        pass
+                raise Exception(error_msg)
+            
+            self.log(f"  [OK] BIOS settings applied successfully")
+            self.log(f"  Note: Changes will take effect after system reboot")
+            
+            # Handle reboot if requested
+            reboot_action = None
+            if reboot_type != 'none':
+                self.log(f"  Initiating {reboot_type} reboot...")
+                reboot_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset"
+                
+                reset_type = 'GracefulRestart' if reboot_type == 'graceful' else 'ForceRestart'
+                reboot_payload = {"ResetType": reset_type}
+                
+                start_time = time.time()
+                reboot_resp = requests.post(
+                    reboot_url,
+                    auth=HTTPBasicAuth(username, password),
+                    headers={'Content-Type': 'application/json'},
+                    json=reboot_payload,
+                    verify=False,
+                    timeout=30
+                )
+                response_time_ms = int((time.time() - start_time) * 1000)
+                
+                # Log activity
+                self.log_idrac_command(
+                    server_id=server_id,
+                    job_id=job['id'],
+                    command_type='POWER_CONTROL',
+                    endpoint='/redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset',
+                    full_url=reboot_url,
+                    request_body=reboot_payload,
+                    request_headers={'Authorization': '[REDACTED]', 'Content-Type': 'application/json'},
+                    status_code=reboot_resp.status_code,
+                    response_body=None,
+                    response_time_ms=response_time_ms,
+                    success=reboot_resp.ok,
+                    error_message=None if reboot_resp.ok else reboot_resp.text,
+                    source='job_executor',
+                    initiated_by=job['created_by']
+                )
+                
+                if reboot_resp.ok:
+                    self.log(f"  [OK] Reboot initiated successfully")
+                    reboot_action = reset_type
+                else:
+                    self.log(f"  [!] Reboot failed but BIOS settings were applied", "WARNING")
+            
+            # Update job status
+            self.update_job_status(
+                job['id'],
+                'completed',
+                completed_at=datetime.now().isoformat(),
+                details={
+                    'settings_applied': len(attributes),
+                    'reboot_required': True,
+                    'reboot_action': reboot_action,
+                    'snapshot_created': create_snapshot
+                }
+            )
+            self.log(f"BIOS config write job completed successfully")
+            
+        except Exception as e:
+            self.log(f"BIOS config write job failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e)}
+            )
+
     def execute_job(self, job: Dict):
         """Execute a job based on its type"""
         job_type = job['job_type']
@@ -2883,6 +3200,10 @@ class JobExecutor:
             self.execute_scp_export(job)
         elif job_type == 'scp_import':
             self.execute_scp_import(job)
+        elif job_type == 'bios_config_read':
+            self.execute_bios_config_read(job)
+        elif job_type == 'bios_config_write':
+            self.execute_bios_config_write(job)
         else:
             self.log(f"Unknown job type: {job_type}", "ERROR")
             self.update_job_status(

@@ -188,6 +188,8 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
               <SelectItem value="virtual_media_unmount">Virtual Media - Unmount</SelectItem>
               <SelectItem value="scp_export">SCP Export (Backup)</SelectItem>
               <SelectItem value="scp_import">SCP Import (Restore)</SelectItem>
+              <SelectItem value="bios_config_read">BIOS Config - Read/Snapshot</SelectItem>
+              <SelectItem value="bios_config_write">BIOS Config - Write/Apply</SelectItem>
               </SelectContent>
             </Select>
           </div>
