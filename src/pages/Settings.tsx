@@ -66,6 +66,7 @@ export default function Settings() {
   const [omeSyncEnabled, setOmeSyncEnabled] = useState(false);
   const [omeLastSync, setOmeLastSync] = useState<string | null>(null);
   const [omeSyncing, setOmeSyncing] = useState(false);
+  const [isOpenManageSyncing, setIsOpenManageSyncing] = useState(false);
   
   // API Token state
   const [apiTokens, setApiTokens] = useState<any[]>([]);
@@ -1195,28 +1196,86 @@ export default function Settings() {
       return;
     }
 
-    setOmeSyncing(true);
+    setIsOpenManageSyncing(true);
     try {
-      toast({
-        title: "Sync Started",
-        description: "OpenManage sync initiated. This may take a few moments...",
+      // Create openmanage_sync job using edge function
+      const { data: result, error: jobError } = await supabase.functions.invoke('create-job', {
+        body: {
+          job_type: 'openmanage_sync' as any,
+          created_by: user?.id,
+          target_scope: { type: 'all' },
+          details: { triggered_by: 'manual' }
+        }
       });
-
-      // Note: This requires the openmanage-sync-script.py to be run
-      // The edge function expects devices array from the script
+      
+      if (jobError) throw jobError;
+      if (!result?.success) throw new Error(result?.error || 'Failed to create job');
+      
+      const jobId = result.job_id;
+      
       toast({
-        title: "Manual Sync Required",
-        description: "Please run the openmanage-sync-script.py on your on-premise server to perform the sync. See documentation for details.",
+        title: "OpenManage Sync Started",
+        description: `Job ${jobId.substring(0, 8)} created. Syncing devices from OpenManage...`,
       });
+      
+      // Poll job status
+      const pollInterval = setInterval(async () => {
+        const { data: job } = await supabase
+          .from('jobs')
+          .select('status, details')
+          .eq('id', jobId)
+          .single();
+        
+        if (job?.status === 'completed') {
+          clearInterval(pollInterval);
+          setIsOpenManageSyncing(false);
+          const details = job.details as any;
+          toast({
+            title: "OpenManage Sync Completed",
+            description: `✓ ${details?.new || 0} new servers, ${details?.updated || 0} updated`,
+          });
+          // Reload OME last_sync timestamp
+          const { data: omeData } = await supabase
+            .from('openmanage_settings')
+            .select('last_sync')
+            .limit(1)
+            .single();
+          if (omeData?.last_sync) {
+            setOmeLastSync(omeData.last_sync);
+          }
+        } else if (job?.status === 'failed') {
+          clearInterval(pollInterval);
+          setIsOpenManageSyncing(false);
+          const details = job.details as any;
+          toast({
+            title: "OpenManage Sync Failed",
+            description: details?.error || "Unknown error occurred",
+            variant: "destructive",
+          });
+        }
+      }, 2000);
+      
+      // Timeout after 5 minutes
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        if (isOpenManageSyncing) {
+          setIsOpenManageSyncing(false);
+          toast({
+            title: "Sync Timed Out",
+            description: "Job Executor may not be running or sync is taking longer than expected",
+            variant: "destructive",
+          });
+        }
+      }, 300000);
+      
     } catch (error: any) {
       console.error("Error triggering sync:", error);
+      setIsOpenManageSyncing(false);
       toast({
         title: "Error",
         description: error.message || "Failed to trigger sync",
         variant: "destructive",
       });
-    } finally {
-      setOmeSyncing(false);
     }
   };
 
@@ -2148,10 +2207,20 @@ export default function Settings() {
                   </Button>
                   <Button 
                     onClick={handleSyncNow} 
-                    disabled={omeSyncing}
+                    disabled={isOpenManageSyncing}
                     variant="outline"
                   >
-                    {omeSyncing ? "Syncing..." : "Sync Now"}
+                    {isOpenManageSyncing ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Syncing...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                        Sync Now
+                      </>
+                    )}
                   </Button>
                 </div>
 

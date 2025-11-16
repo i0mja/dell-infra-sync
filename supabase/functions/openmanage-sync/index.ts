@@ -253,6 +253,23 @@ Deno.serve(async (req) => {
 
     console.log('OpenManage sync completed:', response.summary);
 
+    // Log sync operation activity
+    await supabase.from('idrac_commands').insert({
+      operation_type: 'openmanage_api',
+      endpoint: '/sync',
+      command_type: 'EDGE_FUNCTION_SYNC',
+      full_url: supabaseUrl,
+      success: true,
+      response_body: {
+        devices_received: devices.length,
+        new_count: newCount,
+        updated_count: updatedCount,
+        auto_linked_count: autoLinkedCount,
+        errors_count: errors.length
+      },
+      source: 'edge_function'
+    });
+
     return new Response(
       JSON.stringify(response),
       { 
