@@ -87,6 +87,8 @@ const Servers = () => {
   const [jobDialogOpen, setJobDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [assignCredentialsDialogOpen, setAssignCredentialsDialogOpen] = useState(false);
+  const [showIncompleteBanner, setShowIncompleteBanner] = useState(true);
+  const [bulkRefreshing, setBulkRefreshing] = useState(false);
   const [powerControlDialogOpen, setPowerControlDialogOpen] = useState(false);
   const [healthDialogOpen, setHealthDialogOpen] = useState(false);
   const [eventLogDialogOpen, setEventLogDialogOpen] = useState(false);
@@ -411,6 +413,41 @@ const Servers = () => {
     }
   };
 
+  // Helper to detect incomplete servers
+  const isIncompleteServer = (server: Server) => {
+    return !server.model || 
+           !server.service_tag || 
+           !server.idrac_firmware ||
+           server.model === 'N/A' ||
+           server.service_tag === 'N/A' ||
+           server.idrac_firmware === 'N/A';
+  };
+
+  const incompleteServers = servers.filter(s => 
+    isIncompleteServer(s) && s.credential_set_id
+  );
+
+  const handleRefreshIncomplete = async () => {
+    setBulkRefreshing(true);
+    try {
+      for (const server of incompleteServers) {
+        await handleRefreshInfo(server);
+      }
+      toast({
+        title: "Bulk refresh started",
+        description: `Started discovery jobs for ${incompleteServers.length} servers`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setBulkRefreshing(false);
+    }
+  };
+
   const filteredServers = servers.filter((server) =>
     server.ip_address.toLowerCase().includes(searchTerm.toLowerCase()) ||
     server.hostname?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -444,6 +481,46 @@ const Servers = () => {
           <AlertDescription>
             Running in local mode. Network operations like "Test Connection" and "Refresh Info" use Edge Functions which may have limited access to your local network due to Docker isolation. 
             For comprehensive testing, use the Job Executor with discovery jobs.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {incompleteServers.length > 0 && showIncompleteBanner && (
+        <Alert className="mb-6 border-yellow-500 bg-yellow-50 dark:bg-yellow-950/20">
+          <Info className="h-4 w-4 text-yellow-600 dark:text-yellow-500" />
+          <AlertDescription className="flex items-center justify-between">
+            <span className="text-yellow-900 dark:text-yellow-200">
+              {incompleteServers.length} {incompleteServers.length === 1 ? 'server has' : 'servers have'} incomplete information. Right-click and select "Refresh Server Information" to update, or refresh all at once.
+            </span>
+            <div className="flex items-center gap-2 ml-4">
+              <Button 
+                size="sm" 
+                variant="outline"
+                className="border-yellow-600 text-yellow-900 hover:bg-yellow-100 dark:text-yellow-200 dark:hover:bg-yellow-900/30"
+                onClick={handleRefreshIncomplete}
+                disabled={bulkRefreshing}
+              >
+                {bulkRefreshing ? (
+                  <>
+                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                    Refreshing...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                    Refresh All ({incompleteServers.length})
+                  </>
+                )}
+              </Button>
+              <Button 
+                size="sm" 
+                variant="ghost"
+                className="text-yellow-900 hover:text-yellow-950 dark:text-yellow-200 dark:hover:text-yellow-100"
+                onClick={() => setShowIncompleteBanner(false)}
+              >
+                Dismiss
+              </Button>
+            </div>
           </AlertDescription>
         </Alert>
       )}
@@ -509,6 +586,7 @@ const Servers = () => {
                             lastTest={server.last_connection_test}
                             error={server.connection_error}
                             credentialTestStatus={server.credential_test_status}
+                            isIncomplete={isIncompleteServer(server)}
                           />
                           <Badge variant={getServerStatus(server).variant}>
                             {getServerStatus(server).label}
@@ -652,9 +730,10 @@ const Servers = () => {
                 <ContextMenuItem 
                   onClick={() => handleRefreshInfo(server)}
                   disabled={refreshing === server.id}
+                  className={isIncompleteServer(server) ? "text-yellow-600 dark:text-yellow-500 font-medium" : ""}
                 >
-                  <RotateCw className={`mr-2 h-4 w-4 ${refreshing === server.id ? 'animate-spin' : ''}`} />
-                  Refresh Server Information
+                  <RotateCw className={`mr-2 h-4 w-4 ${refreshing === server.id ? 'animate-spin' : ''} ${isIncompleteServer(server) ? 'text-yellow-600 dark:text-yellow-500' : ''}`} />
+                  {isIncompleteServer(server) ? '⚠ Refresh Missing Information' : 'Refresh Server Information'}
                 </ContextMenuItem>
                 <ContextMenuItem onClick={() => handleEditServer(server)}>
                   <Edit className="mr-2 h-4 w-4" />
