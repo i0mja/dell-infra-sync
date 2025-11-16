@@ -487,11 +487,14 @@ class JobExecutor:
             self.log(f"Error fetching tasks: {e}", "ERROR")
             return []
 
-    def get_comprehensive_server_info(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None) -> Optional[Dict]:
-        """Get comprehensive server information from iDRAC Redfish API"""
-        try:
-            # Get system information
-            system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
+    def get_comprehensive_server_info(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, max_retries: int = 3) -> Optional[Dict]:
+        """Get comprehensive server information from iDRAC Redfish API with retry logic"""
+        system_data = None
+        
+        # Get system information with retry logic
+        system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
+        
+        for attempt in range(max_retries):
             start_time = time.time()
             
             try:
@@ -499,9 +502,19 @@ class JobExecutor:
                     system_url,
                     auth=(username, password),
                     verify=False,
-                    timeout=10
+                    timeout=15
                 )
                 response_time_ms = int((time.time() - start_time) * 1000)
+                
+                # Try to parse JSON, but handle parse errors gracefully
+                response_json = None
+                json_error = None
+                if system_response.content:
+                    try:
+                        response_json = system_response.json()
+                    except json.JSONDecodeError as json_err:
+                        json_error = str(json_err)
+                        self.log(f"  Warning: Could not parse response as JSON (attempt {attempt + 1}/{max_retries}): {json_err}", "WARN")
                 
                 # Log the system info request
                 self.log_idrac_command(
@@ -515,17 +528,29 @@ class JobExecutor:
                     request_body=None,
                     status_code=system_response.status_code,
                     response_time_ms=response_time_ms,
-                    response_body=system_response.json() if system_response.content else None,
-                    success=system_response.status_code == 200,
-                    error_message=None if system_response.status_code == 200 else f"HTTP {system_response.status_code}"
+                    response_body=response_json,
+                    success=system_response.status_code == 200 and response_json is not None,
+                    error_message=json_error if json_error else (None if system_response.status_code == 200 else f"HTTP {system_response.status_code}")
                 )
                 
-                if system_response.status_code != 200:
-                    return None
-                
-                system_data = system_response.json()
+                if system_response.status_code == 200 and response_json is not None:
+                    system_data = response_json
+                    break  # Success! Exit retry loop
+                else:
+                    # Non-200 status or JSON parse error
+                    if attempt < max_retries - 1:
+                        delay = (attempt + 1) * 5  # 5, 10, 15 seconds
+                        self.log(f"  System info query failed (attempt {attempt + 1}/{max_retries}). Retrying in {delay}s...", "WARN")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        self.log(f"  Failed to get system info after {max_retries} attempts", "ERROR")
+                        return None
+                        
             except Exception as e:
                 response_time_ms = int((time.time() - start_time) * 1000)
+                
+                # Log the error
                 self.log_idrac_command(
                     server_id=server_id,
                     job_id=job_id,
@@ -539,12 +564,26 @@ class JobExecutor:
                     response_time_ms=response_time_ms,
                     response_body=None,
                     success=False,
-                    error_message=str(e)
+                    error_message=f"Attempt {attempt + 1}/{max_retries}: {str(e)}"
                 )
-                raise
-            
-            # Get manager (iDRAC) information for firmware version
-            manager_url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1"
+                
+                if attempt < max_retries - 1:
+                    delay = (attempt + 1) * 5  # 5, 10, 15 seconds
+                    self.log(f"  System info query error (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay}s...", "WARN")
+                    time.sleep(delay)
+                    continue
+                else:
+                    self.log(f"  Failed to get system info after {max_retries} attempts: {e}", "ERROR")
+                    return None
+        
+        if system_data is None:
+            return None
+        
+        # Get manager (iDRAC) information with retry logic
+        manager_url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1"
+        manager_data = {}
+        
+        for attempt in range(max_retries):
             start_time = time.time()
             
             try:
@@ -552,9 +591,19 @@ class JobExecutor:
                     manager_url,
                     auth=(username, password),
                     verify=False,
-                    timeout=10
+                    timeout=15
                 )
                 response_time_ms = int((time.time() - start_time) * 1000)
+                
+                # Try to parse JSON, but handle parse errors gracefully
+                response_json = None
+                json_error = None
+                if manager_response.content:
+                    try:
+                        response_json = manager_response.json()
+                    except json.JSONDecodeError as json_err:
+                        json_error = str(json_err)
+                        self.log(f"  Warning: Could not parse manager response as JSON (attempt {attempt + 1}/{max_retries}): {json_err}", "WARN")
                 
                 # Log the manager info request
                 self.log_idrac_command(
@@ -568,14 +617,29 @@ class JobExecutor:
                     request_body=None,
                     status_code=manager_response.status_code,
                     response_time_ms=response_time_ms,
-                    response_body=manager_response.json() if manager_response.content else None,
-                    success=manager_response.status_code == 200,
-                    error_message=None if manager_response.status_code == 200 else f"HTTP {manager_response.status_code}"
+                    response_body=response_json,
+                    success=manager_response.status_code == 200 and response_json is not None,
+                    error_message=json_error if json_error else (None if manager_response.status_code == 200 else f"HTTP {manager_response.status_code}")
                 )
                 
-                manager_data = manager_response.json() if manager_response.status_code == 200 else {}
+                if manager_response.status_code == 200 and response_json is not None:
+                    manager_data = response_json
+                    break  # Success! Exit retry loop
+                else:
+                    # Non-200 status or JSON parse error
+                    if attempt < max_retries - 1:
+                        delay = (attempt + 1) * 5  # 5, 10, 15 seconds
+                        self.log(f"  Manager info query failed (attempt {attempt + 1}/{max_retries}). Retrying in {delay}s...", "WARN")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        self.log(f"  Failed to get manager info after {max_retries} attempts (continuing with system data only)", "WARN")
+                        break  # Manager data is optional, continue with system data
+                        
             except Exception as e:
                 response_time_ms = int((time.time() - start_time) * 1000)
+                
+                # Log the error
                 self.log_idrac_command(
                     server_id=server_id,
                     job_id=job_id,
@@ -589,11 +653,20 @@ class JobExecutor:
                     response_time_ms=response_time_ms,
                     response_body=None,
                     success=False,
-                    error_message=str(e)
+                    error_message=f"Attempt {attempt + 1}/{max_retries}: {str(e)}"
                 )
-                manager_data = {}
-            
-            # Extract comprehensive info
+                
+                if attempt < max_retries - 1:
+                    delay = (attempt + 1) * 5  # 5, 10, 15 seconds
+                    self.log(f"  Manager info query error (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay}s...", "WARN")
+                    time.sleep(delay)
+                    continue
+                else:
+                    self.log(f"  Failed to get manager info after {max_retries} attempts (continuing with system data only): {e}", "WARN")
+                    break  # Manager data is optional, continue with system data
+        
+        # Extract comprehensive info
+        try:
             processor_summary = system_data.get("ProcessorSummary", {})
             memory_summary = system_data.get("MemorySummary", {})
             
@@ -611,7 +684,7 @@ class JobExecutor:
                 "password": password,
             }
         except Exception as e:
-            self.log(f"Error getting server info from {ip}: {e}", "DEBUG")
+            self.log(f"Error extracting server info from {ip}: {e}", "ERROR")
             return None
 
     def test_idrac_connection(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None) -> Optional[Dict]:
