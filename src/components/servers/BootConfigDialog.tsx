@@ -1,14 +1,31 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { HardDrive, Network, Disc, Power, RefreshCw } from "lucide-react";
+import { HardDrive, Network, Disc, Power, RefreshCw, GripVertical, Save, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { 
+  DndContext, 
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 interface BootConfigDialogProps {
   open: boolean;
@@ -21,7 +38,52 @@ interface BootConfigDialogProps {
     boot_source_override_enabled?: string | null;
     boot_source_override_target?: string | null;
     boot_order?: string[] | null;
+    last_boot_config_check?: string | null;
   };
+}
+
+interface SortableBootItemProps {
+  id: string;
+  device: string;
+  index: number;
+  isEditing: boolean;
+}
+
+function SortableBootItem({ id, device, index, isEditing }: SortableBootItemProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`flex items-center gap-2 p-3 bg-muted rounded-md ${
+        isEditing ? 'cursor-move hover:bg-muted/80' : ''
+      }`}
+    >
+      {isEditing && (
+        <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing">
+          <GripVertical className="h-4 w-4 text-muted-foreground" />
+        </div>
+      )}
+      <span className="text-muted-foreground font-mono text-sm">{index + 1}.</span>
+      <code className="text-xs bg-background px-2 py-1 rounded flex-1">
+        {device}
+      </code>
+    </div>
+  );
 }
 
 export function BootConfigDialog({ open, onOpenChange, server }: BootConfigDialogProps) {
@@ -30,7 +92,19 @@ export function BootConfigDialog({ open, onOpenChange, server }: BootConfigDialo
   const [oneTimeTarget, setOneTimeTarget] = useState<string>("None");
   const [bootMode, setBootMode] = useState<string>(server.boot_mode || "UEFI");
   const [confirmAction, setConfirmAction] = useState<string | null>(null);
+  const [editableBootOrder, setEditableBootOrder] = useState<string[]>([]);
+  const [isEditingBootOrder, setIsEditingBootOrder] = useState(false);
+  const [hasBootOrderChanges, setHasBootOrderChanges] = useState(false);
   
+  // Initialize editable boot order when server changes or dialog opens
+  useEffect(() => {
+    if (open && server.boot_order) {
+      setEditableBootOrder([...server.boot_order]);
+      setIsEditingBootOrder(false);
+      setHasBootOrderChanges(false);
+    }
+  }, [open, server.boot_order]);
+
   const bootTargets = [
     { value: "None", label: "None", icon: Power },
     { value: "Pxe", label: "Network (PXE)", icon: Network },
@@ -40,6 +114,77 @@ export function BootConfigDialog({ open, onOpenChange, server }: BootConfigDialo
     { value: "BiosSetup", label: "BIOS Setup", icon: Power },
   ];
   
+  // Configure drag sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  // Handle drag end
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      setEditableBootOrder((items) => {
+        const oldIndex = items.indexOf(active.id as string);
+        const newIndex = items.indexOf(over.id as string);
+        const newOrder = arrayMove(items, oldIndex, newIndex);
+        setHasBootOrderChanges(true);
+        return newOrder;
+      });
+    }
+  };
+
+  // Handle save boot order
+  const handleSaveBootOrder = async () => {
+    setIsSubmitting(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+
+      const { error: jobError } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'boot_configuration',
+          created_by: user.id,
+          target_scope: {
+            type: 'specific',
+            server_ids: [server.id]
+          },
+          details: { 
+            action: 'set_boot_order',
+            boot_order: editableBootOrder
+          }
+        });
+
+      if (jobError) throw jobError;
+
+      toast.success("Boot order update initiated", {
+        description: `Job created for ${server.hostname || server.ip_address}`
+      });
+      
+      setIsEditingBootOrder(false);
+      setHasBootOrderChanges(false);
+      onOpenChange(false);
+    } catch (error: any) {
+      console.error('Error setting boot order:', error);
+      toast.error('Failed to set boot order', {
+        description: error.message
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Handle cancel edit
+  const handleCancelEdit = () => {
+    setEditableBootOrder(server.boot_order || []);
+    setIsEditingBootOrder(false);
+    setHasBootOrderChanges(false);
+  };
+
   const handleFetchConfig = async () => {
     setIsSubmitting(true);
     try {
@@ -165,11 +310,13 @@ export function BootConfigDialog({ open, onOpenChange, server }: BootConfigDialo
           </DialogHeader>
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-2">
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="one-time">One-Time Boot</TabsTrigger>
+              <TabsTrigger value="persistent">Boot Order</TabsTrigger>
               <TabsTrigger value="current">Current Config</TabsTrigger>
             </TabsList>
 
+            {/* One-Time Boot Tab */}
             <TabsContent value="one-time" className="space-y-4">
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
@@ -228,6 +375,118 @@ export function BootConfigDialog({ open, onOpenChange, server }: BootConfigDialo
               </DialogFooter>
             </TabsContent>
 
+            {/* Persistent Boot Order Tab */}
+            <TabsContent value="persistent" className="space-y-4">
+              <div className="space-y-4 py-4">
+                {/* Header with Edit/Save buttons */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label className="text-sm font-medium">Persistent Boot Order</Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Drag devices to reorder. This changes the permanent boot sequence.
+                    </p>
+                  </div>
+                  {!isEditingBootOrder && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setIsEditingBootOrder(true)}
+                      disabled={!server.boot_order || server.boot_order.length === 0}
+                    >
+                      Edit Order
+                    </Button>
+                  )}
+                </div>
+
+                {/* Boot Order List */}
+                {server.boot_order && server.boot_order.length > 0 ? (
+                  <div className="space-y-2">
+                    {isEditingBootOrder ? (
+                      // Drag-and-drop mode
+                      <DndContext
+                        sensors={sensors}
+                        collisionDetection={closestCenter}
+                        onDragEnd={handleDragEnd}
+                      >
+                        <SortableContext
+                          items={editableBootOrder}
+                          strategy={verticalListSortingStrategy}
+                        >
+                          <div className="space-y-2">
+                            {editableBootOrder.map((device, index) => (
+                              <SortableBootItem
+                                key={device}
+                                id={device}
+                                device={device}
+                                index={index}
+                                isEditing={true}
+                              />
+                            ))}
+                          </div>
+                        </SortableContext>
+                      </DndContext>
+                    ) : (
+                      // Read-only mode
+                      <div className="space-y-2">
+                        {(server.boot_order || []).map((device, index) => (
+                          <div key={device} className="flex items-center gap-2 p-3 bg-muted rounded-md">
+                            <span className="text-muted-foreground font-mono text-sm">{index + 1}.</span>
+                            <code className="text-xs bg-background px-2 py-1 rounded flex-1">
+                              {device}
+                            </code>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <p className="text-sm">No boot order information available</p>
+                    <p className="text-xs mt-1">Click "Refresh" to fetch boot configuration</p>
+                  </div>
+                )}
+
+                {/* Warning when editing */}
+                {isEditingBootOrder && (
+                  <div className="bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-900 rounded-lg p-3">
+                    <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                      <strong>Warning:</strong> Changes to boot order are permanent and will affect all future boots. 
+                      The server may need to be restarted for changes to take effect.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter>
+                {isEditingBootOrder ? (
+                  <>
+                    <Button variant="outline" onClick={handleCancelEdit} disabled={isSubmitting}>
+                      <X className="h-4 w-4 mr-2" />
+                      Cancel
+                    </Button>
+                    <Button 
+                      onClick={handleSaveBootOrder} 
+                      disabled={isSubmitting || !hasBootOrderChanges}
+                    >
+                      <Save className="h-4 w-4 mr-2" />
+                      {isSubmitting ? "Saving..." : "Save Boot Order"}
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button variant="outline" onClick={() => onOpenChange(false)}>
+                      Close
+                    </Button>
+                    <Button onClick={handleFetchConfig} disabled={isSubmitting}>
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Refresh
+                    </Button>
+                  </>
+                )}
+              </DialogFooter>
+            </TabsContent>
+
+            {/* Current Configuration Tab */}
             <TabsContent value="current" className="space-y-4">
               <div className="space-y-4 py-4">
                 <div className="grid grid-cols-2 gap-4">
@@ -250,19 +509,21 @@ export function BootConfigDialog({ open, onOpenChange, server }: BootConfigDialo
                   </div>
                 )}
 
-                {server.boot_order && server.boot_order.length > 0 && (
+                {server.last_boot_config_check && (
                   <div>
-                    <Label className="text-xs text-muted-foreground mb-2 block">Boot Order</Label>
-                    <div className="space-y-1">
-                      {server.boot_order.map((device, index) => (
-                        <div key={device} className="flex items-center gap-2 text-sm">
-                          <span className="text-muted-foreground">{index + 1}.</span>
-                          <code className="text-xs bg-muted px-2 py-1 rounded">{device}</code>
-                        </div>
-                      ))}
+                    <Label className="text-xs text-muted-foreground">Last Updated</Label>
+                    <div className="text-sm">
+                      {new Date(server.last_boot_config_check).toLocaleString()}
                     </div>
                   </div>
                 )}
+
+                <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900 rounded-lg p-3">
+                  <p className="text-sm text-blue-800 dark:text-blue-200">
+                    <strong>Tip:</strong> Use the "Boot Order" tab to permanently change the boot sequence, 
+                    or "One-Time Boot" for temporary changes.
+                  </p>
+                </div>
               </div>
 
               <DialogFooter className="flex justify-between">
@@ -292,6 +553,7 @@ export function BootConfigDialog({ open, onOpenChange, server }: BootConfigDialo
         </DialogContent>
       </Dialog>
 
+      {/* Confirmation Dialog */}
       <AlertDialog open={confirmAction !== null} onOpenChange={() => setConfirmAction(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>

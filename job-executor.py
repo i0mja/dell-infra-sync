@@ -2275,6 +2275,58 @@ class JobExecutor:
         except Exception as e:
             self.log(f"Error updating server boot config: {e}", "ERROR")
     
+    def set_persistent_boot_order(self, ip: str, username: str, password: str, 
+                                   server_id: str, job_id: str, boot_order: list):
+        """
+        Change the persistent boot order via Redfish API
+        
+        Args:
+            boot_order: Array of boot option IDs like ['Boot0001', 'Boot0002', 'Boot0003']
+        """
+        system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
+        
+        payload = {
+            "Boot": {
+                "BootOrder": boot_order
+            }
+        }
+        
+        start_time = time.time()
+        response = requests.patch(
+            system_url,
+            auth=(username, password),
+            json=payload,
+            verify=False,
+            timeout=30
+        )
+        response_time_ms = int((time.time() - start_time) * 1000)
+        
+        # Log the command
+        self.log_idrac_command(
+            server_id=server_id,
+            job_id=job_id,
+            command_type='PATCH',
+            endpoint='/redfish/v1/Systems/System.Embedded.1',
+            full_url=system_url,
+            request_body=payload,
+            response_body=response.text if response.status_code not in [200, 204] else None,
+            status_code=response.status_code,
+            response_time_ms=response_time_ms,
+            success=response.status_code in [200, 204]
+        )
+        
+        if response.status_code not in [200, 204]:
+            error_msg = f"Failed to set boot order: {response.status_code}"
+            if response.text:
+                try:
+                    error_data = response.json()
+                    error_msg += f" - {error_data.get('error', {}).get('message', response.text)}"
+                except:
+                    error_msg += f" - {response.text}"
+            raise Exception(error_msg)
+        
+        self.log(f"  Boot order successfully updated")
+    
     def execute_boot_configuration(self, job: Dict):
         """Execute boot configuration changes on servers"""
         try:
@@ -2357,6 +2409,30 @@ class JobExecutor:
                         self.log(f"  ✓ Boot override disabled")
                         success_count += 1
                         results.append({'server': ip, 'success': True, 'action': 'disable_override'})
+                    
+                    elif action == 'set_boot_order':
+                        # Change persistent boot order
+                        boot_order = details.get('boot_order', [])
+                        
+                        if not boot_order:
+                            raise ValueError("boot_order is required for set_boot_order action")
+                        
+                        self.log(f"  Setting boot order: {boot_order}")
+                        self.set_persistent_boot_order(ip, username, password, server['id'], job['id'], boot_order)
+                        
+                        # Fetch updated config to confirm
+                        updated_config = self.fetch_boot_configuration(ip, username, password, server['id'], job['id'])
+                        self.update_server_boot_config(server['id'], updated_config)
+                        
+                        self.log(f"  ✓ Boot order updated successfully")
+                        success_count += 1
+                        results.append({
+                            'server': ip, 
+                            'success': True, 
+                            'action': 'set_boot_order', 
+                            'boot_order': boot_order,
+                            'verified_order': updated_config.get('boot_order')
+                        })
                     
                     else:
                         raise ValueError(f"Unknown boot configuration action: {action}")
