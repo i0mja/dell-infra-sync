@@ -1385,6 +1385,7 @@ export type Database = {
         | "scp_export"
         | "scp_import"
         | "vcenter_connectivity_test"
+        | "openmanage_sync"
       operation_type: "idrac_api" | "vcenter_api" | "openmanage_api"
     }
     CompositeTypes: {
@@ -1532,6 +1533,7 @@ export const Constants = {
         "scp_export",
         "scp_import",
         "vcenter_connectivity_test",
+        "openmanage_sync",
       ],
       operation_type: ["idrac_api", "vcenter_api", "openmanage_api"],
     },

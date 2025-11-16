@@ -3425,6 +3425,359 @@ class JobExecutor:
                 details={'error': str(e)}
             )
     
+    def authenticate_ome(self, settings: dict) -> str:
+        """Authenticate with OpenManage Enterprise and return auth token"""
+        import requests
+        
+        host = settings['host']
+        port = settings.get('port', 443)
+        username = settings['username']
+        password = settings['password']
+        verify_ssl = settings.get('verify_ssl', True)
+        
+        url = f"https://{host}:{port}/api/SessionService/Sessions"
+        payload = {
+            "UserName": username,
+            "Password": password,
+            "SessionType": "API"
+        }
+        
+        start_time = time.time()
+        
+        try:
+            response = requests.post(url, json=payload, verify=verify_ssl, timeout=30)
+            response_time = int((time.time() - start_time) * 1000)
+            
+            # Log authentication activity
+            self.log_openmanage_activity(
+                operation_type='openmanage_api',
+                endpoint='/api/SessionService/Sessions',
+                command_type='AUTHENTICATE',
+                full_url=url,
+                success=response.status_code == 200,
+                status_code=response.status_code,
+                response_time_ms=response_time,
+                details={'username': username, 'verify_ssl': verify_ssl}
+            )
+            
+            response.raise_for_status()
+            auth_token = response.headers.get("x-auth-token")
+            
+            if not auth_token:
+                raise ValueError("Failed to get x-auth-token from response headers")
+            
+            return auth_token
+            
+        except Exception as e:
+            self.log(f"OME authentication failed: {e}", "ERROR")
+            raise
+    
+    def get_ome_devices(self, settings: dict, auth_token: str) -> list:
+        """Retrieve all devices from OpenManage Enterprise"""
+        import requests
+        
+        host = settings['host']
+        port = settings.get('port', 443)
+        verify_ssl = settings.get('verify_ssl', True)
+        
+        url = f"https://{host}:{port}/api/DeviceService/Devices"
+        headers = {
+            "x-auth-token": auth_token,
+            "Content-Type": "application/json"
+        }
+        
+        start_time = time.time()
+        
+        try:
+            response = requests.get(url, headers=headers, verify=verify_ssl, timeout=60)
+            response_time = int((time.time() - start_time) * 1000)
+            
+            data = response.json() if response.status_code == 200 else {}
+            devices = data.get("value", [])
+            
+            # Log device retrieval activity
+            self.log_openmanage_activity(
+                operation_type='openmanage_api',
+                endpoint='/api/DeviceService/Devices',
+                command_type='GET_DEVICES',
+                full_url=url,
+                success=response.status_code == 200,
+                status_code=response.status_code,
+                response_time_ms=response_time,
+                details={'device_count': len(devices)}
+            )
+            
+            response.raise_for_status()
+            
+            self.log(f"Retrieved {len(devices)} devices from OME")
+            return devices
+            
+        except Exception as e:
+            self.log(f"Failed to retrieve OME devices: {e}", "ERROR")
+            raise
+    
+    def process_ome_device(self, device: dict) -> dict:
+        """Process OME device data into server format"""
+        device_id = str(device.get("Id", ""))
+        service_tag = device.get("DeviceServiceTag", "")
+        model = device.get("Model", "")
+        hostname = device.get("DeviceName", "")
+        
+        # Extract IP address
+        ip_address = ""
+        device_mgmt = device.get("DeviceManagement", [])
+        if device_mgmt and len(device_mgmt) > 0:
+            ip_address = device_mgmt[0].get("NetworkAddress", "")
+        
+        # Extract firmware versions
+        bios_version = None
+        idrac_firmware = None
+        capabilities = device.get("DeviceCapabilities", [])
+        for cap in capabilities:
+            cap_type = cap.get("CapabilityType", {}).get("Name", "")
+            if "BIOS" in cap_type:
+                bios_version = cap.get("Version")
+            elif "iDRAC" in cap_type or "Lifecycle" in cap_type:
+                idrac_firmware = cap.get("Version")
+        
+        # Extract hardware specs (if available)
+        cpu_count = None
+        memory_gb = None
+        if "Processors" in device:
+            cpu_count = len(device.get("Processors", []))
+        if "Memory" in device:
+            memory_gb = device.get("Memory", {}).get("TotalSystemMemoryGiB")
+        
+        return {
+            'device_id': device_id,
+            'service_tag': service_tag,
+            'model': model,
+            'hostname': hostname,
+            'ip_address': ip_address,
+            'bios_version': bios_version,
+            'idrac_firmware': idrac_firmware,
+            'cpu_count': cpu_count,
+            'memory_gb': memory_gb
+        }
+    
+    def sync_ome_device_to_db(self, device_data: dict) -> tuple:
+        """Sync a single OME device to servers table"""
+        service_tag = device_data['service_tag']
+        
+        if not service_tag or not device_data['ip_address']:
+            return 'skipped', False
+        
+        # Check if server exists
+        headers = {
+            'apikey': SERVICE_ROLE_KEY,
+            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            'Content-Type': 'application/json'
+        }
+        
+        check_url = f"{DSM_URL}/rest/v1/servers?service_tag=eq.{service_tag}&select=id"
+        response = requests.get(check_url, headers=headers, verify=VERIFY_SSL)
+        existing = response.json() if response.status_code == 200 else []
+        
+        server_payload = {
+            'ip_address': device_data['ip_address'],
+            'hostname': device_data.get('hostname'),
+            'model': device_data.get('model'),
+            'service_tag': service_tag,
+            'bios_version': device_data.get('bios_version'),
+            'idrac_firmware': device_data.get('idrac_firmware'),
+            'cpu_count': device_data.get('cpu_count'),
+            'memory_gb': device_data.get('memory_gb'),
+            'openmanage_device_id': device_data['device_id'],
+            'last_openmanage_sync': datetime.now().isoformat(),
+            'manufacturer': 'Dell'
+        }
+        
+        if existing:
+            # Update existing
+            server_id = existing[0]['id']
+            update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}"
+            response = requests.patch(update_url, json=server_payload, headers=headers, verify=VERIFY_SSL)
+            return 'updated', response.status_code in [200, 204]
+        else:
+            # Insert new
+            insert_url = f"{DSM_URL}/rest/v1/servers"
+            response = requests.post(insert_url, json=server_payload, headers=headers, verify=VERIFY_SSL)
+            
+            if response.status_code in [200, 201]:
+                # Try auto-linking with vCenter
+                new_server = response.json()
+                if new_server:
+                    server_id = new_server[0]['id'] if isinstance(new_server, list) else new_server['id']
+                    self.auto_link_vcenter(server_id, service_tag)
+            
+            return 'new', response.status_code in [200, 201]
+    
+    def auto_link_vcenter(self, server_id: str, service_tag: str):
+        """Attempt to auto-link server with vCenter host by serial number"""
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            # Find matching vCenter host
+            vcenter_url = f"{DSM_URL}/rest/v1/vcenter_hosts?serial_number=eq.{service_tag}&select=id"
+            response = requests.get(vcenter_url, headers=headers, verify=VERIFY_SSL)
+            
+            if response.status_code == 200:
+                hosts = response.json()
+                if hosts:
+                    vcenter_host_id = hosts[0]['id']
+                    
+                    # Link server to vCenter host
+                    update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}"
+                    requests.patch(
+                        update_url,
+                        json={'vcenter_host_id': vcenter_host_id},
+                        headers=headers,
+                        verify=VERIFY_SSL
+                    )
+                    
+                    self.log(f"  Auto-linked to vCenter host: {vcenter_host_id}")
+        except Exception as e:
+            self.log(f"  Auto-link failed: {e}", "WARN")
+    
+    def execute_openmanage_sync(self, job: Dict):
+        """Execute OpenManage Enterprise sync operation"""
+        try:
+            self.log(f"Starting OpenManage sync: {job['id']}")
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            # Fetch OME settings
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/openmanage_settings?select=*&limit=1",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL
+            )
+            
+            if response.status_code != 200 or not response.json():
+                raise Exception("OpenManage settings not configured")
+            
+            settings = response.json()[0]
+            
+            if not settings.get('sync_enabled'):
+                raise Exception("OpenManage sync is disabled in settings")
+            
+            # Authenticate with OME
+            self.log("Authenticating with OpenManage Enterprise...")
+            auth_token = self.authenticate_ome(settings)
+            
+            # Retrieve devices
+            self.log("Retrieving devices from OpenManage Enterprise...")
+            devices = self.get_ome_devices(settings, auth_token)
+            
+            # Process and sync devices
+            results = {
+                'total': len(devices),
+                'new': 0,
+                'updated': 0,
+                'skipped': 0,
+                'auto_linked': 0,
+                'errors': []
+            }
+            
+            for device in devices:
+                try:
+                    device_data = self.process_ome_device(device)
+                    
+                    if not device_data['service_tag'] or not device_data['ip_address']:
+                        self.log(f"  Skipping device {device_data.get('hostname', 'Unknown')} - missing required fields", "WARN")
+                        results['skipped'] += 1
+                        continue
+                    
+                    self.log(f"  Syncing: {device_data['service_tag']} - {device_data['ip_address']}")
+                    
+                    action, success = self.sync_ome_device_to_db(device_data)
+                    
+                    if success:
+                        if action == 'new':
+                            results['new'] += 1
+                        elif action == 'updated':
+                            results['updated'] += 1
+                    else:
+                        results['errors'].append(f"Failed to sync {device_data['service_tag']}")
+                        
+                except Exception as e:
+                    self.log(f"  Error processing device: {e}", "ERROR")
+                    results['errors'].append(str(e))
+            
+            # Update last_sync timestamp in settings
+            requests.patch(
+                f"{DSM_URL}/rest/v1/openmanage_settings?id=eq.{settings['id']}",
+                json={'last_sync': datetime.now().isoformat()},
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL
+            )
+            
+            # Log summary activity
+            self.log_openmanage_activity(
+                operation_type='openmanage_api',
+                endpoint='/sync-summary',
+                command_type='SYNC_COMPLETE',
+                full_url=f"https://{settings['host']}:{settings.get('port', 443)}",
+                success=True,
+                details=results
+            )
+            
+            self.log(f"✓ OpenManage sync completed: {results['new']} new, {results['updated']} updated, {results['skipped']} skipped")
+            
+            self.update_job_status(
+                job['id'], 'completed',
+                completed_at=datetime.now().isoformat(),
+                details=results
+            )
+            
+        except Exception as e:
+            self.log(f"OpenManage sync failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'], 'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e)}
+            )
+    
+    def log_openmanage_activity(self, operation_type: str, endpoint: str, command_type: str,
+                               full_url: str, success: bool, status_code: int = None,
+                               response_time_ms: int = None, details: dict = None):
+        """Log OpenManage API activity to idrac_commands table"""
+        try:
+            activity_data = {
+                'operation_type': operation_type,
+                'endpoint': endpoint,
+                'command_type': command_type,
+                'full_url': full_url,
+                'success': success,
+                'status_code': status_code,
+                'response_time_ms': response_time_ms,
+                'source': 'job_executor',
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            if details:
+                activity_data['response_body'] = details
+            
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            }
+            
+            requests.post(
+                f"{DSM_URL}/rest/v1/idrac_commands",
+                json=activity_data,
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=5
+            )
+        except Exception as e:
+            self.log(f"Failed to log OpenManage activity: {e}", "WARN")
+    
     def execute_bios_config_write(self, job: Dict):
         """
         Execute BIOS configuration write job - apply BIOS attribute changes
@@ -3630,6 +3983,8 @@ class JobExecutor:
             self.execute_vcenter_sync(job)
         elif job_type == 'vcenter_connectivity_test':
             self.execute_vcenter_connectivity_test(job)
+        elif job_type == 'openmanage_sync':
+            self.execute_openmanage_sync(job)
         else:
             self.log(f"Unknown job type: {job_type}", "ERROR")
             self.update_job_status(
