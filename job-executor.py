@@ -770,7 +770,12 @@ class JobExecutor:
         self.log(f"Refreshing {len(server_ids)} existing server(s)")
         
         try:
-            headers = {"apikey": SERVICE_ROLE_KEY, "Authorization": f"Bearer {SERVICE_ROLE_KEY}"}
+            headers = {
+                "apikey": SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=representation"
+            }
             
             # Fetch server records
             servers_url = f"{DSM_URL}/rest/v1/servers"
@@ -824,26 +829,30 @@ class JobExecutor:
                 info = self.get_comprehensive_server_info(ip, username, password, server_id=server['id'], job_id=job['id'])
                 
                 if info:
-                    # Update server record with comprehensive fetched info including new fields
-                    update_data = {
-                        'hostname': info.get('hostname'),
-                        'model': info.get('model'),
-                        'service_tag': info.get('service_tag'),
-                        'manager_mac_address': info.get('manager_mac_address'),
-                        'product_name': info.get('product_name'),
-                        'manufacturer': info.get('manufacturer', 'Dell'),
-                        'redfish_version': info.get('redfish_version'),
-                        'supported_endpoints': info.get('supported_endpoints'),
-                        'idrac_firmware': info.get('idrac_firmware'),
-                        'bios_version': info.get('bios_version'),
-                        'cpu_count': info.get('cpu_count'),
-                        'memory_gb': info.get('memory_gb'),
+                    # Define allowed server columns for update
+                    allowed_fields = {
+                        "manufacturer", "model", "product_name", "service_tag", "hostname",
+                        "bios_version", "cpu_count", "memory_gb", "idrac_firmware",
+                        "manager_mac_address", "redfish_version", "supported_endpoints"
+                    }
+                    
+                    # Build filtered update payload (exclude None values and credentials)
+                    update_data = {k: v for k, v in info.items() if k in allowed_fields and v is not None}
+                    
+                    # Add status fields
+                    update_data.update({
                         'connection_status': 'online',
                         'connection_error': None,
                         'last_seen': datetime.now().isoformat(),
                         'credential_test_status': 'valid',
                         'credential_last_tested': datetime.now().isoformat(),
-                    }
+                    })
+                    
+                    # Mirror model to product_name if missing
+                    if 'product_name' not in update_data and info.get('model'):
+                        update_data['product_name'] = info['model']
+                    
+                    self.log(f"  Updating {ip} with fields: {list(update_data.keys())}", "DEBUG")
                     
                     update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server['id']}"
                     update_response = requests.patch(update_url, headers=headers, json=update_data, verify=VERIFY_SSL)
@@ -852,7 +861,7 @@ class JobExecutor:
                         self.log(f"  ✓ Refreshed {ip}: {info.get('model')} - {info.get('hostname')}")
                         refreshed_count += 1
                     else:
-                        self.log(f"  ✗ Failed to update DB for {ip}: {update_response.status_code}", "ERROR")
+                        self.log(f"  ✗ Failed to update DB for {ip}: {update_response.status_code} {update_response.text}", "ERROR")
                         failed_count += 1
                 else:
                     # Update as offline
