@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Search, RefreshCw, Link2, Wrench, RotateCw, Edit, History, Trash2, CheckCircle, Info, Power, Activity, FileText, HardDrive, Disc, FileJson } from "lucide-react";
+import { Plus, Search, RefreshCw, Link2, Wrench, RotateCw, Edit, History, Trash2, CheckCircle, Info, Power, Activity, FileText, HardDrive, Disc, FileJson, Settings2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -22,6 +22,7 @@ import { EventLogDialog } from "@/components/servers/EventLogDialog";
 import { BootConfigDialog } from "@/components/servers/BootConfigDialog";
 import { VirtualMediaDialog } from "@/components/servers/VirtualMediaDialog";
 import { ScpBackupDialog } from "@/components/servers/ScpBackupDialog";
+import { BiosConfigDialog } from "@/components/servers/BiosConfigDialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   ContextMenu,
@@ -92,6 +93,7 @@ const Servers = () => {
   const [bootConfigDialogOpen, setBootConfigDialogOpen] = useState(false);
   const [virtualMediaDialogOpen, setVirtualMediaDialogOpen] = useState(false);
   const [scpBackupDialogOpen, setScpBackupDialogOpen] = useState(false);
+  const [biosConfigDialogOpen, setBiosConfigDialogOpen] = useState(false);
   const [selectedServer, setSelectedServer] = useState<Server | null>(null);
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [quickScanIp, setQuickScanIp] = useState<string>("");
@@ -623,6 +625,13 @@ const Servers = () => {
                   <FileJson className="mr-2 h-4 w-4" />
                   SCP Backup/Restore
                 </ContextMenuItem>
+                <ContextMenuItem onClick={() => {
+                  setSelectedServer(server);
+                  setBiosConfigDialogOpen(true);
+                }}>
+                  <Settings2 className="mr-2 h-4 w-4" />
+                  BIOS Configuration
+                </ContextMenuItem>
                 <ContextMenuSeparator />
                 <ContextMenuItem onClick={() => handleLinkToVCenter(server)}>
                   <Link2 className="mr-2 h-4 w-4" />
@@ -751,6 +760,11 @@ const Servers = () => {
           <ScpBackupDialog
             open={scpBackupDialogOpen}
             onOpenChange={setScpBackupDialogOpen}
+            server={selectedServer}
+          />
+          <BiosConfigDialog
+            open={biosConfigDialogOpen}
+            onOpenChange={setBiosConfigDialogOpen}
             server={selectedServer}
           />
         </>
