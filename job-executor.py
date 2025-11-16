@@ -1295,29 +1295,247 @@ class JobExecutor:
                 details={"error": str(e)}
             )
 
-    def connect_vcenter(self):
+    def connect_vcenter(self, settings=None):
         """Connect to vCenter if not already connected"""
         if self.vcenter_conn:
             return self.vcenter_conn
+        
+        # Use provided settings or fall back to environment variables
+        host = settings.get('host') if settings else VCENTER_HOST
+        user = settings.get('username') if settings else VCENTER_USER
+        pwd = settings.get('password') if settings else VCENTER_PASSWORD
+        verify_ssl = settings.get('verify_ssl', VERIFY_SSL) if settings else VERIFY_SSL
             
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        if not VERIFY_SSL:
+        if not verify_ssl:
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
         
         try:
             self.vcenter_conn = SmartConnect(
-                host=VCENTER_HOST,
-                user=VCENTER_USER,
-                pwd=VCENTER_PASSWORD,
+                host=host,
+                user=user,
+                pwd=pwd,
                 sslContext=context
             )
             atexit.register(Disconnect, self.vcenter_conn)
-            self.log("Connected to vCenter")
+            self.log(f"Connected to vCenter at {host}")
             return self.vcenter_conn
         except Exception as e:
             self.log(f"Failed to connect to vCenter: {e}", "ERROR")
             return None
+    
+    def execute_vcenter_sync(self, job: Dict):
+        """Execute vCenter sync - fetch ESXi hosts and auto-link to Dell servers"""
+        try:
+            self.log(f"Starting vCenter sync job: {job['id']}")
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            # Fetch vCenter settings from database
+            self.log("Fetching vCenter settings...")
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_settings?select=*&limit=1",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL
+            )
+            
+            if response.status_code != 200:
+                raise Exception(f"Failed to fetch vCenter settings: {response.status_code}")
+            
+            settings_list = response.json()
+            if not settings_list:
+                raise Exception("vCenter settings not configured")
+            
+            settings = settings_list[0]
+            self.log(f"vCenter host: {settings['host']}")
+            
+            # Connect to vCenter using database settings
+            vc = self.connect_vcenter(settings)
+            if not vc:
+                raise Exception("Failed to connect to vCenter")
+            
+            # Get all ESXi hosts
+            content = vc.RetrieveContent()
+            container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.HostSystem], True
+            )
+            
+            hosts_synced = 0
+            hosts_new = 0
+            hosts_updated = 0
+            hosts_linked = 0
+            errors = []
+            
+            self.log(f"Found {len(container.view)} ESXi hosts")
+            
+            for host in container.view:
+                try:
+                    # Get host details
+                    host_name = host.name
+                    serial = None
+                    esxi_version = None
+                    cluster_name = None
+                    status = 'unknown'
+                    in_maintenance = False
+                    
+                    try:
+                        if host.hardware and host.hardware.systemInfo:
+                            serial = host.hardware.systemInfo.serialNumber
+                        if host.config and host.config.product:
+                            esxi_version = host.config.product.version
+                        if host.parent and isinstance(host.parent, vim.ClusterComputeResource):
+                            cluster_name = host.parent.name
+                        status = 'connected' if host.runtime.connectionState == 'connected' else 'disconnected'
+                        in_maintenance = host.runtime.inMaintenanceMode
+                    except Exception as detail_error:
+                        self.log(f"  Warning getting details for {host_name}: {detail_error}", "WARNING")
+                    
+                    # Check if host already exists in database
+                    check_response = requests.get(
+                        f"{DSM_URL}/rest/v1/vcenter_hosts?select=id,server_id&name=eq.{host_name}",
+                        headers={
+                            'apikey': SERVICE_ROLE_KEY,
+                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                        },
+                        verify=VERIFY_SSL
+                    )
+                    
+                    existing_hosts = check_response.json() if check_response.status_code == 200 else []
+                    existing_host = existing_hosts[0] if existing_hosts else None
+                    
+                    host_data = {
+                        'name': host_name,
+                        'cluster': cluster_name,
+                        'serial_number': serial,
+                        'esxi_version': esxi_version,
+                        'status': status,
+                        'maintenance_mode': in_maintenance,
+                        'last_sync': datetime.now().isoformat()
+                    }
+                    
+                    if existing_host:
+                        # Update existing host
+                        update_response = requests.patch(
+                            f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{existing_host['id']}",
+                            headers={
+                                'apikey': SERVICE_ROLE_KEY,
+                                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                'Content-Type': 'application/json',
+                                'Prefer': 'return=minimal'
+                            },
+                            json=host_data,
+                            verify=VERIFY_SSL
+                        )
+                        
+                        if update_response.status_code not in [200, 204]:
+                            raise Exception(f"Failed to update host: {update_response.status_code}")
+                        
+                        host_id = existing_host['id']
+                        hosts_updated += 1
+                        self.log(f"  Updated: {host_name}")
+                    else:
+                        # Insert new host
+                        insert_response = requests.post(
+                            f"{DSM_URL}/rest/v1/vcenter_hosts",
+                            headers={
+                                'apikey': SERVICE_ROLE_KEY,
+                                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                'Content-Type': 'application/json',
+                                'Prefer': 'return=representation'
+                            },
+                            json=host_data,
+                            verify=VERIFY_SSL
+                        )
+                        
+                        if insert_response.status_code not in [200, 201]:
+                            raise Exception(f"Failed to insert host: {insert_response.status_code}")
+                        
+                        new_host = insert_response.json()[0]
+                        host_id = new_host['id']
+                        hosts_new += 1
+                        self.log(f"  Created: {host_name}")
+                    
+                    # Auto-link: Try to find matching Dell server by serial number
+                    if serial and (not existing_host or not existing_host.get('server_id')):
+                        server_response = requests.get(
+                            f"{DSM_URL}/rest/v1/servers?select=id&service_tag=eq.{serial}",
+                            headers={
+                                'apikey': SERVICE_ROLE_KEY,
+                                'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                            },
+                            verify=VERIFY_SSL
+                        )
+                        
+                        if server_response.status_code == 200:
+                            matching_servers = server_response.json()
+                            if matching_servers:
+                                server_id = matching_servers[0]['id']
+                                
+                                # Update vcenter_host with server_id
+                                requests.patch(
+                                    f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{host_id}",
+                                    headers={
+                                        'apikey': SERVICE_ROLE_KEY,
+                                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                        'Content-Type': 'application/json'
+                                    },
+                                    json={'server_id': server_id},
+                                    verify=VERIFY_SSL
+                                )
+                                
+                                # Update server with vcenter_host_id
+                                requests.patch(
+                                    f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}",
+                                    headers={
+                                        'apikey': SERVICE_ROLE_KEY,
+                                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                        'Content-Type': 'application/json'
+                                    },
+                                    json={'vcenter_host_id': host_id},
+                                    verify=VERIFY_SSL
+                                )
+                                
+                                hosts_linked += 1
+                                self.log(f"  Linked to server: {serial}")
+                    
+                    hosts_synced += 1
+                    
+                except Exception as host_error:
+                    error_msg = f"{host_name}: {str(host_error)}"
+                    errors.append(error_msg)
+                    self.log(f"  Error processing {host_name}: {host_error}", "ERROR")
+            
+            container.Destroy()
+            
+            # Update job as completed
+            result_details = {
+                'hosts_synced': hosts_synced,
+                'hosts_new': hosts_new,
+                'hosts_updated': hosts_updated,
+                'hosts_linked': hosts_linked,
+                'errors': errors
+            }
+            
+            self.log(f"vCenter sync completed: {hosts_new} new, {hosts_updated} updated, {hosts_linked} linked")
+            
+            self.update_job_status(
+                job['id'],
+                'completed',
+                completed_at=datetime.now().isoformat(),
+                details=result_details
+            )
+            
+        except Exception as e:
+            self.log(f"vCenter sync failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e)}
+            )
 
     def create_idrac_session(self, ip: str, username: str, password: str) -> Optional[str]:
         """Create authenticated session with iDRAC and return session token"""
@@ -3408,6 +3626,8 @@ class JobExecutor:
             self.execute_bios_config_read(job)
         elif job_type == 'bios_config_write':
             self.execute_bios_config_write(job)
+        elif job_type == 'vcenter_sync':
+            self.execute_vcenter_sync(job)
         else:
             self.log(f"Unknown job type: {job_type}", "ERROR")
             self.update_job_status(

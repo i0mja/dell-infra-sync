@@ -46,6 +46,17 @@ const VCenter = () => {
   const isLocalMode = import.meta.env.VITE_SUPABASE_URL?.includes('127.0.0.1') || 
                       import.meta.env.VITE_SUPABASE_URL?.includes('localhost');
 
+  // Check if IP is private (RFC 1918)
+  const isPrivateIP = (ip: string): boolean => {
+    if (!ip) return false;
+    // Remove any port number
+    const host = ip.split(':')[0];
+    // Private IP ranges: 10.x.x.x, 172.16-31.x.x, 192.168.x.x
+    return /^10\./.test(host) || 
+           /^192\.168\./.test(host) || 
+           /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host);
+  };
+
   const fetchHosts = async () => {
     try {
       setLoading(true);
@@ -129,8 +140,16 @@ const VCenter = () => {
 
     setSyncing(true);
     try {
-      // In local mode, vCenter is on private network - use Job Executor
-      if (isLocalMode) {
+      // Fetch vCenter settings to check if host is private
+      const { data: settings } = await supabase
+        .from('vcenter_settings')
+        .select('host')
+        .maybeSingle();
+
+      const useJobExecutor = isLocalMode || (settings && isPrivateIP(settings.host));
+
+      if (useJobExecutor) {
+        // vCenter is on private network - use Job Executor
         const { data: job, error: jobError } = await supabase
           .from('jobs')
           .insert({
@@ -149,7 +168,7 @@ const VCenter = () => {
 
         toast({
           title: "Sync job created",
-          description: "vCenter sync job has been queued. Monitor progress in Jobs page.",
+          description: "vCenter sync job has been queued. Job Executor will sync from your private network.",
           action: (
             <Button variant="outline" size="sm" onClick={() => navigate('/jobs')}>
               View Jobs
@@ -157,7 +176,7 @@ const VCenter = () => {
           ),
         });
       } else {
-        // Cloud mode - edge function can reach public vCenter
+        // Cloud mode with public vCenter - use edge function
         const { data: result, error: invokeError } = await supabase.functions.invoke('sync-vcenter-direct');
 
         if (invokeError) throw invokeError;
