@@ -2879,6 +2879,10 @@ class JobExecutor:
             self.execute_virtual_media_mount(job)
         elif job_type == 'virtual_media_unmount':
             self.execute_virtual_media_unmount(job)
+        elif job_type == 'scp_export':
+            self.execute_scp_export(job)
+        elif job_type == 'scp_import':
+            self.execute_scp_import(job)
         else:
             self.log(f"Unknown job type: {job_type}", "ERROR")
             self.update_job_status(
@@ -2886,6 +2890,381 @@ class JobExecutor:
                 'failed',
                 completed_at=datetime.now().isoformat(),
                 details={"error": f"Unsupported job type: {job_type}"}
+            )
+    
+    def execute_scp_export(self, job: Dict):
+        """
+        Execute SCP (Server Configuration Profile) export job
+        
+        Expected job details:
+        {
+            "backup_name": "pre-upgrade-backup",
+            "description": "Backup before firmware update",
+            "include_bios": true,
+            "include_idrac": true,
+            "include_nic": true,
+            "include_raid": true
+        }
+        """
+        try:
+            self.log(f"Starting SCP export job: {job['id']}")
+            
+            details = job.get('details', {})
+            backup_name = details.get('backup_name', f"backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
+            
+            # Update job status to running
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            # Get target servers
+            target_scope = job.get('target_scope', {})
+            server_ids = target_scope.get('server_ids', [])
+            
+            if not server_ids:
+                raise ValueError("No target servers specified")
+            
+            success_count = 0
+            failed_count = 0
+            results = []
+            
+            for server_id in server_ids:
+                try:
+                    server = self.get_server_by_id(server_id)
+                    if not server:
+                        raise Exception(f"Server not found: {server_id}")
+                    
+                    ip = server['ip_address']
+                    username, password = self.get_credentials_for_server(server)
+                    
+                    self.log(f"  Exporting SCP from {ip}...")
+                    
+                    # Build export URL
+                    export_url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ExportSystemConfiguration"
+                    
+                    # Build target list based on included components
+                    targets = []
+                    if details.get('include_bios', True):
+                        targets.append('BIOS')
+                    if details.get('include_idrac', True):
+                        targets.append('iDRAC')
+                    if details.get('include_nic', True):
+                        targets.append('NIC')
+                    if details.get('include_raid', True):
+                        targets.append('RAID')
+                    
+                    payload = {
+                        "ExportFormat": "JSON",
+                        "ShareParameters": {
+                            "Target": ",".join(targets)
+                        }
+                    }
+                    
+                    # Initiate export
+                    start_time = time.time()
+                    response = requests.post(
+                        export_url,
+                        auth=(username, password),
+                        json=payload,
+                        verify=False,
+                        timeout=30
+                    )
+                    response_time_ms = int((time.time() - start_time) * 1000)
+                    
+                    # Log the command
+                    self.log_idrac_command(
+                        server_id=server_id,
+                        job_id=job['id'],
+                        command_type='POST',
+                        endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ExportSystemConfiguration',
+                        full_url=export_url,
+                        request_body=payload,
+                        response_body=response.json() if response.status_code == 200 else response.text,
+                        status_code=response.status_code,
+                        response_time_ms=response_time_ms,
+                        success=response.status_code == 200
+                    )
+                    
+                    if response.status_code != 200:
+                        raise Exception(f"Export failed: {response.status_code} - {response.text}")
+                    
+                    export_data = response.json()
+                    
+                    # Get the SCP content from the response
+                    scp_content = export_data.get('SystemConfiguration', export_data)
+                    
+                    # Calculate file size and checksum
+                    scp_json = json.dumps(scp_content, indent=2)
+                    file_size = len(scp_json.encode('utf-8'))
+                    checksum = hashlib.sha256(scp_json.encode()).hexdigest()
+                    
+                    # Create backup record in database
+                    backup_data = {
+                        'server_id': server_id,
+                        'export_job_id': job['id'],
+                        'backup_name': f"{backup_name} - {server.get('hostname', ip)}",
+                        'description': details.get('description'),
+                        'scp_content': scp_content if file_size < 1024*1024 else None,
+                        'scp_file_size_bytes': file_size,
+                        'include_bios': details.get('include_bios', True),
+                        'include_idrac': details.get('include_idrac', True),
+                        'include_nic': details.get('include_nic', True),
+                        'include_raid': details.get('include_raid', True),
+                        'checksum': checksum,
+                        'exported_at': datetime.now().isoformat(),
+                        'created_by': job['created_by']
+                    }
+                    
+                    # Insert into database
+                    headers = {
+                        'apikey': SERVICE_ROLE_KEY,
+                        'Content-Type': 'application/json'
+                    }
+                    db_response = requests.post(
+                        f"{SUPABASE_URL}/rest/v1/scp_backups",
+                        headers=headers,
+                        json=backup_data
+                    )
+                    
+                    if db_response.status_code not in [200, 201]:
+                        self.log(f"Failed to save backup record: {db_response.text}", "ERROR")
+                    
+                    self.log(f"  ✓ SCP exported successfully from {ip} ({round(file_size/1024, 2)} KB)")
+                    success_count += 1
+                    results.append({
+                        'server': ip,
+                        'success': True,
+                        'file_size_kb': round(file_size / 1024, 2),
+                        'components': targets,
+                        'checksum': checksum[:16]
+                    })
+                    
+                except Exception as e:
+                    self.log(f"  ✗ Failed to export SCP from {ip}: {e}", "ERROR")
+                    failed_count += 1
+                    results.append({
+                        'server': ip,
+                        'success': False,
+                        'error': str(e)
+                    })
+            
+            # Update job status
+            if failed_count == 0:
+                self.update_job_status(
+                    job['id'],
+                    'completed',
+                    completed_at=datetime.now().isoformat(),
+                    details={
+                        'success_count': success_count,
+                        'results': results
+                    }
+                )
+                self.log(f"SCP export job completed successfully")
+            else:
+                status = 'failed' if success_count == 0 else 'completed'
+                self.update_job_status(
+                    job['id'],
+                    status,
+                    completed_at=datetime.now().isoformat(),
+                    details={
+                        'success_count': success_count,
+                        'failed_count': failed_count,
+                        'results': results
+                    }
+                )
+                
+        except Exception as e:
+            self.log(f"SCP export job failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e)}
+            )
+    
+    def execute_scp_import(self, job: Dict):
+        """
+        Execute SCP (Server Configuration Profile) import job
+        
+        Expected job details:
+        {
+            "backup_id": "uuid",
+            "shutdown_type": "Graceful",
+            "host_power_state": "On"
+        }
+        """
+        try:
+            self.log(f"Starting SCP import job: {job['id']}")
+            
+            details = job.get('details', {})
+            backup_id = details.get('backup_id')
+            shutdown_type = details.get('shutdown_type', 'Graceful')
+            host_power_state = details.get('host_power_state', 'On')
+            
+            if not backup_id:
+                raise ValueError("backup_id is required")
+            
+            # Update job status to running
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            # Get backup from database
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Content-Type': 'application/json'
+            }
+            backup_response = requests.get(
+                f"{SUPABASE_URL}/rest/v1/scp_backups?id=eq.{backup_id}&select=*",
+                headers=headers
+            )
+            
+            if backup_response.status_code != 200:
+                raise Exception(f"Failed to fetch backup: {backup_response.text}")
+            
+            backups = backup_response.json()
+            if not backups:
+                raise Exception(f"Backup not found: {backup_id}")
+            
+            backup = backups[0]
+            
+            # Get target servers
+            target_scope = job.get('target_scope', {})
+            server_ids = target_scope.get('server_ids', [])
+            
+            if not server_ids:
+                raise ValueError("No target servers specified")
+            
+            success_count = 0
+            failed_count = 0
+            results = []
+            
+            for server_id in server_ids:
+                try:
+                    server = self.get_server_by_id(server_id)
+                    if not server:
+                        raise Exception(f"Server not found: {server_id}")
+                    
+                    ip = server['ip_address']
+                    username, password = self.get_credentials_for_server(server)
+                    
+                    self.log(f"  Importing SCP to {ip}...")
+                    
+                    # Get SCP content
+                    scp_content = backup.get('scp_content')
+                    if not scp_content:
+                        raise Exception("Backup does not contain SCP content")
+                    
+                    # Build import URL
+                    import_url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ImportSystemConfiguration"
+                    
+                    # Build target list
+                    targets = []
+                    if backup.get('include_bios', True):
+                        targets.append('BIOS')
+                    if backup.get('include_idrac', True):
+                        targets.append('iDRAC')
+                    if backup.get('include_nic', True):
+                        targets.append('NIC')
+                    if backup.get('include_raid', True):
+                        targets.append('RAID')
+                    
+                    payload = {
+                        "ImportBuffer": json.dumps(scp_content),
+                        "ShareParameters": {
+                            "Target": ",".join(targets)
+                        },
+                        "ShutdownType": shutdown_type,
+                        "HostPowerState": host_power_state
+                    }
+                    
+                    # Initiate import
+                    start_time = time.time()
+                    response = requests.post(
+                        import_url,
+                        auth=(username, password),
+                        json=payload,
+                        verify=False,
+                        timeout=30
+                    )
+                    response_time_ms = int((time.time() - start_time) * 1000)
+                    
+                    # Log the command
+                    self.log_idrac_command(
+                        server_id=server_id,
+                        job_id=job['id'],
+                        command_type='POST',
+                        endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ImportSystemConfiguration',
+                        full_url=import_url,
+                        request_body={'ShareParameters': payload['ShareParameters'], 'ShutdownType': shutdown_type},
+                        response_body=response.json() if response.status_code in [200, 202] else response.text,
+                        status_code=response.status_code,
+                        response_time_ms=response_time_ms,
+                        success=response.status_code in [200, 202]
+                    )
+                    
+                    if response.status_code not in [200, 202]:
+                        raise Exception(f"Import failed: {response.status_code} - {response.text}")
+                    
+                    import_data = response.json()
+                    
+                    # Update backup record
+                    requests.patch(
+                        f"{SUPABASE_URL}/rest/v1/scp_backups?id=eq.{backup_id}",
+                        headers=headers,
+                        json={
+                            'import_job_id': job['id'],
+                            'last_imported_at': datetime.now().isoformat()
+                        }
+                    )
+                    
+                    self.log(f"  ✓ SCP import initiated on {ip}")
+                    success_count += 1
+                    results.append({
+                        'server': ip,
+                        'success': True,
+                        'components': targets,
+                        'message': import_data.get('Message', 'Import job created')
+                    })
+                    
+                except Exception as e:
+                    self.log(f"  ✗ Failed to import SCP to {ip}: {e}", "ERROR")
+                    failed_count += 1
+                    results.append({
+                        'server': ip,
+                        'success': False,
+                        'error': str(e)
+                    })
+            
+            # Update job status
+            if failed_count == 0:
+                self.update_job_status(
+                    job['id'],
+                    'completed',
+                    completed_at=datetime.now().isoformat(),
+                    details={
+                        'success_count': success_count,
+                        'results': results,
+                        'warning': 'Servers may need to reboot'
+                    }
+                )
+                self.log(f"SCP import job completed successfully")
+            else:
+                status = 'failed' if success_count == 0 else 'completed'
+                self.update_job_status(
+                    job['id'],
+                    status,
+                    completed_at=datetime.now().isoformat(),
+                    details={
+                        'success_count': success_count,
+                        'failed_count': failed_count,
+                        'results': results
+                    }
+                )
+                
+        except Exception as e:
+            self.log(f"SCP import job failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e)}
             )
 
     def run(self):
