@@ -724,8 +724,8 @@ class JobExecutor:
             else:
                 # Manager data is optional, log warning and continue
                 self.log(f"  Warning: Could not get manager info from {ip} (continuing with system data only)", "WARN")
-        if manager_response and manager_response.status_code in [401, 403]:
-            self.throttler.record_failure(ip, manager_response.status_code, self.log)
+                if manager_response and manager_response.status_code in [401, 403]:
+                    self.throttler.record_failure(ip, manager_response.status_code, self.log)
                     
     except Exception as e:
         # Record failure
