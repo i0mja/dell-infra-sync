@@ -727,9 +727,9 @@ class JobExecutor:
                 if manager_response and manager_response.status_code in [401, 403]:
                     self.throttler.record_failure(ip, manager_response.status_code, self.log)
                     
-    except Exception as e:
-        # Record failure
-        self.throttler.record_failure(ip, None, self.log)
+        except Exception as e:
+            # Record failure
+            self.throttler.record_failure(ip, None, self.log)
             
             # Log the error
             self.log_idrac_command(
