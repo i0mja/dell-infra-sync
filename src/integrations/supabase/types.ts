@@ -927,6 +927,7 @@ export type Database = {
       }
       server_health: {
         Row: {
+          cpu_health: string | null
           created_at: string
           fan_health: string | null
           id: string
@@ -942,6 +943,7 @@ export type Database = {
           timestamp: string
         }
         Insert: {
+          cpu_health?: string | null
           created_at?: string
           fan_health?: string | null
           id?: string
@@ -957,6 +959,7 @@ export type Database = {
           timestamp?: string
         }
         Update: {
+          cpu_health?: string | null
           created_at?: string
           fan_health?: string | null
           id?: string
