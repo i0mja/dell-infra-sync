@@ -1,6 +1,7 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { logIdracCommand } from '../_shared/idrac-logger.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -68,6 +69,8 @@ serve(async (req) => {
     }
 
     console.log(`Processing ${hosts.length} vCenter hosts`);
+    
+    const startTime = Date.now();
 
     // Track statistics
     let newHosts = 0;
@@ -188,6 +191,27 @@ serve(async (req) => {
         errors: errors.length,
       },
     }]);
+    
+    // Log to Activity Monitor
+    const syncTime = Date.now() - startTime;
+    await logIdracCommand({
+      supabase: supabase as any,
+      jobId: undefined,
+      serverId: undefined,
+      taskId: undefined,
+      commandType: 'VCENTER_SYNC',
+      endpoint: '/vcenter-sync',
+      fullUrl: 'vcenter-sync-edge-function',
+      requestBody: { host_count: hosts.length },
+      statusCode: 200,
+      responseTimeMs: syncTime,
+      responseBody: { new: newHosts, updated: updatedHosts, linked: linkedServers, errors: errors.length },
+      success: errors.length === 0,
+      errorMessage: errors.length > 0 ? errors.join(', ') : undefined,
+      initiatedBy: user.id,
+      source: 'vcenter_sync_edge',
+      operationType: 'vcenter_api',
+    });
 
     const result = {
       success: true,

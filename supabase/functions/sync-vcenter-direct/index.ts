@@ -1,6 +1,7 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { logIdracCommand } from '../_shared/idrac-logger.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -86,8 +87,10 @@ serve(async (req) => {
     console.log(`Connecting to vCenter at ${vcenterSettings.host}:${vcenterSettings.port}`);
     
     const baseUrl = `https://${vcenterSettings.host}:${vcenterSettings.port}`;
+    const syncStartTime = Date.now();
     
     // Create session with vCenter
+    const authStartTime = Date.now();
     const authResponse = await fetch(`${baseUrl}/api/session`, {
       method: 'POST',
       headers: {
@@ -98,7 +101,28 @@ serve(async (req) => {
       ...(vcenterSettings.verify_ssl ? {} : { rejectUnauthorized: false })
     });
 
+    const authTime = Date.now() - authStartTime;
+    
     if (!authResponse.ok) {
+      // Log failed authentication
+      await logIdracCommand({
+        supabase: supabase as any,
+        jobId: undefined,
+        serverId: undefined,
+        taskId: undefined,
+        commandType: 'VCENTER_AUTH',
+        endpoint: '/api/session',
+        fullUrl: `${baseUrl}/api/session`,
+        requestBody: { host: vcenterSettings.host, port: vcenterSettings.port },
+        statusCode: authResponse.status,
+        responseTimeMs: authTime,
+        responseBody: undefined,
+        success: false,
+        errorMessage: `Authentication failed: ${authResponse.status} ${authResponse.statusText}`,
+        initiatedBy: userId,
+        source: 'sync_vcenter_direct',
+        operationType: 'vcenter_api',
+      });
       throw new Error(`vCenter authentication failed: ${authResponse.status} ${authResponse.statusText}`);
     }
 
@@ -106,6 +130,25 @@ serve(async (req) => {
     const sessionId = sessionToken.replace(/"/g, ''); // Remove quotes from session ID
 
     console.log('vCenter authentication successful');
+    
+    // Log successful authentication
+    await logIdracCommand({
+      supabase: supabase as any,
+      jobId: undefined,
+      serverId: undefined,
+      taskId: undefined,
+      commandType: 'VCENTER_AUTH',
+      endpoint: '/api/session',
+      fullUrl: `${baseUrl}/api/session`,
+      requestBody: { host: vcenterSettings.host, port: vcenterSettings.port },
+      statusCode: authResponse.status,
+      responseTimeMs: authTime,
+      responseBody: { authenticated: true },
+      success: true,
+      initiatedBy: userId,
+      source: 'sync_vcenter_direct',
+      operationType: 'vcenter_api',
+    });
 
     const vcenterHeaders = {
       'vmware-api-session-id': sessionId,

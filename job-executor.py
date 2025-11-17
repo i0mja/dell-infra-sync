@@ -2904,14 +2904,17 @@ class JobExecutor:
         self.log_idrac_command(
             server_id=server_id,
             job_id=job_id,
+            task_id=None,
             command_type='PATCH',
             endpoint='/redfish/v1/Systems/System.Embedded.1',
             full_url=system_url,
+            request_headers={'Authorization': '[REDACTED]'},
             request_body=payload,
             response_body=response.text if response.status_code not in [200, 204] else None,
             status_code=response.status_code,
             response_time_ms=response_time_ms,
-            success=response.status_code in [200, 204]
+            success=response.status_code in [200, 204],
+            operation_type='idrac_api'
         )
         
         if response.status_code not in [200, 204]:
@@ -3868,6 +3871,7 @@ class JobExecutor:
             self.log_idrac_command(
                 server_id=server_id,
                 job_id=job['id'],
+                task_id=None,
                 command_type='BIOS_WRITE',
                 endpoint='/redfish/v1/Systems/System.Embedded.1/Bios/Settings',
                 full_url=settings_url,
@@ -3878,8 +3882,7 @@ class JobExecutor:
                 response_time_ms=response_time_ms,
                 success=settings_resp.ok,
                 error_message=None if settings_resp.ok else settings_resp.text,
-                source='job_executor',
-                initiated_by=job['created_by']
+                operation_type='idrac_api'
             )
             
             if not settings_resp.ok:
@@ -4091,14 +4094,17 @@ class JobExecutor:
                     self.log_idrac_command(
                         server_id=server_id,
                         job_id=job['id'],
+                        task_id=None,
                         command_type='POST',
                         endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ExportSystemConfiguration',
                         full_url=export_url,
+                        request_headers={'Authorization': '[REDACTED]'},
                         request_body=payload,
                         response_body=response.json() if response.status_code == 200 else response.text,
                         status_code=response.status_code,
                         response_time_ms=response_time_ms,
-                        success=response.status_code == 200
+                        success=response.status_code == 200,
+                        operation_type='idrac_api'
                     )
                     
                     if response.status_code != 200:
@@ -4307,14 +4313,17 @@ class JobExecutor:
                     self.log_idrac_command(
                         server_id=server_id,
                         job_id=job['id'],
+                        task_id=None,
                         command_type='POST',
                         endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ImportSystemConfiguration',
                         full_url=import_url,
+                        request_headers={'Authorization': '[REDACTED]'},
                         request_body={'ShareParameters': payload['ShareParameters'], 'ShutdownType': shutdown_type},
                         response_body=response.json() if response.status_code in [200, 202] else response.text,
                         status_code=response.status_code,
                         response_time_ms=response_time_ms,
-                        success=response.status_code in [200, 202]
+                        success=response.status_code in [200, 202],
+                        operation_type='idrac_api'
                     )
                     
                     if response.status_code not in [200, 202]:
