@@ -29,6 +29,10 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
   const { user } = useAuth();
   const { toast } = useToast();
   
+  // Detect local mode first (before using it)
+  const isLocalMode = import.meta.env.VITE_SUPABASE_URL?.includes('127.0.0.1') || 
+                      import.meta.env.VITE_SUPABASE_URL?.includes('localhost');
+  
   // Form state
   const [formData, setFormData] = useState({
     ip_address: "",
@@ -45,8 +49,8 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
   const [credentialName, setCredentialName] = useState("");
   const [credentialSets, setCredentialSets] = useState<any[]>([]);
   
-  // Discovery state
-  const [autoDiscover, setAutoDiscover] = useState(true);
+  // Discovery state - default OFF in Local Mode for safety
+  const [autoDiscover, setAutoDiscover] = useState(!isLocalMode);
   
   // Test connection state
   const [testingConnection, setTestingConnection] = useState(false);
@@ -57,10 +61,6 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
   } | null>(null);
   const [testJobId, setTestJobId] = useState<string | null>(null);
   const [showLocalHelper, setShowLocalHelper] = useState(false);
-
-  // Detect local mode
-  const isLocalMode = import.meta.env.VITE_SUPABASE_URL?.includes('127.0.0.1') || 
-                      import.meta.env.VITE_SUPABASE_URL?.includes('localhost');
 
   // Fetch credential sets on mount
   useEffect(() => {
