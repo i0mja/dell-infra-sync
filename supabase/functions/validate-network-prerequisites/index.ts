@@ -112,7 +112,8 @@ Deno.serve(async (req) => {
           responseTimeMs: 0,
           source: 'edge_function',
           requestBody: { mode: 'job_executor', servers_found: servers.length },
-          responseBody: { skipped: true, reason: 'Job Executor mode enabled' }
+          responseBody: { skipped: true, reason: 'Job Executor mode enabled' },
+          operationType: 'idrac_api',
         });
       } else {
         executionLog.push({
@@ -165,7 +166,8 @@ Deno.serve(async (req) => {
               responseTimeMs: responseTime,
               success: true,
               source: 'network_prerequisites',
-              initiatedBy: user.id
+              initiatedBy: user.id,
+              operationType: 'idrac_api',
             });
           } else {
             results.servers.unreachable++;
@@ -196,7 +198,8 @@ Deno.serve(async (req) => {
               success: false,
               errorMessage: `HTTP ${response.status}`,
               source: 'network_prerequisites',
-              initiatedBy: user.id
+              initiatedBy: user.id,
+              operationType: 'idrac_api',
             });
           }
         } catch (error) {
@@ -229,7 +232,8 @@ Deno.serve(async (req) => {
             success: false,
             errorMessage: errorMsg,
             source: 'network_prerequisites',
-            initiatedBy: user.id
+            initiatedBy: user.id,
+            operationType: 'idrac_api',
           });
         }
       }
@@ -324,7 +328,8 @@ Deno.serve(async (req) => {
             success: false,
             errorMessage: `HTTP ${response.status}`,
             source: 'network_prerequisites',
-            initiatedBy: user.id
+            initiatedBy: user.id,
+            operationType: 'vcenter_api',
           });
         } else {
           logStep(
@@ -348,7 +353,8 @@ Deno.serve(async (req) => {
             responseTimeMs: responseTime,
             success: true,
             source: 'network_prerequisites',
-            initiatedBy: user.id
+            initiatedBy: user.id,
+            operationType: 'vcenter_api',
           });
         }
       } catch (error) {
@@ -377,7 +383,8 @@ Deno.serve(async (req) => {
           success: false,
           errorMessage: errorMsg,
           source: 'network_prerequisites',
-          initiatedBy: user.id
+          initiatedBy: user.id,
+          operationType: 'vcenter_api',
         });
       }
     } else {
@@ -430,7 +437,8 @@ Deno.serve(async (req) => {
         responseTimeMs: dnsResponseTime,
         success: true,
         source: 'network_prerequisites',
-        initiatedBy: user.id
+        initiatedBy: user.id,
+        operationType: 'idrac_api',
       });
     } catch (error) {
       const dnsResponseTime = Date.now() - dnsStartTime;
@@ -457,7 +465,8 @@ Deno.serve(async (req) => {
         success: false,
         errorMessage: 'DNS resolution failed',
         source: 'network_prerequisites',
-        initiatedBy: user.id
+        initiatedBy: user.id,
+        operationType: 'idrac_api',
       });
     }
 

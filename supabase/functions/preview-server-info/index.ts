@@ -142,6 +142,7 @@ Deno.serve(async (req) => {
         errorMessage: !response.ok ? `iDRAC responded with status ${response.status}` : undefined,
         initiatedBy: user.id,
         source: 'edge_function',
+        operationType: 'idrac_api',
       });
 
       if (!response.ok) {
@@ -196,6 +197,7 @@ Deno.serve(async (req) => {
         errorMessage: !response.ok ? `iDRAC responded with status ${response.status}` : undefined,
         initiatedBy: user.id,
         source: 'edge_function',
+        operationType: 'idrac_api',
       });
 
       if (!response.ok) {
@@ -250,6 +252,7 @@ Deno.serve(async (req) => {
         errorMessage: !response.ok ? `iDRAC responded with status ${response.status}` : undefined,
         initiatedBy: user.id,
         source: 'edge_function',
+        operationType: 'idrac_api',
       });
 
       if (response.ok && responseData?.FirmwareVersion) {

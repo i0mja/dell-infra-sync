@@ -111,6 +111,7 @@ Deno.serve(async (req) => {
         errorMessage: !response.ok ? `iDRAC responded with status ${response.status}` : undefined,
         initiatedBy: user.id,
         source: 'edge_function',
+        operationType: 'idrac_api',
       });
 
       if (!response.ok) {
@@ -165,6 +166,7 @@ Deno.serve(async (req) => {
         errorMessage: !response.ok ? `iDRAC responded with status ${response.status}` : undefined,
         initiatedBy: user.id,
         source: 'edge_function',
+        operationType: 'idrac_api',
       });
 
       if (!response.ok) {
@@ -189,6 +191,7 @@ Deno.serve(async (req) => {
         errorMessage: error instanceof Error ? error.message : 'Unknown error',
         initiatedBy: user.id,
         source: 'edge_function',
+        operationType: 'idrac_api',
       });
 
       return new Response(JSON.stringify({ 
@@ -234,6 +237,7 @@ Deno.serve(async (req) => {
         errorMessage: !managerResponse.ok ? `Manager query failed: ${managerResponse.status}` : undefined,
         initiatedBy: user.id,
         source: 'edge_function',
+        operationType: 'idrac_api',
       });
 
       if (managerResponse.ok && managerData) {
@@ -255,6 +259,7 @@ Deno.serve(async (req) => {
         errorMessage: error instanceof Error ? error.message : 'Unknown error',
         initiatedBy: user.id,
         source: 'edge_function',
+        operationType: 'idrac_api',
       });
     }
 

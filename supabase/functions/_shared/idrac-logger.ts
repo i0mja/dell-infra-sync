@@ -17,6 +17,7 @@ interface LogCommandParams {
   errorMessage?: string;
   initiatedBy?: string;
   source: string;
+  operationType: 'idrac_api' | 'vcenter_api' | 'openmanage_api';
 }
 
 export async function logIdracCommand(params: LogCommandParams) {
@@ -101,6 +102,7 @@ export async function logIdracCommand(params: LogCommandParams) {
         error_message: params.errorMessage || null,
         initiated_by: params.initiatedBy || null,
         source: params.source,
+        operation_type: params.operationType,
       });
     
     if (error) {
