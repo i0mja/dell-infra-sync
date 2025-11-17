@@ -1680,14 +1680,18 @@ class JobExecutor:
                 "Password": password
             }
             
-            response = requests.post(
+            response, elapsed_ms = self.throttler.request_with_safety(
+                'POST',
                 url,
+                ip,
                 json=payload,
-                verify=False,
-                timeout=10
+                timeout=(2, 10)
             )
             
-            if response.status_code == 201:
+            if response.status_code in [401, 403]:
+                self.throttler.record_failure(ip)
+            elif response.status_code == 201:
+                self.throttler.record_success(ip)
                 session_token = response.headers.get('X-Auth-Token')
                 self.log(f"  Created iDRAC session: {ip}")
                 return session_token
@@ -1706,14 +1710,19 @@ class JobExecutor:
                 session_uri = f"https://{ip}/redfish/v1/SessionService/Sessions/1"
             
             headers = {"X-Auth-Token": session_token}
-            response = requests.delete(
+            
+            response, elapsed_ms = self.throttler.request_with_safety(
+                'DELETE',
                 session_uri,
+                ip,
                 headers=headers,
-                verify=False,
-                timeout=5
+                timeout=(2, 10)
             )
             
             if response.status_code in [200, 204]:
+                self.throttler.record_success(ip)
+            else:
+                self.throttler.record_failure(ip)
                 self.log(f"  Closed iDRAC session: {ip}")
         except Exception as e:
             self.log(f"  Error closing session (non-fatal): {e}", "WARN")
@@ -1724,14 +1733,18 @@ class JobExecutor:
             url = f"https://{ip}/redfish/v1/UpdateService/FirmwareInventory"
             headers = {"X-Auth-Token": session_token}
             
-            response = requests.get(
+            response, elapsed_ms = self.throttler.request_with_safety(
+                'GET',
                 url,
+                ip,
                 headers=headers,
-                verify=False,
-                timeout=10
+                timeout=(2, 15)
             )
             
-            if response.status_code == 200:
+            if response.status_code in [401, 403]:
+                self.throttler.record_failure(ip)
+            elif response.status_code == 200:
+                self.throttler.record_success(ip)
                 data = response.json()
                 members = data.get('Members', [])
                 
@@ -1739,14 +1752,16 @@ class JobExecutor:
                 firmware_info = {}
                 for member in members:
                     member_url = member.get('@odata.id', '')
-                    member_resp = requests.get(
+                    member_resp, member_elapsed = self.throttler.request_with_safety(
+                        'GET',
                         f"https://{ip}{member_url}",
+                        ip,
                         headers=headers,
-                        verify=False,
-                        timeout=5
+                        timeout=(2, 5)
                     )
                     
                     if member_resp.status_code == 200:
+                        self.throttler.record_success(ip)
                         fw_data = member_resp.json()
                         name = fw_data.get('Name', 'Unknown')
                         version = fw_data.get('Version', 'Unknown')
@@ -1786,15 +1801,20 @@ class JobExecutor:
             }
             
             self.log(f"  Initiating firmware update from: {firmware_uri}")
-            response = requests.post(
+            
+            response, response_time_ms = self.throttler.request_with_safety(
+                'POST',
                 url,
+                ip,
                 json=payload,
                 headers=headers,
-                verify=False,
-                timeout=30
+                timeout=(2, 30)
             )
             
-            if response.status_code == 202:
+            if response.status_code in [401, 403]:
+                self.throttler.record_failure(ip)
+            elif response.status_code == 202:
+                self.throttler.record_success(ip)
                 # Extract task URI from Location header
                 task_uri = response.headers.get('Location')
                 if not task_uri:
@@ -1824,14 +1844,19 @@ class JobExecutor:
                 task_uri = f"https://{ip}{task_uri}"
             
             headers = {"X-Auth-Token": session_token}
-            response = requests.get(
+            
+            response, response_time_ms = self.throttler.request_with_safety(
+                'GET',
                 task_uri,
+                ip,
                 headers=headers,
-                verify=False,
-                timeout=10
+                timeout=(2, 10)
             )
             
-            if response.status_code == 200:
+            if response.status_code in [401, 403]:
+                self.throttler.record_failure(ip)
+            elif response.status_code == 200:
+                self.throttler.record_success(ip)
                 data = response.json()
                 return {
                     "TaskState": data.get("TaskState", "Unknown"),
@@ -1854,15 +1879,19 @@ class JobExecutor:
             }
             payload = {"ResetType": reset_type}
             
-            response = requests.post(
+            response, response_time_ms = self.throttler.request_with_safety(
+                'POST',
                 url,
+                ip,
                 json=payload,
                 headers=headers,
-                verify=False,
-                timeout=10
+                timeout=(2, 10)
             )
             
-            if response.status_code in [200, 204]:
+            if response.status_code in [401, 403]:
+                self.throttler.record_failure(ip)
+            elif response.status_code in [200, 204]:
+                self.throttler.record_success(ip)
                 self.log(f"  System reset initiated: {reset_type}")
                 return True
             else:
@@ -2382,16 +2411,16 @@ class JobExecutor:
                     continue
                 
                 try:
-                    # Get current power state
+                    # Get current power state using throttler
                     system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
-                    start_time = time.time()
-                    response = requests.get(
+                    
+                    response, response_time_ms = self.throttler.request_with_safety(
+                        'GET',
                         system_url,
+                        ip,
                         auth=(username, password),
-                        verify=False,
-                        timeout=30
+                        timeout=(2, 10)
                     )
-                    response_time_ms = int((time.time() - start_time) * 1000)
                     
                     self.log_idrac_command(
                         server_id=server['id'],
@@ -2405,24 +2434,28 @@ class JobExecutor:
                         operation_type='idrac_api'
                     )
                     
-                    if response.status_code == 200:
+                    if response.status_code in [401, 403]:
+                        self.throttler.record_failure(ip)
+                        if self.throttler.is_circuit_open(ip):
+                            raise Exception(f"Circuit breaker OPEN for {ip} - Possible credential lockout")
+                    elif response.status_code == 200:
+                        self.throttler.record_success(ip)
                         data = response.json()
                         current_state = data.get('PowerState', 'Unknown')
                         self.log(f"  Current power state: {current_state}")
                         
-                        # Execute power action
+                        # Execute power action using throttler
                         action_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset"
                         action_payload = {"ResetType": action}
                         
-                        start_time = time.time()
-                        action_response = requests.post(
+                        action_response, response_time_ms = self.throttler.request_with_safety(
+                            'POST',
                             action_url,
+                            ip,
                             auth=(username, password),
                             json=action_payload,
-                            verify=False,
-                            timeout=30
+                            timeout=(2, 30)
                         )
-                        response_time_ms = int((time.time() - start_time) * 1000)
                         
                         self.log_idrac_command(
                             server_id=server['id'],
@@ -2555,9 +2588,14 @@ class JobExecutor:
                     
                     # Get System health and power state
                     system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
-                    start_time = time.time()
-                    response = requests.get(system_url, auth=(username, password), verify=False, timeout=30)
-                    response_time = int((time.time() - start_time) * 1000)
+                    
+                    response, response_time = self.throttler.request_with_safety(
+                        'GET',
+                        system_url,
+                        ip,
+                        auth=(username, password),
+                        timeout=(2, 10)
+                    )
                     
                     self.log_idrac_command(
                         server_id=server['id'],
@@ -2576,19 +2614,30 @@ class JobExecutor:
                         operation_type='idrac_api'
                     )
                     
-                    if response.status_code == 200:
+                    if response.status_code in [401, 403]:
+                        self.throttler.record_failure(ip)
+                        if self.throttler.is_circuit_open(ip):
+                            raise Exception(f"Circuit breaker OPEN for {ip} - Possible credential lockout")
+                    elif response.status_code == 200:
+                        self.throttler.record_success(ip)
                         data = self.safe_json_parse(response)
                         if data:
                             health_data['power_state'] = data.get('PowerState')
                             health_data['overall_health'] = data.get('Status', {}).get('Health', 'Unknown')
                     else:
+                        self.throttler.record_failure(ip)
                         self.log(f"  ⚠️  Failed to get system health: HTTP {response.status_code}", "WARN")
                     
-                    # Get Thermal data (temperatures, fans)
+                    # Get Thermal data (temperatures, fans) using throttler
                     thermal_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/Thermal"
-                    start_time = time.time()
-                    response = requests.get(thermal_url, auth=(username, password), verify=False, timeout=30)
-                    response_time = int((time.time() - start_time) * 1000)
+                    
+                    response, response_time = self.throttler.request_with_safety(
+                        'GET',
+                        thermal_url,
+                        ip,
+                        auth=(username, password),
+                        timeout=(2, 10)
+                    )
                     
                     self.log_idrac_command(
                         server_id=server['id'],
@@ -2607,7 +2656,10 @@ class JobExecutor:
                         operation_type='idrac_api'
                     )
                     
-                    if response.status_code == 200:
+                    if response.status_code in [401, 403]:
+                        self.throttler.record_failure(ip)
+                    elif response.status_code == 200:
+                        self.throttler.record_success(ip)
                         data = self.safe_json_parse(response)
                         if data:
                             temps = data.get('Temperatures', [])
@@ -2624,13 +2676,19 @@ class JobExecutor:
                             
                             health_data['sensors'] = {'temperatures': temps[:5], 'fans': fans[:5]}  # Store subset
                     else:
+                        self.throttler.record_failure(ip)
                         self.log(f"  ⚠️  Failed to get thermal data: HTTP {response.status_code}", "WARN")
                     
-                    # Get Power data (PSU)
+                    # Get Power data (PSU) using throttler
                     power_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/Power"
-                    start_time = time.time()
-                    response = requests.get(power_url, auth=(username, password), verify=False, timeout=30)
-                    response_time = int((time.time() - start_time) * 1000)
+                    
+                    response, response_time = self.throttler.request_with_safety(
+                        'GET',
+                        power_url,
+                        ip,
+                        auth=(username, password),
+                        timeout=(2, 10)
+                    )
                     
                     self.log_idrac_command(
                         server_id=server['id'],
@@ -2649,13 +2707,17 @@ class JobExecutor:
                         operation_type='idrac_api'
                     )
                     
-                    if response.status_code == 200:
+                    if response.status_code in [401, 403]:
+                        self.throttler.record_failure(ip)
+                    elif response.status_code == 200:
+                        self.throttler.record_success(ip)
                         data = self.safe_json_parse(response)
                         if data:
                             psus = data.get('PowerSupplies', [])
                             psu_statuses = [p.get('Status', {}).get('Health') for p in psus]
                             health_data['psu_health'] = 'OK' if all(s == 'OK' for s in psu_statuses if s) else 'Warning'
                     else:
+                        self.throttler.record_failure(ip)
                         self.log(f"  ⚠️  Failed to get power data: HTTP {response.status_code}", "WARN")
                     
                     # Get Storage health
@@ -2976,11 +3038,25 @@ class JobExecutor:
                     continue
                 
                 try:
-                    # Get SEL logs
+                    # Get SEL logs using throttler
                     sel_url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1/Logs/Sel"
-                    response = requests.get(sel_url, auth=(username, password), verify=False, timeout=30)
                     
-                    if response.status_code == 200:
+                    response, response_time_ms = self.throttler.request_with_safety(
+                        'GET',
+                        sel_url,
+                        ip,
+                        auth=(username, password),
+                        timeout=(2, 30)
+                    )
+                    
+                    if response.status_code in [401, 403]:
+                        self.throttler.record_failure(ip)
+                        if self.throttler.is_circuit_open(ip):
+                            self.log(f"  ✗ Circuit breaker OPEN for {ip}", "ERROR")
+                            failed_count += 1
+                            continue
+                    elif response.status_code == 200:
+                        self.throttler.record_success(ip)
                         data = response.json()
                         members = data.get('Members', [])
                         
@@ -3015,6 +3091,7 @@ class JobExecutor:
                             self.log(f"  ⚠ No event log entries found")
                             success_count += 1
                     else:
+                        self.throttler.record_failure(ip)
                         self.log(f"  ✗ Failed to fetch SEL: HTTP {response.status_code}", "ERROR")
                         failed_count += 1
                         
@@ -3070,15 +3147,14 @@ class JobExecutor:
             "WriteProtected": write_protected
         }
         
-        start_time = time.time()
-        response = requests.patch(
+        response, response_time_ms = self.throttler.request_with_safety(
+            'PATCH',
             vm_url,
+            ip,
             auth=(username, password),
             json=payload,
-            verify=False,
-            timeout=30
+            timeout=(2, 30)
         )
-        response_time_ms = int((time.time() - start_time) * 1000)
         
         # Log the command
         self.log_idrac_command(
@@ -3126,15 +3202,14 @@ class JobExecutor:
             "Inserted": False
         }
         
-        start_time = time.time()
-        response = requests.patch(
+        response, response_time_ms = self.throttler.request_with_safety(
+            'PATCH',
             vm_url,
+            ip,
             auth=(username, password),
             json=payload,
-            verify=False,
-            timeout=30
+            timeout=(2, 30)
         )
-        response_time_ms = int((time.time() - start_time) * 1000)
         
         # Log the command
         self.log_idrac_command(
@@ -3151,7 +3226,11 @@ class JobExecutor:
             operation_type='idrac_api'
         )
         
-        if response.status_code not in [200, 204]:
+        if response.status_code in [401, 403]:
+            self.throttler.record_failure(ip)
+            raise Exception(f"Authentication failed for {ip}")
+        elif response.status_code not in [200, 204]:
+            self.throttler.record_failure(ip)
             error_msg = f"Failed to unmount virtual media: {response.status_code}"
             if response.text:
                 try:
@@ -3160,6 +3239,8 @@ class JobExecutor:
                 except:
                     error_msg += f" - {response.text}"
             raise Exception(error_msg)
+        else:
+            self.throttler.record_success(ip)
         
         self.log(f"  Virtual media unmounted successfully")
         return True
@@ -5271,6 +5352,22 @@ class JobExecutor:
             return
         
         self.log("[OK] Configuration validated", "INFO")
+        
+        # Initialize throttler and display configuration
+        try:
+            self.initialize_throttler()
+            self.log("=" * 70)
+            self.log("iDRAC THROTTLER CONFIGURATION")
+            self.log("=" * 70)
+            self.log(f"  Max Concurrent Requests: {self.throttler.max_concurrent}")
+            self.log(f"  Request Delay (per IP): {self.throttler.request_delay_ms}ms")
+            self.log(f"  Discovery Max Threads: {self.activity_settings.get('discovery_max_threads', 5)}")
+            self.log(f"  Circuit Breaker Threshold: {self.throttler.circuit_breaker_threshold} failures")
+            self.log(f"  Circuit Breaker Timeout: {self.throttler.circuit_breaker_timeout}s")
+            self.log(f"  Operations Paused: {self.activity_settings.get('pause_idrac_operations', False)}")
+            self.log("=" * 70)
+        except Exception as e:
+            self.log(f"Warning: Could not initialize throttler: {e}", "WARN")
         
         self.log("Job executor started. Polling for jobs...")
         
