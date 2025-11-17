@@ -21,8 +21,11 @@ export type Database = {
           auto_cancel_stale_jobs: boolean | null
           auto_cleanup_enabled: boolean
           created_at: string
+          discovery_max_threads: number | null
           encryption_key: string | null
           id: string
+          idrac_max_concurrent: number | null
+          idrac_request_delay_ms: number | null
           job_auto_cleanup_enabled: boolean | null
           job_last_cleanup_at: string | null
           job_retention_days: number | null
@@ -32,6 +35,7 @@ export type Database = {
           log_retention_days: number
           max_request_body_kb: number
           max_response_body_kb: number
+          pause_idrac_operations: boolean | null
           slow_command_threshold_ms: number
           stale_pending_hours: number | null
           stale_running_hours: number | null
@@ -45,8 +49,11 @@ export type Database = {
           auto_cancel_stale_jobs?: boolean | null
           auto_cleanup_enabled?: boolean
           created_at?: string
+          discovery_max_threads?: number | null
           encryption_key?: string | null
           id?: string
+          idrac_max_concurrent?: number | null
+          idrac_request_delay_ms?: number | null
           job_auto_cleanup_enabled?: boolean | null
           job_last_cleanup_at?: string | null
           job_retention_days?: number | null
@@ -56,6 +63,7 @@ export type Database = {
           log_retention_days?: number
           max_request_body_kb?: number
           max_response_body_kb?: number
+          pause_idrac_operations?: boolean | null
           slow_command_threshold_ms?: number
           stale_pending_hours?: number | null
           stale_running_hours?: number | null
@@ -69,8 +77,11 @@ export type Database = {
           auto_cancel_stale_jobs?: boolean | null
           auto_cleanup_enabled?: boolean
           created_at?: string
+          discovery_max_threads?: number | null
           encryption_key?: string | null
           id?: string
+          idrac_max_concurrent?: number | null
+          idrac_request_delay_ms?: number | null
           job_auto_cleanup_enabled?: boolean | null
           job_last_cleanup_at?: string | null
           job_retention_days?: number | null
@@ -80,6 +91,7 @@ export type Database = {
           log_retention_days?: number
           max_request_body_kb?: number
           max_response_body_kb?: number
+          pause_idrac_operations?: boolean | null
           slow_command_threshold_ms?: number
           stale_pending_hours?: number | null
           stale_running_hours?: number | null

@@ -86,6 +86,12 @@ export default function Settings() {
   const [maxRequestBodyKb, setMaxRequestBodyKb] = useState(100);
   const [maxResponseBodyKb, setMaxResponseBodyKb] = useState(100);
 
+  // iDRAC Safety Settings (kill switch & throttling)
+  const [pauseIdracOperations, setPauseIdracOperations] = useState(false);
+  const [discoveryMaxThreads, setDiscoveryMaxThreads] = useState(5);
+  const [idracRequestDelayMs, setIdracRequestDelayMs] = useState(500);
+  const [idracMaxConcurrent, setIdracMaxConcurrent] = useState(4);
+
   // Deployment Mode Detection
   const getDeploymentMode = () => {
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
@@ -691,6 +697,11 @@ export default function Settings() {
         setStalePendingHours(activityData.stale_pending_hours ?? 24);
         setStaleRunningHours(activityData.stale_running_hours ?? 48);
         setAutoCancelStaleJobs(activityData.auto_cancel_stale_jobs ?? true);
+        // Load iDRAC safety settings
+        setPauseIdracOperations(activityData.pause_idrac_operations ?? false);
+        setDiscoveryMaxThreads(activityData.discovery_max_threads ?? 5);
+        setIdracRequestDelayMs(activityData.idrac_request_delay_ms ?? 500);
+        setIdracMaxConcurrent(activityData.idrac_max_concurrent ?? 4);
         // useJobExecutorForIdrac is hardcoded to true - no longer stored in database
       }
     } catch (error: any) {
@@ -988,6 +999,11 @@ export default function Settings() {
         stale_pending_hours: stalePendingHours,
         stale_running_hours: staleRunningHours,
         auto_cancel_stale_jobs: autoCancelStaleJobs,
+        // iDRAC safety settings
+        pause_idrac_operations: pauseIdracOperations,
+        discovery_max_threads: discoveryMaxThreads,
+        idrac_request_delay_ms: idracRequestDelayMs,
+        idrac_max_concurrent: idracMaxConcurrent,
         // use_job_executor_for_idrac removed - always true
       };
 
@@ -2424,6 +2440,102 @@ export default function Settings() {
             <Card>
               <CardContent className="space-y-6">
                 
+                {/* iDRAC Safety Controls - Kill Switch & Throttling */}
+                <div className="space-y-4 border-2 border-destructive/50 rounded-lg p-4 bg-destructive/5">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="h-5 w-5 text-destructive" />
+                    <h3 className="text-lg font-medium text-destructive">iDRAC Safety Controls</h3>
+                  </div>
+                  
+                  <Alert className="border-destructive/50">
+                    <AlertDescription>
+                      <strong>Emergency Kill Switch:</strong> Immediately pause all iDRAC operations if you suspect lock-ups or credential issues.
+                      The Job Executor will respect this setting and stop processing iDRAC jobs.
+                    </AlertDescription>
+                  </Alert>
+                  
+                  <div className="flex items-center justify-between py-2 px-3 bg-background rounded-md border-2 border-destructive">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="pause-idrac" className="text-base font-semibold">
+                        🛑 Pause All iDRAC Operations
+                      </Label>
+                      <p className="text-sm text-muted-foreground">
+                        Stops Job Executor from processing any iDRAC-related jobs
+                      </p>
+                    </div>
+                    <Switch
+                      id="pause-idrac"
+                      checked={pauseIdracOperations}
+                      onCheckedChange={(checked) => {
+                        setPauseIdracOperations(checked);
+                        if (checked) {
+                          toast({
+                            title: "⚠️ iDRAC Operations Paused",
+                            description: "Job Executor will stop processing iDRAC jobs. Remember to save settings!",
+                            variant: "destructive",
+                          });
+                        }
+                      }}
+                    />
+                  </div>
+
+                  {pauseIdracOperations && (
+                    <Alert className="border-yellow-500/50 bg-yellow-500/10">
+                      <AlertCircle className="h-4 w-4 text-yellow-600" />
+                      <AlertDescription className="text-yellow-900 dark:text-yellow-200">
+                        iDRAC operations are currently PAUSED. Click "Save Activity Settings" to apply, then restart Job Executor.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="discovery-threads" className="text-sm">Discovery Threads</Label>
+                      <Input
+                        id="discovery-threads"
+                        type="number"
+                        min="1"
+                        max="20"
+                        value={discoveryMaxThreads}
+                        onChange={(e) => setDiscoveryMaxThreads(parseInt(e.target.value) || 5)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Max concurrent threads for IP discovery (1-20)
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="request-delay" className="text-sm">Request Delay (ms)</Label>
+                      <Input
+                        id="request-delay"
+                        type="number"
+                        min="100"
+                        max="5000"
+                        value={idracRequestDelayMs}
+                        onChange={(e) => setIdracRequestDelayMs(parseInt(e.target.value) || 500)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Minimum delay between requests to same iDRAC
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="max-concurrent" className="text-sm">Max Concurrent</Label>
+                      <Input
+                        id="max-concurrent"
+                        type="number"
+                        min="1"
+                        max="20"
+                        value={idracMaxConcurrent}
+                        onChange={(e) => setIdracMaxConcurrent(parseInt(e.target.value) || 4)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Max concurrent iDRAC requests globally
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 {/* iDRAC Log Retention & Cleanup Section */}
                 <div className="space-y-4">
                   <h3 className="text-lg font-medium flex items-center gap-2">
