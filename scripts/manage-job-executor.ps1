@@ -120,7 +120,12 @@ function Read-SecureInput {
         $secure = Read-Host -AsSecureString
         $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
         $value = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
-        return if ([string]::IsNullOrWhiteSpace($value)) { $DefaultValue } else { $value }
+        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            return $DefaultValue
+        } else {
+            return $value
+        }
     } else {
         Write-ColorOutput "$Prompt" -Color $Colors.Prompt -NoNewLine
         if ($DefaultValue) {
