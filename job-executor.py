@@ -671,13 +671,6 @@ class JobExecutor:
             
             self.log(f"  Error getting system info from {ip}: {e}", "ERROR")
             return None
-                    delay = (attempt + 1) * 5  # 5, 10, 15 seconds
-                    self.log(f"  System info query error (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay}s...", "WARN")
-                    time.sleep(delay)
-                    continue
-                else:
-                    self.log(f"  Failed to get system info after {max_retries} attempts: {e}", "ERROR")
-                    return None
         
         if system_data is None:
             return None
@@ -686,89 +679,77 @@ class JobExecutor:
         manager_url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1"
         manager_data = {}
         
-        for attempt in range(max_retries):
-            start_time = time.time()
+        try:
+            manager_response, response_time_ms = self.throttler.request_with_safety(
+                method='GET',
+                url=manager_url,
+                ip_address=ip,
+                auth=(username, password),
+                timeout=(2, 15),  # 2s connect, 15s read
+                max_retries=max_retries
+            )
             
-            try:
-                manager_response = requests.get(
-                    manager_url,
-                    auth=(username, password),
-                    verify=False,
-                    timeout=15
-                )
-                response_time_ms = int((time.time() - start_time) * 1000)
-                
-                # Try to parse JSON, but handle parse errors gracefully
-                response_json = None
-                json_error = None
-                if manager_response.content:
-                    try:
-                        response_json = manager_response.json()
-                    except json.JSONDecodeError as json_err:
-                        json_error = str(json_err)
-                        self.log(f"  Warning: Could not parse manager response as JSON (attempt {attempt + 1}/{max_retries}): {json_err}", "WARN")
-                
-                # Log the manager info request
-                self.log_idrac_command(
-                    server_id=server_id,
-                    job_id=job_id,
-                    task_id=None,
-                    command_type='GET',
-                    endpoint='/redfish/v1/Managers/iDRAC.Embedded.1',
-                    full_url=manager_url,
-                    request_headers={'Authorization': f'Basic {username}:***'},
-                    request_body=None,
-                    status_code=manager_response.status_code,
-                    response_time_ms=response_time_ms,
-                    response_body=response_json,
-                    success=manager_response.status_code == 200 and response_json is not None,
-                    error_message=json_error if json_error else (None if manager_response.status_code == 200 else f"HTTP {manager_response.status_code}"),
-                    operation_type='idrac_api'
-                )
-                
-                if manager_response.status_code == 200 and response_json is not None:
-                    manager_data = response_json
-                    break  # Success! Exit retry loop
-                else:
-                    # Non-200 status or JSON parse error
-                    if attempt < max_retries - 1:
-                        delay = (attempt + 1) * 5  # 5, 10, 15 seconds
-                        self.log(f"  Manager info query failed (attempt {attempt + 1}/{max_retries}). Retrying in {delay}s...", "WARN")
-                        time.sleep(delay)
-                        continue
-                    else:
-                        self.log(f"  Failed to get manager info after {max_retries} attempts (continuing with system data only)", "WARN")
-                        break  # Manager data is optional, continue with system data
-                        
-            except Exception as e:
-                response_time_ms = int((time.time() - start_time) * 1000)
-                
-                # Log the error
-                self.log_idrac_command(
-                    server_id=server_id,
-                    job_id=job_id,
-                    task_id=None,
-                    command_type='GET',
-                    endpoint='/redfish/v1/Managers/iDRAC.Embedded.1',
-                    full_url=manager_url,
-                    request_headers={'Authorization': f'Basic {username}:***'},
-                    request_body=None,
-                    status_code=None,
-                    response_time_ms=response_time_ms,
-                    response_body=None,
-                    success=False,
-                    error_message=f"Attempt {attempt + 1}/{max_retries}: {str(e)}",
-                    operation_type='idrac_api'
-                )
-                
-                if attempt < max_retries - 1:
-                    delay = (attempt + 1) * 5  # 5, 10, 15 seconds
-                    self.log(f"  Manager info query error (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay}s...", "WARN")
-                    time.sleep(delay)
-                    continue
-                else:
-                    self.log(f"  Failed to get manager info after {max_retries} attempts (continuing with system data only): {e}", "WARN")
-                    break  # Manager data is optional, continue with system data
+            # Parse JSON
+            response_json = None
+            json_error = None
+            if manager_response and manager_response.content:
+                try:
+                    response_json = manager_response.json()
+                except json.JSONDecodeError as json_err:
+                    json_error = str(json_err)
+                    self.log(f"  Warning: Could not parse manager response as JSON: {json_err}", "WARN")
+            
+            # Log the request
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                task_id=None,
+                command_type='GET',
+                endpoint='/redfish/v1/Managers/iDRAC.Embedded.1',
+                full_url=manager_url,
+                request_headers={'Authorization': f'Basic {username}:***'},
+                request_body=None,
+                status_code=manager_response.status_code if manager_response else None,
+                response_time_ms=response_time_ms,
+                response_body=response_json,
+                success=(manager_response and manager_response.status_code == 200 and response_json is not None),
+                error_message=json_error if json_error else (None if (manager_response and manager_response.status_code == 200) else f"HTTP {manager_response.status_code}" if manager_response else "Request failed"),
+                operation_type='idrac_api'
+            )
+            
+            if manager_response and manager_response.status_code == 200 and response_json is not None:
+                manager_data = response_json
+                # Record success
+                self.throttler.record_success(ip)
+            else:
+                # Manager data is optional, log warning and continue
+                self.log(f"  Warning: Could not get manager info from {ip} (continuing with system data only)", "WARN")
+                if manager_response and manager_response.status_code in [401, 403]:
+                    self.throttler.record_failure(ip, f"HTTP {manager_response.status_code}")
+                    
+        except Exception as e:
+            # Record failure
+            self.throttler.record_failure(ip, str(e))
+            
+            # Log the error
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                task_id=None,
+                command_type='GET',
+                endpoint='/redfish/v1/Managers/iDRAC.Embedded.1',
+                full_url=manager_url,
+                request_headers={'Authorization': f'Basic {username}:***'},
+                request_body=None,
+                status_code=None,
+                response_time_ms=0,
+                response_body=None,
+                success=False,
+                error_message=str(e),
+                operation_type='idrac_api'
+            )
+            
+            self.log(f"  Warning: Error getting manager info from {ip}: {e} (continuing with system data only)", "WARN")
         
         # Extract comprehensive info
         try:
