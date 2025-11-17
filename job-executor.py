@@ -2403,16 +2403,56 @@ class JobExecutor:
                     
                     # Get System health and power state
                     system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
+                    start_time = time.time()
                     response = requests.get(system_url, auth=(username, password), verify=False, timeout=30)
+                    response_time = int((time.time() - start_time) * 1000)
+                    
+                    self.log_idrac_command(
+                        server_id=server['id'],
+                        job_id=job['id'],
+                        task_id=None,
+                        command_type='GET',
+                        endpoint='/redfish/v1/Systems/System.Embedded.1',
+                        full_url=system_url,
+                        request_headers={'Authorization': '[REDACTED]'},
+                        request_body=None,
+                        status_code=response.status_code,
+                        response_time_ms=response_time,
+                        response_body=response.json() if response.status_code == 200 else None,
+                        success=response.status_code == 200,
+                        error_message=None if response.status_code == 200 else f"HTTP {response.status_code}",
+                        operation_type='health'
+                    )
                     
                     if response.status_code == 200:
                         data = response.json()
                         health_data['power_state'] = data.get('PowerState')
                         health_data['overall_health'] = data.get('Status', {}).get('Health', 'Unknown')
+                    else:
+                        self.log(f"  ⚠️  Failed to get system health: HTTP {response.status_code}", "WARN")
                     
                     # Get Thermal data (temperatures, fans)
                     thermal_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/Thermal"
+                    start_time = time.time()
                     response = requests.get(thermal_url, auth=(username, password), verify=False, timeout=30)
+                    response_time = int((time.time() - start_time) * 1000)
+                    
+                    self.log_idrac_command(
+                        server_id=server['id'],
+                        job_id=job['id'],
+                        task_id=None,
+                        command_type='GET',
+                        endpoint='/redfish/v1/Chassis/System.Embedded.1/Thermal',
+                        full_url=thermal_url,
+                        request_headers={'Authorization': '[REDACTED]'},
+                        request_body=None,
+                        status_code=response.status_code,
+                        response_time_ms=response_time,
+                        response_body=response.json() if response.status_code == 200 else None,
+                        success=response.status_code == 200,
+                        error_message=None if response.status_code == 200 else f"HTTP {response.status_code}",
+                        operation_type='health'
+                    )
                     
                     if response.status_code == 200:
                         data = response.json()
@@ -2429,16 +2469,195 @@ class JobExecutor:
                         health_data['fan_health'] = 'OK' if all(s == 'OK' for s in fan_statuses if s) else 'Warning'
                         
                         health_data['sensors'] = {'temperatures': temps[:5], 'fans': fans[:5]}  # Store subset
+                    else:
+                        self.log(f"  ⚠️  Failed to get thermal data: HTTP {response.status_code}", "WARN")
                     
                     # Get Power data (PSU)
                     power_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/Power"
+                    start_time = time.time()
                     response = requests.get(power_url, auth=(username, password), verify=False, timeout=30)
+                    response_time = int((time.time() - start_time) * 1000)
+                    
+                    self.log_idrac_command(
+                        server_id=server['id'],
+                        job_id=job['id'],
+                        task_id=None,
+                        command_type='GET',
+                        endpoint='/redfish/v1/Chassis/System.Embedded.1/Power',
+                        full_url=power_url,
+                        request_headers={'Authorization': '[REDACTED]'},
+                        request_body=None,
+                        status_code=response.status_code,
+                        response_time_ms=response_time,
+                        response_body=response.json() if response.status_code == 200 else None,
+                        success=response.status_code == 200,
+                        error_message=None if response.status_code == 200 else f"HTTP {response.status_code}",
+                        operation_type='health'
+                    )
                     
                     if response.status_code == 200:
                         data = response.json()
                         psus = data.get('PowerSupplies', [])
                         psu_statuses = [p.get('Status', {}).get('Health') for p in psus]
                         health_data['psu_health'] = 'OK' if all(s == 'OK' for s in psu_statuses if s) else 'Warning'
+                    else:
+                        self.log(f"  ⚠️  Failed to get power data: HTTP {response.status_code}", "WARN")
+                    
+                    # Get Storage health
+                    storage_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Storage"
+                    start_time = time.time()
+                    response = requests.get(storage_url, auth=(username, password), verify=False, timeout=30)
+                    response_time = int((time.time() - start_time) * 1000)
+                    
+                    self.log_idrac_command(
+                        server_id=server['id'],
+                        job_id=job['id'],
+                        task_id=None,
+                        command_type='GET',
+                        endpoint='/redfish/v1/Systems/System.Embedded.1/Storage',
+                        full_url=storage_url,
+                        request_headers={'Authorization': '[REDACTED]'},
+                        request_body=None,
+                        status_code=response.status_code,
+                        response_time_ms=response_time,
+                        response_body=response.json() if response.status_code == 200 else None,
+                        success=response.status_code == 200,
+                        error_message=None if response.status_code == 200 else f"HTTP {response.status_code}",
+                        operation_type='health'
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        controllers = data.get('Members', [])
+                        storage_statuses = []
+                        for controller_ref in controllers[:3]:  # Limit to 3 controllers
+                            controller_url = f"https://{ip}{controller_ref['@odata.id']}"
+                            ctrl_resp = requests.get(controller_url, auth=(username, password), verify=False, timeout=30)
+                            if ctrl_resp.status_code == 200:
+                                ctrl_data = ctrl_resp.json()
+                                storage_statuses.append(ctrl_data.get('Status', {}).get('Health'))
+                        
+                        if storage_statuses:
+                            health_data['storage_health'] = 'OK' if all(s == 'OK' for s in storage_statuses if s) else 'Warning'
+                    else:
+                        self.log(f"  ⚠️  Failed to get storage data: HTTP {response.status_code}", "WARN")
+                    
+                    # Get Memory health
+                    memory_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Memory"
+                    start_time = time.time()
+                    response = requests.get(memory_url, auth=(username, password), verify=False, timeout=30)
+                    response_time = int((time.time() - start_time) * 1000)
+                    
+                    self.log_idrac_command(
+                        server_id=server['id'],
+                        job_id=job['id'],
+                        task_id=None,
+                        command_type='GET',
+                        endpoint='/redfish/v1/Systems/System.Embedded.1/Memory',
+                        full_url=memory_url,
+                        request_headers={'Authorization': '[REDACTED]'},
+                        request_body=None,
+                        status_code=response.status_code,
+                        response_time_ms=response_time,
+                        response_body=response.json() if response.status_code == 200 else None,
+                        success=response.status_code == 200,
+                        error_message=None if response.status_code == 200 else f"HTTP {response.status_code}",
+                        operation_type='health'
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        memory_modules = data.get('Members', [])
+                        memory_statuses = []
+                        for module_ref in memory_modules[:8]:  # Limit to 8 DIMMs
+                            module_url = f"https://{ip}{module_ref['@odata.id']}"
+                            mem_resp = requests.get(module_url, auth=(username, password), verify=False, timeout=30)
+                            if mem_resp.status_code == 200:
+                                mem_data = mem_resp.json()
+                                memory_statuses.append(mem_data.get('Status', {}).get('Health'))
+                        
+                        if memory_statuses:
+                            health_data['memory_health'] = 'OK' if all(s == 'OK' for s in memory_statuses if s) else 'Warning'
+                    else:
+                        self.log(f"  ⚠️  Failed to get memory data: HTTP {response.status_code}", "WARN")
+                    
+                    # Get Processor health
+                    proc_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Processors"
+                    start_time = time.time()
+                    response = requests.get(proc_url, auth=(username, password), verify=False, timeout=30)
+                    response_time = int((time.time() - start_time) * 1000)
+                    
+                    self.log_idrac_command(
+                        server_id=server['id'],
+                        job_id=job['id'],
+                        task_id=None,
+                        command_type='GET',
+                        endpoint='/redfish/v1/Systems/System.Embedded.1/Processors',
+                        full_url=proc_url,
+                        request_headers={'Authorization': '[REDACTED]'},
+                        request_body=None,
+                        status_code=response.status_code,
+                        response_time_ms=response_time,
+                        response_body=response.json() if response.status_code == 200 else None,
+                        success=response.status_code == 200,
+                        error_message=None if response.status_code == 200 else f"HTTP {response.status_code}",
+                        operation_type='health'
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        processors = data.get('Members', [])
+                        proc_statuses = []
+                        for proc_ref in processors:
+                            proc_detail_url = f"https://{ip}{proc_ref['@odata.id']}"
+                            proc_resp = requests.get(proc_detail_url, auth=(username, password), verify=False, timeout=30)
+                            if proc_resp.status_code == 200:
+                                proc_data = proc_resp.json()
+                                proc_statuses.append(proc_data.get('Status', {}).get('Health'))
+                        
+                        if proc_statuses:
+                            health_data['cpu_health'] = 'OK' if all(s == 'OK' for s in proc_statuses if s) else 'Warning'
+                    else:
+                        self.log(f"  ⚠️  Failed to get processor data: HTTP {response.status_code}", "WARN")
+                    
+                    # Get Network health
+                    network_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/NetworkInterfaces"
+                    start_time = time.time()
+                    response = requests.get(network_url, auth=(username, password), verify=False, timeout=30)
+                    response_time = int((time.time() - start_time) * 1000)
+                    
+                    self.log_idrac_command(
+                        server_id=server['id'],
+                        job_id=job['id'],
+                        task_id=None,
+                        command_type='GET',
+                        endpoint='/redfish/v1/Systems/System.Embedded.1/NetworkInterfaces',
+                        full_url=network_url,
+                        request_headers={'Authorization': '[REDACTED]'},
+                        request_body=None,
+                        status_code=response.status_code,
+                        response_time_ms=response_time,
+                        response_body=response.json() if response.status_code == 200 else None,
+                        success=response.status_code == 200,
+                        error_message=None if response.status_code == 200 else f"HTTP {response.status_code}",
+                        operation_type='health'
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        nics = data.get('Members', [])
+                        nic_statuses = []
+                        for nic_ref in nics[:4]:  # Limit to 4 NICs
+                            nic_url = f"https://{ip}{nic_ref['@odata.id']}"
+                            nic_resp = requests.get(nic_url, auth=(username, password), verify=False, timeout=30)
+                            if nic_resp.status_code == 200:
+                                nic_data = nic_resp.json()
+                                nic_statuses.append(nic_data.get('Status', {}).get('Health'))
+                        
+                        if nic_statuses:
+                            health_data['network_health'] = 'OK' if all(s == 'OK' for s in nic_statuses if s) else 'Warning'
+                    else:
+                        self.log(f"  ⚠️  Failed to get network data: HTTP {response.status_code}", "WARN")
                     
                     # Insert health record
                     insert_url = f"{DSM_URL}/rest/v1/server_health"

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Activity, RefreshCw, Thermometer, Fan, Zap, HardDrive } from "lucide-react";
+import { Activity, RefreshCw, Thermometer, Fan, Zap, HardDrive, Cpu, MemoryStick, Network } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -29,6 +29,7 @@ interface HealthData {
   storage_health?: string;
   memory_health?: string;
   network_health?: string;
+  cpu_health?: string;
   timestamp: string;
 }
 
@@ -201,6 +202,36 @@ export function ServerHealthDialog({ open, onOpenChange, server }: ServerHealthD
                       <span className="text-sm">Storage</span>
                     </div>
                     {getHealthBadge(healthData.storage_health)}
+                  </div>
+                )}
+
+                {healthData.cpu_health && (
+                  <div className="flex items-center justify-between p-3 rounded-lg border">
+                    <div className="flex items-center gap-2">
+                      <Cpu className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm">Processors</span>
+                    </div>
+                    {getHealthBadge(healthData.cpu_health)}
+                  </div>
+                )}
+
+                {healthData.memory_health && (
+                  <div className="flex items-center justify-between p-3 rounded-lg border">
+                    <div className="flex items-center gap-2">
+                      <MemoryStick className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm">Memory</span>
+                    </div>
+                    {getHealthBadge(healthData.memory_health)}
+                  </div>
+                )}
+
+                {healthData.network_health && (
+                  <div className="flex items-center justify-between p-3 rounded-lg border">
+                    <div className="flex items-center gap-2">
+                      <Network className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm">Network</span>
+                    </div>
+                    {getHealthBadge(healthData.network_health)}
                   </div>
                 )}
               </div>
