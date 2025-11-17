@@ -468,6 +468,15 @@ class JobExecutor:
         except Exception as e:
             self.log(f"Error updating task status: {e}", "ERROR")
 
+    def safe_json_parse(self, response):
+        """Safely parse JSON response, return None if invalid"""
+        try:
+            if response.status_code in [200, 201] and response.text:
+                return response.json()
+        except Exception as e:
+            self.log(f"Failed to parse JSON: {e}", "WARN")
+        return None
+
     def get_job_tasks(self, job_id: str) -> List[Dict]:
         """Fetch tasks for a job"""
         try:
@@ -2379,7 +2388,7 @@ class JobExecutor:
                 servers_url = f"{DSM_URL}/rest/v1/servers"
             
             servers_response = requests.get(servers_url, headers=headers, verify=VERIFY_SSL)
-            servers = servers_response.json() if servers_response.status_code == 200 else []
+            servers = self.safe_json_parse(servers_response) or []
             
             success_count = 0
             failed_count = 0
@@ -2398,7 +2407,8 @@ class JobExecutor:
                     'started_at': datetime.now().isoformat()
                 }
                 task_response = requests.post(task_url, headers=headers, json=task_data, verify=VERIFY_SSL)
-                task_id = task_response.json()[0]['id'] if task_response.status_code == 201 else None
+                task_data_result = self.safe_json_parse(task_response)
+                task_id = task_data_result[0]['id'] if task_data_result else None
                 
                 # Get credentials
                 username, password = self.get_server_credentials(server)
@@ -2443,16 +2453,17 @@ class JobExecutor:
                         request_body=None,
                         status_code=response.status_code,
                         response_time_ms=response_time,
-                        response_body=response.json() if response.status_code == 200 else None,
+                        response_body=self.safe_json_parse(response),
                         success=response.status_code == 200,
                         error_message=None if response.status_code == 200 else f"HTTP {response.status_code}",
-                        operation_type='health'
+                        operation_type='idrac_api'
                     )
                     
                     if response.status_code == 200:
-                        data = response.json()
-                        health_data['power_state'] = data.get('PowerState')
-                        health_data['overall_health'] = data.get('Status', {}).get('Health', 'Unknown')
+                        data = self.safe_json_parse(response)
+                        if data:
+                            health_data['power_state'] = data.get('PowerState')
+                            health_data['overall_health'] = data.get('Status', {}).get('Health', 'Unknown')
                     else:
                         self.log(f"  ⚠️  Failed to get system health: HTTP {response.status_code}", "WARN")
                     
@@ -2473,27 +2484,28 @@ class JobExecutor:
                         request_body=None,
                         status_code=response.status_code,
                         response_time_ms=response_time,
-                        response_body=response.json() if response.status_code == 200 else None,
+                        response_body=self.safe_json_parse(response),
                         success=response.status_code == 200,
                         error_message=None if response.status_code == 200 else f"HTTP {response.status_code}",
-                        operation_type='health'
+                        operation_type='idrac_api'
                     )
                     
                     if response.status_code == 200:
-                        data = response.json()
-                        temps = data.get('Temperatures', [])
-                        fans = data.get('Fans', [])
-                        
-                        if temps:
-                            valid_temps = [t.get('ReadingCelsius', 0) for t in temps if t.get('ReadingCelsius')]
-                            if valid_temps:
-                                avg_temp = sum(valid_temps) / len(valid_temps)
-                                health_data['temperature_celsius'] = round(avg_temp, 1)
-                        
-                        fan_statuses = [f.get('Status', {}).get('Health') for f in fans]
-                        health_data['fan_health'] = 'OK' if all(s == 'OK' for s in fan_statuses if s) else 'Warning'
-                        
-                        health_data['sensors'] = {'temperatures': temps[:5], 'fans': fans[:5]}  # Store subset
+                        data = self.safe_json_parse(response)
+                        if data:
+                            temps = data.get('Temperatures', [])
+                            fans = data.get('Fans', [])
+                            
+                            if temps:
+                                valid_temps = [t.get('ReadingCelsius', 0) for t in temps if t.get('ReadingCelsius')]
+                                if valid_temps:
+                                    avg_temp = sum(valid_temps) / len(valid_temps)
+                                    health_data['temperature_celsius'] = round(avg_temp, 1)
+                            
+                            fan_statuses = [f.get('Status', {}).get('Health') for f in fans]
+                            health_data['fan_health'] = 'OK' if all(s == 'OK' for s in fan_statuses if s) else 'Warning'
+                            
+                            health_data['sensors'] = {'temperatures': temps[:5], 'fans': fans[:5]}  # Store subset
                     else:
                         self.log(f"  ⚠️  Failed to get thermal data: HTTP {response.status_code}", "WARN")
                     
@@ -2514,17 +2526,18 @@ class JobExecutor:
                         request_body=None,
                         status_code=response.status_code,
                         response_time_ms=response_time,
-                        response_body=response.json() if response.status_code == 200 else None,
+                        response_body=self.safe_json_parse(response),
                         success=response.status_code == 200,
                         error_message=None if response.status_code == 200 else f"HTTP {response.status_code}",
-                        operation_type='health'
+                        operation_type='idrac_api'
                     )
                     
                     if response.status_code == 200:
-                        data = response.json()
-                        psus = data.get('PowerSupplies', [])
-                        psu_statuses = [p.get('Status', {}).get('Health') for p in psus]
-                        health_data['psu_health'] = 'OK' if all(s == 'OK' for s in psu_statuses if s) else 'Warning'
+                        data = self.safe_json_parse(response)
+                        if data:
+                            psus = data.get('PowerSupplies', [])
+                            psu_statuses = [p.get('Status', {}).get('Health') for p in psus]
+                            health_data['psu_health'] = 'OK' if all(s == 'OK' for s in psu_statuses if s) else 'Warning'
                     else:
                         self.log(f"  ⚠️  Failed to get power data: HTTP {response.status_code}", "WARN")
                     
@@ -2545,25 +2558,27 @@ class JobExecutor:
                         request_body=None,
                         status_code=response.status_code,
                         response_time_ms=response_time,
-                        response_body=response.json() if response.status_code == 200 else None,
+                        response_body=self.safe_json_parse(response),
                         success=response.status_code == 200,
                         error_message=None if response.status_code == 200 else f"HTTP {response.status_code}",
-                        operation_type='health'
+                        operation_type='idrac_api'
                     )
                     
                     if response.status_code == 200:
-                        data = response.json()
-                        controllers = data.get('Members', [])
-                        storage_statuses = []
-                        for controller_ref in controllers[:3]:  # Limit to 3 controllers
-                            controller_url = f"https://{ip}{controller_ref['@odata.id']}"
-                            ctrl_resp = requests.get(controller_url, auth=(username, password), verify=False, timeout=30)
-                            if ctrl_resp.status_code == 200:
-                                ctrl_data = ctrl_resp.json()
-                                storage_statuses.append(ctrl_data.get('Status', {}).get('Health'))
-                        
-                        if storage_statuses:
-                            health_data['storage_health'] = 'OK' if all(s == 'OK' for s in storage_statuses if s) else 'Warning'
+                        data = self.safe_json_parse(response)
+                        if data:
+                            controllers = data.get('Members', [])
+                            storage_statuses = []
+                            for controller_ref in controllers[:3]:  # Limit to 3 controllers
+                                controller_url = f"https://{ip}{controller_ref['@odata.id']}"
+                                ctrl_resp = requests.get(controller_url, auth=(username, password), verify=False, timeout=30)
+                                if ctrl_resp.status_code == 200:
+                                    ctrl_data = self.safe_json_parse(ctrl_resp)
+                                    if ctrl_data:
+                                        storage_statuses.append(ctrl_data.get('Status', {}).get('Health'))
+                            
+                            if storage_statuses:
+                                health_data['storage_health'] = 'OK' if all(s == 'OK' for s in storage_statuses if s) else 'Warning'
                     else:
                         self.log(f"  ⚠️  Failed to get storage data: HTTP {response.status_code}", "WARN")
                     
@@ -2584,25 +2599,27 @@ class JobExecutor:
                         request_body=None,
                         status_code=response.status_code,
                         response_time_ms=response_time,
-                        response_body=response.json() if response.status_code == 200 else None,
+                        response_body=self.safe_json_parse(response),
                         success=response.status_code == 200,
                         error_message=None if response.status_code == 200 else f"HTTP {response.status_code}",
-                        operation_type='health'
+                        operation_type='idrac_api'
                     )
                     
                     if response.status_code == 200:
-                        data = response.json()
-                        memory_modules = data.get('Members', [])
-                        memory_statuses = []
-                        for module_ref in memory_modules[:8]:  # Limit to 8 DIMMs
-                            module_url = f"https://{ip}{module_ref['@odata.id']}"
-                            mem_resp = requests.get(module_url, auth=(username, password), verify=False, timeout=30)
-                            if mem_resp.status_code == 200:
-                                mem_data = mem_resp.json()
-                                memory_statuses.append(mem_data.get('Status', {}).get('Health'))
-                        
-                        if memory_statuses:
-                            health_data['memory_health'] = 'OK' if all(s == 'OK' for s in memory_statuses if s) else 'Warning'
+                        data = self.safe_json_parse(response)
+                        if data:
+                            memory_modules = data.get('Members', [])
+                            memory_statuses = []
+                            for module_ref in memory_modules[:8]:  # Limit to 8 DIMMs
+                                module_url = f"https://{ip}{module_ref['@odata.id']}"
+                                mem_resp = requests.get(module_url, auth=(username, password), verify=False, timeout=30)
+                                if mem_resp.status_code == 200:
+                                    mem_data = self.safe_json_parse(mem_resp)
+                                    if mem_data:
+                                        memory_statuses.append(mem_data.get('Status', {}).get('Health'))
+                            
+                            if memory_statuses:
+                                health_data['memory_health'] = 'OK' if all(s == 'OK' for s in memory_statuses if s) else 'Warning'
                     else:
                         self.log(f"  ⚠️  Failed to get memory data: HTTP {response.status_code}", "WARN")
                     
@@ -2623,25 +2640,27 @@ class JobExecutor:
                         request_body=None,
                         status_code=response.status_code,
                         response_time_ms=response_time,
-                        response_body=response.json() if response.status_code == 200 else None,
+                        response_body=self.safe_json_parse(response),
                         success=response.status_code == 200,
                         error_message=None if response.status_code == 200 else f"HTTP {response.status_code}",
-                        operation_type='health'
+                        operation_type='idrac_api'
                     )
                     
                     if response.status_code == 200:
-                        data = response.json()
-                        processors = data.get('Members', [])
-                        proc_statuses = []
-                        for proc_ref in processors:
-                            proc_detail_url = f"https://{ip}{proc_ref['@odata.id']}"
-                            proc_resp = requests.get(proc_detail_url, auth=(username, password), verify=False, timeout=30)
-                            if proc_resp.status_code == 200:
-                                proc_data = proc_resp.json()
-                                proc_statuses.append(proc_data.get('Status', {}).get('Health'))
-                        
-                        if proc_statuses:
-                            health_data['cpu_health'] = 'OK' if all(s == 'OK' for s in proc_statuses if s) else 'Warning'
+                        data = self.safe_json_parse(response)
+                        if data:
+                            processors = data.get('Members', [])
+                            proc_statuses = []
+                            for proc_ref in processors:
+                                proc_detail_url = f"https://{ip}{proc_ref['@odata.id']}"
+                                proc_resp = requests.get(proc_detail_url, auth=(username, password), verify=False, timeout=30)
+                                if proc_resp.status_code == 200:
+                                    proc_data = self.safe_json_parse(proc_resp)
+                                    if proc_data:
+                                        proc_statuses.append(proc_data.get('Status', {}).get('Health'))
+                            
+                            if proc_statuses:
+                                health_data['cpu_health'] = 'OK' if all(s == 'OK' for s in proc_statuses if s) else 'Warning'
                     else:
                         self.log(f"  ⚠️  Failed to get processor data: HTTP {response.status_code}", "WARN")
                     
@@ -2662,25 +2681,27 @@ class JobExecutor:
                         request_body=None,
                         status_code=response.status_code,
                         response_time_ms=response_time,
-                        response_body=response.json() if response.status_code == 200 else None,
+                        response_body=self.safe_json_parse(response),
                         success=response.status_code == 200,
                         error_message=None if response.status_code == 200 else f"HTTP {response.status_code}",
-                        operation_type='health'
+                        operation_type='idrac_api'
                     )
                     
                     if response.status_code == 200:
-                        data = response.json()
-                        nics = data.get('Members', [])
-                        nic_statuses = []
-                        for nic_ref in nics[:4]:  # Limit to 4 NICs
-                            nic_url = f"https://{ip}{nic_ref['@odata.id']}"
-                            nic_resp = requests.get(nic_url, auth=(username, password), verify=False, timeout=30)
-                            if nic_resp.status_code == 200:
-                                nic_data = nic_resp.json()
-                                nic_statuses.append(nic_data.get('Status', {}).get('Health'))
-                        
-                        if nic_statuses:
-                            health_data['network_health'] = 'OK' if all(s == 'OK' for s in nic_statuses if s) else 'Warning'
+                        data = self.safe_json_parse(response)
+                        if data:
+                            nics = data.get('Members', [])
+                            nic_statuses = []
+                            for nic_ref in nics[:4]:  # Limit to 4 NICs
+                                nic_url = f"https://{ip}{nic_ref['@odata.id']}"
+                                nic_resp = requests.get(nic_url, auth=(username, password), verify=False, timeout=30)
+                                if nic_resp.status_code == 200:
+                                    nic_data = self.safe_json_parse(nic_resp)
+                                    if nic_data:
+                                        nic_statuses.append(nic_data.get('Status', {}).get('Health'))
+                            
+                            if nic_statuses:
+                                health_data['network_health'] = 'OK' if all(s == 'OK' for s in nic_statuses if s) else 'Warning'
                     else:
                         self.log(f"  ⚠️  Failed to get network data: HTTP {response.status_code}", "WARN")
                     
@@ -2762,11 +2783,38 @@ class JobExecutor:
             self.log(f"Health check complete: {success_count} succeeded, {failed_count} failed")
             
         except Exception as e:
-            self.log(f"Health check job failed: {e}", "ERROR")
+            import traceback
+            error_msg = str(e)
+            stack_trace = traceback.format_exc()
+            self.log(f"Health check job failed: {error_msg}\n{stack_trace}", "ERROR")
+            
+            # Mark any running tasks as failed
+            try:
+                headers = {
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json'
+                }
+                tasks_url = f"{DSM_URL}/rest/v1/job_tasks?job_id=eq.{job['id']}&status=eq.running"
+                tasks_response = requests.get(tasks_url, headers=headers, verify=VERIFY_SSL)
+                if tasks_response.status_code == 200:
+                    running_tasks = self.safe_json_parse(tasks_response) or []
+                    for task in running_tasks:
+                        self.update_task_status(
+                            task['id'], 'failed',
+                            log=f"Job failed: {error_msg}",
+                            completed_at=datetime.now().isoformat()
+                        )
+            except Exception as task_error:
+                self.log(f"Failed to update task statuses: {task_error}", "WARN")
+            
             self.update_job_status(
                 job['id'], 'failed',
                 completed_at=datetime.now().isoformat(),
-                details={"error": str(e)}
+                details={
+                    "error": error_msg,
+                    "traceback": stack_trace[:2000]  # Limit to 2000 chars
+                }
             )
     
     def execute_fetch_event_logs(self, job: Dict):
