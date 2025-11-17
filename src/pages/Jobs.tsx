@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Briefcase, Plus, RefreshCw, Clock, CheckCircle, XCircle, PlayCircle, RotateCcw, FileText, Settings, Calendar, Filter, BarChart3 } from "lucide-react";
+import { Briefcase, Plus, RefreshCw, Clock, CheckCircle, XCircle, PlayCircle, RotateCcw, FileText, Settings, Calendar, Filter, BarChart3, AlertCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -388,6 +388,23 @@ const Jobs = () => {
                       )}
                     </div>
                   </div>
+
+                  {/* Error Message Preview */}
+                  {job.status === 'failed' && job.details?.error && (
+                    <div className="mt-3 p-3 bg-destructive/10 rounded-lg border border-destructive/20">
+                      <div className="flex items-start gap-2">
+                        <AlertCircle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
+                        <div className="text-sm">
+                          <span className="font-medium text-destructive">Error: </span>
+                          <span className="font-mono text-destructive/80">
+                            {job.details.error.length > 100 
+                              ? `${job.details.error.substring(0, 100)}...` 
+                              : job.details.error}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                     <div>
