@@ -35,6 +35,7 @@ import atexit
 import json
 import os
 from datetime import datetime
+from idrac_throttler import IdracThrottler
 
 # Best-effort: prefer UTF-8 output if available, but never crash if not
 try:
@@ -110,6 +111,9 @@ class JobExecutor:
         self.vcenter_conn = None
         self.running = True
         self.encryption_key = None  # Will be fetched on first use
+        self.throttler = None  # Will be initialized on first use
+        self.activity_settings = {}  # Cache settings
+        self.last_settings_fetch = 0  # Timestamp for cache invalidation
         
     def log(self, message: str, level: str = "INFO"):
         """Log with timestamp"""
@@ -117,6 +121,96 @@ class JobExecutor:
         msg = _safe_to_stdout(_normalize_unicode(message))
         line = f"[{timestamp}] [{level}] {msg}"
         print(_safe_to_stdout(line))
+    
+    def fetch_activity_settings(self, force: bool = False) -> Dict:
+        """Fetch activity settings from database with caching"""
+        current_time = time.time()
+        
+        # Use cache if less than 30 seconds old and not forced
+        if not force and self.activity_settings and (current_time - self.last_settings_fetch < 30):
+            return self.activity_settings
+        
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/activity_settings",
+                headers=headers,
+                params={'select': '*'},
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                settings_list = response.json()
+                if settings_list and len(settings_list) > 0:
+                    self.activity_settings = settings_list[0]
+                    self.last_settings_fetch = current_time
+                    return self.activity_settings
+            
+            # Return defaults if fetch fails
+            return {
+                'pause_idrac_operations': False,
+                'discovery_max_threads': 5,
+                'idrac_request_delay_ms': 500,
+                'idrac_max_concurrent': 4,
+                'encryption_key': self.encryption_key
+            }
+        except Exception as e:
+            self.log(f"Error fetching activity settings: {e}", "WARN")
+            # Return safe defaults
+            return {
+                'pause_idrac_operations': False,
+                'discovery_max_threads': 5,
+                'idrac_request_delay_ms': 500,
+                'idrac_max_concurrent': 4
+            }
+    
+    def initialize_throttler(self):
+        """Initialize or update the iDRAC throttler with current settings"""
+        try:
+            settings = self.fetch_activity_settings()
+            
+            max_concurrent = settings.get('idrac_max_concurrent', 4)
+            request_delay_ms = settings.get('idrac_request_delay_ms', 500)
+            
+            if self.throttler is None:
+                self.throttler = IdracThrottler(
+                    max_concurrent=max_concurrent,
+                    request_delay_ms=request_delay_ms
+                )
+                self.log(f"Throttler initialized: max_concurrent={max_concurrent}, delay={request_delay_ms}ms")
+            else:
+                self.throttler.update_settings(
+                    max_concurrent=max_concurrent,
+                    request_delay_ms=request_delay_ms
+                )
+                self.log(f"Throttler settings updated: max_concurrent={max_concurrent}, delay={request_delay_ms}ms")
+        except Exception as e:
+            self.log(f"Error initializing throttler: {e}", "ERROR")
+            # Create throttler with safe defaults
+            if self.throttler is None:
+                self.throttler = IdracThrottler(max_concurrent=4, request_delay_ms=500)
+                self.log("Throttler initialized with safe defaults")
+    
+    def check_idrac_pause(self) -> bool:
+        """Check if iDRAC operations are paused. Returns True if paused."""
+        try:
+            settings = self.fetch_activity_settings(force=True)  # Force fresh fetch
+            is_paused = settings.get('pause_idrac_operations', False)
+            
+            if is_paused:
+                self.log("⚠️  iDRAC operations are PAUSED via activity settings", "WARN")
+                self.log("All iDRAC jobs will be skipped until pause is disabled", "WARN")
+            
+            return is_paused
+        except Exception as e:
+            self.log(f"Error checking pause status: {e}", "ERROR")
+            return False  # Default to not paused on error
     
     def log_idrac_command(
         self,
@@ -499,88 +593,84 @@ class JobExecutor:
             return []
 
     def get_comprehensive_server_info(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, max_retries: int = 3) -> Optional[Dict]:
-        """Get comprehensive server information from iDRAC Redfish API with retry logic"""
+        """Get comprehensive server information from iDRAC Redfish API using throttler"""
         system_data = None
         
-        # Get system information with retry logic
+        # Get system information with throttler (handles retries internally)
         system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
         
-        for attempt in range(max_retries):
-            start_time = time.time()
+        try:
+            system_response, response_time_ms = self.throttler.request_with_safety(
+                method='GET',
+                url=system_url,
+                ip_address=ip,
+                auth=(username, password),
+                timeout=(2, 15),  # 2s connect, 15s read
+                max_retries=max_retries
+            )
             
-            try:
-                system_response = requests.get(
-                    system_url,
-                    auth=(username, password),
-                    verify=False,
-                    timeout=15
-                )
-                response_time_ms = int((time.time() - start_time) * 1000)
-                
-                # Try to parse JSON, but handle parse errors gracefully
-                response_json = None
-                json_error = None
-                if system_response.content:
-                    try:
-                        response_json = system_response.json()
-                    except json.JSONDecodeError as json_err:
-                        json_error = str(json_err)
-                        self.log(f"  Warning: Could not parse response as JSON (attempt {attempt + 1}/{max_retries}): {json_err}", "WARN")
-                
-                # Log the system info request
-                self.log_idrac_command(
-                    server_id=server_id,
-                    job_id=job_id,
-                    task_id=None,
-                    command_type='GET',
-                    endpoint='/redfish/v1/Systems/System.Embedded.1',
-                    full_url=system_url,
-                    request_headers={'Authorization': f'Basic {username}:***'},
-                    request_body=None,
-                    status_code=system_response.status_code,
-                    response_time_ms=response_time_ms,
-                    response_body=response_json,
-                    success=system_response.status_code == 200 and response_json is not None,
-                    error_message=json_error if json_error else (None if system_response.status_code == 200 else f"HTTP {system_response.status_code}"),
-                    operation_type='idrac_api'
-                )
-                
-                if system_response.status_code == 200 and response_json is not None:
-                    system_data = response_json
-                    break  # Success! Exit retry loop
-                else:
-                    # Non-200 status or JSON parse error
-                    if attempt < max_retries - 1:
-                        delay = (attempt + 1) * 5  # 5, 10, 15 seconds
-                        self.log(f"  System info query failed (attempt {attempt + 1}/{max_retries}). Retrying in {delay}s...", "WARN")
-                        time.sleep(delay)
-                        continue
-                    else:
-                        self.log(f"  Failed to get system info after {max_retries} attempts", "ERROR")
-                        return None
-                        
-            except Exception as e:
-                response_time_ms = int((time.time() - start_time) * 1000)
-                
-                # Log the error
-                self.log_idrac_command(
-                    server_id=server_id,
-                    job_id=job_id,
-                    task_id=None,
-                    command_type='GET',
-                    endpoint='/redfish/v1/Systems/System.Embedded.1',
-                    full_url=system_url,
-                    request_headers={'Authorization': f'Basic {username}:***'},
-                    request_body=None,
-                    status_code=None,
-                    response_time_ms=response_time_ms,
-                    response_body=None,
-                    success=False,
-                    error_message=f"Attempt {attempt + 1}/{max_retries}: {str(e)}",
-                    operation_type='idrac_api'
-                )
-                
-                if attempt < max_retries - 1:
+            # Try to parse JSON, but handle parse errors gracefully
+            response_json = None
+            json_error = None
+            if system_response and system_response.content:
+                try:
+                    response_json = system_response.json()
+                except json.JSONDecodeError as json_err:
+                    json_error = str(json_err)
+                    self.log(f"  Warning: Could not parse response as JSON: {json_err}", "WARN")
+            
+            # Log the system info request
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                task_id=None,
+                command_type='GET',
+                endpoint='/redfish/v1/Systems/System.Embedded.1',
+                full_url=system_url,
+                request_headers={'Authorization': f'Basic {username}:***'},
+                request_body=None,
+                status_code=system_response.status_code if system_response else None,
+                response_time_ms=response_time_ms,
+                response_body=response_json,
+                success=(system_response and system_response.status_code == 200 and response_json is not None),
+                error_message=json_error if json_error else (None if (system_response and system_response.status_code == 200) else f"HTTP {system_response.status_code}" if system_response else "Request failed"),
+                operation_type='idrac_api'
+            )
+            
+            if system_response and system_response.status_code == 200 and response_json is not None:
+                system_data = response_json
+                # Record success
+                self.throttler.record_success(ip)
+            else:
+                self.log(f"  Failed to get system info from {ip}", "ERROR")
+                if system_response and system_response.status_code in [401, 403]:
+                    self.throttler.record_failure(ip, f"HTTP {system_response.status_code}")
+                return None
+                    
+        except Exception as e:
+            # Record failure
+            self.throttler.record_failure(ip, str(e))
+            
+            # Log the error
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                task_id=None,
+                command_type='GET',
+                endpoint='/redfish/v1/Systems/System.Embedded.1',
+                full_url=system_url,
+                request_headers={'Authorization': f'Basic {username}:***'},
+                request_body=None,
+                status_code=None,
+                response_time_ms=0,
+                response_body=None,
+                success=False,
+                error_message=str(e),
+                operation_type='idrac_api'
+            )
+            
+            self.log(f"  Error getting system info from {ip}: {e}", "ERROR")
+            return None
                     delay = (attempt + 1) * 5  # 5, 10, 15 seconds
                     self.log(f"  System info query error (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay}s...", "WARN")
                     time.sleep(delay)
@@ -737,18 +827,18 @@ class JobExecutor:
             return None
 
     def test_idrac_connection(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None) -> Optional[Dict]:
-        """Test iDRAC connection and get basic info (lightweight version)"""
+        """Test iDRAC connection and get basic info (lightweight version using throttler)"""
         url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
-        start_time = time.time()
         
         try:
-            response = requests.get(
-                url,
+            # Use throttler for safe request handling
+            response, response_time_ms = self.throttler.request_with_safety(
+                method='GET',
+                url=url,
+                ip_address=ip,
                 auth=(username, password),
-                verify=False,
-                timeout=5
+                timeout=(2, 10)  # 2s connect, 10s read
             )
-            response_time_ms = int((time.time() - start_time) * 1000)
             
             # Log the test connection request
             self.log_idrac_command(
@@ -760,16 +850,18 @@ class JobExecutor:
                 full_url=url,
                 request_headers={'Authorization': f'Basic {username}:***'},
                 request_body=None,
-                status_code=response.status_code,
+                status_code=response.status_code if response else None,
                 response_time_ms=response_time_ms,
-                response_body=response.json() if response.content else None,
-                success=response.status_code == 200,
-                error_message=None if response.status_code == 200 else f"HTTP {response.status_code}",
+                response_body=response.json() if response and response.content else None,
+                success=response.status_code == 200 if response else False,
+                error_message=None if (response and response.status_code == 200) else (f"HTTP {response.status_code}" if response else "Request failed"),
                 operation_type='idrac_api'
             )
             
-            if response.status_code == 200:
+            if response and response.status_code == 200:
                 data = response.json()
+                # Record success for circuit breaker
+                self.throttler.record_success(ip)
                 return {
                     "manufacturer": data.get("Manufacturer", "Unknown"),
                     "model": data.get("Model", "Unknown"),
@@ -779,9 +871,14 @@ class JobExecutor:
                     "username": username,
                     "password": password,
                 }
+            elif response and response.status_code in [401, 403]:
+                # Authentication failure - record and possibly open circuit
+                self.throttler.record_failure(ip, f"HTTP {response.status_code}")
             return None
         except Exception as e:
-            response_time_ms = int((time.time() - start_time) * 1000)
+            # Record failure for circuit breaker
+            self.throttler.record_failure(ip, str(e))
+            
             self.log_idrac_command(
                 server_id=server_id,
                 job_id=job_id,
@@ -792,7 +889,7 @@ class JobExecutor:
                 request_headers={'Authorization': f'Basic {username}:***'},
                 request_body=None,
                 status_code=None,
-                response_time_ms=response_time_ms,
+                response_time_ms=0,
                 response_body=None,
                 success=False,
                 error_message=str(e),
@@ -1253,23 +1350,38 @@ class JobExecutor:
             
             self.log(f"Scanning {len(ips_to_scan)} IPs...")
             
+            # Get activity settings for discovery thread limit
+            settings = self.fetch_activity_settings()
+            max_threads = settings.get('discovery_max_threads', 5)
+            self.log(f"Using {max_threads} concurrent threads for discovery")
+            
             discovered = []
             auth_failures = []
             
-            with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-                futures = {
-                    executor.submit(
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
+                futures = {}
+                
+                # Submit jobs with pacing to avoid thundering herd
+                for i, ip in enumerate(ips_to_scan):
+                    # Add small random delay between starting each scan (50-200ms)
+                    if i > 0 and len(ips_to_scan) > 10:
+                        time.sleep(0.05 + (0.15 * (i % 10) / 10.0))
+                    
+                    future = executor.submit(
                         self.discover_single_ip,
                         ip,
                         credential_sets,
                         job['id']
-                    ): ip for ip in ips_to_scan
-                }
+                    )
+                    futures[future] = ip
+                
+                timeout_count = 0
+                total_requests = len(ips_to_scan)
                 
                 for future in concurrent.futures.as_completed(futures):
                     ip = futures[future]
                     try:
-                        result = future.result()
+                        result = future.result(timeout=30)  # 30s timeout per IP
                         if result['success']:
                             self.log(f"✓ Found iDRAC at {ip}: {result['model']} (using {result['credential_set_name']})")
                             discovered.append(result)
@@ -1278,6 +1390,11 @@ class JobExecutor:
                                 'ip': ip,
                                 'reason': 'Authentication failed with all credential sets'
                             })
+                    except concurrent.futures.TimeoutError:
+                        timeout_count += 1
+                        # If >30% of requests timeout, warn about overload
+                        if timeout_count / total_requests > 0.3:
+                            self.log("⚠️  Multiple timeouts detected - iDRACs may be overloaded. Consider reducing discovery_max_threads in settings.", "WARN")
                     except Exception as e:
                         pass  # Silent fail for non-responsive IPs
             
@@ -4298,6 +4415,29 @@ class JobExecutor:
     def execute_job(self, job: Dict):
         """Execute a job based on its type"""
         job_type = job['job_type']
+        
+        # Initialize throttler if not already done
+        if self.throttler is None:
+            self.initialize_throttler()
+        
+        # Check if iDRAC operations are paused for iDRAC-related job types
+        idrac_job_types = [
+            'discovery_scan', 'firmware_update', 'full_server_update', 
+            'test_credentials', 'power_action', 'health_check', 
+            'fetch_event_logs', 'boot_configuration', 'virtual_media_mount',
+            'virtual_media_unmount', 'scp_export', 'scp_import',
+            'bios_config_read', 'bios_config_write'
+        ]
+        
+        if job_type in idrac_job_types and self.check_idrac_pause():
+            self.log(f"Skipping {job_type} job {job['id']} - iDRAC operations are paused", "WARN")
+            self.update_job_status(
+                job['id'],
+                'cancelled',
+                completed_at=datetime.now().isoformat(),
+                details={"message": "Job cancelled - iDRAC operations paused via activity settings"}
+            )
+            return
         
         if job_type == 'discovery_scan':
             self.execute_discovery_scan(job)
