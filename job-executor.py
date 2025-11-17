@@ -132,7 +132,8 @@ class JobExecutor:
         response_time_ms: int,
         response_body: Optional[dict],
         success: bool,
-        error_message: Optional[str] = None
+        error_message: Optional[str] = None,
+        operation_type: str = 'idrac_api'
     ):
         """Log iDRAC command to activity monitor"""
         try:
@@ -190,7 +191,8 @@ class JobExecutor:
                 'success': success,
                 'error_message': error_message,
                 'initiated_by': None,
-                'source': 'job_executor'
+                'source': 'job_executor',
+                'operation_type': operation_type
             }
             
             # Insert via Supabase REST API
@@ -530,7 +532,8 @@ class JobExecutor:
                     response_time_ms=response_time_ms,
                     response_body=response_json,
                     success=system_response.status_code == 200 and response_json is not None,
-                    error_message=json_error if json_error else (None if system_response.status_code == 200 else f"HTTP {system_response.status_code}")
+                    error_message=json_error if json_error else (None if system_response.status_code == 200 else f"HTTP {system_response.status_code}"),
+                    operation_type='idrac_api'
                 )
                 
                 if system_response.status_code == 200 and response_json is not None:
@@ -564,7 +567,8 @@ class JobExecutor:
                     response_time_ms=response_time_ms,
                     response_body=None,
                     success=False,
-                    error_message=f"Attempt {attempt + 1}/{max_retries}: {str(e)}"
+                    error_message=f"Attempt {attempt + 1}/{max_retries}: {str(e)}",
+                    operation_type='idrac_api'
                 )
                 
                 if attempt < max_retries - 1:
@@ -619,7 +623,8 @@ class JobExecutor:
                     response_time_ms=response_time_ms,
                     response_body=response_json,
                     success=manager_response.status_code == 200 and response_json is not None,
-                    error_message=json_error if json_error else (None if manager_response.status_code == 200 else f"HTTP {manager_response.status_code}")
+                    error_message=json_error if json_error else (None if manager_response.status_code == 200 else f"HTTP {manager_response.status_code}"),
+                    operation_type='idrac_api'
                 )
                 
                 if manager_response.status_code == 200 and response_json is not None:
@@ -653,7 +658,8 @@ class JobExecutor:
                     response_time_ms=response_time_ms,
                     response_body=None,
                     success=False,
-                    error_message=f"Attempt {attempt + 1}/{max_retries}: {str(e)}"
+                    error_message=f"Attempt {attempt + 1}/{max_retries}: {str(e)}",
+                    operation_type='idrac_api'
                 )
                 
                 if attempt < max_retries - 1:
@@ -749,7 +755,8 @@ class JobExecutor:
                 response_time_ms=response_time_ms,
                 response_body=response.json() if response.content else None,
                 success=response.status_code == 200,
-                error_message=None if response.status_code == 200 else f"HTTP {response.status_code}"
+                error_message=None if response.status_code == 200 else f"HTTP {response.status_code}",
+                operation_type='idrac_api'
             )
             
             if response.status_code == 200:
@@ -779,7 +786,8 @@ class JobExecutor:
                 response_time_ms=response_time_ms,
                 response_body=None,
                 success=False,
-                error_message=str(e)
+                error_message=str(e),
+                operation_type='idrac_api'
             )
             self.log(f"Error testing iDRAC {ip}: {e}", "DEBUG")
             return None
@@ -2136,7 +2144,8 @@ class JobExecutor:
                     response_time_ms=response_time_ms,
                     response_body=response.json() if response.content else None,
                     success=response.status_code == 200,
-                    error_message=None if response.status_code == 200 else f"HTTP {response.status_code}"
+                    error_message=None if response.status_code == 200 else f"HTTP {response.status_code}",
+                    operation_type='idrac_api'
                 )
                 
                 if response.status_code == 200:
@@ -2176,7 +2185,8 @@ class JobExecutor:
                     response_time_ms=response_time_ms,
                     response_body=None,
                     success=False,
-                    error_message=str(e)
+                    error_message=str(e),
+                    operation_type='idrac_api'
                 )
                 raise
             
@@ -2265,7 +2275,8 @@ class JobExecutor:
                         full_url=system_url,
                         status_code=response.status_code,
                         response_time_ms=response_time_ms,
-                        success=response.status_code == 200
+                        success=response.status_code == 200,
+                        operation_type='idrac_api'
                     )
                     
                     if response.status_code == 200:
@@ -2296,7 +2307,8 @@ class JobExecutor:
                             request_body=action_payload,
                             status_code=action_response.status_code,
                             response_time_ms=response_time_ms,
-                            success=action_response.status_code in [200, 202, 204]
+                            success=action_response.status_code in [200, 202, 204],
+                            operation_type='idrac_api'
                         )
                         
                         if action_response.status_code in [200, 202, 204]:
@@ -2633,7 +2645,8 @@ class JobExecutor:
             response_body=response.text if response.status_code not in [200, 204] else None,
             status_code=response.status_code,
             response_time_ms=response_time_ms,
-            success=response.status_code in [200, 204]
+            success=response.status_code in [200, 204],
+            operation_type='idrac_api'
         )
         
         if response.status_code not in [200, 204]:
@@ -2688,7 +2701,8 @@ class JobExecutor:
             response_body=response.text if response.status_code not in [200, 204] else None,
             status_code=response.status_code,
             response_time_ms=response_time_ms,
-            success=response.status_code in [200, 204]
+            success=response.status_code in [200, 204],
+            operation_type='idrac_api'
         )
         
         if response.status_code not in [200, 204]:
@@ -2736,7 +2750,8 @@ class JobExecutor:
             response_body=response.json() if response.status_code == 200 else response.text,
             status_code=response.status_code,
             response_time_ms=response_time_ms,
-            success=response.status_code == 200
+            success=response.status_code == 200,
+            operation_type='idrac_api'
         )
         
         if response.status_code != 200:
@@ -2772,7 +2787,8 @@ class JobExecutor:
                 full_url=system_url,
                 status_code=response.status_code,
                 response_time_ms=response_time_ms,
-                success=response.status_code == 200
+                success=response.status_code == 200,
+                operation_type='idrac_api'
             )
         
         if response.status_code != 200:
