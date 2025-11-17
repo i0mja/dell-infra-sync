@@ -603,10 +603,10 @@ class JobExecutor:
             system_response, response_time_ms = self.throttler.request_with_safety(
                 method='GET',
                 url=system_url,
-                ip_address=ip,
+                ip=ip,
+                logger=self.log,
                 auth=(username, password),
-                timeout=(2, 15),  # 2s connect, 15s read
-                max_retries=max_retries
+                timeout=(2, 15)  # 2s connect, 15s read
             )
             
             # Try to parse JSON, but handle parse errors gracefully
@@ -644,12 +644,12 @@ class JobExecutor:
             else:
                 self.log(f"  Failed to get system info from {ip}", "ERROR")
                 if system_response and system_response.status_code in [401, 403]:
-                    self.throttler.record_failure(ip, f"HTTP {system_response.status_code}")
+                    self.throttler.record_failure(ip, system_response.status_code, self.log)
                 return None
                     
         except Exception as e:
             # Record failure
-            self.throttler.record_failure(ip, str(e))
+            self.throttler.record_failure(ip, None, self.log)
             
             # Log the error
             self.log_idrac_command(
@@ -683,10 +683,10 @@ class JobExecutor:
             manager_response, response_time_ms = self.throttler.request_with_safety(
                 method='GET',
                 url=manager_url,
-                ip_address=ip,
+                ip=ip,
+                logger=self.log,
                 auth=(username, password),
-                timeout=(2, 15),  # 2s connect, 15s read
-                max_retries=max_retries
+                timeout=(2, 15)  # 2s connect, 15s read
             )
             
             # Parse JSON
@@ -724,12 +724,12 @@ class JobExecutor:
             else:
                 # Manager data is optional, log warning and continue
                 self.log(f"  Warning: Could not get manager info from {ip} (continuing with system data only)", "WARN")
-                if manager_response and manager_response.status_code in [401, 403]:
-                    self.throttler.record_failure(ip, f"HTTP {manager_response.status_code}")
+        if manager_response and manager_response.status_code in [401, 403]:
+            self.throttler.record_failure(ip, manager_response.status_code, self.log)
                     
-        except Exception as e:
-            # Record failure
-            self.throttler.record_failure(ip, str(e))
+    except Exception as e:
+        # Record failure
+        self.throttler.record_failure(ip, None, self.log)
             
             # Log the error
             self.log_idrac_command(
@@ -816,7 +816,8 @@ class JobExecutor:
             response, response_time_ms = self.throttler.request_with_safety(
                 method='GET',
                 url=url,
-                ip_address=ip,
+                ip=ip,
+                logger=self.log,
                 auth=(username, password),
                 timeout=(2, 10)  # 2s connect, 10s read
             )
@@ -854,11 +855,11 @@ class JobExecutor:
                 }
             elif response and response.status_code in [401, 403]:
                 # Authentication failure - record and possibly open circuit
-                self.throttler.record_failure(ip, f"HTTP {response.status_code}")
+                self.throttler.record_failure(ip, response.status_code, self.log)
             return None
         except Exception as e:
             # Record failure for circuit breaker
-            self.throttler.record_failure(ip, str(e))
+            self.throttler.record_failure(ip, None, self.log)
             
             self.log_idrac_command(
                 server_id=server_id,
@@ -1665,12 +1666,13 @@ class JobExecutor:
                 'POST',
                 url,
                 ip,
+                self.log,
                 json=payload,
                 timeout=(2, 10)
             )
             
             if response.status_code in [401, 403]:
-                self.throttler.record_failure(ip)
+                self.throttler.record_failure(ip, response.status_code, self.log)
             elif response.status_code == 201:
                 self.throttler.record_success(ip)
                 session_token = response.headers.get('X-Auth-Token')
@@ -1696,6 +1698,7 @@ class JobExecutor:
                 'DELETE',
                 session_uri,
                 ip,
+                self.log,
                 headers=headers,
                 timeout=(2, 10)
             )
@@ -1703,7 +1706,7 @@ class JobExecutor:
             if response.status_code in [200, 204]:
                 self.throttler.record_success(ip)
             else:
-                self.throttler.record_failure(ip)
+                self.throttler.record_failure(ip, response.status_code, self.log)
                 self.log(f"  Closed iDRAC session: {ip}")
         except Exception as e:
             self.log(f"  Error closing session (non-fatal): {e}", "WARN")
@@ -1718,12 +1721,13 @@ class JobExecutor:
                 'GET',
                 url,
                 ip,
+                self.log,
                 headers=headers,
                 timeout=(2, 15)
             )
             
             if response.status_code in [401, 403]:
-                self.throttler.record_failure(ip)
+                self.throttler.record_failure(ip, response.status_code, self.log)
             elif response.status_code == 200:
                 self.throttler.record_success(ip)
                 data = response.json()
@@ -1737,6 +1741,7 @@ class JobExecutor:
                         'GET',
                         f"https://{ip}{member_url}",
                         ip,
+                        self.log,
                         headers=headers,
                         timeout=(2, 5)
                     )
@@ -1787,13 +1792,14 @@ class JobExecutor:
                 'POST',
                 url,
                 ip,
+                self.log,
                 json=payload,
                 headers=headers,
                 timeout=(2, 30)
             )
             
             if response.status_code in [401, 403]:
-                self.throttler.record_failure(ip)
+                self.throttler.record_failure(ip, response.status_code, self.log)
             elif response.status_code == 202:
                 self.throttler.record_success(ip)
                 # Extract task URI from Location header
@@ -1830,12 +1836,13 @@ class JobExecutor:
                 'GET',
                 task_uri,
                 ip,
+                self.log,
                 headers=headers,
                 timeout=(2, 10)
             )
             
             if response.status_code in [401, 403]:
-                self.throttler.record_failure(ip)
+                self.throttler.record_failure(ip, response.status_code, self.log)
             elif response.status_code == 200:
                 self.throttler.record_success(ip)
                 data = response.json()
@@ -1864,13 +1871,14 @@ class JobExecutor:
                 'POST',
                 url,
                 ip,
+                self.log,
                 json=payload,
                 headers=headers,
                 timeout=(2, 10)
             )
             
             if response.status_code in [401, 403]:
-                self.throttler.record_failure(ip)
+                self.throttler.record_failure(ip, response.status_code, self.log)
             elif response.status_code in [200, 204]:
                 self.throttler.record_success(ip)
                 self.log(f"  System reset initiated: {reset_type}")
@@ -2399,6 +2407,7 @@ class JobExecutor:
                         'GET',
                         system_url,
                         ip,
+                        self.log,
                         auth=(username, password),
                         timeout=(2, 10)
                     )
@@ -2416,7 +2425,7 @@ class JobExecutor:
                     )
                     
                     if response.status_code in [401, 403]:
-                        self.throttler.record_failure(ip)
+                        self.throttler.record_failure(ip, response.status_code, self.log)
                         if self.throttler.is_circuit_open(ip):
                             raise Exception(f"Circuit breaker OPEN for {ip} - Possible credential lockout")
                     elif response.status_code == 200:
@@ -2433,6 +2442,7 @@ class JobExecutor:
                             'POST',
                             action_url,
                             ip,
+                            self.log,
                             auth=(username, password),
                             json=action_payload,
                             timeout=(2, 30)
@@ -2574,6 +2584,7 @@ class JobExecutor:
                         'GET',
                         system_url,
                         ip,
+                        self.log,
                         auth=(username, password),
                         timeout=(2, 10)
                     )
@@ -2596,7 +2607,7 @@ class JobExecutor:
                     )
                     
                     if response.status_code in [401, 403]:
-                        self.throttler.record_failure(ip)
+                        self.throttler.record_failure(ip, response.status_code, self.log)
                         if self.throttler.is_circuit_open(ip):
                             raise Exception(f"Circuit breaker OPEN for {ip} - Possible credential lockout")
                     elif response.status_code == 200:
@@ -2606,7 +2617,7 @@ class JobExecutor:
                             health_data['power_state'] = data.get('PowerState')
                             health_data['overall_health'] = data.get('Status', {}).get('Health', 'Unknown')
                     else:
-                        self.throttler.record_failure(ip)
+                        self.throttler.record_failure(ip, response.status_code, self.log)
                         self.log(f"  ⚠️  Failed to get system health: HTTP {response.status_code}", "WARN")
                     
                     # Get Thermal data (temperatures, fans) using throttler
@@ -2616,6 +2627,7 @@ class JobExecutor:
                         'GET',
                         thermal_url,
                         ip,
+                        self.log,
                         auth=(username, password),
                         timeout=(2, 10)
                     )
@@ -2638,7 +2650,7 @@ class JobExecutor:
                     )
                     
                     if response.status_code in [401, 403]:
-                        self.throttler.record_failure(ip)
+                        self.throttler.record_failure(ip, response.status_code, self.log)
                     elif response.status_code == 200:
                         self.throttler.record_success(ip)
                         data = self.safe_json_parse(response)
@@ -2667,8 +2679,10 @@ class JobExecutor:
                         'GET',
                         power_url,
                         ip,
+                        self.log,
                         auth=(username, password),
                         timeout=(2, 10)
+                    )
                     )
                     
                     self.log_idrac_command(
@@ -2689,7 +2703,7 @@ class JobExecutor:
                     )
                     
                     if response.status_code in [401, 403]:
-                        self.throttler.record_failure(ip)
+                        self.throttler.record_failure(ip, response.status_code, self.log)
                     elif response.status_code == 200:
                         self.throttler.record_success(ip)
                         data = self.safe_json_parse(response)
@@ -2698,7 +2712,7 @@ class JobExecutor:
                             psu_statuses = [p.get('Status', {}).get('Health') for p in psus]
                             health_data['psu_health'] = 'OK' if all(s == 'OK' for s in psu_statuses if s) else 'Warning'
                     else:
-                        self.throttler.record_failure(ip)
+                        self.throttler.record_failure(ip, response.status_code, self.log)
                         self.log(f"  ⚠️  Failed to get power data: HTTP {response.status_code}", "WARN")
                     
                     # Get Storage health
@@ -3026,12 +3040,13 @@ class JobExecutor:
                         'GET',
                         sel_url,
                         ip,
+                        self.log,
                         auth=(username, password),
                         timeout=(2, 30)
                     )
                     
                     if response.status_code in [401, 403]:
-                        self.throttler.record_failure(ip)
+                        self.throttler.record_failure(ip, response.status_code, self.log)
                         if self.throttler.is_circuit_open(ip):
                             self.log(f"  ✗ Circuit breaker OPEN for {ip}", "ERROR")
                             failed_count += 1
@@ -3072,7 +3087,7 @@ class JobExecutor:
                             self.log(f"  ⚠ No event log entries found")
                             success_count += 1
                     else:
-                        self.throttler.record_failure(ip)
+                        self.throttler.record_failure(ip, response.status_code, self.log)
                         self.log(f"  ✗ Failed to fetch SEL: HTTP {response.status_code}", "ERROR")
                         failed_count += 1
                         
@@ -3132,6 +3147,7 @@ class JobExecutor:
             'PATCH',
             vm_url,
             ip,
+            self.log,
             auth=(username, password),
             json=payload,
             timeout=(2, 30)
@@ -3187,6 +3203,7 @@ class JobExecutor:
             'PATCH',
             vm_url,
             ip,
+            self.log,
             auth=(username, password),
             json=payload,
             timeout=(2, 30)
@@ -3208,10 +3225,10 @@ class JobExecutor:
         )
         
         if response.status_code in [401, 403]:
-            self.throttler.record_failure(ip)
+            self.throttler.record_failure(ip, response.status_code, self.log)
             raise Exception(f"Authentication failed for {ip}")
         elif response.status_code not in [200, 204]:
-            self.throttler.record_failure(ip)
+            self.throttler.record_failure(ip, response.status_code, self.log)
             error_msg = f"Failed to unmount virtual media: {response.status_code}"
             if response.text:
                 try:
