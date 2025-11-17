@@ -244,25 +244,49 @@ export default function ActivityMonitor() {
   };
 
   const getCommandTypeBadge = (type: string) => {
-    const colors: Record<string, string> = {
-      GET: 'bg-blue-600',
-      POST: 'bg-green-600',
-      PATCH: 'bg-yellow-600',
-      DELETE: 'bg-red-600',
-      network_validation: 'bg-purple-600',
-      network_validation_server: 'bg-purple-600',
-      network_validation_vcenter: 'bg-purple-600',
-      network_validation_dns: 'bg-purple-600',
+    const config: Record<string, { color: string; label: string }> = {
+      // HTTP Methods
+      GET: { color: 'bg-blue-600', label: 'GET' },
+      POST: { color: 'bg-green-600', label: 'POST' },
+      PATCH: { color: 'bg-yellow-600', label: 'PATCH' },
+      DELETE: { color: 'bg-red-600', label: 'DELETE' },
+      
+      // BIOS Operations
+      BIOS_READ: { color: 'bg-cyan-600', label: 'BIOS:READ' },
+      BIOS_READ_PENDING: { color: 'bg-cyan-500', label: 'BIOS:PENDING' },
+      BIOS_WRITE: { color: 'bg-cyan-700', label: 'BIOS:WRITE' },
+      
+      // Power Operations
+      POWER_CONTROL: { color: 'bg-orange-600', label: 'POWER' },
+      
+      // Network Validation
+      network_validation: { color: 'bg-purple-600', label: 'NET:TEST' },
+      network_validation_server: { color: 'bg-purple-600', label: 'NET:SERVER' },
+      network_validation_vcenter: { color: 'bg-purple-600', label: 'NET:VCENTER' },
+      network_validation_dns: { color: 'bg-purple-600', label: 'NET:DNS' },
+      
+      // vCenter Operations
+      VCENTER_AUTH: { color: 'bg-indigo-600', label: 'vC:AUTH' },
+      VCENTER_CONNECTION_TEST: { color: 'bg-indigo-500', label: 'vC:TEST' },
+      VCENTER_SYNC: { color: 'bg-indigo-700', label: 'vC:SYNC' },
+      AUTHENTICATION: { color: 'bg-indigo-600', label: 'AUTH' },
+      DNS_RESOLUTION: { color: 'bg-indigo-500', label: 'DNS' },
+      PORT_CONNECTIVITY: { color: 'bg-indigo-500', label: 'PORT' },
+      SSL_VALIDATION: { color: 'bg-indigo-500', label: 'SSL' },
+      
+      // OpenManage Operations
+      AUTHENTICATE: { color: 'bg-amber-600', label: 'OME:AUTH' },
+      GET_DEVICES: { color: 'bg-amber-500', label: 'OME:DEVICES' },
+      SYNC_COMPLETE: { color: 'bg-amber-700', label: 'OME:SYNC' },
+      EDGE_FUNCTION_SYNC: { color: 'bg-amber-600', label: 'OME:EDGE' },
+      
+      // SCP Operations
+      SCP_EXPORT: { color: 'bg-teal-600', label: 'SCP:EXPORT' },
+      SCP_IMPORT: { color: 'bg-teal-700', label: 'SCP:IMPORT' },
     };
     
-    const labels: Record<string, string> = {
-      network_validation: 'NET:TEST',
-      network_validation_server: 'NET:SERVER',
-      network_validation_vcenter: 'NET:VCENTER',
-      network_validation_dns: 'NET:DNS',
-    };
-    
-    return <Badge className={colors[type] || 'bg-gray-600'}>{labels[type] || type}</Badge>;
+    const badgeConfig = config[type] || { color: 'bg-gray-600', label: type };
+    return <Badge className={badgeConfig.color}>{badgeConfig.label}</Badge>;
   };
 
   const getOperationTypeBadge = (type: 'idrac_api' | 'vcenter_api' | 'openmanage_api') => {
@@ -400,10 +424,15 @@ export default function ActivityMonitor() {
               <SelectItem value="POST">POST</SelectItem>
               <SelectItem value="PATCH">PATCH</SelectItem>
               <SelectItem value="DELETE">DELETE</SelectItem>
-              <SelectItem value="network_validation">Network: Validation</SelectItem>
-              <SelectItem value="network_validation_server">Network: Server Test</SelectItem>
-              <SelectItem value="network_validation_vcenter">Network: vCenter Test</SelectItem>
-              <SelectItem value="network_validation_dns">Network: DNS Test</SelectItem>
+              <SelectItem value="BIOS_READ">BIOS Read</SelectItem>
+              <SelectItem value="BIOS_WRITE">BIOS Write</SelectItem>
+              <SelectItem value="POWER_CONTROL">Power Control</SelectItem>
+              <SelectItem value="VCENTER_AUTH">vCenter Auth</SelectItem>
+              <SelectItem value="VCENTER_SYNC">vCenter Sync</SelectItem>
+              <SelectItem value="AUTHENTICATE">OpenManage Auth</SelectItem>
+              <SelectItem value="network_validation">Network Tests</SelectItem>
+              <SelectItem value="SCP_EXPORT">SCP Export</SelectItem>
+              <SelectItem value="SCP_IMPORT">SCP Import</SelectItem>
             </SelectContent>
           </Select>
 
