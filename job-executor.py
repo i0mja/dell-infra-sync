@@ -2669,7 +2669,7 @@ class JobExecutor:
                             
                             health_data['sensors'] = {'temperatures': temps[:5], 'fans': fans[:5]}  # Store subset
                     else:
-                        self.throttler.record_failure(ip)
+                        self.throttler.record_failure(ip, response.status_code, self.log)
                         self.log(f"  ⚠️  Failed to get thermal data: HTTP {response.status_code}", "WARN")
                     
                     # Get Power data (PSU) using throttler
@@ -2682,7 +2682,6 @@ class JobExecutor:
                         self.log,
                         auth=(username, password),
                         timeout=(2, 10)
-                    )
                     )
                     
                     self.log_idrac_command(
