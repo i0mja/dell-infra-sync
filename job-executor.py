@@ -2383,16 +2383,41 @@ class JobExecutor:
             
             success_count = 0
             failed_count = 0
+            failed_servers = []
             
             for server in servers:
                 ip = server['ip_address']
                 self.log(f"Checking health for {ip}...")
                 
+                # Create task for this server
+                task_url = f"{DSM_URL}/rest/v1/job_tasks"
+                task_data = {
+                    'job_id': job['id'],
+                    'server_id': server['id'],
+                    'status': 'running',
+                    'started_at': datetime.now().isoformat()
+                }
+                task_response = requests.post(task_url, headers=headers, json=task_data, verify=VERIFY_SSL)
+                task_id = task_response.json()[0]['id'] if task_response.status_code == 201 else None
+                
                 # Get credentials
                 username, password = self.get_server_credentials(server)
                 if not username or not password:
-                    self.log(f"  ✗ No credentials for {ip}", "WARN")
+                    error_msg = f"No credentials configured for {ip}"
+                    self.log(f"  ✗ {error_msg}", "WARN")
                     failed_count += 1
+                    failed_servers.append({
+                        'ip_address': ip,
+                        'hostname': server.get('hostname'),
+                        'server_id': server['id'],
+                        'error': error_msg
+                    })
+                    if task_id:
+                        self.update_task_status(
+                            task_id, 'failed',
+                            log=error_msg,
+                            completed_at=datetime.now().isoformat()
+                        )
                     continue
                 
                 try:
@@ -2675,13 +2700,45 @@ class JobExecutor:
                         
                         self.log(f"  ✓ Health check complete: {health_data.get('overall_health')}")
                         success_count += 1
+                        if task_id:
+                            self.update_task_status(
+                                task_id, 'completed',
+                                log="Health check successful",
+                                completed_at=datetime.now().isoformat()
+                            )
                     else:
-                        self.log(f"  ✗ Failed to store health data", "ERROR")
+                        error_msg = "Failed to store health data"
+                        self.log(f"  ✗ {error_msg}", "ERROR")
                         failed_count += 1
+                        failed_servers.append({
+                            'ip_address': ip,
+                            'hostname': server.get('hostname'),
+                            'server_id': server['id'],
+                            'error': error_msg
+                        })
+                        if task_id:
+                            self.update_task_status(
+                                task_id, 'failed',
+                                log=error_msg,
+                                completed_at=datetime.now().isoformat()
+                            )
                         
                 except Exception as e:
-                    self.log(f"  ✗ Error: {e}", "ERROR")
+                    error_msg = str(e)
+                    self.log(f"  ✗ Error: {error_msg}", "ERROR")
                     failed_count += 1
+                    failed_servers.append({
+                        'ip_address': ip,
+                        'hostname': server.get('hostname'),
+                        'server_id': server['id'],
+                        'error': error_msg
+                    })
+                    if task_id:
+                        self.update_task_status(
+                            task_id, 'failed',
+                            log=error_msg,
+                            completed_at=datetime.now().isoformat()
+                        )
             
             # Complete job
             result = {
@@ -2689,6 +2746,11 @@ class JobExecutor:
                 "failed_count": failed_count,
                 "total": len(servers)
             }
+            
+            # Add detailed failure information
+            if failed_count > 0 and failed_servers:
+                result['failed_servers'] = failed_servers[:10]  # Limit to first 10 to avoid huge payloads
+                result['error'] = f"{failed_count} server(s) failed health check"
             
             self.update_job_status(
                 job['id'],

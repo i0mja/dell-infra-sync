@@ -212,6 +212,39 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
             </CardContent>
           </Card>
 
+          {/* Error Alert for Failed Jobs */}
+          {job.status === 'failed' && job.details?.error && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Job Failed</AlertTitle>
+              <AlertDescription className="mt-2">
+                <div className="font-mono text-sm whitespace-pre-wrap">
+                  {job.details.error}
+                </div>
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {/* Health Check Failure Details */}
+          {job.status === 'failed' && job.job_type === 'health_check' && job.details?.failed_servers && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Health Check Failures ({job.details.failed_count}/{job.details.total})</AlertTitle>
+              <AlertDescription className="mt-2">
+                <ScrollArea className="h-[200px]">
+                  <div className="space-y-2">
+                    {job.details.failed_servers.map((failure: any, idx: number) => (
+                      <div key={idx} className="p-2 bg-destructive/10 rounded border border-destructive/20">
+                        <div className="font-medium">{failure.ip_address}</div>
+                        <div className="text-sm font-mono mt-1">{failure.error}</div>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* Progress */}
           {tasks.length > 0 && job.job_type !== 'discovery_scan' && (
             <Card>
