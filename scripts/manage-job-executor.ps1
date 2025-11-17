@@ -128,7 +128,11 @@ function Read-SecureInput {
         }
         Write-ColorOutput ": " -Color $Colors.Prompt -NoNewLine
         $value = Read-Host
-        return if ([string]::IsNullOrWhiteSpace($value)) { $DefaultValue } else { $value }
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            return $DefaultValue
+        } else {
+            return $value
+        }
     }
 }
 
