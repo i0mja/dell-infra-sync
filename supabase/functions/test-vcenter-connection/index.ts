@@ -1,6 +1,7 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { logIdracCommand } from '../_shared/idrac-logger.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -130,6 +131,25 @@ serve(async (req) => {
           .from('vcenter_settings')
           .update({ last_sync: new Date().toISOString() })
           .eq('host', host);
+        
+        // Log successful connection to Activity Monitor
+        await logIdracCommand({
+          supabase: supabaseAdmin as any,
+          jobId: undefined,
+          serverId: undefined,
+          taskId: undefined,
+          commandType: 'VCENTER_CONNECTION_TEST',
+          endpoint: '/api/session',
+          fullUrl: vcenterUrl,
+          requestBody: { host, port },
+          statusCode: 200,
+          responseTimeMs: responseTime,
+          responseBody: { version },
+          success: true,
+          initiatedBy: userId,
+          source: 'test_vcenter_connection',
+          operationType: 'vcenter_api',
+        });
 
         return new Response(
           JSON.stringify({
@@ -144,6 +164,26 @@ serve(async (req) => {
       } else {
         const errorText = await response.text();
         console.error(`vCenter connection failed: ${response.status} - ${errorText}`);
+        
+        // Log failed connection to Activity Monitor
+        await logIdracCommand({
+          supabase: supabaseAdmin as any,
+          jobId: undefined,
+          serverId: undefined,
+          taskId: undefined,
+          commandType: 'VCENTER_CONNECTION_TEST',
+          endpoint: '/api/session',
+          fullUrl: vcenterUrl,
+          requestBody: { host, port },
+          statusCode: response.status,
+          responseTimeMs: responseTime,
+          responseBody: { error: errorText },
+          success: false,
+          errorMessage: `Connection failed: ${response.status} ${response.statusText}`,
+          initiatedBy: userId,
+          source: 'test_vcenter_connection',
+          operationType: 'vcenter_api',
+        });
         
         return new Response(
           JSON.stringify({
