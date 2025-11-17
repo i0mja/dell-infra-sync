@@ -106,6 +106,15 @@ def _safe_to_stdout(text: str) -> str:
     except Exception:
         return text.encode("ascii", errors="replace").decode("ascii", errors="replace")
 
+def _safe_json_parse(response):
+    """Safely parse JSON response, returning dict or text on failure"""
+    try:
+        return response.json()
+    except Exception:
+        # Return truncated text if JSON parsing fails
+        text = response.text[:500] if hasattr(response, 'text') else str(response.content[:500])
+        return {"_raw_response": text, "_parse_error": "Not valid JSON"}
+
 class JobExecutor:
     def __init__(self):
         self.vcenter_conn = None
@@ -2286,14 +2295,14 @@ class JobExecutor:
                     request_body=None,
                     status_code=response.status_code,
                     response_time_ms=response_time_ms,
-                    response_body=response.json() if response.content else None,
+                    response_body=_safe_json_parse(response) if response.content else None,
                     success=response.status_code == 200,
                     error_message=None if response.status_code == 200 else f"HTTP {response.status_code}",
                     operation_type='idrac_api'
                 )
                 
                 if response.status_code == 200:
-                    data = response.json()
+                    data = _safe_json_parse(response)
                     result = {
                         "success": True,
                         "message": "Connection successful",
