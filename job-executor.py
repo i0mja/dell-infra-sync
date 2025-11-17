@@ -702,7 +702,7 @@ class JobExecutor:
             return {
                 "manufacturer": system_data.get("Manufacturer", "Unknown"),
                 "model": system_data.get("Model", "Unknown"),
-                "service_tag": system_data.get("SerialNumber", None),  # Dell Service Tag is SerialNumber
+                "service_tag": system_data.get("SKU") or system_data.get("SerialNumber", None),  # Dell Service Tag is in SKU field
                 "hostname": system_data.get("HostName", None) or None,  # Convert empty string to None
                 "bios_version": system_data.get("BiosVersion", None),
                 "cpu_count": cpu_count,

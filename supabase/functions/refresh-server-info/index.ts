@@ -261,7 +261,7 @@ Deno.serve(async (req) => {
     // Extract comprehensive server information
     const hostname = redfishData.HostName || null;
     const model = redfishData.Model || null;
-    const service_tag = rootData?.Oem?.Dell?.ServiceTag || redfishData.SKU || redfishData.SerialNumber || null;
+    const service_tag = redfishData.SKU || rootData?.Oem?.Dell?.ServiceTag || redfishData.SerialNumber || null;
     const bios_version = redfishData.BiosVersion || null;
     const manager_mac_address = rootData?.Oem?.Dell?.ManagerMACAddress || null;
     const product_name = rootData?.Product || null;
