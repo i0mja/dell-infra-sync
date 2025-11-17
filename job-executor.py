@@ -123,6 +123,10 @@ class JobExecutor:
         self.throttler = None  # Will be initialized on first use
         self.activity_settings = {}  # Cache settings
         self.last_settings_fetch = 0  # Timestamp for cache invalidation
+    
+    def safe_json_parse(self, response):
+        """Instance method wrapper for _safe_json_parse"""
+        return _safe_json_parse(response)
         
     def log(self, message: str, level: str = "INFO"):
         """Log with timestamp"""
@@ -155,7 +159,7 @@ class JobExecutor:
             )
             
             if response.status_code == 200:
-                settings_list = response.json()
+                settings_list = _safe_json_parse(response)
                 if settings_list and len(settings_list) > 0:
                     self.activity_settings = settings_list[0]
                     self.last_settings_fetch = current_time
@@ -334,7 +338,7 @@ class JobExecutor:
             
             response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
             if response.status_code == 200:
-                settings = response.json()
+                settings = _safe_json_parse(response)
                 if settings and len(settings) > 0:
                     self.encryption_key = settings[0].get('encryption_key')
                     if self.encryption_key:
@@ -373,7 +377,7 @@ class JobExecutor:
             response = requests.post(url, headers=headers, json=payload, verify=VERIFY_SSL)
             if response.status_code == 200:
                 # RPC returns the decrypted string directly
-                decrypted = response.json()
+                decrypted = _safe_json_parse(response)
                 if decrypted:
                     return decrypted
                 else:
@@ -437,7 +441,7 @@ class JobExecutor:
                 return []
             
             matching_sets = []
-            ip_range_entries = response.json()
+            ip_range_entries = _safe_json_parse(response)
             
             for ip_range_entry in ip_range_entries:
                 ip_range = ip_range_entry['ip_range']
@@ -481,7 +485,7 @@ class JobExecutor:
             
             response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
             if response.status_code == 200:
-                servers = response.json()
+                servers = _safe_json_parse(response)
                 if servers and len(servers) > 0:
                     server = servers[0]
                     # Use server-specific credentials if available, otherwise use defaults
@@ -520,7 +524,7 @@ class JobExecutor:
             
             response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
             if response.status_code == 200:
-                jobs = response.json()
+                jobs = _safe_json_parse(response)
                 # Filter by schedule_at if set
                 ready_jobs = []
                 for job in jobs:
@@ -595,7 +599,7 @@ class JobExecutor:
             
             response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
             if response.status_code == 200:
-                return response.json()
+                return _safe_json_parse(response)
             return []
         except Exception as e:
             self.log(f"Error fetching tasks: {e}", "ERROR")
@@ -843,14 +847,14 @@ class JobExecutor:
                 request_body=None,
                 status_code=response.status_code if response else None,
                 response_time_ms=response_time_ms,
-                response_body=response.json() if response and response.content else None,
+                response_body=_safe_json_parse(response) if response and response.content else None,
                 success=response.status_code == 200 if response else False,
                 error_message=None if (response and response.status_code == 200) else (f"HTTP {response.status_code}" if response else "Request failed"),
                 operation_type='idrac_api'
             )
             
             if response and response.status_code == 200:
-                data = response.json()
+                data = _safe_json_parse(response)
                 # Record success for circuit breaker
                 self.throttler.record_success(ip)
                 return {
@@ -984,7 +988,7 @@ class JobExecutor:
             if servers_response.status_code != 200:
                 raise Exception(f"Failed to fetch servers: {servers_response.status_code}")
             
-            servers = servers_response.json()
+            servers = _safe_json_parse(servers_response)
             self.log(f"Found {len(servers)} server(s) to refresh")
             
             refreshed_count = 0
@@ -1125,7 +1129,7 @@ class JobExecutor:
             response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
             
             if response.status_code == 200:
-                return response.json()
+                return _safe_json_parse(response)
             return []
         except Exception as e:
             self.log(f"Error fetching credential sets: {e}", "ERROR")
@@ -1233,9 +1237,9 @@ class JobExecutor:
                 'discovery_job_id': job_id,
             }
             
-            if existing.status_code == 200 and existing.json():
+            if existing.status_code == 200 and _safe_json_parse(existing):
                 # Update existing server
-                server_id = existing.json()[0]['id']
+                server_id = _safe_json_parse(existing)[0]['id']
                 update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}"
                 requests.patch(update_url, headers=headers, json=server_data, verify=VERIFY_SSL)
                 self.log(f"Updated existing server: {server['ip']}")
@@ -1269,9 +1273,9 @@ class JobExecutor:
                 'notes': f'Discovered by IP scan on {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} - iDRAC detected but no valid credentials'
             }
             
-            if existing.status_code == 200 and existing.json():
+            if existing.status_code == 200 and _safe_json_parse(existing):
                 # Update existing server with auth failure status
-                server_id = existing.json()[0]['id']
+                server_id = _safe_json_parse(existing)[0]['id']
                 update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}"
                 requests.patch(update_url, headers=headers, json=server_data, verify=VERIFY_SSL)
                 self.log(f"Updated server {ip} - auth failed status")
@@ -1470,7 +1474,7 @@ class JobExecutor:
             if response.status_code != 200:
                 raise Exception(f"Failed to fetch vCenter settings: {response.status_code}")
             
-            settings_list = response.json()
+            settings_list = _safe_json_parse(response)
             if not settings_list:
                 raise Exception("vCenter settings not configured")
             
@@ -1528,7 +1532,7 @@ class JobExecutor:
                         verify=VERIFY_SSL
                     )
                     
-                    existing_hosts = check_response.json() if check_response.status_code == 200 else []
+                    existing_hosts = _safe_json_parse(check_response) if check_response.status_code == 200 else []
                     existing_host = existing_hosts[0] if existing_hosts else None
                     
                     host_data = {
@@ -1578,7 +1582,7 @@ class JobExecutor:
                         if insert_response.status_code not in [200, 201]:
                             raise Exception(f"Failed to insert host: {insert_response.status_code}")
                         
-                        new_host = insert_response.json()[0]
+                        new_host = _safe_json_parse(insert_response)[0]
                         host_id = new_host['id']
                         hosts_new += 1
                         self.log(f"  Created: {host_name}")
@@ -1595,7 +1599,7 @@ class JobExecutor:
                         )
                         
                         if server_response.status_code == 200:
-                            matching_servers = server_response.json()
+                            matching_servers = _safe_json_parse(server_response)
                             if matching_servers:
                                 server_id = matching_servers[0]['id']
                                 
@@ -1739,7 +1743,7 @@ class JobExecutor:
                 self.throttler.record_failure(ip, response.status_code, self.log)
             elif response.status_code == 200:
                 self.throttler.record_success(ip)
-                data = response.json()
+                data = _safe_json_parse(response)
                 members = data.get('Members', [])
                 
                 # Extract key firmware components
@@ -1757,7 +1761,7 @@ class JobExecutor:
                     
                     if member_resp.status_code == 200:
                         self.throttler.record_success(ip)
-                        fw_data = member_resp.json()
+                        fw_data = _safe_json_parse(member_resp)
                         name = fw_data.get('Name', 'Unknown')
                         version = fw_data.get('Version', 'Unknown')
                         firmware_info[name] = version
@@ -1815,7 +1819,7 @@ class JobExecutor:
                 task_uri = response.headers.get('Location')
                 if not task_uri:
                     # Try to get it from response body
-                    data = response.json()
+                    data = _safe_json_parse(response)
                     task_uri = data.get('@odata.id') or data.get('TaskUri')
                 
                 self.log(f"  Firmware update initiated, task URI: {task_uri}")
@@ -1854,7 +1858,7 @@ class JobExecutor:
                 self.throttler.record_failure(ip, response.status_code, self.log)
             elif response.status_code == 200:
                 self.throttler.record_success(ip)
-                data = response.json()
+                data = _safe_json_parse(response)
                 return {
                     "TaskState": data.get("TaskState", "Unknown"),
                     "PercentComplete": data.get("PercentComplete", 0),
@@ -2148,7 +2152,7 @@ class JobExecutor:
             
             response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
             response.raise_for_status()
-            sub_jobs = response.json()
+            sub_jobs = _safe_json_parse(response)
             
             if not sub_jobs:
                 raise Exception("No sub-jobs found for full server update")
@@ -2179,7 +2183,7 @@ class JobExecutor:
                             verify=VERIFY_SSL
                         )
                         status_response.raise_for_status()
-                        status_data = status_response.json()
+                        status_data = _safe_json_parse(status_response)
                         
                         if status_data and len(status_data) > 0:
                             current_status = status_data[0]['status']
@@ -2392,7 +2396,7 @@ class JobExecutor:
             
             servers_url = f"{DSM_URL}/rest/v1/servers?id=in.({','.join(server_ids)})"
             servers_response = requests.get(servers_url, headers=headers, verify=VERIFY_SSL)
-            servers = servers_response.json() if servers_response.status_code == 200 else []
+            servers = _safe_json_parse(servers_response) if servers_response.status_code == 200 else []
             
             success_count = 0
             failed_count = 0
@@ -2439,7 +2443,7 @@ class JobExecutor:
                             raise Exception(f"Circuit breaker OPEN for {ip} - Possible credential lockout")
                     elif response.status_code == 200:
                         self.throttler.record_success(ip)
-                        data = response.json()
+                        data = _safe_json_parse(response)
                         current_state = data.get('PowerState', 'Unknown')
                         self.log(f"  Current power state: {current_state}")
                         
@@ -3023,7 +3027,7 @@ class JobExecutor:
                 servers_url = f"{DSM_URL}/rest/v1/servers"
             
             servers_response = requests.get(servers_url, headers=headers, verify=VERIFY_SSL)
-            servers = servers_response.json() if servers_response.status_code == 200 else []
+            servers = _safe_json_parse(servers_response) if servers_response.status_code == 200 else []
             
             total_events = 0
             success_count = 0
@@ -3061,7 +3065,7 @@ class JobExecutor:
                             continue
                     elif response.status_code == 200:
                         self.throttler.record_success(ip)
-                        data = response.json()
+                        data = _safe_json_parse(response)
                         members = data.get('Members', [])
                         
                         events_to_insert = []
@@ -3180,7 +3184,7 @@ class JobExecutor:
             error_msg = f"Failed to mount virtual media: {response.status_code}"
             if response.text:
                 try:
-                    error_data = response.json()
+                    error_data = _safe_json_parse(response)
                     error_msg += f" - {error_data.get('error', {}).get('message', response.text)}"
                 except:
                     error_msg += f" - {response.text}"
@@ -3240,7 +3244,7 @@ class JobExecutor:
             error_msg = f"Failed to unmount virtual media: {response.status_code}"
             if response.text:
                 try:
-                    error_data = response.json()
+                    error_data = _safe_json_parse(response)
                     error_msg += f" - {error_data.get('error', {}).get('message', response.text)}"
                 except:
                     error_msg += f" - {response.text}"
@@ -3280,7 +3284,7 @@ class JobExecutor:
             command_type='GET',
             endpoint=f'/redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia/{media_slot}',
             full_url=vm_url,
-            response_body=response.json() if response.status_code == 200 else response.text,
+            response_body=_safe_json_parse(response) if response.status_code == 200 else response.text,
             status_code=response.status_code,
             response_time_ms=response_time_ms,
             success=response.status_code == 200,
@@ -3290,7 +3294,7 @@ class JobExecutor:
         if response.status_code != 200:
             raise Exception(f"Failed to get virtual media status: {response.status_code}")
         
-        data = response.json()
+        data = _safe_json_parse(response)
         return {
             'inserted': data.get('Inserted', False),
             'write_protected': data.get('WriteProtected', True),
@@ -3327,7 +3331,7 @@ class JobExecutor:
         if response.status_code != 200:
             raise Exception(f"Failed to fetch boot config: {response.status_code}")
         
-        data = response.json()
+        data = _safe_json_parse(response)
         boot_data = data.get('Boot', {})
         
         return {
@@ -3454,7 +3458,7 @@ class JobExecutor:
             error_msg = f"Failed to set boot order: {response.status_code}"
             if response.text:
                 try:
-                    error_data = response.json()
+                    error_data = _safe_json_parse(response)
                     error_msg += f" - {error_data.get('error', {}).get('message', response.text)}"
                 except:
                     error_msg += f" - {response.text}"
@@ -3488,7 +3492,7 @@ class JobExecutor:
             
             servers_url = f"{DSM_URL}/rest/v1/servers?id=in.({','.join(server_ids)})"
             servers_response = requests.get(servers_url, headers=headers, verify=VERIFY_SSL)
-            servers = servers_response.json() if servers_response.status_code == 200 else []
+            servers = _safe_json_parse(servers_response) if servers_response.status_code == 200 else []
             
             success_count = 0
             failed_count = 0
@@ -3883,7 +3887,7 @@ class JobExecutor:
                 request_body=None,
                 request_headers={'Authorization': '[REDACTED]'},
                 status_code=current_resp.status_code,
-                response_body=current_resp.json() if current_resp.ok else None,
+                response_body=_safe_json_parse(current_resp) if current_resp.ok else None,
                 response_time_ms=response_time_ms,
                 success=current_resp.ok,
                 error_message=None if current_resp.ok else current_resp.text,
@@ -3894,7 +3898,7 @@ class JobExecutor:
             if not current_resp.ok:
                 raise Exception(f"Failed to read current BIOS: HTTP {current_resp.status_code}")
             
-            current_data = current_resp.json()
+            current_data = _safe_json_parse(current_resp)
             current_attributes = current_data.get('Attributes', {})
             bios_version = current_data.get('BiosVersion', 'Unknown')
             
@@ -3921,7 +3925,7 @@ class JobExecutor:
                 request_body=None,
                 request_headers={'Authorization': '[REDACTED]'},
                 status_code=pending_resp.status_code,
-                response_body=pending_resp.json() if pending_resp.ok else None,
+                response_body=_safe_json_parse(pending_resp) if pending_resp.ok else None,
                 response_time_ms=response_time_ms,
                 success=pending_resp.ok,
                 error_message=None if pending_resp.ok else pending_resp.text,
@@ -3931,7 +3935,7 @@ class JobExecutor:
             
             pending_attributes = None
             if pending_resp.ok:
-                pending_data = pending_resp.json()
+                pending_data = _safe_json_parse(pending_resp)
                 pending_attributes = pending_data.get('Attributes', {})
                 if pending_attributes:
                     self.log(f"  [OK] Retrieved {len(pending_attributes)} pending BIOS attributes")
@@ -4044,7 +4048,7 @@ class JobExecutor:
             response = requests.get(url, headers=headers, verify=verify_ssl, timeout=60)
             response_time = int((time.time() - start_time) * 1000)
             
-            data = response.json() if response.status_code == 200 else {}
+            data = _safe_json_parse(response) if response.status_code == 200 else {}
             devices = data.get("value", [])
             
             # Log device retrieval activity
@@ -4128,7 +4132,7 @@ class JobExecutor:
         
         check_url = f"{DSM_URL}/rest/v1/servers?service_tag=eq.{service_tag}&select=id"
         response = requests.get(check_url, headers=headers, verify=VERIFY_SSL)
-        existing = response.json() if response.status_code == 200 else []
+        existing = _safe_json_parse(response) if response.status_code == 200 else []
         
         server_payload = {
             'ip_address': device_data['ip_address'],
@@ -4157,7 +4161,7 @@ class JobExecutor:
             
             if response.status_code in [200, 201]:
                 # Try auto-linking with vCenter
-                new_server = response.json()
+                new_server = _safe_json_parse(response)
                 if new_server:
                     server_id = new_server[0]['id'] if isinstance(new_server, list) else new_server['id']
                     self.auto_link_vcenter(server_id, service_tag)
@@ -4178,7 +4182,7 @@ class JobExecutor:
             response = requests.get(vcenter_url, headers=headers, verify=VERIFY_SSL)
             
             if response.status_code == 200:
-                hosts = response.json()
+                hosts = _safe_json_parse(response)
                 if hosts:
                     vcenter_host_id = hosts[0]['id']
                     
@@ -4208,10 +4212,10 @@ class JobExecutor:
                 verify=VERIFY_SSL
             )
             
-            if response.status_code != 200 or not response.json():
+            if response.status_code != 200 or not _safe_json_parse(response):
                 raise Exception("OpenManage settings not configured")
             
-            settings = response.json()[0]
+            settings = _safe_json_parse(response)[0]
             
             if not settings.get('sync_enabled'):
                 raise Exception("OpenManage sync is disabled in settings")
@@ -4411,7 +4415,7 @@ class JobExecutor:
                 request_body=payload,
                 request_headers={'Authorization': '[REDACTED]', 'Content-Type': 'application/json'},
                 status_code=settings_resp.status_code,
-                response_body=settings_resp.json() if settings_resp.ok and settings_resp.text else None,
+                response_body=_safe_json_parse(settings_resp) if settings_resp.ok and settings_resp.text else None,
                 response_time_ms=response_time_ms,
                 success=settings_resp.ok,
                 error_message=None if settings_resp.ok else settings_resp.text,
@@ -4422,7 +4426,7 @@ class JobExecutor:
                 error_msg = f"Failed to apply BIOS settings: HTTP {settings_resp.status_code}"
                 if settings_resp.text:
                     try:
-                        error_data = settings_resp.json()
+                        error_data = _safe_json_parse(settings_resp)
                         if 'error' in error_data:
                             error_msg = f"{error_msg} - {error_data['error'].get('message', error_data['error'])}"
                     except:
@@ -4656,7 +4660,7 @@ class JobExecutor:
                         full_url=export_url,
                         request_headers={'Authorization': '[REDACTED]'},
                         request_body=payload,
-                        response_body=response.json() if response.status_code == 200 else response.text,
+                        response_body=_safe_json_parse(response) if response.status_code == 200 else response.text,
                         status_code=response.status_code,
                         response_time_ms=response_time_ms,
                         success=response.status_code == 200,
@@ -4666,7 +4670,7 @@ class JobExecutor:
                     if response.status_code != 200:
                         raise Exception(f"Export failed: {response.status_code} - {response.text}")
                     
-                    export_data = response.json()
+                    export_data = _safe_json_parse(response)
                     
                     # Get the SCP content from the response
                     scp_content = export_data.get('SystemConfiguration', export_data)
@@ -4798,7 +4802,7 @@ class JobExecutor:
             if backup_response.status_code != 200:
                 raise Exception(f"Failed to fetch backup: {backup_response.text}")
             
-            backups = backup_response.json()
+            backups = _safe_json_parse(backup_response)
             if not backups:
                 raise Exception(f"Backup not found: {backup_id}")
             
@@ -4875,7 +4879,7 @@ class JobExecutor:
                         full_url=import_url,
                         request_headers={'Authorization': '[REDACTED]'},
                         request_body={'ShareParameters': payload['ShareParameters'], 'ShutdownType': shutdown_type},
-                        response_body=response.json() if response.status_code in [200, 202] else response.text,
+                        response_body=_safe_json_parse(response) if response.status_code in [200, 202] else response.text,
                         status_code=response.status_code,
                         response_time_ms=response_time_ms,
                         success=response.status_code in [200, 202],
@@ -4885,7 +4889,7 @@ class JobExecutor:
                     if response.status_code not in [200, 202]:
                         raise Exception(f"Import failed: {response.status_code} - {response.text}")
                     
-                    import_data = response.json()
+                    import_data = _safe_json_parse(response)
                     
                     # Update backup record
                     requests.patch(
@@ -5192,10 +5196,10 @@ class JobExecutor:
                 verify=VERIFY_SSL
             )
             
-            if response.status_code != 200 or not response.json():
+            if response.status_code != 200 or not _safe_json_parse(response):
                 raise Exception("vCenter settings not configured")
             
-            settings = response.json()[0]
+            settings = _safe_json_parse(response)[0]
             host = settings['host']
             port = settings.get('port', 443)
             verify_ssl = settings.get('verify_ssl', True)
