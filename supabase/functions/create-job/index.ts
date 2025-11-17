@@ -8,7 +8,11 @@ const corsHeaders = {
 };
 
 interface CreateJobRequest {
-  job_type: 'firmware_update' | 'discovery_scan' | 'vcenter_sync' | 'full_server_update';
+  job_type: 'firmware_update' | 'discovery_scan' | 'vcenter_sync' | 'full_server_update' |
+            'test_credentials' | 'power_action' | 'health_check' | 'fetch_event_logs' |
+            'boot_configuration' | 'virtual_media_mount' | 'virtual_media_unmount' |
+            'bios_config_read' | 'bios_config_write' | 'scp_export' | 'scp_import' |
+            'vcenter_connectivity_test' | 'openmanage_sync';
   target_scope: any;
   details?: any;
   schedule_at?: string;
@@ -29,9 +33,27 @@ function validateUUID(uuid: string): boolean {
 
 function validateJobRequest(request: CreateJobRequest): { valid: boolean; error?: string } {
   // Validate job type
-  const validTypes = ['firmware_update', 'discovery_scan', 'vcenter_sync', 'full_server_update'];
+  const validTypes = [
+    'firmware_update',
+    'discovery_scan',
+    'vcenter_sync',
+    'full_server_update',
+    'test_credentials',
+    'power_action',
+    'health_check',
+    'fetch_event_logs',
+    'boot_configuration',
+    'virtual_media_mount',
+    'virtual_media_unmount',
+    'bios_config_read',
+    'bios_config_write',
+    'scp_export',
+    'scp_import',
+    'vcenter_connectivity_test',
+    'openmanage_sync'
+  ];
   if (!request.job_type || !validTypes.includes(request.job_type)) {
-    return { valid: false, error: 'Invalid job_type. Must be one of: firmware_update, discovery_scan, vcenter_sync, full_server_update' };
+    return { valid: false, error: 'Invalid job_type. Must be one of: ' + validTypes.join(', ') };
   }
 
   // Validate target_scope
@@ -136,6 +158,8 @@ serve(async (req) => {
     // Validate request
     const validation = validateJobRequest(jobRequest);
     if (!validation.valid) {
+      console.error('❌ Job validation failed:', validation.error);
+      console.error('   Request job_type:', jobRequest.job_type);
       return new Response(
         JSON.stringify({ error: validation.error }),
         { 
@@ -144,6 +168,8 @@ serve(async (req) => {
         }
       );
     }
+    
+    console.log('✓ Creating job:', jobRequest.job_type, 'for user:', userId);
 
     // Create the job with RLS permissions
     const { data: newJob, error: insertError } = await supabase
