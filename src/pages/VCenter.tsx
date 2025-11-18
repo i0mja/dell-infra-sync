@@ -361,6 +361,11 @@ const VCenter = () => {
     }
   };
 
+  const handleClusterUpdate = (clusterName?: string) => {
+    setSelectedCluster(clusterName || '');
+    setClusterWizardOpen(true);
+  };
+
   const getStatusColor = (status: string | null) => {
     switch (status?.toLowerCase()) {
       case 'connected':
@@ -402,6 +407,14 @@ const VCenter = () => {
                 Test Connectivity
               </>
             )}
+          </Button>
+          <Button 
+            variant="default" 
+            onClick={() => handleClusterUpdate()}
+            disabled={clusterGroups.length === 0 || clusterGroups.every(c => c.name === "Unclustered")}
+          >
+            <RefreshCcw className="mr-2 h-4 w-4" />
+            Rolling Cluster Update
           </Button>
           <Button onClick={handleSyncNow} disabled={syncing}>
             {syncing ? (
@@ -571,11 +584,28 @@ const VCenter = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <CardTitle className="text-xl">{cluster.name}</CardTitle>
-                    <CardDescription>{cluster.hosts.length} ESXi hosts</CardDescription>
+                    <CardDescription>
+                      {cluster.hosts.length} ESXi hosts • 
+                      {cluster.hosts.filter(h => h.server_id).length} linked • 
+                      {cluster.hosts.filter(h => h.status === 'connected').length} connected
+                    </CardDescription>
                   </div>
-                  {cluster.name !== "Unclustered" && (
-                    <Badge variant="outline">Cluster</Badge>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {cluster.name !== "Unclustered" && (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleClusterUpdate(cluster.name)}
+                          disabled={cluster.hosts.filter(h => h.server_id && h.status === 'connected').length < 2}
+                        >
+                          <RefreshCcw className="mr-2 h-3 w-3" />
+                          Update Cluster
+                        </Button>
+                        <Badge variant="outline">Cluster</Badge>
+                      </>
+                    )}
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
@@ -630,6 +660,12 @@ const VCenter = () => {
           ))}
         </div>
       )}
+
+      <ClusterUpdateWizard
+        open={clusterWizardOpen}
+        onOpenChange={setClusterWizardOpen}
+        preSelectedCluster={selectedCluster}
+      />
     </div>
   );
 };
