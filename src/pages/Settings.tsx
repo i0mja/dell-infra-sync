@@ -2741,6 +2741,72 @@ export default function Settings() {
           <TabsContent value="preferences">
             <div className="space-y-4">
               <Card>
+                <CardHeader>
+                  <CardTitle>Notification Center</CardTitle>
+                  <CardDescription>
+                    Configure the notification center that appears in the top navigation
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="nc-enabled">Enable Notification Center</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Show the notification bell icon with real-time job progress
+                      </p>
+                    </div>
+                    <Switch
+                      id="nc-enabled"
+                      checked={true}
+                      disabled
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="nc-progress">Show Progress Updates</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Display detailed progress bars and status for active jobs
+                      </p>
+                    </div>
+                    <Switch
+                      id="nc-progress"
+                      checked={true}
+                      disabled
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="nc-max-items">Recent Activity Items</Label>
+                    <Input
+                      id="nc-max-items"
+                      type="number"
+                      min="5"
+                      max="50"
+                      defaultValue={10}
+                      disabled
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Number of recent commands to show (5-50)
+                    </p>
+                  </div>
+
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertDescription>
+                      Notification center settings are managed automatically. Use the bell icon in the top navigation to view active operations and recent activity.
+                    </AlertDescription>
+                  </Alert>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Teams & Email Notifications</CardTitle>
+                  <CardDescription>
+                    Configure when to send notifications to Teams or email
+                  </CardDescription>
+                </CardHeader>
                 <CardContent className="space-y-6">
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
