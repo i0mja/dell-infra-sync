@@ -1398,6 +1398,79 @@ export type Database = {
           },
         ]
       }
+      workflow_executions: {
+        Row: {
+          cluster_id: string | null
+          created_at: string | null
+          host_id: string | null
+          id: string
+          job_id: string
+          server_id: string | null
+          step_completed_at: string | null
+          step_details: Json | null
+          step_error: string | null
+          step_name: string
+          step_number: number
+          step_started_at: string | null
+          step_status: string
+          workflow_type: string
+        }
+        Insert: {
+          cluster_id?: string | null
+          created_at?: string | null
+          host_id?: string | null
+          id?: string
+          job_id: string
+          server_id?: string | null
+          step_completed_at?: string | null
+          step_details?: Json | null
+          step_error?: string | null
+          step_name: string
+          step_number: number
+          step_started_at?: string | null
+          step_status: string
+          workflow_type: string
+        }
+        Update: {
+          cluster_id?: string | null
+          created_at?: string | null
+          host_id?: string | null
+          id?: string
+          job_id?: string
+          server_id?: string | null
+          step_completed_at?: string | null
+          step_details?: Json | null
+          step_error?: string | null
+          step_name?: string
+          step_number?: number
+          step_started_at?: string | null
+          step_status?: string
+          workflow_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workflow_executions_host_id_fkey"
+            columns: ["host_id"]
+            isOneToOne: false
+            referencedRelation: "vcenter_hosts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workflow_executions_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workflow_executions_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -1449,6 +1522,9 @@ export type Database = {
         | "vcenter_connectivity_test"
         | "openmanage_sync"
         | "cluster_safety_check"
+        | "prepare_host_for_update"
+        | "verify_host_after_update"
+        | "rolling_cluster_update"
       operation_type: "idrac_api" | "vcenter_api" | "openmanage_api"
     }
     CompositeTypes: {
@@ -1598,6 +1674,9 @@ export const Constants = {
         "vcenter_connectivity_test",
         "openmanage_sync",
         "cluster_safety_check",
+        "prepare_host_for_update",
+        "verify_host_after_update",
+        "rolling_cluster_update",
       ],
       operation_type: ["idrac_api", "vcenter_api", "openmanage_api"],
     },
