@@ -123,7 +123,25 @@ class JobExecutor:
         self.throttler = None  # Will be initialized on first use
         self.activity_settings = {}  # Cache settings
         self.last_settings_fetch = 0  # Timestamp for cache invalidation
-    
+
+    def _validate_service_role_key(self):
+        """Ensure SERVICE_ROLE_KEY is present before making Supabase requests"""
+        if not SERVICE_ROLE_KEY or not SERVICE_ROLE_KEY.strip():
+            self.log("ERROR: SERVICE_ROLE_KEY not set!", "ERROR")
+            self.log("Set via: export SERVICE_ROLE_KEY='your-key-here'", "ERROR")
+            self.log("Get your key from Lovable Cloud -> Settings", "ERROR")
+            raise SystemExit(1)
+
+    def _handle_supabase_auth_error(self, response, context: str):
+        """Raise with helpful log message on Supabase authorization failures"""
+        if response.status_code in (401, 403):
+            self.log(
+                f"Authorization failed while {context} (HTTP {response.status_code}). "
+                "Verify SERVICE_ROLE_KEY and DSM_URL before retrying.",
+                "ERROR",
+            )
+            raise PermissionError(f"Supabase authorization failed during {context}")
+
     def safe_json_parse(self, response):
         """Instance method wrapper for _safe_json_parse"""
         return _safe_json_parse(response)
@@ -157,7 +175,9 @@ class JobExecutor:
                 verify=VERIFY_SSL,
                 timeout=10
             )
-            
+
+            self._handle_supabase_auth_error(response, "fetching activity settings")
+
             if response.status_code == 200:
                 settings_list = _safe_json_parse(response)
                 if settings_list and len(settings_list) > 0:
@@ -315,10 +335,12 @@ class JobExecutor:
                 verify=VERIFY_SSL,
                 timeout=5
             )
-            
+
+            self._handle_supabase_auth_error(response, "logging iDRAC command")
+
             if response.status_code not in [200, 201]:
                 self.log(f"Failed to log iDRAC command: {response.status_code}", "DEBUG")
-                
+
         except Exception as e:
             # Don't let logging failures break job execution
             self.log(f"Logging exception: {e}", "DEBUG")
@@ -337,6 +359,7 @@ class JobExecutor:
             params = {"select": "encryption_key", "limit": "1"}
             
             response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
+            self._handle_supabase_auth_error(response, "loading encryption key")
             if response.status_code == 200:
                 settings = _safe_json_parse(response)
                 if settings and len(settings) > 0:
@@ -375,6 +398,7 @@ class JobExecutor:
             }
             
             response = requests.post(url, headers=headers, json=payload, verify=VERIFY_SSL)
+            self._handle_supabase_auth_error(response, "decrypting password")
             if response.status_code == 200:
                 # RPC returns the decrypted string directly
                 decrypted = _safe_json_parse(response)
@@ -521,8 +545,9 @@ class JobExecutor:
                 "select": "*",
                 "order": "created_at.asc"
             }
-            
+
             response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
+            self._handle_supabase_auth_error(response, "fetching pending jobs")
             if response.status_code == 200:
                 jobs = _safe_json_parse(response)
                 # Filter by schedule_at if set
@@ -549,8 +574,9 @@ class JobExecutor:
                     **kwargs
                 }
             }
-            
+
             response = requests.post(url, json=payload, verify=VERIFY_SSL)
+            self._handle_supabase_auth_error(response, "updating job status")
             if response.status_code != 200:
                 self.log(f"Error updating job: {response.text}", "ERROR")
         except Exception as e:
@@ -568,8 +594,9 @@ class JobExecutor:
                     **kwargs
                 }
             }
-            
+
             response = requests.post(url, json=payload, verify=VERIFY_SSL)
+            self._handle_supabase_auth_error(response, "updating task status")
             if response.status_code != 200:
                 self.log(f"Error updating task: {response.text}", "ERROR")
         except Exception as e:
@@ -598,6 +625,7 @@ class JobExecutor:
             }
             
             response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
+            self._handle_supabase_auth_error(response, "fetching job tasks")
             if response.status_code == 200:
                 return _safe_json_parse(response)
             return []
@@ -5596,13 +5624,9 @@ class JobExecutor:
         self.log(f"Polling interval: {POLL_INTERVAL} seconds")
         self.log(f"SSL Verification: {VERIFY_SSL}")
         self.log("="*70)
-        
-        if not SERVICE_ROLE_KEY:
-            self.log("ERROR: SERVICE_ROLE_KEY not set!", "ERROR")
-            self.log("Set via: export SERVICE_ROLE_KEY='your-key-here'", "ERROR")
-            self.log("Get your key from Lovable Cloud -> Settings", "ERROR")
-            return
-        
+
+        self._validate_service_role_key()
+
         self.log("[OK] Configuration validated", "INFO")
         
         # Initialize throttler and display configuration
