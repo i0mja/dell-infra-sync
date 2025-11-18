@@ -605,8 +605,8 @@ class JobExecutor:
             self.log(f"Error fetching tasks: {e}", "ERROR")
             return []
 
-    def get_comprehensive_server_info(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, max_retries: int = 3) -> Optional[Dict]:
-        """Get comprehensive server information from iDRAC Redfish API using throttler"""
+    def get_comprehensive_server_info(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, max_retries: int = 3, full_onboarding: bool = True) -> Optional[Dict]:
+        """Get comprehensive server information from iDRAC Redfish API using throttler with optional full onboarding"""
         system_data = None
         
         # Get system information with throttler (handles retries internally)
@@ -798,7 +798,7 @@ class JobExecutor:
             else:
                 memory_gb = None
             
-            return {
+            base_info = {
                 "manufacturer": system_data.get("Manufacturer", "Unknown"),
                 "model": system_data.get("Model", "Unknown"),
                 "service_tag": system_data.get("SKU") or system_data.get("SerialNumber", None),  # Dell Service Tag is in SKU field
@@ -814,11 +814,249 @@ class JobExecutor:
                 "username": username,
                 "password": password,
             }
+            
+            # If full onboarding is requested, fetch additional data
+            if full_onboarding:
+                self.log(f"  Starting full onboarding for {ip}...", "INFO")
+                
+                # Fetch health status
+                health_data = self._fetch_health_status(ip, username, password, server_id, job_id)
+                if health_data:
+                    base_info['health_status'] = health_data
+                    self.log(f"  ✓ Health status fetched", "INFO")
+                
+                # Fetch event logs
+                event_log_count = self._fetch_initial_event_logs(ip, username, password, server_id, job_id)
+                if event_log_count > 0:
+                    base_info['event_log_count'] = event_log_count
+                    self.log(f"  ✓ Fetched {event_log_count} event logs", "INFO")
+            
+            return base_info
         except Exception as e:
             self.log(f"Error extracting server info from {ip}: {e}", "ERROR")
             self.log(f"  system_data keys: {list(system_data.keys()) if system_data else 'None'}", "DEBUG")
             self.log(f"  manager_data keys: {list(manager_data.keys()) if manager_data else 'None'}", "DEBUG")
             return None
+
+    def _fetch_health_status(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None) -> Optional[Dict]:
+        """Fetch comprehensive health status from multiple Redfish endpoints"""
+        health = {
+            'overall_status': 'Unknown',
+            'storage_healthy': None,
+            'thermal_healthy': None,
+            'power_healthy': None
+        }
+        
+        endpoints = [
+            ('/redfish/v1/Systems/System.Embedded.1/Storage', 'storage'),
+            ('/redfish/v1/Chassis/System.Embedded.1/Thermal', 'thermal'),
+            ('/redfish/v1/Chassis/System.Embedded.1/Power', 'power')
+        ]
+        
+        for endpoint, health_type in endpoints:
+            try:
+                url = f"https://{ip}{endpoint}"
+                response, response_time = self.throttler.request_with_safety(
+                    method='GET',
+                    url=url,
+                    ip=ip,
+                    logger=self.log,
+                    auth=(username, password),
+                    timeout=(2, 15)
+                )
+                
+                response_json = None
+                if response and response.status_code == 200 and response.content:
+                    try:
+                        response_json = response.json()
+                    except json.JSONDecodeError:
+                        pass
+                
+                # Log the API call
+                self.log_idrac_command(
+                    server_id=server_id,
+                    job_id=job_id,
+                    task_id=None,
+                    command_type='GET',
+                    endpoint=endpoint,
+                    full_url=url,
+                    request_headers={'Authorization': f'Basic {username}:***'},
+                    request_body=None,
+                    status_code=response.status_code if response else None,
+                    response_time_ms=response_time,
+                    response_body=response_json,
+                    success=(response and response.status_code == 200),
+                    error_message=None if (response and response.status_code == 200) else f"HTTP {response.status_code}" if response else "Request failed",
+                    operation_type='idrac_api'
+                )
+                
+                if response and response.status_code == 200 and response_json:
+                    health[f'{health_type}_healthy'] = self._parse_health_from_response(response_json)
+                    self.throttler.record_success(ip)
+                    
+            except Exception as e:
+                self.log(f"  Could not fetch {health_type} health: {e}", "WARN")
+        
+        return health
+
+    def _parse_health_from_response(self, data: Dict) -> bool:
+        """Parse health status from various Redfish health response formats"""
+        try:
+            # Try Status.Health field (common pattern)
+            if 'Status' in data and isinstance(data['Status'], dict):
+                health = data['Status'].get('Health', 'Unknown')
+                return health == 'OK'
+            
+            # Try Members array with Status fields
+            if 'Members' in data and isinstance(data['Members'], list):
+                all_ok = True
+                for member in data['Members']:
+                    if 'Status' in member and isinstance(member['Status'], dict):
+                        health = member['Status'].get('Health', 'Unknown')
+                        if health != 'OK':
+                            all_ok = False
+                            break
+                return all_ok
+            
+            # Default to unknown
+            return None
+        except Exception as e:
+            self.log(f"  Error parsing health status: {e}", "DEBUG")
+            return None
+
+    def _fetch_initial_event_logs(self, ip: str, username: str, password: str, server_id: str, job_id: str) -> int:
+        """Fetch recent event logs and store in database"""
+        try:
+            url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1/Logs/Sel"
+            response, response_time = self.throttler.request_with_safety(
+                method='GET',
+                url=url,
+                ip=ip,
+                logger=self.log,
+                auth=(username, password),
+                timeout=(2, 15)
+            )
+            
+            response_json = None
+            if response and response.status_code == 200 and response.content:
+                try:
+                    response_json = response.json()
+                except json.JSONDecodeError:
+                    pass
+            
+            # Log the API call
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                task_id=None,
+                command_type='GET',
+                endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Logs/Sel',
+                full_url=url,
+                request_headers={'Authorization': f'Basic {username}:***'},
+                request_body=None,
+                status_code=response.status_code if response else None,
+                response_time_ms=response_time,
+                response_body=response_json,
+                success=(response and response.status_code == 200),
+                error_message=None if (response and response.status_code == 200) else f"HTTP {response.status_code}" if response else "Request failed",
+                operation_type='idrac_api'
+            )
+            
+            if response and response.status_code == 200 and response_json:
+                log_count = self._store_event_logs(response_json, server_id)
+                self.throttler.record_success(ip)
+                return log_count
+                
+        except Exception as e:
+            self.log(f"  Could not fetch event logs: {e}", "WARN")
+        
+        return 0
+
+    def _store_event_logs(self, data: Dict, server_id: str) -> int:
+        """Parse and store event log entries in database (limit to last 50)"""
+        try:
+            members = data.get('Members', [])
+            if not members:
+                return 0
+            
+            # Limit to last 50 entries
+            recent_logs = members[-50:] if len(members) > 50 else members
+            
+            headers = {"apikey": SERVICE_ROLE_KEY, "Authorization": f"Bearer {SERVICE_ROLE_KEY}"}
+            stored_count = 0
+            
+            for log_entry in recent_logs:
+                try:
+                    # Extract fields from log entry
+                    log_data = {
+                        'server_id': server_id,
+                        'event_id': log_entry.get('Id'),
+                        'timestamp': log_entry.get('Created', datetime.utcnow().isoformat() + 'Z'),
+                        'severity': log_entry.get('Severity'),
+                        'message': log_entry.get('Message'),
+                        'category': log_entry.get('EntryType'),
+                        'sensor_type': log_entry.get('SensorType'),
+                        'sensor_number': log_entry.get('SensorNumber'),
+                        'raw_data': log_entry
+                    }
+                    
+                    # Insert into server_event_logs table
+                    insert_url = f"{DSM_URL}/rest/v1/server_event_logs"
+                    response = requests.post(insert_url, headers=headers, json=log_data, verify=VERIFY_SSL)
+                    
+                    if response.status_code in [200, 201]:
+                        stored_count += 1
+                except Exception as e:
+                    self.log(f"  Error storing event log: {e}", "DEBUG")
+            
+            return stored_count
+            
+        except Exception as e:
+            self.log(f"  Error parsing event logs: {e}", "WARN")
+            return 0
+
+    def _create_automatic_scp_backup(self, server_id: str, parent_job_id: str):
+        """Create automatic SCP backup job for newly discovered servers"""
+        try:
+            headers = {"apikey": SERVICE_ROLE_KEY, "Authorization": f"Bearer {SERVICE_ROLE_KEY}"}
+            
+            # Get user who created the parent job
+            job_url = f"{DSM_URL}/rest/v1/jobs?id=eq.{parent_job_id}&select=created_by"
+            job_response = requests.get(job_url, headers=headers, verify=VERIFY_SSL)
+            created_by = None
+            if job_response.status_code == 200:
+                jobs = _safe_json_parse(job_response)
+                if jobs and len(jobs) > 0:
+                    created_by = jobs[0].get('created_by')
+            
+            if not created_by:
+                self.log(f"  Cannot create SCP backup: no user found for parent job", "WARN")
+                return
+            
+            backup_job = {
+                'job_type': 'scp_export',
+                'created_by': created_by,
+                'target_scope': {'server_ids': [server_id]},
+                'details': {
+                    'backup_name': f'Initial-{datetime.now().strftime("%Y%m%d-%H%M%S")}',
+                    'description': 'Automatic backup on server discovery',
+                    'include_bios': True,
+                    'include_idrac': True,
+                    'include_raid': True,
+                    'include_nic': True
+                }
+            }
+            
+            insert_url = f"{DSM_URL}/rest/v1/jobs"
+            response = requests.post(insert_url, headers=headers, json=backup_job, verify=VERIFY_SSL)
+            
+            if response.status_code in [200, 201]:
+                self.log(f"  ✓ Created automatic SCP backup job for server {server_id}", "INFO")
+            else:
+                self.log(f"  Failed to create SCP backup: HTTP {response.status_code}", "WARN")
+                
+        except Exception as e:
+            self.log(f"  Failed to create SCP backup: {e}", "WARN")
 
     def test_idrac_connection(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None) -> Optional[Dict]:
         """Test iDRAC connection and get basic info (lightweight version using throttler)"""
@@ -1062,6 +1300,10 @@ class JobExecutor:
                     if update_response.status_code in [200, 204]:
                         self.log(f"  ✓ Refreshed {ip}: {info.get('model')} - {info.get('hostname')}")
                         refreshed_count += 1
+                        
+                        # Create automatic SCP backup for newly discovered servers
+                        if server.get('discovery_job_id') == job['id']:
+                            self._create_automatic_scp_backup(server['id'], job['id'])
                     else:
                         error_detail = {
                             'ip': ip,
