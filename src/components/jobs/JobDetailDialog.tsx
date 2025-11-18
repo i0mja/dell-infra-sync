@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,6 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Clock, CheckCircle, XCircle, PlayCircle, Server, AlertCircle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
 
 interface Job {
   id: string;
@@ -40,6 +41,29 @@ interface JobDetailDialogProps {
 }
 
 export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProps) => {
+  // Check if this is a workflow job type
+  const workflowJobTypes = ['prepare_host_for_update', 'verify_host_after_update', 'rolling_cluster_update'];
+  const isWorkflowJob = workflowJobTypes.includes(job.job_type);
+
+  // If it's a workflow job, render WorkflowExecutionViewer instead
+  if (isWorkflowJob) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {job.job_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+            </DialogTitle>
+            <DialogDescription>
+              Workflow execution details for job {job.id}
+            </DialogDescription>
+          </DialogHeader>
+          <WorkflowExecutionViewer jobId={job.id} workflowType={job.job_type} />
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   const [tasks, setTasks] = useState<JobTask[]>([]);
   const [subJobs, setSubJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);

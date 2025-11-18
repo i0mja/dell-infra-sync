@@ -11,6 +11,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { InfoIcon, Loader2 } from "lucide-react";
 import { VCenterSettingsDialog } from "@/components/vcenter/VCenterSettingsDialog";
 import { VCenterConnectivityDialog } from "@/components/vcenter/VCenterConnectivityDialog";
+import { ClusterUpdateWizard } from "@/components/jobs/ClusterUpdateWizard";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 
@@ -45,6 +46,8 @@ const VCenter = () => {
   const [testing, setTesting] = useState(false);
   const [testResults, setTestResults] = useState<any>(null);
   const [testDialogOpen, setTestDialogOpen] = useState(false);
+  const [clusterWizardOpen, setClusterWizardOpen] = useState(false);
+  const [selectedCluster, setSelectedCluster] = useState<string>('');
   const { toast } = useToast();
   
   // Detect local mode
