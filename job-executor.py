@@ -1936,23 +1936,26 @@ class JobExecutor:
                 details={'error': str(e)}
             )
 
-    def create_idrac_session(self, ip: str, username: str, password: str) -> Optional[str]:
+    def create_idrac_session(self, ip: str, username: str, password: str, log_to_db: bool = False,
+                            server_id: str = None, job_id: str = None) -> Optional[str]:
         """Create authenticated session with iDRAC and return session token"""
         try:
             url = f"https://{ip}/redfish/v1/SessionService/Sessions"
-            payload = {
-                "UserName": username,
-                "Password": password
-            }
+            payload = {"UserName": username, "Password": password}
             
             response, elapsed_ms = self.throttler.request_with_safety(
-                'POST',
-                url,
-                ip,
-                self.log,
-                json=payload,
-                timeout=(2, 10)
+                'POST', url, ip, self.log, json=payload, timeout=(2, 10)
             )
+            
+            # Log session creation if requested
+            if log_to_db and server_id:
+                self.log_idrac_command(
+                    server_id=server_id, job_id=job_id, command_type='POST',
+                    endpoint='/redfish/v1/SessionService/Sessions', full_url=url,
+                    request_body={'UserName': username}, status_code=response.status_code,
+                    response_time_ms=elapsed_ms, success=response.status_code == 201,
+                    operation_type='idrac_api'
+                )
             
             if response.status_code in [401, 403]:
                 self.throttler.record_failure(ip, response.status_code, self.log)
@@ -2139,6 +2142,83 @@ class JobExecutor:
         except Exception as e:
             self.log(f"  Error monitoring task: {e}", "WARN")
             return {"TaskState": "Unknown", "PercentComplete": 0, "Messages": []}
+    
+    def wait_for_task_completion(self, ip: str, task_uri: str, session_token: str, 
+                                 timeout: int = 1800, description: str = "task") -> dict:
+        """
+        Poll Redfish task until completion or timeout with exponential backoff
+        
+        Args:
+            ip: iDRAC IP address
+            task_uri: Task URI (relative or absolute)
+            session_token: Authenticated session token
+            timeout: Maximum wait time in seconds (default 30 minutes)
+            description: Human-readable description for logging
+            
+        Returns:
+            Dict with 'state', 'percent', 'messages', 'success'
+        """
+        start_time = time.time()
+        poll_intervals = [1, 2, 4, 8, 15, 30]  # Exponential backoff
+        interval_index = 0
+        last_percent = -1
+        
+        self.log(f"  Monitoring {description}...")
+        
+        while time.time() - start_time < timeout:
+            elapsed = time.time() - start_time
+            
+            # Get task status
+            task_status = self.monitor_update_task(ip, session_token, task_uri)
+            state = task_status.get('TaskState', 'Unknown')
+            percent = task_status.get('PercentComplete', 0)
+            messages = task_status.get('Messages', [])
+            
+            # Log progress if changed
+            if percent != last_percent and state not in ['Unknown', 'Exception', 'Killed']:
+                self.log(f"    Progress: {state} ({percent}%) - {elapsed:.0f}s elapsed")
+                last_percent = percent
+            
+            # Check terminal states
+            if state == 'Completed':
+                self.log(f"  ✓ {description.capitalize()} completed successfully")
+                return {
+                    'state': state,
+                    'percent': percent,
+                    'messages': messages,
+                    'success': True
+                }
+            elif state == 'Exception':
+                error_msgs = [msg.get('Message', str(msg)) for msg in messages] if messages else ['Unknown error']
+                self.log(f"  ✗ {description.capitalize()} failed: {', '.join(error_msgs)}", "ERROR")
+                return {
+                    'state': state,
+                    'percent': percent,
+                    'messages': messages,
+                    'success': False
+                }
+            elif state == 'Killed':
+                self.log(f"  ✗ {description.capitalize()} was killed/cancelled", "ERROR")
+                return {
+                    'state': state,
+                    'percent': percent,
+                    'messages': messages,
+                    'success': False
+                }
+            
+            # Exponential backoff sleep
+            interval = poll_intervals[min(interval_index, len(poll_intervals)-1)]
+            time.sleep(interval)
+            interval_index += 1
+        
+        # Timeout
+        self.log(f"  ✗ {description.capitalize()} timed out after {timeout}s", "ERROR")
+        return {
+            'state': 'Timeout',
+            'percent': last_percent,
+            'messages': [],
+            'success': False
+        }
 
     def reset_system(self, ip: str, session_token: str, reset_type: str = "ForceRestart"):
         """Trigger system reboot to apply firmware"""
@@ -4834,6 +4914,8 @@ class JobExecutor:
             self.execute_vcenter_connectivity_test(job)
         elif job_type == 'openmanage_sync':
             self.execute_openmanage_sync(job)
+        elif job_type == 'cluster_safety_check':
+            self.execute_cluster_safety_check(job)
         else:
             self.log(f"Unknown job type: {job_type}", "ERROR")
             self.update_job_status(
@@ -5614,6 +5696,94 @@ class JobExecutor:
                 completed_at=datetime.now().isoformat(),
                 details={'error': str(e), 'message': 'Connectivity test execution failed'}
             )
+
+    def execute_cluster_safety_check(self, job: Dict):
+        """
+        Execute cluster safety check before taking hosts offline for updates
+        
+        Expected job details:
+        {
+            "cluster_name": "Production Cluster",
+            "min_required_hosts": 2,
+            "check_drs": true,
+            "check_ha": true
+        }
+        """
+        try:
+            self.log(f"Starting cluster safety check: {job['id']}")
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            details = job.get('details', {})
+            cluster_name = details.get('cluster_name')
+            min_required_hosts = details.get('min_required_hosts', 2)
+            
+            if not cluster_name:
+                raise Exception("Missing cluster_name in job details")
+            
+            self.log(f"Checking safety for cluster: {cluster_name}")
+            
+            # Fetch vCenter settings and connect
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_settings?select=*&limit=1",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL
+            )
+            
+            if response.status_code != 200:
+                raise Exception(f"Failed to fetch vCenter settings")
+            
+            settings = _safe_json_parse(response)[0]
+            vc = self.connect_vcenter(settings)
+            if not vc:
+                raise Exception("Failed to connect to vCenter")
+            
+            # Find cluster
+            content = vc.RetrieveContent()
+            cluster_obj = None
+            for dc in content.rootFolder.childEntity:
+                if hasattr(dc, 'hostFolder'):
+                    for cluster in dc.hostFolder.childEntity:
+                        if isinstance(cluster, vim.ClusterComputeResource) and cluster.name == cluster_name:
+                            cluster_obj = cluster
+                            break
+            
+            if not cluster_obj:
+                raise Exception(f"Cluster '{cluster_name}' not found")
+            
+            # Count host states
+            total_hosts = len(cluster_obj.host)
+            healthy_hosts = sum(1 for h in cluster_obj.host 
+                              if h.runtime.connectionState == 'connected' 
+                              and h.runtime.powerState == 'poweredOn' 
+                              and not h.runtime.inMaintenanceMode)
+            
+            safe_to_proceed = healthy_hosts >= (min_required_hosts + 1)
+            
+            result = {
+                'safe_to_proceed': safe_to_proceed,
+                'total_hosts': total_hosts,
+                'healthy_hosts': healthy_hosts,
+                'min_required_hosts': min_required_hosts,
+                'recommendation': 'SAFE - Proceed' if safe_to_proceed else 'UNSAFE - Do not proceed'
+            }
+            
+            # Store result
+            requests.post(
+                f"{DSM_URL}/rest/v1/cluster_safety_checks",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}', 'Content-Type': 'application/json'},
+                json={'job_id': job['id'], 'cluster_id': cluster_name, 'total_hosts': total_hosts, 
+                      'healthy_hosts': healthy_hosts, 'min_required_hosts': min_required_hosts, 
+                      'safe_to_proceed': safe_to_proceed, 'details': result},
+                verify=VERIFY_SSL
+            )
+            
+            self.log(f"✓ Safety check: {'PASSED' if safe_to_proceed else 'FAILED'}")
+            self.update_job_status(job['id'], 'completed', completed_at=datetime.now().isoformat(), details=result)
+            
+        except Exception as e:
+            self.log(f"Cluster safety check failed: {e}", "ERROR")
+            self.update_job_status(job['id'], 'failed', completed_at=datetime.now().isoformat(), 
+                                 details={'error': str(e), 'safe_to_proceed': False})
 
     def run(self):
         """Main execution loop"""

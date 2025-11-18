@@ -233,6 +233,53 @@ export type Database = {
           },
         ]
       }
+      cluster_safety_checks: {
+        Row: {
+          check_timestamp: string | null
+          cluster_id: string
+          created_at: string | null
+          details: Json | null
+          healthy_hosts: number
+          id: string
+          job_id: string | null
+          min_required_hosts: number
+          safe_to_proceed: boolean
+          total_hosts: number
+        }
+        Insert: {
+          check_timestamp?: string | null
+          cluster_id: string
+          created_at?: string | null
+          details?: Json | null
+          healthy_hosts: number
+          id?: string
+          job_id?: string | null
+          min_required_hosts: number
+          safe_to_proceed: boolean
+          total_hosts: number
+        }
+        Update: {
+          check_timestamp?: string | null
+          cluster_id?: string
+          created_at?: string | null
+          details?: Json | null
+          healthy_hosts?: number
+          id?: string
+          job_id?: string | null
+          min_required_hosts?: number
+          safe_to_proceed?: boolean
+          total_hosts?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cluster_safety_checks_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       credential_ip_ranges: {
         Row: {
           created_at: string | null
@@ -1401,6 +1448,7 @@ export type Database = {
         | "scp_import"
         | "vcenter_connectivity_test"
         | "openmanage_sync"
+        | "cluster_safety_check"
       operation_type: "idrac_api" | "vcenter_api" | "openmanage_api"
     }
     CompositeTypes: {
@@ -1549,6 +1597,7 @@ export const Constants = {
         "scp_import",
         "vcenter_connectivity_test",
         "openmanage_sync",
+        "cluster_safety_check",
       ],
       operation_type: ["idrac_api", "vcenter_api", "openmanage_api"],
     },
