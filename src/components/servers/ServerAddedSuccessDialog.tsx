@@ -30,7 +30,7 @@ export const ServerAddedSuccessDialog = ({
             <DialogTitle>Server Added Successfully!</DialogTitle>
           </div>
           <DialogDescription>
-            The server at IP {serverIp} has been added. Create a discovery job to fetch complete details from iDRAC.
+            The server at IP {serverIp} has been added. Create a discovery job to fetch comprehensive details from iDRAC.
           </DialogDescription>
         </DialogHeader>
 
@@ -39,17 +39,22 @@ export const ServerAddedSuccessDialog = ({
           <AlertDescription>
             <strong>Status:</strong> Basic information only
             <br />
-            <strong>Next:</strong> Fetch complete details from iDRAC
+            <strong>Next:</strong> Complete onboarding via discovery job
           </AlertDescription>
         </Alert>
 
         <div className="space-y-3 text-sm text-muted-foreground">
-          <p>Discovery jobs use Job Executor to fetch:</p>
+          <p><strong>Comprehensive Discovery includes:</strong></p>
           <ul className="list-disc list-inside space-y-1 ml-2">
-            <li>Hostname, Model, Service Tag</li>
+            <li>Server hardware details (model, service tag, CPU, RAM)</li>
+            <li>Health status (storage, thermal, power)</li>
             <li>BIOS & iDRAC firmware versions</li>
-            <li>Hardware configuration</li>
+            <li>Configuration backup (SCP export)</li>
+            <li>Recent event logs (last 50 entries)</li>
           </ul>
+          <p className="text-xs italic">
+            Onboarding takes ~10-15 seconds per server with proper API rate limiting.
+          </p>
         </div>
 
         <DialogFooter className="flex-col sm:flex-row gap-2">
