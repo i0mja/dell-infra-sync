@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bell, Activity, Clock, ExternalLink } from 'lucide-react';
+import { Bell, Activity, Clock, ExternalLink, Terminal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useNotificationCenter } from '@/hooks/useNotificationCenter';
 import { ActiveJobCard } from './ActiveJobCard';
 import { RecentActivityItem } from './RecentActivityItem';
+import { LiveConsoleView } from './LiveConsoleView';
 import { JobDetailDialog } from '@/components/jobs/JobDetailDialog';
 import { CommandDetailDialog } from '@/components/activity/CommandDetailDialog';
 import { useNavigate } from 'react-router-dom';
@@ -199,6 +200,10 @@ export function NotificationCenter() {
                   </div>
                 </>
               )}
+            </TabsContent>
+
+            <TabsContent value="console" className="p-0 m-0">
+              <LiveConsoleView />
             </TabsContent>
           </Tabs>
         </PopoverContent>
