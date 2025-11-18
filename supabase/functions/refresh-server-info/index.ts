@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { logIdracCommand } from '../_shared/idrac-logger.ts';
+import { createIdracSession, deleteIdracSession, makeAuthenticatedRequest, IdracSession } from '../_shared/idrac-session.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -18,6 +19,8 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
+
+  let session: IdracSession | null = null;
 
   try {
     const supabaseClient = createClient(
@@ -74,24 +77,33 @@ Deno.serve(async (req) => {
     const username = idrac_username || 'root';
     const password = idrac_password || 'calvin';
 
-    // Query iDRAC Redfish API for root service info first
-    const rootUrl = `https://${ip_address}/redfish/v1/`;
-    const authHeader = `Basic ${btoa(`${username}:${password}`)}`;
+    // Create Redfish session
+    session = await createIdracSession(
+      ip_address,
+      username,
+      password,
+      supabaseClient,
+      user.id,
+      server_id,
+      10000
+    );
 
+    if (!session) {
+      console.warn('[FALLBACK] Session creation failed, using Basic Auth');
+    }
+
+    // Query iDRAC Redfish API for root service info
     let rootData;
     let rootResponseTime = 0;
     const rootStartTime = Date.now();
     try {
-      const response = await fetch(rootUrl, {
-        method: 'GET',
-        headers: {
-          'Authorization': authHeader,
-          'Accept': 'application/json',
-        },
-        signal: AbortSignal.timeout(10000),
-        // @ts-ignore - Deno-specific option to bypass SSL verification for self-signed certs
-        insecure: true,
-      });
+      const response = await makeAuthenticatedRequest(
+        ip_address,
+        '/redfish/v1/',
+        session,
+        username,
+        password
+      );
 
       rootResponseTime = Date.now() - rootStartTime;
       const responseData = response.ok ? await response.json() : null;
@@ -102,7 +114,7 @@ Deno.serve(async (req) => {
         serverId: server_id,
         commandType: 'GET',
         endpoint: '/redfish/v1/',
-        fullUrl: rootUrl,
+        fullUrl: `https://${ip_address}/redfish/v1/`,
         requestHeaders: { 'Accept': 'application/json' },
         statusCode: response.status,
         responseTimeMs: rootResponseTime,
@@ -119,45 +131,40 @@ Deno.serve(async (req) => {
       }
 
       rootData = responseData;
-    } catch (error: any) {
-      console.error('[ERROR] Failed to fetch root service info:', error);
+    } catch (error) {
+      console.error('[ERROR] Failed to query root service:', error);
       return new Response(JSON.stringify({ 
-        success: false,
         error: 'Failed to connect to iDRAC',
-        details: error.message 
+        details: error instanceof Error ? error.message : 'Unknown error' 
       }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Query iDRAC Redfish API for system info
-    const redfishUrl = `https://${ip_address}/redfish/v1/Systems/System.Embedded.1`;
-
-    let redfishData;
+    // Query system information
+    let systemData;
+    let systemResponseTime = 0;
     const systemStartTime = Date.now();
     try {
-      const response = await fetch(redfishUrl, {
-        method: 'GET',
-        headers: {
-          'Authorization': authHeader,
-          'Accept': 'application/json',
-        },
-        signal: AbortSignal.timeout(10000),
-        // @ts-ignore - Deno-specific option to bypass SSL verification for self-signed certs
-        insecure: true,
-      });
+      const response = await makeAuthenticatedRequest(
+        ip_address,
+        '/redfish/v1/Systems/System.Embedded.1',
+        session,
+        username,
+        password
+      );
 
-      const systemResponseTime = Date.now() - systemStartTime;
+      systemResponseTime = Date.now() - systemStartTime;
       const responseData = response.ok ? await response.json() : null;
 
-      // Log the command
+      // Log the system command
       await logIdracCommand({
         supabase: supabaseClient,
         serverId: server_id,
         commandType: 'GET',
         endpoint: '/redfish/v1/Systems/System.Embedded.1',
-        fullUrl: redfishUrl,
+        fullUrl: `https://${ip_address}/redfish/v1/Systems/System.Embedded.1`,
         requestHeaders: { 'Accept': 'application/json' },
         statusCode: response.status,
         responseTimeMs: systemResponseTime,
@@ -170,184 +177,165 @@ Deno.serve(async (req) => {
       });
 
       if (!response.ok) {
-        throw new Error(`iDRAC responded with status ${response.status}`);
+        throw new Error(`System info request failed with status ${response.status}`);
       }
 
-      redfishData = responseData;
-      console.log('[REDFISH] Successfully fetched system data');
+      systemData = responseData;
     } catch (error) {
-      console.error('[REDFISH] Failed to query iDRAC:', error);
-      
-      // Log the failed attempt
-      await logIdracCommand({
-        supabase: supabaseClient,
-        serverId: server_id,
-        commandType: 'GET',
-        endpoint: '/redfish/v1/Systems/System.Embedded.1',
-        fullUrl: redfishUrl,
-        requestHeaders: { 'Accept': 'application/json' },
-        responseTimeMs: Date.now() - systemStartTime,
-        success: false,
-        errorMessage: error instanceof Error ? error.message : 'Unknown error',
-        initiatedBy: user.id,
-        source: 'edge_function',
-        operationType: 'idrac_api',
-      });
-
+      console.error('[ERROR] Failed to query system info:', error);
       return new Response(JSON.stringify({ 
-        error: 'Failed to connect to iDRAC',
-        details: error instanceof Error ? error.message : 'Unknown error'
+        error: 'Failed to retrieve system information',
+        details: error instanceof Error ? error.message : 'Unknown error' 
       }), {
-        status: 502,
+        status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Query manager info for iDRAC version
-    const managerUrl = `https://${ip_address}/redfish/v1/Managers/iDRAC.Embedded.1`;
-    let idracFirmware = null;
+    // Query manager (iDRAC) information
+    let managerData;
+    let managerResponseTime = 0;
     const managerStartTime = Date.now();
     try {
-      const managerResponse = await fetch(managerUrl, {
-        method: 'GET',
-        headers: {
-          'Authorization': authHeader,
-          'Accept': 'application/json',
-        },
-        signal: AbortSignal.timeout(10000),
-        // @ts-ignore - Deno-specific option to bypass SSL verification for self-signed certs
-        insecure: true,
-      });
+      const response = await makeAuthenticatedRequest(
+        ip_address,
+        '/redfish/v1/Managers/iDRAC.Embedded.1',
+        session,
+        username,
+        password
+      );
 
-      const managerResponseTime = Date.now() - managerStartTime;
-      const managerData = managerResponse.ok ? await managerResponse.json() : null;
+      managerResponseTime = Date.now() - managerStartTime;
+      const responseData = response.ok ? await response.json() : null;
 
-      // Log the command
+      // Log the manager command
       await logIdracCommand({
         supabase: supabaseClient,
         serverId: server_id,
         commandType: 'GET',
         endpoint: '/redfish/v1/Managers/iDRAC.Embedded.1',
-        fullUrl: managerUrl,
+        fullUrl: `https://${ip_address}/redfish/v1/Managers/iDRAC.Embedded.1`,
         requestHeaders: { 'Accept': 'application/json' },
-        statusCode: managerResponse.status,
+        statusCode: response.status,
         responseTimeMs: managerResponseTime,
-        responseBody: managerData,
-        success: managerResponse.ok,
-        errorMessage: !managerResponse.ok ? `Manager query failed: ${managerResponse.status}` : undefined,
+        responseBody: responseData,
+        success: response.ok,
+        errorMessage: !response.ok ? `iDRAC responded with status ${response.status}` : undefined,
         initiatedBy: user.id,
         source: 'edge_function',
         operationType: 'idrac_api',
       });
 
-      if (managerResponse.ok && managerData) {
-        idracFirmware = managerData.FirmwareVersion || null;
+      if (!response.ok) {
+        throw new Error(`Manager info request failed with status ${response.status}`);
       }
+
+      managerData = responseData;
     } catch (error) {
-      console.warn('[REDFISH] Failed to fetch iDRAC firmware version:', error);
-      
-      // Log the failed attempt
-      await logIdracCommand({
-        supabase: supabaseClient,
-        serverId: server_id,
-        commandType: 'GET',
-        endpoint: '/redfish/v1/Managers/iDRAC.Embedded.1',
-        fullUrl: managerUrl,
-        requestHeaders: { 'Accept': 'application/json' },
-        responseTimeMs: Date.now() - managerStartTime,
-        success: false,
-        errorMessage: error instanceof Error ? error.message : 'Unknown error',
-        initiatedBy: user.id,
-        source: 'edge_function',
-        operationType: 'idrac_api',
-      });
+      console.error('[ERROR] Failed to query manager info:', error);
+      // Manager info is optional, continue without it
+      managerData = null;
     }
 
-    // Extract comprehensive server information
-    const hostname = redfishData.HostName || null;
-    const model = redfishData.Model || null;
-    const service_tag = redfishData.SKU || rootData?.Oem?.Dell?.ServiceTag || redfishData.SerialNumber || null;
-    const bios_version = redfishData.BiosVersion || null;
-    const manager_mac_address = rootData?.Oem?.Dell?.ManagerMACAddress || null;
-    const product_name = rootData?.Product || null;
-    const manufacturer = 'Dell';
-    const redfish_version = rootData?.RedfishVersion || null;
-    const supported_endpoints = {
-      systems: rootData?.Systems?.['@odata.id'] || null,
-      chassis: rootData?.Chassis?.['@odata.id'] || null,
-      managers: rootData?.Managers?.['@odata.id'] || null,
-      updateService: rootData?.UpdateService?.['@odata.id'] || null,
-      taskService: rootData?.Tasks?.['@odata.id'] || null,
-      eventService: rootData?.EventService?.['@odata.id'] || null,
+    // Extract relevant information for database update
+    const updateData = {
+      hostname: systemData?.HostName || null,
+      manufacturer: systemData?.Manufacturer || null,
+      model: systemData?.Model || null,
+      service_tag: systemData?.SKU || null,
+      bios_version: systemData?.BiosVersion || null,
+      power_state: systemData?.PowerState || null,
+      idrac_firmware: managerData?.FirmwareVersion || null,
+      redfish_version: rootData?.RedfishVersion || null,
+      cpu_count: systemData?.ProcessorSummary?.Count || null,
+      memory_gb: systemData?.MemorySummary?.TotalSystemMemoryGiB || null,
+      product_name: systemData?.Model || null,
+      manager_mac_address: managerData?.EthernetInterfaces?.['@odata.id'] || null,
+      supported_endpoints: {
+        systems: rootData?.Systems?.['@odata.id'] || null,
+        managers: rootData?.Managers?.['@odata.id'] || null,
+        chassis: rootData?.Chassis?.['@odata.id'] || null,
+        update_service: rootData?.UpdateService?.['@odata.id'] || null,
+        task_service: rootData?.TaskService?.['@odata.id'] || null,
+        session_service: rootData?.SessionService?.['@odata.id'] || null,
+      },
+      last_seen: new Date().toISOString(),
+      connection_status: 'connected',
+      connection_error: null,
     };
-    const cpu_count = redfishData.ProcessorSummary?.Count || null;
-    const memory_gb = redfishData.MemorySummary?.TotalSystemMemoryGiB || null;
 
-    // Update server record with all comprehensive details
+    // Update server record in database
     const { error: updateError } = await supabaseClient
       .from('servers')
-      .update({
-        hostname,
-        model,
-        service_tag,
-        manager_mac_address,
-        product_name,
-        manufacturer,
-        redfish_version,
-        supported_endpoints,
-        bios_version,
-        cpu_count,
-        memory_gb,
-        idrac_firmware: idracFirmware,
-        last_seen: new Date().toISOString(),
-        connection_status: 'online',
-        last_connection_test: new Date().toISOString(),
-        connection_error: null,
-      })
+      .update(updateData)
       .eq('id', server_id);
 
     if (updateError) {
-      console.error('[DB] Failed to update server:', updateError);
-      throw updateError;
+      console.error('[ERROR] Failed to update server record:', updateError);
+      return new Response(JSON.stringify({ 
+        error: 'Failed to update server information',
+        details: updateError.message 
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
-    // Create audit log
-    await supabaseClient.from('audit_logs').insert({
-      user_id: user.id,
-      action: 'server_refreshed',
-      details: {
-        server_id,
-        ip_address,
-        hostname,
-        model,
-        service_tag,
-      },
-    });
+    // Create audit log entry
+    const { error: auditError } = await supabaseClient
+      .from('audit_logs')
+      .insert({
+        action: 'server_refresh',
+        user_id: user.id,
+        details: {
+          server_id,
+          ip_address,
+          hostname: updateData.hostname,
+          response_times: {
+            root_ms: rootResponseTime,
+            system_ms: systemResponseTime,
+            manager_ms: managerResponseTime,
+            total_ms: rootResponseTime + systemResponseTime + managerResponseTime,
+          },
+          auth_method: session ? 'session_token' : 'basic_auth',
+        },
+      });
 
-    console.log('[SUCCESS] Server information refreshed successfully');
+    if (auditError) {
+      console.warn('[WARN] Failed to create audit log:', auditError);
+    }
+
+    console.log(`[SUCCESS] Successfully refreshed server ${ip_address}`);
 
     return new Response(JSON.stringify({ 
       success: true,
-      data: {
-        hostname,
-        model,
-        service_tag,
-        bios_version,
-        idrac_firmware: idracFirmware,
-      }
+      server: updateData,
+      response_times: {
+        root_ms: rootResponseTime,
+        system_ms: systemResponseTime,
+        manager_ms: managerResponseTime,
+        total_ms: rootResponseTime + systemResponseTime + managerResponseTime,
+      },
+      auth_method: session ? 'session_token' : 'basic_auth',
     }), {
-      status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error) {
-    console.error('[ERROR] Unexpected error:', error);
+    console.error('[ERROR] Unexpected error in refresh-server-info:', error);
     return new Response(JSON.stringify({ 
       error: 'Internal server error',
-      details: error instanceof Error ? error.message : 'Unknown error'
+      details: error instanceof Error ? error.message : 'Unknown error' 
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
+  } finally {
+    // Always cleanup session after all operations complete
+    if (session) {
+      await deleteIdracSession(session).catch(err => 
+        console.warn('[WARN] Session cleanup failed:', err)
+      );
+    }
   }
 });
