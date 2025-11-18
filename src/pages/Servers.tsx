@@ -23,6 +23,7 @@ import { BootConfigDialog } from "@/components/servers/BootConfigDialog";
 import { VirtualMediaDialog } from "@/components/servers/VirtualMediaDialog";
 import { ScpBackupDialog } from "@/components/servers/ScpBackupDialog";
 import { BiosConfigDialog } from "@/components/servers/BiosConfigDialog";
+import { WorkflowJobDialog } from "@/components/jobs/WorkflowJobDialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   ContextMenu,
@@ -96,7 +97,9 @@ const Servers = () => {
   const [virtualMediaDialogOpen, setVirtualMediaDialogOpen] = useState(false);
   const [scpBackupDialogOpen, setScpBackupDialogOpen] = useState(false);
   const [biosConfigDialogOpen, setBiosConfigDialogOpen] = useState(false);
+  const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
   const [selectedServer, setSelectedServer] = useState<Server | null>(null);
+  const [deleteServerToConfirm, setDeleteServerToConfirm] = useState<Server | null>(null);
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [quickScanIp, setQuickScanIp] = useState<string>("");
   const { toast } = useToast();
@@ -748,6 +751,19 @@ const Servers = () => {
                   View Properties
                 </ContextMenuItem>
                 <ContextMenuSeparator />
+                
+                <ContextMenuItem
+                  onClick={() => {
+                    setSelectedServer(server);
+                    setWorkflowDialogOpen(true);
+                  }}
+                >
+                  <Wrench className="h-4 w-4 mr-2" />
+                  Prepare for Update
+                </ContextMenuItem>
+
+                <ContextMenuSeparator />
+                
                 <ContextMenuItem 
                   onClick={() => handleDeleteServer(server)}
                   className="text-destructive focus:text-destructive"
@@ -845,6 +861,14 @@ const Servers = () => {
             open={biosConfigDialogOpen}
             onOpenChange={setBiosConfigDialogOpen}
             server={selectedServer}
+          />
+
+          <WorkflowJobDialog
+            open={workflowDialogOpen}
+            onOpenChange={setWorkflowDialogOpen}
+            onSuccess={fetchServers}
+            defaultJobType="prepare_host_for_update"
+            preSelectedServerId={selectedServer?.id}
           />
         </>
       )}
