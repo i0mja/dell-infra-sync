@@ -953,7 +953,10 @@ class JobExecutor:
             return None
 
     def _fetch_initial_event_logs(self, ip: str, username: str, password: str, server_id: str, job_id: str) -> int:
-        """Fetch recent event logs and store in database"""
+        """Fetch recent event logs (SEL + Lifecycle) and store in database"""
+        total_logs = 0
+        
+        # Fetch SEL logs (System Event Log)
         try:
             url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1/Logs/Sel"
             response, response_time = self.throttler.request_with_safety(
@@ -991,16 +994,63 @@ class JobExecutor:
             )
             
             if response and response.status_code == 200 and response_json:
-                log_count = self._store_event_logs(response_json, server_id)
+                log_count = self._store_event_logs(response_json, server_id, log_type='SEL')
+                total_logs += log_count
+                self.log(f"  Fetched {log_count} SEL logs")
                 self.throttler.record_success(ip)
-                return log_count
                 
         except Exception as e:
-            self.log(f"  Could not fetch event logs: {e}", "WARN")
+            self.log(f"  Could not fetch SEL logs: {e}", "WARN")
         
-        return 0
+        # Fetch Lifecycle logs
+        try:
+            url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1/LogServices/Lclog/Entries"
+            response, response_time = self.throttler.request_with_safety(
+                method='GET',
+                url=url,
+                ip=ip,
+                logger=self.log,
+                auth=(username, password),
+                timeout=(2, 15)
+            )
+            
+            response_json = None
+            if response and response.status_code == 200 and response.content:
+                try:
+                    response_json = response.json()
+                except json.JSONDecodeError:
+                    pass
+            
+            # Log the API call
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                task_id=None,
+                command_type='GET',
+                endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/LogServices/Lclog/Entries',
+                full_url=url,
+                request_headers={'Authorization': f'Basic {username}:***'},
+                request_body=None,
+                status_code=response.status_code if response else None,
+                response_time_ms=response_time,
+                response_body=response_json,
+                success=(response and response.status_code == 200),
+                error_message=None if (response and response.status_code == 200) else f"HTTP {response.status_code}" if response else "Request failed",
+                operation_type='idrac_api'
+            )
+            
+            if response and response.status_code == 200 and response_json:
+                log_count = self._store_event_logs(response_json, server_id, log_type='Lifecycle')
+                total_logs += log_count
+                self.log(f"  Fetched {log_count} Lifecycle logs")
+                self.throttler.record_success(ip)
+                
+        except Exception as e:
+            self.log(f"  Could not fetch Lifecycle logs: {e}", "WARN")
+        
+        return total_logs
 
-    def _store_event_logs(self, data: Dict, server_id: str) -> int:
+    def _store_event_logs(self, data: Dict, server_id: str, log_type: str = 'SEL') -> int:
         """Parse and store event log entries in database (limit to last 50)"""
         try:
             members = data.get('Members', [])
@@ -1016,13 +1066,16 @@ class JobExecutor:
             for log_entry in recent_logs:
                 try:
                     # Extract fields from log entry
+                    # Differentiate between SEL and Lifecycle log formats
+                    category = log_entry.get('EntryType', log_type)
+                    
                     log_data = {
                         'server_id': server_id,
                         'event_id': log_entry.get('Id'),
                         'timestamp': log_entry.get('Created', datetime.utcnow().isoformat() + 'Z'),
                         'severity': log_entry.get('Severity'),
                         'message': log_entry.get('Message'),
-                        'category': log_entry.get('EntryType'),
+                        'category': f"{log_type}:{category}" if category else log_type,
                         'sensor_type': log_entry.get('SensorType'),
                         'sensor_number': log_entry.get('SensorNumber'),
                         'raw_data': log_entry
@@ -3395,63 +3448,16 @@ class JobExecutor:
                     continue
                 
                 try:
-                    # Get SEL logs using throttler
-                    sel_url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1/Logs/Sel"
+                    # Fetch both SEL and Lifecycle logs
+                    event_count = self._fetch_initial_event_logs(ip, username, password, server['id'], job['id'])
                     
-                    response, response_time_ms = self.throttler.request_with_safety(
-                        'GET',
-                        sel_url,
-                        ip,
-                        self.log,
-                        auth=(username, password),
-                        timeout=(2, 30)
-                    )
-                    
-                    if response.status_code in [401, 403]:
-                        self.throttler.record_failure(ip, response.status_code, self.log)
-                        if self.throttler.is_circuit_open(ip):
-                            self.log(f"  ✗ Circuit breaker OPEN for {ip}", "ERROR")
-                            failed_count += 1
-                            continue
-                    elif response.status_code == 200:
-                        self.throttler.record_success(ip)
-                        data = _safe_json_parse(response)
-                        members = data.get('Members', [])
-                        
-                        events_to_insert = []
-                        for member in members[:limit]:
-                            event = {
-                                'server_id': server['id'],
-                                'event_id': member.get('Id'),
-                                'timestamp': member.get('Created', datetime.now().isoformat()),
-                                'severity': member.get('Severity', 'Unknown'),
-                                'message': member.get('Message', ''),
-                                'category': member.get('MessageId', '').split('.')[0] if '.' in member.get('MessageId', '') else 'Unknown',
-                                'sensor_type': member.get('SensorType'),
-                                'sensor_number': member.get('SensorNumber'),
-                                'raw_data': member
-                            }
-                            events_to_insert.append(event)
-                        
-                        if events_to_insert:
-                            # Bulk insert events
-                            insert_url = f"{DSM_URL}/rest/v1/server_event_logs"
-                            insert_response = requests.post(insert_url, headers=headers, json=events_to_insert, verify=VERIFY_SSL)
-                            
-                            if insert_response.status_code in [200, 201]:
-                                self.log(f"  ✓ Inserted {len(events_to_insert)} event log entries")
-                                total_events += len(events_to_insert)
-                                success_count += 1
-                            else:
-                                self.log(f"  ✗ Failed to insert events: HTTP {insert_response.status_code}", "ERROR")
-                                failed_count += 1
-                        else:
-                            self.log(f"  ⚠ No event log entries found")
-                            success_count += 1
+                    if event_count > 0:
+                        self.log(f"  ✓ Fetched {event_count} total event log entries (SEL + Lifecycle)")
+                        total_events += event_count
+                        success_count += 1
                     else:
-                        self.throttler.record_failure(ip, response.status_code, self.log)
-                        self.log(f"  ✗ Failed to fetch SEL: HTTP {response.status_code}", "ERROR")
-                        failed_count += 1
+                        self.log(f"  ⚠ No event log entries found")
+                        success_count += 1
                         
                 except Exception as e:
                     self.log(f"  ✗ Error: {e}", "ERROR")
@@ -4684,6 +4690,136 @@ class JobExecutor:
         except Exception as e:
             self.log(f"Failed to log OpenManage activity: {e}", "WARN")
     
+    def _verify_bios_settings_after_reboot(self, ip: str, username: str, password: str, 
+                                           requested_attributes: Dict, server_id: str, job_id: str) -> Dict:
+        """
+        Wait for system to reboot and verify BIOS settings were applied correctly
+        
+        Returns verification result with comparison details
+        """
+        try:
+            self.log(f"  Waiting for system to reboot and come back online...")
+            
+            # Wait for system to be unreachable (shutting down)
+            time.sleep(15)
+            
+            # Wait for system to come back online (max 5 minutes)
+            max_wait = 300  # 5 minutes
+            start_time = time.time()
+            system_online = False
+            
+            while time.time() - start_time < max_wait:
+                try:
+                    # Try to reach Redfish root
+                    test_url = f"https://{ip}/redfish/v1/"
+                    test_resp = requests.get(
+                        test_url,
+                        auth=HTTPBasicAuth(username, password),
+                        verify=False,
+                        timeout=5
+                    )
+                    
+                    if test_resp.status_code == 200:
+                        system_online = True
+                        self.log(f"  [OK] System is back online after {int(time.time() - start_time)}s")
+                        break
+                except:
+                    pass
+                
+                time.sleep(10)
+            
+            if not system_online:
+                self.log(f"  [!] System did not come back online within {max_wait}s", "WARNING")
+                return {
+                    'verified': False,
+                    'reason': 'System did not respond after reboot timeout',
+                    'wait_time_seconds': int(time.time() - start_time)
+                }
+            
+            # Wait a bit more for BIOS to fully initialize
+            time.sleep(20)
+            
+            # Query current BIOS settings
+            self.log(f"  Verifying BIOS settings were applied...")
+            bios_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Bios"
+            
+            verify_start = time.time()
+            bios_resp = requests.get(
+                bios_url,
+                auth=HTTPBasicAuth(username, password),
+                verify=False,
+                timeout=30
+            )
+            response_time_ms = int((time.time() - verify_start) * 1000)
+            
+            # Log the verification API call
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                task_id=None,
+                command_type='BIOS_VERIFY',
+                endpoint='/redfish/v1/Systems/System.Embedded.1/Bios',
+                full_url=bios_url,
+                request_headers={'Authorization': '[REDACTED]'},
+                request_body=None,
+                status_code=bios_resp.status_code,
+                response_body=_safe_json_parse(bios_resp) if bios_resp.ok else None,
+                response_time_ms=response_time_ms,
+                success=bios_resp.ok,
+                error_message=None if bios_resp.ok else bios_resp.text,
+                operation_type='idrac_api'
+            )
+            
+            if not bios_resp.ok:
+                return {
+                    'verified': False,
+                    'reason': f'Failed to query BIOS settings: HTTP {bios_resp.status_code}'
+                }
+            
+            current_bios = _safe_json_parse(bios_resp)
+            current_attributes = current_bios.get('Attributes', {})
+            
+            # Compare requested vs current
+            mismatches = []
+            matches = []
+            
+            for key, requested_value in requested_attributes.items():
+                current_value = current_attributes.get(key)
+                
+                # Convert both to strings for comparison (handles bool/int/string variations)
+                if str(current_value).lower() == str(requested_value).lower():
+                    matches.append(key)
+                else:
+                    mismatches.append({
+                        'attribute': key,
+                        'requested': requested_value,
+                        'current': current_value
+                    })
+            
+            verification_result = {
+                'verified': len(mismatches) == 0,
+                'total_attributes': len(requested_attributes),
+                'matches': len(matches),
+                'mismatches': mismatches,
+                'wait_time_seconds': int(time.time() - start_time)
+            }
+            
+            if len(mismatches) == 0:
+                self.log(f"  [OK] All {len(matches)} BIOS settings verified successfully")
+            else:
+                self.log(f"  [!] {len(mismatches)} BIOS settings did not match expected values", "WARNING")
+                for mismatch in mismatches:
+                    self.log(f"    - {mismatch['attribute']}: expected '{mismatch['requested']}', got '{mismatch['current']}'", "WARNING")
+            
+            return verification_result
+            
+        except Exception as e:
+            self.log(f"  Error during BIOS verification: {e}", "ERROR")
+            return {
+                'verified': False,
+                'reason': f'Verification error: {str(e)}'
+            }
+    
     def execute_bios_config_write(self, job: Dict):
         """
         Execute BIOS configuration write job - apply BIOS attribute changes
@@ -4827,20 +4963,33 @@ class JobExecutor:
                 if reboot_resp.ok:
                     self.log(f"  [OK] Reboot initiated successfully")
                     reboot_action = reset_type
+                    
+                    # Wait for system to reboot and verify BIOS settings were applied
+                    verification_result = self._verify_bios_settings_after_reboot(
+                        ip, username, password, attributes, server_id, job['id']
+                    )
                 else:
                     self.log(f"  [!] Reboot failed but BIOS settings were applied", "WARNING")
+                    verification_result = None
+            else:
+                verification_result = None
             
             # Update job status
+            job_details = {
+                'settings_applied': len(attributes),
+                'reboot_required': True,
+                'reboot_action': reboot_action,
+                'snapshot_created': create_snapshot
+            }
+            
+            if verification_result:
+                job_details['verification'] = verification_result
+            
             self.update_job_status(
                 job['id'],
                 'completed',
                 completed_at=datetime.now().isoformat(),
-                details={
-                    'settings_applied': len(attributes),
-                    'reboot_required': True,
-                    'reboot_action': reboot_action,
-                    'snapshot_created': create_snapshot
-                }
+                details=job_details
             )
             self.log(f"BIOS config write job completed successfully")
             
