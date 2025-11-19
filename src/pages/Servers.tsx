@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Search, RefreshCw, Link2, Wrench, RotateCw, Edit, History, Trash2, CheckCircle, Info, Power, Activity, FileText, HardDrive, Disc, FileJson, Settings2, Shield } from "lucide-react";
+import { Plus, Search, RefreshCw, Link2, Wrench, RotateCw, Edit, History, Trash2, CheckCircle, Info, Power, Activity, FileText, HardDrive, Disc, FileJson, Settings2, Shield, Users } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -25,6 +25,16 @@ import { ScpBackupDialog } from "@/components/servers/ScpBackupDialog";
 import { BiosConfigDialog } from "@/components/servers/BiosConfigDialog";
 import { WorkflowJobDialog } from "@/components/jobs/WorkflowJobDialog";
 import { PreFlightCheckDialog } from "@/components/jobs/PreFlightCheckDialog";
+import { ManageServerGroupsDialog } from "@/components/servers/ManageServerGroupsDialog";
+import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   ContextMenu,
@@ -76,17 +86,20 @@ interface Server {
 }
 
 const Servers = () => {
+  const navigate = useNavigate();
   // Job Executor is always enabled - iDRACs are always on private networks
   const useJobExecutorForIdrac = true;
   const [servers, setServers] = useState<Server[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [groupFilter, setGroupFilter] = useState<string>("all");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [auditDialogOpen, setAuditDialogOpen] = useState(false);
   const [propertiesDialogOpen, setPropertiesDialogOpen] = useState(false);
   const [jobDialogOpen, setJobDialogOpen] = useState(false);
+  const [manageGroupsDialogOpen, setManageGroupsDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [assignCredentialsDialogOpen, setAssignCredentialsDialogOpen] = useState(false);
   const [showIncompleteBanner, setShowIncompleteBanner] = useState(true);
@@ -105,6 +118,31 @@ const Servers = () => {
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [quickScanIp, setQuickScanIp] = useState<string>("");
   const { toast } = useToast();
+  
+  // Fetch server groups
+  const { data: serverGroups } = useQuery({
+    queryKey: ['server-groups'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('server_groups')
+        .select('id, name, color, icon')
+        .order('name');
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  // Fetch server group memberships
+  const { data: groupMemberships } = useQuery({
+    queryKey: ['server-group-memberships'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('server_group_members')
+        .select('server_id, server_group_id, server_groups(id, name, color, icon)');
+      if (error) throw error;
+      return data;
+    },
+  });
   
   const getServerStatus = (server: any) => {
     if (server.discovery_job_id) {
@@ -453,12 +491,27 @@ const Servers = () => {
     }
   };
 
-  const filteredServers = servers.filter((server) =>
-    server.ip_address.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    server.hostname?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    server.service_tag?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    server.model?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredServers = servers.filter((server) => {
+    // Text search filter
+    const matchesSearch = 
+      server.ip_address.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      server.hostname?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      server.service_tag?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      server.model?.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    // Group filter
+    if (groupFilter === "all") {
+      return matchesSearch;
+    } else if (groupFilter === "ungrouped") {
+      const hasGroup = groupMemberships?.some(m => m.server_id === server.id);
+      return matchesSearch && !hasGroup;
+    } else {
+      const inGroup = groupMemberships?.some(
+        m => m.server_id === server.id && m.server_group_id === groupFilter
+      );
+      return matchesSearch && inGroup;
+    }
+  });
 
   return (
     <div className="container mx-auto p-6">
@@ -472,6 +525,13 @@ const Servers = () => {
         <div className="flex gap-2">
           <Button variant="outline" size="icon" onClick={fetchServers}>
             <RefreshCw className="h-4 w-4" />
+          </Button>
+          <Button 
+            variant="outline" 
+            onClick={() => navigate('/settings?tab=server-groups')}
+          >
+            <Users className="mr-2 h-4 w-4" />
+            Manage Groups
           </Button>
           <Button onClick={() => setDialogOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
@@ -530,20 +590,52 @@ const Servers = () => {
         </Alert>
       )}
 
+      {servers.length > 0 && (!serverGroups || serverGroups.length === 0) && (
+        <Alert className="mb-6">
+          <Info className="h-4 w-4" />
+          <AlertDescription>
+            💡 <strong>Tip:</strong> Group your Dell servers into application clusters for unified maintenance scheduling.{" "}
+            <Button 
+              variant="link" 
+              className="p-0 h-auto font-semibold"
+              onClick={() => navigate('/settings?tab=server-groups')}
+            >
+              Create your first group
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle>Search Servers</CardTitle>
-          <CardDescription>Filter by IP, hostname, service tag, or model</CardDescription>
+          <CardTitle>Search & Filter Servers</CardTitle>
+          <CardDescription>Filter by IP, hostname, service tag, model, or group</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="relative">
-            <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search servers..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10"
-            />
+          <div className="flex gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search servers..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+            {serverGroups && serverGroups.length > 0 && (
+              <Select value={groupFilter} onValueChange={setGroupFilter}>
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue placeholder="All Groups" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Groups</SelectItem>
+                  <SelectItem value="ungrouped">Ungrouped Servers</SelectItem>
+                  {serverGroups.map((g) => (
+                    <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -626,6 +718,23 @@ const Servers = () => {
                           {refreshing === server.id && (
                             <Badge variant="outline" className="animate-pulse">Refreshing...</Badge>
                           )}
+                          {groupMemberships
+                            ?.filter(m => m.server_id === server.id)
+                            .map((m) => {
+                              const group = m.server_groups as any;
+                              return (
+                                <Badge 
+                                  key={group.id}
+                                  variant="outline"
+                                  style={{ borderColor: group.color }}
+                                  className="gap-1"
+                                >
+                                  <Users className="h-3 w-3" />
+                                  {group.name}
+                                </Badge>
+                              );
+                            })
+                          }
                         </div>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                           <div>
@@ -716,7 +825,15 @@ const Servers = () => {
                   BIOS Configuration
                 </ContextMenuItem>
                 <ContextMenuSeparator />
-                <ContextMenuItem 
+                <ContextMenuItem onClick={() => {
+                  setSelectedServer(server);
+                  setManageGroupsDialogOpen(true);
+                }}>
+                  <Users className="mr-2 h-4 w-4" />
+                  Manage Group Membership
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
                   onClick={() => {
                     setSelectedServer(server);
                     setPreFlightCheckDialogOpen(true);
@@ -895,6 +1012,12 @@ const Servers = () => {
           />
         </>
       )}
+
+      <ManageServerGroupsDialog
+        server={selectedServer}
+        open={manageGroupsDialogOpen}
+        onOpenChange={setManageGroupsDialogOpen}
+      />
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
