@@ -116,6 +116,7 @@ const Servers = () => {
   const [selectedServer, setSelectedServer] = useState<Server | null>(null);
   const [deleteServerToConfirm, setDeleteServerToConfirm] = useState<Server | null>(null);
   const [refreshing, setRefreshing] = useState<string | null>(null);
+  const [healthCheckServer, setHealthCheckServer] = useState<string | null>(null);
   const [quickScanIp, setQuickScanIp] = useState<string>("");
   const { toast } = useToast();
   
@@ -386,6 +387,73 @@ const Servers = () => {
         description: error.message,
         variant: "destructive",
       });
+    }
+  };
+
+  const handleRunHealthCheck = async (server: Server) => {
+    setHealthCheckServer(server.id);
+    
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+
+      const { data: job, error: jobError } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'health_check',
+          created_by: user.id,
+          status: 'pending',
+          target_scope: {
+            type: 'specific',
+            server_ids: [server.id]
+          },
+          details: {
+            server_ip: server.ip_address,
+            server_hostname: server.hostname || server.ip_address
+          }
+        })
+        .select()
+        .single();
+
+      if (jobError) throw jobError;
+
+      toast({
+        title: 'Health check initiated',
+        description: `Checking health status for ${server.hostname || server.ip_address}`,
+      });
+
+      setTimeout(async () => {
+        const { data: updatedJob } = await supabase
+          .from('jobs')
+          .select('status, details')
+          .eq('id', job.id)
+          .single();
+
+        if (updatedJob?.status === 'completed') {
+          toast({
+            title: 'Health check completed',
+            description: 'View results in Health Status dialog',
+          });
+          fetchServers();
+        } else if (updatedJob?.status === 'failed') {
+          const error = (updatedJob.details as any)?.error || 'Unknown error';
+          toast({
+            title: 'Health check failed',
+            description: error,
+            variant: 'destructive',
+          });
+        }
+        setHealthCheckServer(null);
+      }, 10000);
+
+    } catch (error: any) {
+      console.error('Error initiating health check:', error);
+      toast({
+        title: 'Failed to initiate health check',
+        description: error.message,
+        variant: 'destructive',
+      });
+      setHealthCheckServer(null);
     }
   };
 
@@ -852,21 +920,28 @@ const Servers = () => {
                   Create Firmware Update Job
                 </ContextMenuItem>
                 <ContextMenuSeparator />
-                <ContextMenuItem 
-                  onClick={() => handleTestConnection(server)}
-                  disabled={refreshing === server.id}
-                >
-                  <CheckCircle className="mr-2 h-4 w-4" />
-                  Test iDRAC Connection
-                </ContextMenuItem>
-                <ContextMenuItem 
-                  onClick={() => handleRefreshInfo(server)}
-                  disabled={refreshing === server.id}
-                  className={isIncompleteServer(server) ? "text-yellow-600 dark:text-yellow-500 font-medium" : ""}
-                >
-                  <RotateCw className={`mr-2 h-4 w-4 ${refreshing === server.id ? 'animate-spin' : ''} ${isIncompleteServer(server) ? 'text-yellow-600 dark:text-yellow-500' : ''}`} />
-                  {isIncompleteServer(server) ? '⚠ Refresh Missing Information' : 'Refresh Server Information'}
-                </ContextMenuItem>
+                    <ContextMenuItem 
+                      onClick={() => handleTestConnection(server)}
+                      disabled={refreshing === server.id}
+                    >
+                      <CheckCircle className="mr-2 h-4 w-4" />
+                      Test iDRAC Connection
+                    </ContextMenuItem>
+                    <ContextMenuItem 
+                      onClick={() => handleRunHealthCheck(server)}
+                      disabled={healthCheckServer === server.id}
+                    >
+                      <Activity className="mr-2 h-4 w-4" />
+                      Run Health Check
+                    </ContextMenuItem>
+                    <ContextMenuItem 
+                      onClick={() => handleRefreshInfo(server)}
+                      disabled={refreshing === server.id}
+                      className={isIncompleteServer(server) ? "text-yellow-600 dark:text-yellow-500 font-medium" : ""}
+                    >
+                      <RotateCw className={`mr-2 h-4 w-4 ${refreshing === server.id ? 'animate-spin' : ''} ${isIncompleteServer(server) ? 'text-yellow-600 dark:text-yellow-500' : ''}`} />
+                      {isIncompleteServer(server) ? '⚠ Refresh Missing Information' : 'Refresh Server Information'}
+                    </ContextMenuItem>
                 <ContextMenuItem onClick={() => handleEditServer(server)}>
                   <Edit className="mr-2 h-4 w-4" />
                   Edit Server Details
