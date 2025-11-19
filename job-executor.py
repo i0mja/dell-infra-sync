@@ -5562,13 +5562,33 @@ class JobExecutor:
             self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
             
             details = job.get('details', {})
-            cluster_id = details.get('cluster_id')
+            cluster_id = details.get('cluster_id') or details.get('cluster_name')  # Support both field names
+            update_scope = details.get('update_scope', 'full_stack')
             firmware_updates = details.get('firmware_updates', [])
             backup_scp = details.get('backup_scp', True)
             min_healthy_hosts = details.get('min_healthy_hosts', 2)
             continue_on_failure = details.get('continue_on_failure', False)
+
+            # Map update_scope to firmware components
+            self.log(f"Update scope: {update_scope}")
+            if update_scope == 'firmware_only':
+                self.log("  Scope: Firmware components only (iDRAC, NIC, RAID)")
+                firmware_components_filter = ['iDRAC', 'NIC', 'RAID', 'FC']
+            elif update_scope == 'bios_only':
+                self.log("  Scope: BIOS only")
+                firmware_components_filter = ['BIOS']
+            elif update_scope == 'full_stack':
+                self.log("  Scope: All components (BIOS + Firmware)")
+                firmware_components_filter = ['BIOS', 'iDRAC', 'NIC', 'RAID', 'FC']
+            elif update_scope == 'safety_check':
+                self.log("  Scope: Safety check only - no updates")
+                firmware_components_filter = []  # No updates, just validation
+            else:
+                self.log(f"  Unknown update_scope '{update_scope}', defaulting to full_stack")
+                firmware_components_filter = ['BIOS', 'iDRAC', 'NIC', 'RAID', 'FC']
             
             workflow_results['cluster_id'] = cluster_id
+            workflow_results['update_scope'] = update_scope
             
             # STEP 1: Get list of hosts in cluster
             self.log_workflow_step(job['id'], 'rolling_update', 1, 'Get Cluster Hosts', 'running',
