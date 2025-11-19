@@ -61,11 +61,21 @@ Cloud (Dell Server Manager)         Local Network (Your Infrastructure)
    - Connectivity to vCenter (if using maintenance mode)
    - Outbound HTTPS to your Dell Server Manager URL
 
-3. **Firmware Repository (Required for firmware updates)**
+3. **Firmware Repository Options**
+   
+   **Option A: Manual Repository (Air-Gapped/Offline)**
    - HTTP/HTTPS server hosting Dell Update Packages (DUP files)
    - Must be accessible from iDRAC management network
    - Organized structure (e.g., `/dell/BIOS/`, `/dell/iDRAC/`, etc.)
    - Example: `http://firmware.example.com/dell/BIOS_R720_2.9.0.exe`
+   - Works in completely offline environments
+   
+   **Option B: Dell Online Catalog (Internet-Connected)**
+   - iDRAC downloads firmware directly from downloads.dell.com
+   - No local repository needed
+   - Always gets latest available firmware
+   - Requires internet connectivity from iDRAC
+   - DNS resolution and HTTPS (443) outbound required
 
 4. **Credentials**
    - Service Role Key from Supabase (for API access)
@@ -267,6 +277,141 @@ The script will:
    - Wait for server reboot
    - **If linked**: Exit maintenance mode
    - Report task completion
+
+### Firmware Update Options
+
+The Job Executor supports three methods for firmware delivery:
+
+#### **Option 1: Manual Repository (Offline/Air-Gapped)**
+
+**Best for:** Air-gapped datacenters, controlled environments, strict change management
+
+- Host firmware files on local HTTP/HTTPS server
+- Full control over firmware versions deployed
+- Works in completely offline environments
+- Requires manual firmware downloads from Dell Support
+
+**Setup:**
+```bash
+# Example: Simple HTTP server for firmware repository
+mkdir -p /opt/firmware-repo/dell
+cd /opt/firmware-repo
+python3 -m http.server 8080
+
+# Or use production web server (Apache/Nginx)
+```
+
+**File organization:**
+```
+/opt/firmware-repo/dell/
+├── BIOS_R740_2.23.0.exe
+├── iDRAC_7.00.00.174.exe
+├── NIC_Broadcom_23.0.1.exe
+└── RAID_H740_25.5.9.exe
+```
+
+**Job creation:** Select "Manual Repository" and provide full URL:
+```
+http://firmware.example.com:8080/dell/BIOS_R740_2.23.0.exe
+```
+
+---
+
+#### **Option 2: Dell Online Catalog (Internet-Connected)** ⭐ **Recommended**
+
+**Best for:** Internet-connected servers, lab environments, always-latest deployments
+
+- iDRAC downloads firmware directly from downloads.dell.com
+- Automatically gets latest Dell-approved firmware
+- No local repository to maintain
+- Zero bandwidth cost from your infrastructure
+
+**Requirements:**
+- iDRAC must have default gateway configured
+- DNS resolution enabled on iDRAC (`dig downloads.dell.com` must work)
+- Firewall allows HTTPS (443) outbound to Dell CDN
+- iDRAC firmware version 4.00.00.00 or newer
+
+**How it works:**
+1. iDRAC queries `https://downloads.dell.com/catalog/Catalog.xml`
+2. Identifies all applicable firmware for the specific server model/service tag
+3. Downloads only the selected component(s) or all if "auto-select latest" enabled
+4. Applies updates based on schedule (OnReset or Immediate)
+
+**Job creation:** Select "Dell Online Catalog" and optionally:
+- Use default catalog URL (recommended)
+- Choose specific component or "all components"
+- Enable/disable "auto-select latest"
+
+**Network validation:**
+```bash
+# Test from machine with iDRAC-like network access
+curl -I https://downloads.dell.com/catalog/Catalog.xml
+
+# Test DNS resolution
+nslookup downloads.dell.com
+
+# Test from iDRAC SSH (if enabled)
+ssh root@idrac-ip
+ping downloads.dell.com
+```
+
+---
+
+#### **Option 3: Dell Direct URL**
+
+**Best for:** Specific firmware versions, testing, targeted deployments
+
+- Uses Dell's download servers but with specific file URL
+- Still requires internet but with version control
+- Good for "pin to known-good version" scenarios
+
+**Job creation:** Select "Dell Direct URL" and provide full Dell download URL:
+```
+https://downloads.dell.com/FOLDER09876543M/1/BIOS_ABC12_WN64_2.23.0.EXE
+```
+
+**Finding Dell URLs:**
+1. Go to dell.com/support
+2. Search by service tag
+3. Find firmware update
+4. Right-click "Download" → Copy Link Address
+
+---
+
+### Comparison Matrix
+
+| Feature | Manual Repository | Dell Online Catalog | Dell Direct URL |
+|---------|------------------|---------------------|-----------------|
+| **Internet Required** | No | Yes (from iDRAC) | Yes (from iDRAC) |
+| **Maintenance Effort** | High (manual downloads) | None | Low (find URLs) |
+| **Version Control** | Full control | Always latest | Specific version |
+| **Bandwidth Usage** | From your network | From Dell CDN | From Dell CDN |
+| **Air-gap Support** | ✅ Yes | ❌ No | ❌ No |
+| **Setup Complexity** | High (HTTP server) | None | None |
+| **Firmware Currency** | Manual | Automatic | Manual |
+
+### Deployment Scenarios
+
+**Scenario: Production datacenter with DMZ**
+- **DMZ servers:** Dell Online Catalog (internet access)
+- **Internal servers:** Manual Repository (no internet)
+- **Job Executor:** Runs on internal network with access to both zones
+
+**Scenario: Fully air-gapped environment**
+- **All servers:** Manual Repository only
+- **Job Executor:** On same isolated network
+- **Firmware updates:** Manually transfer DUP files to repository server
+
+**Scenario: Lab/development environment**
+- **All servers:** Dell Online Catalog
+- **Job Executor:** Any machine with iDRAC access
+- **Always latest firmware automatically**
+
+**Scenario: Hybrid with change control**
+- **Pre-production:** Dell Online Catalog (test latest)
+- **Production:** Manual Repository (controlled versions)
+- **Workflow:** Test latest in pre-prod → download approved versions → deploy to prod
 
 4. **Real-time updates**
    - Task status updates sent to cloud

@@ -45,6 +45,9 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
   const [notes, setNotes] = useState("");
   const [firmwareUri, setFirmwareUri] = useState("");
   const [component, setComponent] = useState("BIOS");
+  const [firmwareSource, setFirmwareSource] = useState<'manual' | 'dell_online' | 'dell_direct'>('manual');
+  const [dellCatalogUrl, setDellCatalogUrl] = useState('https://downloads.dell.com/catalog/Catalog.xml');
+  const [autoSelectLatest, setAutoSelectLatest] = useState(true);
   const [credentialSets, setCredentialSets] = useState<CredentialSet[]>([]);
   const [selectedCredentialSets, setSelectedCredentialSets] = useState<string[]>([]);
   const [preFlightOpen, setPreFlightOpen] = useState(false);
@@ -130,6 +133,16 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
           details.component = component;
           details.version = "latest";
           details.apply_time = "OnReset";
+        }
+        // Add firmware source information
+        if (jobType === 'firmware_update') {
+          details.firmware_source = firmwareSource === 'dell_online' ? 'dell_online_catalog' : 
+                                     firmwareSource === 'dell_direct' ? 'dell_direct_url' : 
+                                     'manual_repository';
+          if (firmwareSource === 'dell_online') {
+            details.dell_catalog_url = dellCatalogUrl;
+            details.auto_select_latest = autoSelectLatest;
+          }
         }
       } else if (jobType === 'discovery_scan') {
         if (!scanRange) {
@@ -266,17 +279,97 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="firmware_uri">Firmware URI (Optional)</Label>
-                    <Input
-                      id="firmware_uri"
-                      placeholder="e.g., http://downloads.dell.com/FOLDER12345/1/BIOS_ABC12.exe"
-                      value={firmwareUri}
-                      onChange={(e) => setFirmwareUri(e.target.value)}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Leave blank to use latest available firmware from Dell
-                    </p>
+                    <Label>Firmware Source *</Label>
+                    <Select value={firmwareSource} onValueChange={(value) => setFirmwareSource(value as any)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="manual">
+                          <div className="space-y-0.5">
+                            <div className="font-medium">Manual Repository</div>
+                            <div className="text-xs text-muted-foreground">Local HTTP server (offline)</div>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="dell_online">
+                          <div className="space-y-0.5">
+                            <div className="font-medium">Dell Online Catalog</div>
+                            <div className="text-xs text-muted-foreground">downloads.dell.com (internet required)</div>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="dell_direct">
+                          <div className="space-y-0.5">
+                            <div className="font-medium">Dell Direct URL</div>
+                            <div className="text-xs text-muted-foreground">Specific Dell download link</div>
+                          </div>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
+
+                  {firmwareSource === 'manual' && (
+                    <div className="space-y-2">
+                      <Label htmlFor="firmware_uri">Firmware URI *</Label>
+                      <Input
+                        id="firmware_uri"
+                        placeholder="http://firmware.example.com/dell/BIOS_R740_2.9.0.exe"
+                        value={firmwareUri}
+                        onChange={(e) => setFirmwareUri(e.target.value)}
+                        required
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Full URL to firmware package (.exe)
+                      </p>
+                    </div>
+                  )}
+
+                  {firmwareSource === 'dell_online' && (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="dell_catalog_url">Dell Catalog URL</Label>
+                        <Input
+                          id="dell_catalog_url"
+                          value={dellCatalogUrl}
+                          onChange={(e) => setDellCatalogUrl(e.target.value)}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Default works for most scenarios
+                        </p>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="auto_latest"
+                          checked={autoSelectLatest}
+                          onCheckedChange={(checked) => setAutoSelectLatest(checked as boolean)}
+                        />
+                        <label htmlFor="auto_latest" className="text-sm cursor-pointer">
+                          Automatically install latest available firmware
+                        </label>
+                      </div>
+                      <Alert>
+                        <Info className="h-4 w-4" />
+                        <AlertDescription>
+                          iDRAC will query Dell's catalog and download the latest firmware. Server must have internet connectivity.
+                        </AlertDescription>
+                      </Alert>
+                    </>
+                  )}
+
+                  {firmwareSource === 'dell_direct' && (
+                    <div className="space-y-2">
+                      <Label htmlFor="firmware_uri">Dell Download URL *</Label>
+                      <Input
+                        id="firmware_uri"
+                        placeholder="https://downloads.dell.com/FOLDER09876543M/1/BIOS_ABC12.exe"
+                        value={firmwareUri}
+                        onChange={(e) => setFirmwareUri(e.target.value)}
+                        required
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Direct URL from Dell support downloads
+                      </p>
+                    </div>
+                  )}
                 </>
               )}
 

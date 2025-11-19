@@ -528,12 +528,15 @@ export type Database = {
       }
       jobs: {
         Row: {
+          auto_select_latest: boolean | null
           completed_at: string | null
           component_order: number | null
           created_at: string
           created_by: string
           credential_set_ids: string[] | null
+          dell_catalog_url: string | null
           details: Json | null
+          firmware_source: string | null
           id: string
           job_type: Database["public"]["Enums"]["job_type"]
           parent_job_id: string | null
@@ -543,12 +546,15 @@ export type Database = {
           target_scope: Json | null
         }
         Insert: {
+          auto_select_latest?: boolean | null
           completed_at?: string | null
           component_order?: number | null
           created_at?: string
           created_by: string
           credential_set_ids?: string[] | null
+          dell_catalog_url?: string | null
           details?: Json | null
+          firmware_source?: string | null
           id?: string
           job_type: Database["public"]["Enums"]["job_type"]
           parent_job_id?: string | null
@@ -558,12 +564,15 @@ export type Database = {
           target_scope?: Json | null
         }
         Update: {
+          auto_select_latest?: boolean | null
           completed_at?: string | null
           component_order?: number | null
           created_at?: string
           created_by?: string
           credential_set_ids?: string[] | null
+          dell_catalog_url?: string | null
           details?: Json | null
+          firmware_source?: string | null
           id?: string
           job_type?: Database["public"]["Enums"]["job_type"]
           parent_job_id?: string | null
