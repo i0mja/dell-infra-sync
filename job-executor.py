@@ -6582,6 +6582,13 @@ class JobExecutor:
             if not cluster_obj:
                 raise Exception(f"Cluster '{cluster_name}' not found")
             
+            # Check DRS configuration
+            drs_enabled = cluster_obj.configuration.drsConfig.enabled
+            drs_behavior = cluster_obj.configuration.drsConfig.defaultVmBehavior
+            drs_mode = 'fullyAutomated' if drs_behavior == 'fullyAutomated' else \
+                       'partiallyAutomated' if drs_behavior == 'partiallyAutomated' else \
+                       'manual'
+            
             # Count host states
             total_hosts = len(cluster_obj.host)
             healthy_hosts = sum(1 for h in cluster_obj.host 
@@ -6589,13 +6596,59 @@ class JobExecutor:
                               and h.runtime.powerState == 'poweredOn' 
                               and not h.runtime.inMaintenanceMode)
             
-            safe_to_proceed = healthy_hosts >= (min_required_hosts + 1)
+            # Find target host and count VMs
+            target_host_id = details.get('target_host_id')
+            target_host_vms = 0
+            target_host_powered_on_vms = 0
+            
+            if target_host_id:
+                # Fetch host from database to get vcenter_id
+                host_response = requests.get(
+                    f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{target_host_id}&select=*",
+                    headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                    verify=VERIFY_SSL
+                )
+                host_data = _safe_json_parse(host_response)
+                if host_data:
+                    vcenter_host_id = host_data[0].get('vcenter_id')
+                    
+                    # Find host in cluster
+                    for h in cluster_obj.host:
+                        if str(h._moId) == vcenter_host_id:
+                            target_host_vms = len(h.vm) if h.vm else 0
+                            target_host_powered_on_vms = sum(1 for vm in h.vm 
+                                                            if vm.runtime.powerState == 'poweredOn') if h.vm else 0
+                            break
+            
+            # Enhanced safety logic with warnings
+            safe_to_proceed = (
+                healthy_hosts >= (min_required_hosts + 1) and
+                (drs_enabled or target_host_powered_on_vms == 0)
+            )
+            
+            warnings = []
+            if not drs_enabled:
+                warnings.append("DRS is disabled - VMs will not automatically evacuate")
+            if drs_mode == 'manual':
+                warnings.append("DRS is in manual mode - requires manual VM migration")
+            if healthy_hosts == min_required_hosts + 1:
+                warnings.append("Cluster will have minimum required hosts after maintenance")
+            if target_host_powered_on_vms > 0 and not drs_enabled:
+                warnings.append(f"{target_host_powered_on_vms} powered-on VMs require manual migration")
             
             result = {
                 'safe_to_proceed': safe_to_proceed,
                 'total_hosts': total_hosts,
                 'healthy_hosts': healthy_hosts,
                 'min_required_hosts': min_required_hosts,
+                'drs_enabled': drs_enabled,
+                'drs_mode': drs_mode,
+                'drs_warning': not drs_enabled or drs_mode == 'manual',
+                'target_host_vms': target_host_vms,
+                'target_host_powered_on_vms': target_host_powered_on_vms,
+                'target_host_powered_off_vms': target_host_vms - target_host_powered_on_vms,
+                'estimated_evacuation_seconds': (target_host_powered_on_vms * 30) + 60,
+                'warnings': warnings,
                 'recommendation': 'SAFE - Proceed' if safe_to_proceed else 'UNSAFE - Do not proceed'
             }
             

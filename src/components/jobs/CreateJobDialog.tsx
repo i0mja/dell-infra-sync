@@ -11,6 +11,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Info } from "lucide-react";
+import { PreFlightCheckDialog } from "./PreFlightCheckDialog";
 
 interface CreateJobDialogProps {
   open: boolean;
@@ -46,6 +47,8 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
   const [component, setComponent] = useState("BIOS");
   const [credentialSets, setCredentialSets] = useState<CredentialSet[]>([]);
   const [selectedCredentialSets, setSelectedCredentialSets] = useState<string[]>([]);
+  const [preFlightOpen, setPreFlightOpen] = useState(false);
+  const [preFlightServerId, setPreFlightServerId] = useState<string | null>(null);
   const { toast } = useToast();
   const { user } = useAuth();
 
@@ -86,6 +89,29 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Check if any selected server has vCenter link for firmware updates
+    if (jobType === 'firmware_update' || jobType === 'full_server_update') {
+      const { data: serversData } = await supabase
+        .from('servers')
+        .select('id, vcenter_host_id')
+        .in('id', selectedServers);
+      
+      const vcenterLinkedServers = serversData?.filter(s => s.vcenter_host_id) || [];
+      
+      if (vcenterLinkedServers.length > 0) {
+        // Open pre-flight check for first vCenter-linked server
+        setPreFlightServerId(vcenterLinkedServers[0].id);
+        setPreFlightOpen(true);
+        return; // Don't proceed with job creation yet
+      }
+    }
+    
+    // Continue with job creation
+    await createJob();
+  };
+
+  const createJob = async () => {
     setLoading(true);
 
     try {
@@ -369,6 +395,14 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
           </div>
         </form>
       </DialogContent>
+      
+      <PreFlightCheckDialog
+        open={preFlightOpen}
+        onOpenChange={setPreFlightOpen}
+        onProceed={createJob}
+        serverId={preFlightServerId || ''}
+        jobType={jobType as 'firmware_update' | 'full_server_update'}
+      />
     </Dialog>
   );
 };
