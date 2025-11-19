@@ -241,9 +241,13 @@ export type Database = {
           details: Json | null
           healthy_hosts: number
           id: string
+          is_scheduled: boolean | null
           job_id: string | null
           min_required_hosts: number
+          previous_status: string | null
           safe_to_proceed: boolean
+          scheduled_check_id: string | null
+          status_changed: boolean | null
           total_hosts: number
         }
         Insert: {
@@ -253,9 +257,13 @@ export type Database = {
           details?: Json | null
           healthy_hosts: number
           id?: string
+          is_scheduled?: boolean | null
           job_id?: string | null
           min_required_hosts: number
+          previous_status?: string | null
           safe_to_proceed: boolean
+          scheduled_check_id?: string | null
+          status_changed?: boolean | null
           total_hosts: number
         }
         Update: {
@@ -265,9 +273,13 @@ export type Database = {
           details?: Json | null
           healthy_hosts?: number
           id?: string
+          is_scheduled?: boolean | null
           job_id?: string | null
           min_required_hosts?: number
+          previous_status?: string | null
           safe_to_proceed?: boolean
+          scheduled_check_id?: string | null
+          status_changed?: boolean | null
           total_hosts?: number
         }
         Relationships: [
@@ -276,6 +288,13 @@ export type Database = {
             columns: ["job_id"]
             isOneToOne: false
             referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cluster_safety_checks_scheduled_check_id_fkey"
+            columns: ["scheduled_check_id"]
+            isOneToOne: false
+            referencedRelation: "scheduled_safety_checks"
             referencedColumns: ["id"]
           },
         ]
@@ -671,9 +690,12 @@ export type Database = {
           critical_job_types: string[] | null
           id: string
           mention_on_critical_failures: boolean | null
+          notify_on_cluster_status_change: boolean | null
+          notify_on_cluster_warning: boolean | null
           notify_on_job_complete: boolean | null
           notify_on_job_failed: boolean | null
           notify_on_job_started: boolean | null
+          notify_on_unsafe_cluster: boolean | null
           smtp_from_email: string | null
           smtp_host: string | null
           smtp_password: string | null
@@ -688,9 +710,12 @@ export type Database = {
           critical_job_types?: string[] | null
           id?: string
           mention_on_critical_failures?: boolean | null
+          notify_on_cluster_status_change?: boolean | null
+          notify_on_cluster_warning?: boolean | null
           notify_on_job_complete?: boolean | null
           notify_on_job_failed?: boolean | null
           notify_on_job_started?: boolean | null
+          notify_on_unsafe_cluster?: boolean | null
           smtp_from_email?: string | null
           smtp_host?: string | null
           smtp_password?: string | null
@@ -705,9 +730,12 @@ export type Database = {
           critical_job_types?: string[] | null
           id?: string
           mention_on_critical_failures?: boolean | null
+          notify_on_cluster_status_change?: boolean | null
+          notify_on_cluster_warning?: boolean | null
           notify_on_job_complete?: boolean | null
           notify_on_job_failed?: boolean | null
           notify_on_job_started?: boolean | null
+          notify_on_unsafe_cluster?: boolean | null
           smtp_from_email?: string | null
           smtp_host?: string | null
           smtp_password?: string | null
@@ -779,6 +807,54 @@ export type Database = {
           full_name?: string | null
           id?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      scheduled_safety_checks: {
+        Row: {
+          check_all_clusters: boolean | null
+          created_at: string | null
+          enabled: boolean | null
+          id: string
+          last_run_at: string | null
+          last_status: string | null
+          min_required_hosts: number | null
+          notify_on_safe_to_unsafe_change: boolean | null
+          notify_on_unsafe: boolean | null
+          notify_on_warnings: boolean | null
+          schedule_cron: string | null
+          specific_clusters: string[] | null
+          updated_at: string | null
+        }
+        Insert: {
+          check_all_clusters?: boolean | null
+          created_at?: string | null
+          enabled?: boolean | null
+          id?: string
+          last_run_at?: string | null
+          last_status?: string | null
+          min_required_hosts?: number | null
+          notify_on_safe_to_unsafe_change?: boolean | null
+          notify_on_unsafe?: boolean | null
+          notify_on_warnings?: boolean | null
+          schedule_cron?: string | null
+          specific_clusters?: string[] | null
+          updated_at?: string | null
+        }
+        Update: {
+          check_all_clusters?: boolean | null
+          created_at?: string | null
+          enabled?: boolean | null
+          id?: string
+          last_run_at?: string | null
+          last_status?: string | null
+          min_required_hosts?: number | null
+          notify_on_safe_to_unsafe_change?: boolean | null
+          notify_on_unsafe?: boolean | null
+          notify_on_warnings?: boolean | null
+          schedule_cron?: string | null
+          specific_clusters?: string[] | null
+          updated_at?: string | null
         }
         Relationships: []
       }
@@ -1498,6 +1574,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      run_scheduled_cluster_safety_checks: { Args: never; Returns: undefined }
       validate_api_token: { Args: { token_input: string }; Returns: string }
     }
     Enums: {

@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Server, Database, Briefcase, Activity } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ClusterSafetyWidget } from "@/components/dashboard/ClusterSafetyWidget";
 
 interface Stats {
   serverCount: number;
@@ -109,7 +110,9 @@ const Dashboard = () => {
         ))}
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <ClusterSafetyWidget />
+        
         <Card>
           <CardHeader>
             <CardTitle>Quick Actions</CardTitle>
