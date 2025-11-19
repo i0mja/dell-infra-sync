@@ -11,6 +11,7 @@ import { Loader2, AlertTriangle, CheckCircle, Info } from "lucide-react";
 import { format, addHours } from "date-fns";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
 
 interface CreateMaintenanceWindowDialogProps {
   open: boolean;
@@ -47,11 +48,14 @@ export function CreateMaintenanceWindowDialog({
     planned_start: prefilledData?.start ? format(prefilledData.start, "yyyy-MM-dd'T'HH:mm") : format(new Date(), "yyyy-MM-dd'T'HH:mm"),
     planned_end: prefilledData?.end ? format(prefilledData.end, "yyyy-MM-dd'T'HH:mm") : format(addHours(new Date(), 4), "yyyy-MM-dd'T'HH:mm"),
     maintenance_type: "firmware_update" as "firmware_update" | "host_maintenance" | "cluster_update" | "full_update" | "safety_check",
+    update_scope: "full_stack" as "firmware_only" | "bios_only" | "full_stack" | "safety_check",
     notify_before_hours: 24,
     auto_execute: true,
     firmware_uri: "",
     component: "BIOS"
   });
+
+  const hasClusterSelection = formData.cluster_ids.length > 0;
 
   const validateWindow = async () => {
     if (formData.cluster_ids.length === 0 && formData.server_group_ids.length === 0) {
@@ -191,6 +195,13 @@ export function CreateMaintenanceWindowDialog({
 
       // Prepare details object with job-specific configuration
       const details: any = {};
+      
+      // If clusters are selected, include update_scope for orchestration
+      if (hasClusterSelection) {
+        details.update_scope = formData.update_scope;
+      }
+      
+      // Add firmware-specific fields if applicable (for standalone servers)
       if (formData.maintenance_type === 'firmware_update' && formData.firmware_uri) {
         details.firmware_uri = formData.firmware_uri;
         details.component = formData.component;
@@ -290,95 +301,209 @@ export function CreateMaintenanceWindowDialog({
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="maintenance_type">Maintenance Type *</Label>
-            <Select
-              value={formData.maintenance_type}
-              onValueChange={(value: any) => setFormData({ ...formData, maintenance_type: value })}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="firmware_update">
-                  <div className="space-y-1">
-                    <div className="font-medium">Firmware Update</div>
-                    <div className="text-xs text-muted-foreground">
-                      Updates iDRAC, BIOS, or component firmware on selected servers
-                    </div>
-                  </div>
-                </SelectItem>
+          {/* Cluster-aware mode vs Standalone mode */}
+          {hasClusterSelection ? (
+            <>
+              {/* CLUSTER MODE: Show orchestration info + update scope */}
+              <Alert className="mb-4">
+                <Info className="h-4 w-4" />
+                <AlertDescription>
+                  vCenter clusters selected. Updates will be performed <strong>one server at a time</strong> with automatic orchestration (VM evacuation, maintenance mode, health checks).
+                </AlertDescription>
+              </Alert>
+              
+              <div className="space-y-2">
+                <Label htmlFor="update_scope">Update Scope *</Label>
+                <Select
+                  value={formData.update_scope}
+                  onValueChange={(value: any) => setFormData({ ...formData, update_scope: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="firmware_only">
+                      <div className="space-y-1">
+                        <div className="font-medium">Firmware Only</div>
+                        <div className="text-xs text-muted-foreground">
+                          Update iDRAC and component firmware (safe, no reboot required)
+                        </div>
+                      </div>
+                    </SelectItem>
+                    
+                    <SelectItem value="bios_only">
+                      <div className="space-y-1">
+                        <div className="font-medium">BIOS Only</div>
+                        <div className="text-xs text-muted-foreground">
+                          Update system BIOS (requires reboot)
+                        </div>
+                      </div>
+                    </SelectItem>
+                    
+                    <SelectItem value="full_stack">
+                      <div className="space-y-1">
+                        <div className="font-medium">Complete Update</div>
+                        <div className="text-xs text-muted-foreground">
+                          Update all components (BIOS + firmware + RAID + NIC)
+                        </div>
+                      </div>
+                    </SelectItem>
+                    
+                    <SelectItem value="safety_check">
+                      <div className="space-y-1">
+                        <div className="font-medium">Safety Check Only</div>
+                        <div className="text-xs text-muted-foreground">
+                          Validate cluster health (read-only, no changes)
+                        </div>
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
                 
-                <SelectItem value="host_maintenance">
-                  <div className="space-y-1">
-                    <div className="font-medium">Host Maintenance</div>
-                    <div className="text-xs text-muted-foreground">
-                      Prepares hosts for updates (evacuates VMs, enters maintenance mode)
-                    </div>
+                {/* Contextual helper text */}
+                {formData.update_scope === 'firmware_only' && (
+                  <p className="text-sm text-muted-foreground flex items-center gap-2">
+                    <Info className="h-4 w-4" />
+                    Firmware updates typically don't require reboots
+                  </p>
+                )}
+                {formData.update_scope === 'bios_only' && (
+                  <p className="text-sm text-muted-foreground flex items-center gap-2">
+                    <Info className="h-4 w-4" />
+                    BIOS updates require server reboot
+                  </p>
+                )}
+                {formData.update_scope === 'full_stack' && (
+                  <p className="text-sm text-muted-foreground flex items-center gap-2">
+                    <Info className="h-4 w-4" />
+                    Complete update includes BIOS, iDRAC, RAID, NIC, and all components
+                  </p>
+                )}
+                {formData.update_scope === 'safety_check' && (
+                  <p className="text-sm text-muted-foreground flex items-center gap-2">
+                    <Info className="h-4 w-4" />
+                    Read-only validation - no updates will be performed
+                  </p>
+                )}
+              </div>
+              
+              {/* Show orchestration settings (read-only) */}
+              <div className="space-y-2">
+                <Label>Orchestration Settings</Label>
+                <div className="space-y-3 p-3 border rounded-md bg-muted/50">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm">Sequential updates</span>
+                    <Badge variant="outline" className="bg-green-500/10 text-green-700">Automatic</Badge>
                   </div>
-                </SelectItem>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm">VM evacuation</span>
+                    <Badge variant="outline" className="bg-green-500/10 text-green-700">Automatic</Badge>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm">Maintenance mode</span>
+                    <Badge variant="outline" className="bg-green-500/10 text-green-700">Automatic</Badge>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm">Health verification</span>
+                    <Badge variant="outline" className="bg-green-500/10 text-green-700">Automatic</Badge>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* STANDALONE MODE: Show traditional maintenance type dropdown */}
+              <div className="space-y-2">
+                <Label htmlFor="maintenance_type">Maintenance Type *</Label>
+                <Select
+                  value={formData.maintenance_type}
+                  onValueChange={(value: any) => setFormData({ ...formData, maintenance_type: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="firmware_update">
+                      <div className="space-y-1">
+                        <div className="font-medium">Firmware Update</div>
+                        <div className="text-xs text-muted-foreground">
+                          Updates iDRAC, BIOS, or component firmware on selected servers
+                        </div>
+                      </div>
+                    </SelectItem>
+                    
+                    <SelectItem value="host_maintenance">
+                      <div className="space-y-1">
+                        <div className="font-medium">Host Maintenance</div>
+                        <div className="text-xs text-muted-foreground">
+                          Prepares hosts for updates (evacuates VMs, enters maintenance mode)
+                        </div>
+                      </div>
+                    </SelectItem>
+                    
+                    <SelectItem value="cluster_update">
+                      <div className="space-y-1">
+                        <div className="font-medium">Rolling Cluster Update</div>
+                        <div className="text-xs text-muted-foreground">
+                          Updates entire cluster one host at a time (orchestrated workflow)
+                        </div>
+                      </div>
+                    </SelectItem>
+                    
+                    <SelectItem value="full_update">
+                      <div className="space-y-1">
+                        <div className="font-medium">Full Server Update</div>
+                        <div className="text-xs text-muted-foreground">
+                          Complete server refresh (firmware + BIOS + all components)
+                        </div>
+                      </div>
+                    </SelectItem>
+                    
+                    <SelectItem value="safety_check">
+                      <div className="space-y-1">
+                        <div className="font-medium">Safety Check</div>
+                        <div className="text-xs text-muted-foreground">
+                          Validates cluster health and readiness (no changes made)
+                        </div>
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
                 
-                <SelectItem value="cluster_update">
-                  <div className="space-y-1">
-                    <div className="font-medium">Rolling Cluster Update</div>
-                    <div className="text-xs text-muted-foreground">
-                      Updates entire cluster one host at a time (orchestrated workflow)
-                    </div>
-                  </div>
-                </SelectItem>
-                
-                <SelectItem value="full_update">
-                  <div className="space-y-1">
-                    <div className="font-medium">Full Server Update</div>
-                    <div className="text-xs text-muted-foreground">
-                      Complete server refresh (firmware + BIOS + all components)
-                    </div>
-                  </div>
-                </SelectItem>
-                
-                <SelectItem value="safety_check">
-                  <div className="space-y-1">
-                    <div className="font-medium">Safety Check</div>
-                    <div className="text-xs text-muted-foreground">
-                      Validates cluster health and readiness (no changes made)
-                    </div>
-                  </div>
-                </SelectItem>
-              </SelectContent>
-            </Select>
-            
-            {/* Contextual helper text */}
-            {formData.maintenance_type === 'firmware_update' && (
-              <p className="text-sm text-muted-foreground flex items-center gap-2">
-                <Info className="h-4 w-4" />
-                You'll need to provide a firmware URI in the details below
-              </p>
-            )}
-            {formData.maintenance_type === 'host_maintenance' && (
-              <p className="text-sm text-muted-foreground flex items-center gap-2">
-                <Info className="h-4 w-4" />
-                This will evacuate VMs and enter maintenance mode before updates
-              </p>
-            )}
-            {formData.maintenance_type === 'cluster_update' && (
-              <p className="text-sm text-muted-foreground flex items-center gap-2">
-                <Info className="h-4 w-4" />
-                Servers will be updated one at a time to maintain cluster availability
-              </p>
-            )}
-            {formData.maintenance_type === 'full_update' && (
-              <p className="text-sm text-muted-foreground flex items-center gap-2">
-                <Info className="h-4 w-4" />
-                Complete update includes BIOS, iDRAC, RAID, NIC, and all components
-              </p>
-            )}
-            {formData.maintenance_type === 'safety_check' && (
-              <p className="text-sm text-muted-foreground flex items-center gap-2">
-                <Info className="h-4 w-4" />
-                Read-only check - validates health without making changes
-              </p>
-            )}
-          </div>
+                {/* Contextual helper text for standalone mode */}
+                {formData.maintenance_type === 'firmware_update' && (
+                  <p className="text-sm text-muted-foreground flex items-center gap-2">
+                    <Info className="h-4 w-4" />
+                    You'll need to provide a firmware URI in the details below
+                  </p>
+                )}
+                {formData.maintenance_type === 'host_maintenance' && (
+                  <p className="text-sm text-muted-foreground flex items-center gap-2">
+                    <Info className="h-4 w-4" />
+                    This will evacuate VMs and enter maintenance mode before updates
+                  </p>
+                )}
+                {formData.maintenance_type === 'cluster_update' && (
+                  <p className="text-sm text-muted-foreground flex items-center gap-2">
+                    <Info className="h-4 w-4" />
+                    Servers will be updated one at a time to maintain cluster availability
+                  </p>
+                )}
+                {formData.maintenance_type === 'full_update' && (
+                  <p className="text-sm text-muted-foreground flex items-center gap-2">
+                    <Info className="h-4 w-4" />
+                    Complete update includes BIOS, iDRAC, RAID, NIC, and all components
+                  </p>
+                )}
+                {formData.maintenance_type === 'safety_check' && (
+                  <p className="text-sm text-muted-foreground flex items-center gap-2">
+                    <Info className="h-4 w-4" />
+                    Read-only check - validates health without making changes
+                  </p>
+                )}
+              </div>
+            </>
+          )}
 
           <div className="space-y-2">
             <Label>Clusters * ({formData.cluster_ids.length} selected)</Label>

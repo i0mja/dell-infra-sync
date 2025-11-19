@@ -81,25 +81,41 @@ serve(async (req) => {
 
         console.log(`Found ${serverIds.length} target servers`);
 
-        // Create job(s) based on maintenance type
-        const jobType = MAINTENANCE_TYPE_TO_JOB_TYPE[window.maintenance_type];
-        if (!jobType) {
-          console.error(`Unknown maintenance type: ${window.maintenance_type}`);
-          throw new Error(`Unknown maintenance type: ${window.maintenance_type}`);
-        }
+        // Detect if window targets clusters
+        const hasClusterTargets = window.cluster_ids && window.cluster_ids.length > 0;
 
-        // Prepare job details
+        let jobType;
         const jobDetails: any = {
           maintenance_window_id: window.id,
           maintenance_window_title: window.title,
           ...(window.details || {})
         };
 
-        // Add job-specific details
-        if (jobType === 'rolling_cluster_update' && window.cluster_ids && window.cluster_ids.length > 0) {
+        if (hasClusterTargets) {
+          // ALWAYS use rolling cluster update for cluster targets
+          console.log('Cluster targets detected - forcing rolling_cluster_update orchestration');
+          jobType = 'rolling_cluster_update';
+          
+          // Set orchestration parameters
           jobDetails.cluster_name = window.cluster_ids[0];
-          jobDetails.max_concurrent = 1;
-          jobDetails.wait_between_servers = 300;
+          jobDetails.max_concurrent = 1; // One server at a time - CRITICAL SAFETY
+          jobDetails.wait_between_servers = 300; // 5 minutes between servers
+          jobDetails.update_scope = window.details?.update_scope || 'full_stack';
+          
+          console.log(`  Update scope: ${jobDetails.update_scope}`);
+          console.log(`  Max concurrent: ${jobDetails.max_concurrent} (enforced for safety)`);
+        } else {
+          // Standalone servers - use direct job types from maintenance_type
+          jobType = MAINTENANCE_TYPE_TO_JOB_TYPE[window.maintenance_type];
+          console.log(`Standalone servers - using job type: ${jobType}`);
+        }
+
+        if (!jobType) {
+          const supportedTypes = Object.keys(MAINTENANCE_TYPE_TO_JOB_TYPE).join(', ');
+          throw new Error(
+            `Unsupported maintenance type: ${window.maintenance_type}. ` +
+            `Supported types: ${supportedTypes}`
+          );
         }
 
         // Create the job
