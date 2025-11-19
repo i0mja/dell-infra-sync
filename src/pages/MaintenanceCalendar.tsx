@@ -13,6 +13,29 @@ import { useToast } from "@/hooks/use-toast";
 import { Calendar, Plus, TrendingUp } from "lucide-react";
 import { format, subMonths, addMonths, startOfMonth, endOfMonth } from "date-fns";
 
+interface ClusterSafetyDay {
+  date: Date;
+  clusters: {
+    [clusterName: string]: {
+      safe: boolean;
+      healthy_hosts: number;
+      total_hosts: number;
+    }
+  };
+  serverGroups?: {
+    [groupId: string]: {
+      safe: boolean;
+      healthy_servers: number;
+      total_servers: number;
+    }
+  };
+  maintenanceWindows: any[];
+  allClustersChecked: boolean;
+  allClustersSafe: boolean;
+  allTargetsChecked?: boolean;
+  allTargetsSafe?: boolean;
+}
+
 export default function MaintenanceCalendar() {
   const { toast } = useToast();
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
@@ -49,6 +72,19 @@ export default function MaintenanceCalendar() {
     }
   });
 
+  // Fetch server groups
+  const { data: serverGroups = [] } = useQuery({
+    queryKey: ['server-groups-list'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('server_groups')
+        .select('id, name');
+
+      if (error) throw error;
+      return data || [];
+    }
+  });
+
   // Fetch safety checks for calendar view
   const { data: safetyChecks = [] } = useQuery({
     queryKey: ['safety-checks-calendar', selectedDate],
@@ -68,9 +104,28 @@ export default function MaintenanceCalendar() {
     }
   });
 
+  // Fetch server group safety checks for calendar view
+  const { data: serverGroupSafetyChecks = [] } = useQuery({
+    queryKey: ['server-group-safety-checks-calendar', selectedDate],
+    queryFn: async () => {
+      const startDate = startOfMonth(subMonths(selectedDate, 1));
+      const endDate = endOfMonth(addMonths(selectedDate, 1));
+
+      const { data, error } = await supabase
+        .from('server_group_safety_checks')
+        .select('*')
+        .gte('check_timestamp', startDate.toISOString())
+        .lte('check_timestamp', endDate.toISOString())
+        .order('check_timestamp', { ascending: false });
+
+      if (error) throw error;
+      return data;
+    }
+  });
+
   // Analyze optimal windows
   const { data: analysisData, isLoading: analyzingWindows } = useQuery({
-    queryKey: ['optimal-windows', selectedDate],
+    queryKey: ['optimal-windows', selectedDate, clusters, serverGroups],
     queryFn: async () => {
       const startDate = new Date();
       const endDate = addMonths(startDate, 3);
@@ -90,7 +145,8 @@ export default function MaintenanceCalendar() {
             start_date: startDate.toISOString(),
             end_date: endDate.toISOString(),
             min_window_duration_hours: 4,
-            clusters
+            clusters,
+            server_groups: serverGroups.map(g => g.id)
           })
         }
       );
@@ -101,11 +157,11 @@ export default function MaintenanceCalendar() {
 
       return await response.json();
     },
-    enabled: clusters.length > 0
+    enabled: clusters.length > 0 || serverGroups.length > 0
   });
 
   // Process safety checks into daily status map
-  const dailyStatus = new Map();
+  const dailyStatus = new Map<string, ClusterSafetyDay>();
   for (const check of safetyChecks) {
     const dateKey = format(new Date(check.check_timestamp), 'yyyy-MM-dd');
     
@@ -113,15 +169,43 @@ export default function MaintenanceCalendar() {
       dailyStatus.set(dateKey, {
         date: new Date(dateKey),
         clusters: {},
-        maintenanceWindows: []
+        serverGroups: {},
+        maintenanceWindows: [],
+        allClustersChecked: false,
+        allClustersSafe: false
       });
     }
     
-    const day = dailyStatus.get(dateKey);
+    const day = dailyStatus.get(dateKey)!;
     day.clusters[check.cluster_id] = {
       safe: check.safe_to_proceed,
       healthy_hosts: check.healthy_hosts,
       total_hosts: check.total_hosts
+    };
+  }
+
+  // Process server group safety checks
+  for (const check of serverGroupSafetyChecks) {
+    const dateKey = format(new Date(check.check_timestamp), 'yyyy-MM-dd');
+    
+    if (!dailyStatus.has(dateKey)) {
+      dailyStatus.set(dateKey, {
+        date: new Date(dateKey),
+        clusters: {},
+        serverGroups: {},
+        maintenanceWindows: [],
+        allClustersChecked: false,
+        allClustersSafe: false
+      });
+    }
+    
+    const day = dailyStatus.get(dateKey)!;
+    if (!day.serverGroups) day.serverGroups = {};
+    
+    day.serverGroups[check.server_group_id] = {
+      safe: check.safe_to_proceed,
+      healthy_servers: check.healthy_servers,
+      total_servers: check.total_servers
     };
   }
 
@@ -135,14 +219,22 @@ export default function MaintenanceCalendar() {
     }
   }
 
-  // Calculate allClustersSafe for each day
+  // Calculate allTargetsSafe for each day (both clusters and server groups)
   for (const [_, day] of dailyStatus) {
     const clusterValues = Object.values(day.clusters) as any[];
-    day.allClustersChecked = clusterValues.length > 0;
-    day.allClustersSafe = clusterValues.length > 0 && clusterValues.every(c => c.safe);
+    const serverGroupValues = Object.values(day.serverGroups || {}) as any[];
+    
+    const allValues = [...clusterValues, ...serverGroupValues];
+    
+    day.allTargetsChecked = allValues.length > 0;
+    day.allTargetsSafe = allValues.length > 0 && allValues.every(v => v.safe);
+    
+    // Keep backward compatibility
+    day.allClustersChecked = day.allTargetsChecked;
+    day.allClustersSafe = day.allTargetsSafe;
   }
 
-  // Prepare chart data
+  // Prepare chart data for both clusters and server groups
   const chartData = Array.from(dailyStatus.values())
     .sort((a, b) => a.date.getTime() - b.date.getTime())
     .map(day => {
@@ -150,8 +242,16 @@ export default function MaintenanceCalendar() {
         date: format(day.date, 'yyyy-MM-dd')
       };
       
+      // Add vCenter clusters
       for (const [cluster, status] of Object.entries(day.clusters) as any[]) {
         dataPoint[cluster] = status.safe ? 100 : 0;
+      }
+      
+      // Add server groups
+      for (const [groupId, status] of Object.entries(day.serverGroups || {}) as any[]) {
+        const group = serverGroups.find(g => g.id === groupId);
+        const groupName = group ? group.name : groupId.substring(0, 8);
+        dataPoint[groupName] = (status as any).safe ? 100 : 0;
       }
       
       return dataPoint;
@@ -306,10 +406,10 @@ export default function MaintenanceCalendar() {
         </div>
       </div>
 
-      {chartData.length > 0 && clusters.length > 0 && (
+      {chartData.length > 0 && (clusters.length > 0 || serverGroups.length > 0) && (
         <ClusterSafetyTrendChart
           data={chartData}
-          clusters={clusters}
+          clusters={[...clusters, ...serverGroups.map(g => g.name)]}
           maintenanceWindows={maintenanceWindows?.filter(w => w.status === 'planned') || []}
         />
       )}
@@ -318,6 +418,7 @@ export default function MaintenanceCalendar() {
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         clusters={clusters}
+        serverGroups={serverGroups}
         prefilledData={prefilledData}
         onSuccess={() => {
           refetchWindows();

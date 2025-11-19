@@ -13,6 +13,7 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTheme } from "next-themes";
 import { Activity, AlertCircle, Bell, Briefcase, CheckCircle2, ChevronDown, ChevronRight, Copy, Database, FileText, Globe, Info, Loader2, Mail, MessageSquare, Monitor, Moon, Network, Palette, Plus, RefreshCw, Save, Server, Settings as SettingsIcon, Shield, Sun, Terminal, Users, X, XCircle } from "lucide-react";
+import { ServerGroupsManagement } from "@/components/settings/ServerGroupsManagement";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { DiagnosticsDialog } from "@/components/settings/DiagnosticsDialog";
@@ -475,6 +476,11 @@ export default function Settings() {
       title: "Network Connectivity",
       description: "Test connectivity to iDRAC servers and vCenter hosts",
       icon: Network,
+    },
+    'server-groups': {
+      title: "Server Groups",
+      description: "Organize Dell servers into application clusters for unified maintenance planning",
+      icon: Users,
     },
   };
 
@@ -3964,6 +3970,10 @@ export default function Settings() {
                 </CardContent>
               </Card>
             </div>
+          </TabsContent>
+
+          <TabsContent value="server-groups">
+            <ServerGroupsManagement />
           </TabsContent>
         </Tabs>
 
