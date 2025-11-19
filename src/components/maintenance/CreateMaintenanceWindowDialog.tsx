@@ -56,8 +56,8 @@ export function CreateMaintenanceWindowDialog({
     firmware_uri: "",
     component: "BIOS",
     recurrence_enabled: false,
-    recurrence_type: "weekly" as "daily" | "weekly" | "monthly" | "custom",
-    recurrence_pattern: "0 2 * * 0" // Default: Sunday 2 AM
+    recurrence_type: "monthly" as "monthly" | "quarterly" | "semi_annually" | "yearly" | "custom",
+    recurrence_pattern: "0 2 1 * *" // Default: 1st of month at 2 AM
   });
 
   const hasClusterSelection = formData.cluster_ids.length > 0;
@@ -608,9 +608,10 @@ export function CreateMaintenanceWindowDialog({
                     value={formData.recurrence_type}
                     onValueChange={(value: any) => {
                       let pattern = formData.recurrence_pattern;
-                      if (value === 'daily') pattern = '0 2 * * *';
-                      if (value === 'weekly') pattern = '0 2 * * 0';
                       if (value === 'monthly') pattern = '0 2 1 * *';
+                      if (value === 'quarterly') pattern = '0 2 1 */3 *';
+                      if (value === 'semi_annually') pattern = '0 2 1 1,7 *';
+                      if (value === 'yearly') pattern = '0 2 1 1 *';
                       setFormData({ ...formData, recurrence_type: value, recurrence_pattern: pattern });
                     }}
                   >
@@ -618,28 +619,34 @@ export function CreateMaintenanceWindowDialog({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="daily">
-                        <div className="space-y-1">
-                          <div className="font-medium">Daily</div>
-                          <div className="text-xs text-muted-foreground">Every day at specified time</div>
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="weekly">
-                        <div className="space-y-1">
-                          <div className="font-medium">Weekly</div>
-                          <div className="text-xs text-muted-foreground">Every week on specified day</div>
-                        </div>
-                      </SelectItem>
                       <SelectItem value="monthly">
                         <div className="space-y-1">
                           <div className="font-medium">Monthly</div>
-                          <div className="text-xs text-muted-foreground">Every month on specified date</div>
+                          <div className="text-xs text-muted-foreground">1st of every month (common for patch cycles)</div>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="quarterly">
+                        <div className="space-y-1">
+                          <div className="font-medium">Quarterly</div>
+                          <div className="text-xs text-muted-foreground">Every 3 months (standard firmware update cycle)</div>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="semi_annually">
+                        <div className="space-y-1">
+                          <div className="font-medium">Semi-Annually</div>
+                          <div className="text-xs text-muted-foreground">Twice per year (Jan & July)</div>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="yearly">
+                        <div className="space-y-1">
+                          <div className="font-medium">Yearly</div>
+                          <div className="text-xs text-muted-foreground">Once per year (January 1st)</div>
                         </div>
                       </SelectItem>
                       <SelectItem value="custom">
                         <div className="space-y-1">
                           <div className="font-medium">Custom (Cron)</div>
-                          <div className="text-xs text-muted-foreground">Advanced cron expression</div>
+                          <div className="text-xs text-muted-foreground">Advanced cron expression for custom schedules</div>
                         </div>
                       </SelectItem>
                     </SelectContent>
@@ -661,9 +668,35 @@ export function CreateMaintenanceWindowDialog({
                     disabled={formData.recurrence_type !== 'custom'}
                     className="font-mono"
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Format: minute hour day month weekday (e.g., "0 2 * * 0" = Sunday 2:00 AM)
-                  </p>
+                  {formData.recurrence_type === 'monthly' && (
+                    <p className="text-xs text-muted-foreground">
+                      <Info className="h-3 w-3 inline mr-1" />
+                      Will run on the 1st of every month at 2:00 AM
+                    </p>
+                  )}
+                  {formData.recurrence_type === 'quarterly' && (
+                    <p className="text-xs text-muted-foreground">
+                      <Info className="h-3 w-3 inline mr-1" />
+                      Will run every 3 months (Jan, Apr, Jul, Oct) on the 1st at 2:00 AM
+                    </p>
+                  )}
+                  {formData.recurrence_type === 'semi_annually' && (
+                    <p className="text-xs text-muted-foreground">
+                      <Info className="h-3 w-3 inline mr-1" />
+                      Will run twice per year (January 1st and July 1st) at 2:00 AM
+                    </p>
+                  )}
+                  {formData.recurrence_type === 'yearly' && (
+                    <p className="text-xs text-muted-foreground">
+                      <Info className="h-3 w-3 inline mr-1" />
+                      Will run once per year on January 1st at 2:00 AM
+                    </p>
+                  )}
+                  {formData.recurrence_type === 'custom' && (
+                    <p className="text-xs text-muted-foreground">
+                      Format: minute hour day month weekday (e.g., "0 2 1 * *" = 1st of month at 2:00 AM)
+                    </p>
+                  )}
                 </div>
 
                 <Alert>
