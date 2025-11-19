@@ -1430,10 +1430,8 @@ const Servers = () => {
                             openDialog: true,
                             prefilledData: {
                               maintenance_type: 'firmware_update',
-                              server_group_ids: [],
-                              cluster_ids: [],
+                              server_ids: [server.id],
                               details: {
-                                server_ids: [server.id],
                                 server_name: server.hostname || server.ip_address
                               }
                             }
