@@ -7,11 +7,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Loader2, AlertTriangle, CheckCircle, Info } from "lucide-react";
+import { Loader2, AlertTriangle, CheckCircle, Info, Calendar } from "lucide-react";
 import { format, addHours } from "date-fns";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { getNextExecutions } from "@/lib/cron-utils";
 
 interface CreateMaintenanceWindowDialogProps {
   open: boolean;
@@ -52,7 +54,10 @@ export function CreateMaintenanceWindowDialog({
     notify_before_hours: 24,
     auto_execute: true,
     firmware_uri: "",
-    component: "BIOS"
+    component: "BIOS",
+    recurrence_enabled: false,
+    recurrence_type: "weekly" as "daily" | "weekly" | "monthly" | "custom",
+    recurrence_pattern: "0 2 * * 0" // Default: Sunday 2 AM
   });
 
   const hasClusterSelection = formData.cluster_ids.length > 0;
@@ -575,6 +580,107 @@ export function CreateMaintenanceWindowDialog({
               value={formData.notify_before_hours}
               onChange={(e) => setFormData({ ...formData, notify_before_hours: parseInt(e.target.value) })}
             />
+          </div>
+
+          {/* Recurring Schedule */}
+          <div className="space-y-4 border-t pt-4">
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label htmlFor="recurrence_enabled">Recurring Schedule</Label>
+                <p className="text-sm text-muted-foreground">
+                  Automatically create maintenance windows on a schedule
+                </p>
+              </div>
+              <Switch
+                id="recurrence_enabled"
+                checked={formData.recurrence_enabled}
+                onCheckedChange={(checked) => 
+                  setFormData({ ...formData, recurrence_enabled: checked })
+                }
+              />
+            </div>
+
+            {formData.recurrence_enabled && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="recurrence_type">Recurrence Pattern</Label>
+                  <Select
+                    value={formData.recurrence_type}
+                    onValueChange={(value: any) => {
+                      let pattern = formData.recurrence_pattern;
+                      if (value === 'daily') pattern = '0 2 * * *';
+                      if (value === 'weekly') pattern = '0 2 * * 0';
+                      if (value === 'monthly') pattern = '0 2 1 * *';
+                      setFormData({ ...formData, recurrence_type: value, recurrence_pattern: pattern });
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="daily">
+                        <div className="space-y-1">
+                          <div className="font-medium">Daily</div>
+                          <div className="text-xs text-muted-foreground">Every day at specified time</div>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="weekly">
+                        <div className="space-y-1">
+                          <div className="font-medium">Weekly</div>
+                          <div className="text-xs text-muted-foreground">Every week on specified day</div>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="monthly">
+                        <div className="space-y-1">
+                          <div className="font-medium">Monthly</div>
+                          <div className="text-xs text-muted-foreground">Every month on specified date</div>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="custom">
+                        <div className="space-y-1">
+                          <div className="font-medium">Custom (Cron)</div>
+                          <div className="text-xs text-muted-foreground">Advanced cron expression</div>
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="recurrence_pattern">
+                    Cron Pattern
+                    {formData.recurrence_type !== 'custom' && (
+                      <span className="text-xs text-muted-foreground ml-2">(auto-generated)</span>
+                    )}
+                  </Label>
+                  <Input
+                    id="recurrence_pattern"
+                    value={formData.recurrence_pattern}
+                    onChange={(e) => setFormData({ ...formData, recurrence_pattern: e.target.value })}
+                    placeholder="0 2 * * 0"
+                    disabled={formData.recurrence_type !== 'custom'}
+                    className="font-mono"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Format: minute hour day month weekday (e.g., "0 2 * * 0" = Sunday 2:00 AM)
+                  </p>
+                </div>
+
+                <Alert>
+                  <Calendar className="h-4 w-4" />
+                  <AlertDescription>
+                    <div className="space-y-1">
+                      <div className="font-medium">Next 3 Scheduled Executions:</div>
+                      <div className="text-xs space-y-0.5">
+                        {getNextExecutions(formData.recurrence_pattern, 3).map((date, i) => (
+                          <div key={i}>• {format(date, "PPpp")}</div>
+                        ))}
+                      </div>
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              </>
+            )}
           </div>
 
           {validation && (
