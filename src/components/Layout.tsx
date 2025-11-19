@@ -17,6 +17,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useSearchParams } from "react-router-dom";
 import { NotificationCenter } from "@/components/notifications/NotificationCenter";
+import { getSettingsNavigation } from "@/config/settings-tabs";
 
 const Layout = () => {
   const { user, signOut, loading } = useAuth();
@@ -70,17 +71,7 @@ const Layout = () => {
     { name: "Activity Monitor", href: "/activity", icon: Activity },
   ];
 
-  const settingsNavigation = [
-    { name: "Appearance", href: "/settings?tab=appearance", icon: Palette, group: "General" },
-    { name: "SMTP Email", href: "/settings?tab=smtp", icon: Mail, group: "Integrations" },
-    { name: "Microsoft Teams", href: "/settings?tab=teams", icon: MessageSquare, group: "Integrations" },
-    { name: "OpenManage", href: "/settings?tab=openmanage", icon: Server, group: "Integrations" },
-    { name: "Credentials", href: "/settings?tab=credentials", icon: Shield, group: "Security" },
-    { name: "Jobs", href: "/settings?tab=jobs", icon: Briefcase, group: "Monitoring" },
-    { name: "Activity Monitor", href: "/settings?tab=activity", icon: Activity, group: "Monitoring" },
-    { name: "Network", href: "/settings?tab=network", icon: Network, group: "Monitoring" },
-    { name: "Preferences", href: "/settings?tab=preferences", icon: Bell, group: "Other" },
-  ];
+  const settingsNavigation = getSettingsNavigation();
 
   const jobsNavigation = [
     { name: "All Jobs", href: "/jobs?view=all", icon: Briefcase },

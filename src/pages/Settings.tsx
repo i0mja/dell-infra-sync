@@ -22,6 +22,7 @@ import { useSearchParams } from "react-router-dom";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import { getTabMetadata } from "@/config/settings-tabs";
 
 export default function Settings() {
   const isLocalMode = import.meta.env.VITE_SUPABASE_URL?.includes('127.0.0.1') || 
@@ -431,58 +432,7 @@ export default function Settings() {
   }, [searchParams]);
 
   // Tab metadata for dynamic headers
-  const tabMetadata: Record<string, { title: string; description: string; icon: any }> = {
-    appearance: {
-      title: "Appearance",
-      description: "Customize how the application looks and feels",
-      icon: Palette,
-    },
-    smtp: {
-      title: "SMTP Configuration",
-      description: "Configure your SMTP server for email notifications",
-      icon: Mail,
-    },
-    teams: {
-      title: "Microsoft Teams Integration",
-      description: "Configure Teams webhook for job notifications",
-      icon: MessageSquare,
-    },
-    openmanage: {
-      title: "Dell OpenManage Enterprise",
-      description: "Configure automatic server discovery from OpenManage Enterprise",
-      icon: Server,
-    },
-    jobs: {
-      title: "Jobs Configuration",
-      description: "Configure job retention, cleanup, and stale job management",
-      icon: Briefcase,
-    },
-    activity: {
-      title: "Activity Monitor Settings",
-      description: "Configure log retention, cleanup, and monitoring preferences",
-      icon: Activity,
-    },
-    preferences: {
-      title: "Notification Preferences",
-      description: "Choose which events trigger notifications",
-      icon: Bell,
-    },
-    credentials: {
-      title: "Credential Management",
-      description: "Manage iDRAC credential sets for server discovery and operations",
-      icon: Shield,
-    },
-    network: {
-      title: "Network Connectivity",
-      description: "Test connectivity to iDRAC servers and vCenter hosts",
-      icon: Network,
-    },
-    'server-groups': {
-      title: "Server Groups",
-      description: "Organize Dell servers into application clusters for unified maintenance planning",
-      icon: Users,
-    },
-  };
+  const tabMetadata = getTabMetadata();
 
   const loadRecentNotifications = async () => {
     const { data, error } = await supabase
