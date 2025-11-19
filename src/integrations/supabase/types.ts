@@ -593,7 +593,7 @@ export type Database = {
         Row: {
           approved_at: string | null
           approved_by: string | null
-          cluster_ids: string[]
+          cluster_ids: string[] | null
           completed_at: string | null
           created_at: string | null
           created_by: string | null
@@ -607,6 +607,7 @@ export type Database = {
           planned_start: string
           requires_approval: boolean | null
           safety_check_snapshot: Json | null
+          server_group_ids: string[] | null
           started_at: string | null
           status: string
           title: string
@@ -615,7 +616,7 @@ export type Database = {
         Insert: {
           approved_at?: string | null
           approved_by?: string | null
-          cluster_ids: string[]
+          cluster_ids?: string[] | null
           completed_at?: string | null
           created_at?: string | null
           created_by?: string | null
@@ -629,6 +630,7 @@ export type Database = {
           planned_start: string
           requires_approval?: boolean | null
           safety_check_snapshot?: Json | null
+          server_group_ids?: string[] | null
           started_at?: string | null
           status?: string
           title: string
@@ -637,7 +639,7 @@ export type Database = {
         Update: {
           approved_at?: string | null
           approved_by?: string | null
-          cluster_ids?: string[]
+          cluster_ids?: string[] | null
           completed_at?: string | null
           created_at?: string | null
           created_by?: string | null
@@ -651,6 +653,7 @@ export type Database = {
           planned_start?: string
           requires_approval?: boolean | null
           safety_check_snapshot?: Json | null
+          server_group_ids?: string[] | null
           started_at?: string | null
           status?: string
           title?: string
@@ -1140,6 +1143,171 @@ export type Database = {
             columns: ["server_id"]
             isOneToOne: false
             referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      server_group_members: {
+        Row: {
+          added_at: string | null
+          id: string
+          priority: number | null
+          role: string | null
+          server_group_id: string | null
+          server_id: string | null
+        }
+        Insert: {
+          added_at?: string | null
+          id?: string
+          priority?: number | null
+          role?: string | null
+          server_group_id?: string | null
+          server_id?: string | null
+        }
+        Update: {
+          added_at?: string | null
+          id?: string
+          priority?: number | null
+          role?: string | null
+          server_group_id?: string | null
+          server_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "server_group_members_server_group_id_fkey"
+            columns: ["server_group_id"]
+            isOneToOne: false
+            referencedRelation: "server_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "server_group_members_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      server_group_safety_checks: {
+        Row: {
+          check_timestamp: string | null
+          created_at: string | null
+          details: Json | null
+          healthy_servers: number
+          id: string
+          is_scheduled: boolean | null
+          job_id: string | null
+          min_required_servers: number
+          previous_status: string | null
+          safe_to_proceed: boolean
+          scheduled_check_id: string | null
+          server_group_id: string | null
+          status_changed: boolean | null
+          total_servers: number
+          warnings: string[] | null
+        }
+        Insert: {
+          check_timestamp?: string | null
+          created_at?: string | null
+          details?: Json | null
+          healthy_servers: number
+          id?: string
+          is_scheduled?: boolean | null
+          job_id?: string | null
+          min_required_servers: number
+          previous_status?: string | null
+          safe_to_proceed: boolean
+          scheduled_check_id?: string | null
+          server_group_id?: string | null
+          status_changed?: boolean | null
+          total_servers: number
+          warnings?: string[] | null
+        }
+        Update: {
+          check_timestamp?: string | null
+          created_at?: string | null
+          details?: Json | null
+          healthy_servers?: number
+          id?: string
+          is_scheduled?: boolean | null
+          job_id?: string | null
+          min_required_servers?: number
+          previous_status?: string | null
+          safe_to_proceed?: boolean
+          scheduled_check_id?: string | null
+          server_group_id?: string | null
+          status_changed?: boolean | null
+          total_servers?: number
+          warnings?: string[] | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "server_group_safety_checks_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "server_group_safety_checks_scheduled_check_id_fkey"
+            columns: ["scheduled_check_id"]
+            isOneToOne: false
+            referencedRelation: "scheduled_safety_checks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "server_group_safety_checks_server_group_id_fkey"
+            columns: ["server_group_id"]
+            isOneToOne: false
+            referencedRelation: "server_groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      server_groups: {
+        Row: {
+          color: string | null
+          created_at: string | null
+          created_by: string | null
+          description: string | null
+          group_type: string
+          icon: string | null
+          id: string
+          min_healthy_servers: number | null
+          name: string
+          updated_at: string | null
+        }
+        Insert: {
+          color?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          group_type?: string
+          icon?: string | null
+          id?: string
+          min_healthy_servers?: number | null
+          name: string
+          updated_at?: string | null
+        }
+        Update: {
+          color?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          group_type?: string
+          icon?: string | null
+          id?: string
+          min_healthy_servers?: number | null
+          name?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "server_groups_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]

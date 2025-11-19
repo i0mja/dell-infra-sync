@@ -15,10 +15,12 @@ interface CreateMaintenanceWindowDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   clusters: string[];
+  serverGroups?: Array<{ id: string; name: string; }>;
   prefilledData?: {
     start: Date;
     end: Date;
     clusters?: string[];
+    serverGroupIds?: string[];
   };
   onSuccess: () => void;
 }
@@ -27,6 +29,7 @@ export function CreateMaintenanceWindowDialog({
   open,
   onOpenChange,
   clusters,
+  serverGroups = [],
   prefilledData,
   onSuccess
 }: CreateMaintenanceWindowDialogProps) {
@@ -39,6 +42,7 @@ export function CreateMaintenanceWindowDialog({
     title: "",
     description: "",
     cluster_ids: prefilledData?.clusters || [],
+    server_group_ids: prefilledData?.serverGroupIds || [],
     planned_start: prefilledData?.start ? format(prefilledData.start, "yyyy-MM-dd'T'HH:mm") : format(new Date(), "yyyy-MM-dd'T'HH:mm"),
     planned_end: prefilledData?.end ? format(prefilledData.end, "yyyy-MM-dd'T'HH:mm") : format(addHours(new Date(), 4), "yyyy-MM-dd'T'HH:mm"),
     maintenance_type: "firmware_update" as const,

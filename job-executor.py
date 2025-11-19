@@ -5742,6 +5742,8 @@ class JobExecutor:
             self.execute_openmanage_sync(job)
         elif job_type == 'cluster_safety_check':
             self.execute_cluster_safety_check(job)
+        elif job_type == 'server_group_safety_check':
+            self.execute_server_group_safety_check(job)
         elif job_type == 'prepare_host_for_update':
             self.execute_prepare_host_for_update(job)
         elif job_type == 'verify_host_after_update':
@@ -6789,6 +6791,268 @@ class JobExecutor:
             self.log(f"Cluster safety check failed: {e}", "ERROR")
             self.update_job_status(job['id'], 'failed', completed_at=datetime.now().isoformat(), 
                                  details={'error': str(e), 'safe_to_proceed': False})
+
+    def execute_server_group_safety_check(self, job: Dict):
+        """
+        Execute server group safety check before taking servers offline for maintenance
+        
+        Expected job details:
+        {
+            "server_group_id": "uuid",
+            "min_required_servers": 1
+        }
+        """
+        try:
+            self.log(f"Starting server group safety check: {job['id']}")
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            details = job.get('details', {})
+            group_id = details.get('server_group_id')
+            min_required = details.get('min_required_servers', 1)
+            scheduled_check_id = details.get('scheduled_check_id')
+            is_scheduled = details.get('is_scheduled', False)
+            
+            if not group_id:
+                raise Exception("Missing server_group_id in job details")
+            
+            # Fetch server group
+            group_response = requests.get(
+                f"{DSM_URL}/rest/v1/server_groups?id=eq.{group_id}&select=*",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL
+            )
+            
+            if group_response.status_code != 200:
+                raise Exception("Failed to fetch server group")
+            
+            groups = _safe_json_parse(group_response)
+            if not groups:
+                raise Exception(f"Server group {group_id} not found")
+            
+            group = groups[0]
+            group_name = group['name']
+            
+            self.log(f"Checking safety for server group: {group_name}")
+            
+            # Fetch group members with server details
+            members_response = requests.get(
+                f"{DSM_URL}/rest/v1/server_group_members?server_group_id=eq.{group_id}&select=server_id,servers(id,ip_address,hostname,overall_health,power_state,connection_status)",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL
+            )
+            
+            members = _safe_json_parse(members_response)
+            total_servers = len(members)
+            healthy_servers = 0
+            warnings = []
+            server_details = []
+            
+            self.log(f"Total servers in group: {total_servers}")
+            
+            # Check health of each server
+            for member in members:
+                server = member.get('servers')
+                if not server:
+                    continue
+                
+                server_id = server['id']
+                ip = server['ip_address']
+                hostname = server.get('hostname', ip)
+                
+                # Check iDRAC health
+                try:
+                    # Fetch credentials
+                    creds = self.get_server_credentials(server_id)
+                    if not creds:
+                        self.log(f"  ⚠️ {hostname}: No credentials configured", "WARN")
+                        warnings.append(f"Server {hostname} has no credentials")
+                        server_details.append({
+                            'server_id': server_id,
+                            'hostname': hostname,
+                            'healthy': False,
+                            'reason': 'No credentials'
+                        })
+                        continue
+                    
+                    username, password = creds
+                    
+                    # Get system health from iDRAC
+                    system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
+                    response, response_time_ms = self.throttler.request_with_safety(
+                        'GET',
+                        system_url,
+                        ip,
+                        self.log,
+                        auth=(username, password),
+                        timeout=(2, 10)
+                    )
+                    
+                    if response.status_code == 200:
+                        system_data = _safe_json_parse(response)
+                        health_status = system_data.get('Status', {}).get('Health', 'Unknown')
+                        power_state = system_data.get('PowerState', 'Unknown')
+                        
+                        is_healthy = (health_status in ['OK', 'Warning'] and 
+                                    power_state == 'On' and
+                                    server.get('connection_status') == 'connected')
+                        
+                        if is_healthy:
+                            healthy_servers += 1
+                            self.log(f"  ✓ {hostname}: Healthy (Power: {power_state}, Health: {health_status})")
+                        else:
+                            self.log(f"  ✗ {hostname}: Unhealthy (Power: {power_state}, Health: {health_status})", "WARN")
+                            warnings.append(f"Server {hostname} is not healthy: {health_status}, {power_state}")
+                        
+                        server_details.append({
+                            'server_id': server_id,
+                            'hostname': hostname,
+                            'healthy': is_healthy,
+                            'health_status': health_status,
+                            'power_state': power_state
+                        })
+                    else:
+                        self.log(f"  ✗ {hostname}: iDRAC unreachable (HTTP {response.status_code})", "WARN")
+                        warnings.append(f"Server {hostname} iDRAC unreachable")
+                        server_details.append({
+                            'server_id': server_id,
+                            'hostname': hostname,
+                            'healthy': False,
+                            'reason': f'iDRAC unreachable ({response.status_code})'
+                        })
+                
+                except Exception as e:
+                    self.log(f"  ✗ {hostname}: Error checking health: {e}", "ERROR")
+                    warnings.append(f"Server {hostname} health check failed: {str(e)}")
+                    server_details.append({
+                        'server_id': server_id,
+                        'hostname': hostname,
+                        'healthy': False,
+                        'reason': str(e)
+                    })
+            
+            # Calculate if safe for maintenance
+            servers_after_maintenance = healthy_servers - 1
+            safe_to_proceed = servers_after_maintenance >= min_required
+            
+            # Get previous status for change detection
+            previous_status = None
+            if is_scheduled and scheduled_check_id:
+                prev_check_response = requests.get(
+                    f"{DSM_URL}/rest/v1/server_group_safety_checks?server_group_id=eq.{group_id}&is_scheduled=eq.true&order=check_timestamp.desc&limit=1",
+                    headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                    verify=VERIFY_SSL
+                )
+                prev_checks = _safe_json_parse(prev_check_response)
+                if prev_checks:
+                    previous_status = 'safe' if prev_checks[0]['safe_to_proceed'] else 'unsafe'
+            
+            current_status = 'safe' if safe_to_proceed else 'unsafe'
+            status_changed = previous_status and previous_status != current_status
+            
+            if not safe_to_proceed:
+                self.log(f"⚠️ SERVER GROUP UNSAFE: Only {healthy_servers} healthy, need {min_required} to remain after maintenance", "WARN")
+            else:
+                self.log(f"✓ Server group is safe for maintenance ({healthy_servers} healthy, {min_required} required)")
+            
+            # Store result
+            result = {
+                'server_group_id': group_id,
+                'safe_to_proceed': safe_to_proceed,
+                'total_servers': total_servers,
+                'healthy_servers': healthy_servers,
+                'min_required_servers': min_required,
+                'warnings': warnings,
+                'details': {
+                    'group_name': group_name,
+                    'server_details': server_details
+                },
+                'is_scheduled': is_scheduled,
+                'scheduled_check_id': scheduled_check_id if is_scheduled else None,
+                'previous_status': previous_status,
+                'status_changed': status_changed,
+                'job_id': job['id']
+            }
+            
+            # Insert safety check result
+            check_response = requests.post(
+                f"{DSM_URL}/rest/v1/server_group_safety_checks",
+                json=result,
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=representation'
+                },
+                verify=VERIFY_SSL
+            )
+            
+            # Send notifications if scheduled check
+            if is_scheduled and scheduled_check_id:
+                config_response = requests.get(
+                    f"{DSM_URL}/rest/v1/scheduled_safety_checks?id=eq.{scheduled_check_id}",
+                    headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                    verify=VERIFY_SSL
+                )
+                config_data = _safe_json_parse(config_response)
+                config = config_data[0] if config_data else {}
+                
+                send_notification = False
+                notification_severity = 'normal'
+                
+                if not safe_to_proceed and config.get('notify_on_unsafe', True):
+                    send_notification = True
+                    notification_severity = 'critical'
+                elif warnings and config.get('notify_on_warnings', False):
+                    send_notification = True
+                    notification_severity = 'warning'
+                
+                if status_changed and config.get('notify_on_safe_to_unsafe_change', True):
+                    send_notification = True
+                    notification_severity = 'critical' if not safe_to_proceed else 'normal'
+                
+                if send_notification:
+                    self.log(f"Sending server group safety alert (severity: {notification_severity})")
+                    notification_payload = {
+                        'notification_type': 'server_group_safety_alert',
+                        'group_name': group_name,
+                        'safe_to_proceed': safe_to_proceed,
+                        'total_servers': total_servers,
+                        'healthy_servers': healthy_servers,
+                        'warnings': warnings,
+                        'status_changed': status_changed,
+                        'previous_status': previous_status,
+                        'severity': notification_severity,
+                        'check_timestamp': datetime.now().isoformat()
+                    }
+                    
+                    try:
+                        requests.post(
+                            f"{DSM_URL}/functions/v1/send-notification",
+                            json=notification_payload,
+                            headers={
+                                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                'Content-Type': 'application/json'
+                            },
+                            verify=VERIFY_SSL
+                        )
+                    except Exception as e:
+                        self.log(f"Failed to send notification: {e}", "WARN")
+            
+            self.update_job_status(
+                job['id'],
+                'completed',
+                completed_at=datetime.now().isoformat(),
+                details=result
+            )
+            
+        except Exception as e:
+            self.log(f"Server group safety check failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e)}
+            )
 
     def run(self):
         """Main execution loop"""
