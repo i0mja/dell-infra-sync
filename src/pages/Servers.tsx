@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Search, RefreshCw, Link2, Wrench, RotateCw, Edit, History, Trash2, CheckCircle, Info, Power, Activity, FileText, HardDrive, Disc, FileJson, Settings2 } from "lucide-react";
+import { Plus, Search, RefreshCw, Link2, Wrench, RotateCw, Edit, History, Trash2, CheckCircle, Info, Power, Activity, FileText, HardDrive, Disc, FileJson, Settings2, Shield } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -24,6 +24,7 @@ import { VirtualMediaDialog } from "@/components/servers/VirtualMediaDialog";
 import { ScpBackupDialog } from "@/components/servers/ScpBackupDialog";
 import { BiosConfigDialog } from "@/components/servers/BiosConfigDialog";
 import { WorkflowJobDialog } from "@/components/jobs/WorkflowJobDialog";
+import { PreFlightCheckDialog } from "@/components/jobs/PreFlightCheckDialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   ContextMenu,
@@ -98,6 +99,7 @@ const Servers = () => {
   const [scpBackupDialogOpen, setScpBackupDialogOpen] = useState(false);
   const [biosConfigDialogOpen, setBiosConfigDialogOpen] = useState(false);
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
+  const [preFlightCheckDialogOpen, setPreFlightCheckDialogOpen] = useState(false);
   const [selectedServer, setSelectedServer] = useState<Server | null>(null);
   const [deleteServerToConfirm, setDeleteServerToConfirm] = useState<Server | null>(null);
   const [refreshing, setRefreshing] = useState<string | null>(null);
@@ -714,6 +716,16 @@ const Servers = () => {
                   BIOS Configuration
                 </ContextMenuItem>
                 <ContextMenuSeparator />
+                <ContextMenuItem 
+                  onClick={() => {
+                    setSelectedServer(server);
+                    setPreFlightCheckDialogOpen(true);
+                  }}
+                  disabled={!server.vcenter_host_id}
+                >
+                  <Shield className="mr-2 h-4 w-4" />
+                  Check Update Readiness
+                </ContextMenuItem>
                 <ContextMenuItem onClick={() => handleLinkToVCenter(server)}>
                   <Link2 className="mr-2 h-4 w-4" />
                   Link to vCenter Host
@@ -869,6 +881,17 @@ const Servers = () => {
             onSuccess={fetchServers}
             defaultJobType="prepare_host_for_update"
             preSelectedServerId={selectedServer?.id}
+          />
+          
+          <PreFlightCheckDialog
+            open={preFlightCheckDialogOpen}
+            onOpenChange={setPreFlightCheckDialogOpen}
+            onProceed={() => {
+              setPreFlightCheckDialogOpen(false);
+              handleCreateJob(selectedServer!);
+            }}
+            serverId={selectedServer?.id || ''}
+            jobType="firmware_update"
           />
         </>
       )}
