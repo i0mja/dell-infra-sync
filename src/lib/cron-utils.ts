@@ -3,7 +3,6 @@
  */
 export function getNextExecutions(cronPattern: string, count: number): Date[] {
   const results: Date[] = [];
-  let candidate = new Date();
   
   // Parse cron pattern (minute hour day month weekday)
   const parts = cronPattern.split(' ');
@@ -13,9 +12,26 @@ export function getNextExecutions(cronPattern: string, count: number): Date[] {
   
   const [minute, hour, day, month, weekday] = parts;
   
+  // Determine optimal increment strategy based on pattern
+  let incrementMs = 60000; // Default: 1 minute
+  let maxIterations = 1000;
+  
+  // If looking for specific day of month, increment by days
+  if (day !== '*' && !day.includes(',') && !day.includes('-')) {
+    incrementMs = 86400000; // 1 day in milliseconds
+    maxIterations = 10000; // Can search ~27 years ahead
+  } 
+  // If looking for specific month or month steps, also use day increments
+  else if (month !== '*') {
+    incrementMs = 86400000; // 1 day
+    maxIterations = 10000;
+  }
+  
+  let candidate = new Date();
+  
   // Find next matches
-  for (let i = 0; i < 1000 && results.length < count; i++) {
-    candidate = new Date(candidate.getTime() + 60000); // Increment by 1 minute
+  for (let i = 0; i < maxIterations && results.length < count; i++) {
+    candidate = new Date(candidate.getTime() + incrementMs);
     
     if (matchesCronPattern(candidate, minute, hour, day, month, weekday)) {
       results.push(new Date(candidate));
