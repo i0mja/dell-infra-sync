@@ -2380,16 +2380,31 @@ class JobExecutor:
                     
                     # Step 3: Put host in maintenance mode (if vCenter linked)
                     maintenance_mode_enabled = False
+                    maintenance_mode_result = None
                     if server.get('vcenter_host_id'):
-                        self.log(f"  Entering maintenance mode...")
-                        # TODO: Implement actual vCenter maintenance mode
-                        # For now, just log
-                        maintenance_mode_enabled = True
+                        self.log(f"  Entering maintenance mode for vCenter host...")
                         self.update_task_status(
                             task['id'], 'running',
                             log="✓ Connected to iDRAC\n✓ Current firmware checked\n→ Entering maintenance mode..."
                         )
-                        time.sleep(2)  # Simulate maintenance mode entry
+                        
+                        # Get maintenance timeout from job details, default to 600s
+                        maintenance_timeout = job.get('details', {}).get('maintenance_timeout', 600)
+                        
+                        # Call actual vCenter maintenance mode function
+                        maintenance_mode_result = self.enter_vcenter_maintenance_mode(
+                            server['vcenter_host_id'],
+                            timeout=maintenance_timeout
+                        )
+                        
+                        if maintenance_mode_result.get('success'):
+                            maintenance_mode_enabled = True
+                            vms_evacuated = maintenance_mode_result.get('vms_evacuated', 0)
+                            time_taken = maintenance_mode_result.get('time_taken_seconds', 0)
+                            self.log(f"  [OK] Maintenance mode active ({vms_evacuated} VMs evacuated in {time_taken}s)")
+                        else:
+                            error_msg = maintenance_mode_result.get('error', 'Unknown error')
+                            raise Exception(f"Failed to enter maintenance mode: {error_msg}")
                     
                     # Step 4: Initiate firmware update
                     self.log(f"  Initiating firmware update...")
@@ -2473,11 +2488,31 @@ class JobExecutor:
                         if not system_online:
                             raise Exception("System did not come back online after reboot")
                     
-                    # Step 8: Exit maintenance mode
-                    if maintenance_mode_enabled:
+                    # Step 8: Exit maintenance mode and wait for host to reconnect
+                    if maintenance_mode_enabled and server.get('vcenter_host_id'):
                         self.log(f"  Exiting maintenance mode...")
-                        # TODO: Implement actual vCenter maintenance mode exit
-                        time.sleep(2)
+                        
+                        # Call actual exit function
+                        exit_result = self.exit_vcenter_maintenance_mode(
+                            server['vcenter_host_id'],
+                            timeout=300  # 5 minutes for exit
+                        )
+                        
+                        if exit_result.get('success'):
+                            time_taken = exit_result.get('time_taken_seconds', 0)
+                            self.log(f"  [OK] Exited maintenance mode ({time_taken}s)")
+                            
+                            # Wait for host to be fully connected in vCenter
+                            self.log(f"  Waiting for host to reconnect to vCenter...")
+                            if self.wait_for_vcenter_host_connected(server['vcenter_host_id'], timeout=600):
+                                self.log(f"  [OK] Host reconnected to vCenter")
+                            else:
+                                self.log(f"  [!] Host did not reconnect within timeout (non-critical)", "WARNING")
+                        else:
+                            error_msg = exit_result.get('error', 'Unknown error')
+                            # Log as warning but don't fail the job - firmware update succeeded
+                            self.log(f"  [!] Failed to exit maintenance mode: {error_msg}", "WARNING")
+                            self.log(f"  [!] Manual intervention may be required to exit maintenance mode", "WARNING")
                     
                     # Step 9: Verify firmware version
                     new_session = self.create_idrac_session(ip, username, password)
@@ -2485,13 +2520,14 @@ class JobExecutor:
                         new_fw = self.get_firmware_inventory(ip, new_session)
                         self.close_idrac_session(ip, new_session)
                     
-                    # Build success log
+                    # Build success log with maintenance mode details
                     success_log = "✓ Connected to iDRAC\n✓ Current firmware checked\n"
-                    if maintenance_mode_enabled:
-                        success_log += "✓ Maintenance mode active\n"
+                    if maintenance_mode_enabled and maintenance_mode_result:
+                        vms = maintenance_mode_result.get('vms_evacuated', 0)
+                        success_log += f"✓ Maintenance mode active ({vms} VMs evacuated)\n"
                     success_log += "✓ Firmware staged\n✓ System rebooted\n✓ System back online\n"
                     if maintenance_mode_enabled:
-                        success_log += "✓ Exited maintenance mode\n"
+                        success_log += "✓ Exited maintenance mode\n✓ Host reconnected to vCenter\n"
                     success_log += f"\n✓ Firmware update successful"
                     
                     self.update_task_status(
