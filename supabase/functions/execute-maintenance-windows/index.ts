@@ -30,32 +30,122 @@ serve(async (req) => {
 
     const now = new Date();
     
-    // Find windows that should execute NOW
+    // Find one-time windows that should execute NOW
     const { data: windows, error: windowsError } = await supabase
       .from('maintenance_windows')
       .select('*')
       .eq('status', 'planned')
       .eq('auto_execute', true)
+      .or('recurrence_enabled.is.null,recurrence_enabled.eq.false')
       .lte('planned_start', now.toISOString())
       .gte('planned_end', now.toISOString());
 
     if (windowsError) {
-      console.error('Error fetching maintenance windows:', windowsError);
+      console.error('Error fetching one-time maintenance windows:', windowsError);
       throw windowsError;
     }
 
-    if (!windows || windows.length === 0) {
+    // Find recurring window templates
+    const { data: recurringWindows, error: recurringError } = await supabase
+      .from('maintenance_windows')
+      .select('*')
+      .eq('recurrence_enabled', true)
+      .in('status', ['planned', 'completed']);
+
+    if (recurringError) {
+      console.error('Error fetching recurring maintenance windows:', recurringError);
+      throw recurringError;
+    }
+
+    console.log(`Found ${windows?.length || 0} one-time window(s) ready for execution`);
+    console.log(`Found ${recurringWindows?.length || 0} recurring window template(s)`);
+
+    // Process recurring windows to create new instances if needed
+    const newInstances: any[] = [];
+    if (recurringWindows && recurringWindows.length > 0) {
+      for (const template of recurringWindows) {
+        const nextExecution = calculateNextExecution(
+          template.recurrence_pattern!,
+          template.last_executed_at || template.created_at,
+          now.toISOString()
+        );
+
+        if (nextExecution && nextExecution <= now) {
+          console.log(`Creating new instance for recurring window: ${template.title}`);
+
+          // Calculate window duration from original template
+          const templateStart = new Date(template.planned_start);
+          const templateEnd = new Date(template.planned_end);
+          const durationMs = templateEnd.getTime() - templateStart.getTime();
+
+          const instanceStart = new Date(nextExecution);
+          const instanceEnd = new Date(nextExecution.getTime() + durationMs);
+
+          // Create new one-time instance
+          const { data: newInstance, error: createError } = await supabase
+            .from('maintenance_windows')
+            .insert({
+              title: `${template.title} (Auto-scheduled)`,
+              description: template.description,
+              cluster_ids: template.cluster_ids,
+              server_group_ids: template.server_group_ids,
+              maintenance_type: template.maintenance_type,
+              planned_start: instanceStart.toISOString(),
+              planned_end: instanceEnd.toISOString(),
+              auto_execute: true,
+              recurrence_enabled: false, // Instance is one-time
+              credential_set_ids: template.credential_set_ids,
+              details: {
+                ...template.details,
+                created_from_recurring_template: template.id,
+                recurrence_pattern: template.recurrence_pattern
+              },
+              status: 'planned',
+              created_by: template.created_by
+            })
+            .select()
+            .single();
+
+          if (createError) {
+            console.error(`Failed to create instance for ${template.title}:`, createError);
+            continue;
+          }
+
+          // Update last_executed_at on template
+          await supabase
+            .from('maintenance_windows')
+            .update({ last_executed_at: nextExecution.toISOString() })
+            .eq('id', template.id);
+
+          console.log(`Created instance ${newInstance.id} for ${template.title}`);
+
+          // Add to execution queue if it's time to run now
+          if (instanceStart <= now && instanceEnd >= now) {
+            newInstances.push(newInstance);
+          }
+        }
+      }
+    }
+
+    // Combine one-time windows with newly created instances
+    const allWindows = [...(windows || []), ...newInstances];
+
+    if (allWindows.length === 0) {
       console.log('No maintenance windows to execute');
       return new Response(
-        JSON.stringify({ message: 'No windows to execute', processed: 0 }),
+        JSON.stringify({ 
+          message: 'No windows to execute', 
+          processed: 0,
+          recurring_instances_created: newInstances.length
+        }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    console.log(`Found ${windows.length} maintenance window(s) to execute`);
+    console.log(`Found ${allWindows.length} total maintenance window(s) to execute`);
 
     const results = [];
-    for (const window of windows) {
+    for (const window of allWindows) {
       try {
         console.log(`Processing window: ${window.id} - ${window.title}`);
         
@@ -243,7 +333,8 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({ 
         message: 'Maintenance windows processed',
-        processed: windows.length,
+        processed: allWindows.length,
+        recurring_instances_created: newInstances.length,
         results 
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -261,6 +352,100 @@ serve(async (req) => {
     );
   }
 });
+
+/**
+ * Calculate next execution time based on cron pattern
+ */
+function calculateNextExecution(
+  cronPattern: string,
+  lastExecution: string,
+  currentTime: string
+): Date | null {
+  try {
+    const last = new Date(lastExecution);
+    const now = new Date(currentTime);
+    
+    const parts = cronPattern.split(' ');
+    if (parts.length !== 5) {
+      console.error('Invalid cron pattern:', cronPattern);
+      return null;
+    }
+    
+    const [minute, hour, day, month, weekday] = parts;
+    
+    let candidate = new Date(last);
+    candidate.setMinutes(candidate.getMinutes() + 15);
+    
+    for (let i = 0; i < 100; i++) {
+      if (matchesCronPattern(candidate, minute, hour, day, month, weekday)) {
+        if (candidate <= now) {
+          return candidate;
+        }
+        break;
+      }
+      candidate.setMinutes(candidate.getMinutes() + 15);
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error calculating next execution:', error);
+    return null;
+  }
+}
+
+/**
+ * Check if a date matches a cron pattern
+ */
+function matchesCronPattern(
+  date: Date,
+  minute: string,
+  hour: string,
+  day: string,
+  month: string,
+  weekday: string
+): boolean {
+  const m = date.getMinutes();
+  const h = date.getHours();
+  const d = date.getDate();
+  const mon = date.getMonth() + 1;
+  const w = date.getDay();
+  
+  return (
+    matchesCronValue(m, minute, 0, 59) &&
+    matchesCronValue(h, hour, 0, 23) &&
+    matchesCronValue(d, day, 1, 31) &&
+    matchesCronValue(mon, month, 1, 12) &&
+    matchesCronValue(w, weekday, 0, 6)
+  );
+}
+
+/**
+ * Check if a value matches a cron field
+ */
+function matchesCronValue(
+  value: number,
+  pattern: string,
+  min: number,
+  max: number
+): boolean {
+  if (pattern === '*') return true;
+  
+  if (pattern.startsWith('*/')) {
+    const step = parseInt(pattern.slice(2));
+    return value % step === 0;
+  }
+  
+  if (pattern.includes(',')) {
+    return pattern.split(',').some(p => matchesCronValue(value, p.trim(), min, max));
+  }
+  
+  if (pattern.includes('-')) {
+    const [start, end] = pattern.split('-').map(n => parseInt(n));
+    return value >= start && value <= end;
+  }
+  
+  return value === parseInt(pattern);
+}
 
 async function resolveTargetServers(supabase: any, window: any): Promise<string[]> {
   const serverIds: string[] = [];

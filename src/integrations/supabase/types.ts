@@ -603,11 +603,15 @@ export type Database = {
           details: Json | null
           id: string
           job_ids: string[] | null
+          last_executed_at: string | null
           maintenance_type: string
           notification_sent: boolean | null
           notify_before_hours: number | null
           planned_end: string
           planned_start: string
+          recurrence_enabled: boolean | null
+          recurrence_pattern: string | null
+          recurrence_type: string | null
           requires_approval: boolean | null
           safety_check_snapshot: Json | null
           server_group_ids: string[] | null
@@ -629,11 +633,15 @@ export type Database = {
           details?: Json | null
           id?: string
           job_ids?: string[] | null
+          last_executed_at?: string | null
           maintenance_type: string
           notification_sent?: boolean | null
           notify_before_hours?: number | null
           planned_end: string
           planned_start: string
+          recurrence_enabled?: boolean | null
+          recurrence_pattern?: string | null
+          recurrence_type?: string | null
           requires_approval?: boolean | null
           safety_check_snapshot?: Json | null
           server_group_ids?: string[] | null
@@ -655,11 +663,15 @@ export type Database = {
           details?: Json | null
           id?: string
           job_ids?: string[] | null
+          last_executed_at?: string | null
           maintenance_type?: string
           notification_sent?: boolean | null
           notify_before_hours?: number | null
           planned_end?: string
           planned_start?: string
+          recurrence_enabled?: boolean | null
+          recurrence_pattern?: string | null
+          recurrence_type?: string | null
           requires_approval?: boolean | null
           safety_check_snapshot?: Json | null
           server_group_ids?: string[] | null
