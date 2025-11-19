@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Calendar, Clock, Server, Activity, MoreVertical, Trash2 } from "lucide-react";
+import { Calendar, Clock, Server, Activity, MoreVertical, Trash2, Loader2, Zap } from "lucide-react";
 import { format, formatDistanceToNow, differenceInHours } from "date-fns";
 import {
   DropdownMenu,
@@ -9,17 +9,21 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useNavigate } from "react-router-dom";
 
 interface MaintenanceWindow {
   id: string;
   title: string;
   description?: string;
   cluster_ids: string[];
+  server_group_ids?: string[];
   planned_start: string;
   planned_end: string;
   maintenance_type: string;
   status: string;
   notify_before_hours: number;
+  auto_execute?: boolean;
+  job_ids?: string[];
 }
 
 interface MaintenanceWindowCardProps {
@@ -33,6 +37,7 @@ export function MaintenanceWindowCard({
   onPreFlightCheck,
   onDelete
 }: MaintenanceWindowCardProps) {
+  const navigate = useNavigate();
   
   const getStatusVariant = (status: string) => {
     switch (status) {
@@ -40,6 +45,7 @@ export function MaintenanceWindowCard({
       case 'in_progress': return 'secondary';
       case 'completed': return 'outline';
       case 'cancelled': return 'destructive';
+      case 'failed': return 'destructive';
       default: return 'secondary';
     }
   };
@@ -65,11 +71,24 @@ export function MaintenanceWindowCard({
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between">
           <div className="flex-1">
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
               <CardTitle className="text-lg">{window.title}</CardTitle>
               <Badge variant={getStatusVariant(window.status)}>
-                {window.status.replace('_', ' ').toUpperCase()}
+                {window.status === 'in_progress' ? (
+                  <>
+                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    EXECUTING
+                  </>
+                ) : (
+                  window.status.replace('_', ' ').toUpperCase()
+                )}
               </Badge>
+              {window.auto_execute && (
+                <Badge variant="outline" className="gap-1 border-primary text-primary">
+                  <Zap className="h-3 w-3" />
+                  Auto-Execute
+                </Badge>
+              )}
             </div>
             {window.description && (
               <p className="text-sm text-muted-foreground">{window.description}</p>

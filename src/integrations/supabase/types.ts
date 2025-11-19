@@ -593,11 +593,14 @@ export type Database = {
         Row: {
           approved_at: string | null
           approved_by: string | null
+          auto_execute: boolean | null
           cluster_ids: string[] | null
           completed_at: string | null
           created_at: string | null
           created_by: string | null
+          credential_set_ids: string[] | null
           description: string | null
+          details: Json | null
           id: string
           job_ids: string[] | null
           maintenance_type: string
@@ -616,11 +619,14 @@ export type Database = {
         Insert: {
           approved_at?: string | null
           approved_by?: string | null
+          auto_execute?: boolean | null
           cluster_ids?: string[] | null
           completed_at?: string | null
           created_at?: string | null
           created_by?: string | null
+          credential_set_ids?: string[] | null
           description?: string | null
+          details?: Json | null
           id?: string
           job_ids?: string[] | null
           maintenance_type: string
@@ -639,11 +645,14 @@ export type Database = {
         Update: {
           approved_at?: string | null
           approved_by?: string | null
+          auto_execute?: boolean | null
           cluster_ids?: string[] | null
           completed_at?: string | null
           created_at?: string | null
           created_by?: string | null
+          credential_set_ids?: string[] | null
           description?: string | null
+          details?: Json | null
           id?: string
           job_ids?: string[] | null
           maintenance_type?: string

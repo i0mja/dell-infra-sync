@@ -7,9 +7,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Loader2, AlertTriangle, CheckCircle } from "lucide-react";
+import { Loader2, AlertTriangle, CheckCircle, Info } from "lucide-react";
 import { format, addHours } from "date-fns";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface CreateMaintenanceWindowDialogProps {
   open: boolean;
@@ -46,7 +47,10 @@ export function CreateMaintenanceWindowDialog({
     planned_start: prefilledData?.start ? format(prefilledData.start, "yyyy-MM-dd'T'HH:mm") : format(new Date(), "yyyy-MM-dd'T'HH:mm"),
     planned_end: prefilledData?.end ? format(prefilledData.end, "yyyy-MM-dd'T'HH:mm") : format(addHours(new Date(), 4), "yyyy-MM-dd'T'HH:mm"),
     maintenance_type: "firmware_update" as const,
-    notify_before_hours: 24
+    notify_before_hours: 24,
+    auto_execute: true,
+    firmware_uri: "",
+    component: "BIOS"
   });
 
   const validateWindow = async () => {
@@ -185,25 +189,38 @@ export function CreateMaintenanceWindowDialog({
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
+      // Prepare details object with job-specific configuration
+      const details: any = {};
+      if (formData.maintenance_type === 'firmware_update' && formData.firmware_uri) {
+        details.firmware_uri = formData.firmware_uri;
+        details.component = formData.component;
+      }
+
       const { error } = await supabase
         .from('maintenance_windows')
         .insert({
           title: formData.title,
           description: formData.description || null,
-          cluster_ids: formData.cluster_ids,
+          cluster_ids: formData.cluster_ids.length > 0 ? formData.cluster_ids : null,
+          server_group_ids: formData.server_group_ids.length > 0 ? formData.server_group_ids : null,
           planned_start: new Date(formData.planned_start).toISOString(),
           planned_end: new Date(formData.planned_end).toISOString(),
           maintenance_type: formData.maintenance_type,
           notify_before_hours: formData.notify_before_hours,
           created_by: user.id,
-          safety_check_snapshot: validation?.clusters_status || null
+          safety_check_snapshot: validation || null,
+          status: 'planned',
+          auto_execute: formData.auto_execute,
+          details: Object.keys(details).length > 0 ? details : null
         });
 
       if (error) throw error;
 
       toast({
         title: "Success",
-        description: "Maintenance window created successfully",
+        description: formData.auto_execute 
+          ? "Maintenance window created. Jobs will execute automatically at start time."
+          : "Maintenance window created successfully",
       });
 
       onSuccess();
