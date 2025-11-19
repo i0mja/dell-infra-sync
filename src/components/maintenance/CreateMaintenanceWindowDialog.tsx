@@ -50,10 +50,10 @@ export function CreateMaintenanceWindowDialog({
   });
 
   const validateWindow = async () => {
-    if (formData.cluster_ids.length === 0) {
+    if (formData.cluster_ids.length === 0 && formData.server_group_ids.length === 0) {
       toast({
         title: "Validation Error",
-        description: "Please select at least one cluster",
+        description: "Please select at least one cluster or server group",
         variant: "destructive"
       });
       return;
@@ -61,44 +61,87 @@ export function CreateMaintenanceWindowDialog({
 
     setValidating(true);
     try {
-      // Fetch recent safety checks for selected clusters
-      const { data: recentChecks, error } = await supabase
-        .from('cluster_safety_checks')
-        .select('*')
-        .in('cluster_id', formData.cluster_ids)
-        .gte('check_timestamp', new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString())
-        .order('check_timestamp', { ascending: false });
+      const warnings: string[] = [];
+      let allSafe = true;
 
-      if (error) throw error;
+      // Validate clusters if selected
+      if (formData.cluster_ids.length > 0) {
+        const { data: clusterChecks, error: clusterError } = await supabase
+          .from('cluster_safety_checks')
+          .select('*')
+          .in('cluster_id', formData.cluster_ids)
+          .gte('check_timestamp', new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString())
+          .order('check_timestamp', { ascending: false });
 
-      // Group by cluster and get latest check
-      const latestByCluster = new Map();
-      for (const check of recentChecks || []) {
-        if (!latestByCluster.has(check.cluster_id)) {
-          latestByCluster.set(check.cluster_id, check);
+        if (clusterError) throw clusterError;
+
+        const latestByCluster = new Map();
+        for (const check of clusterChecks || []) {
+          if (!latestByCluster.has(check.cluster_id)) {
+            latestByCluster.set(check.cluster_id, check);
+          }
+        }
+
+        const allClustersSafe = formData.cluster_ids.every(clusterId => {
+          const check = latestByCluster.get(clusterId);
+          return check && check.safe_to_proceed;
+        });
+
+        const missingClusterChecks = formData.cluster_ids.filter(c => !latestByCluster.has(c));
+        
+        if (!allClustersSafe) {
+          warnings.push('Some clusters may not be safe for maintenance');
+          allSafe = false;
+        }
+        
+        if (missingClusterChecks.length > 0) {
+          warnings.push(`No recent safety checks for clusters: ${missingClusterChecks.join(', ')}`);
+          allSafe = false;
         }
       }
 
-      // Check if all clusters are safe
-      const allSafe = formData.cluster_ids.every(clusterId => {
-        const check = latestByCluster.get(clusterId);
-        return check && check.safe_to_proceed;
-      });
+      // Validate server groups if selected
+      if (formData.server_group_ids.length > 0) {
+        const { data: groupChecks, error: groupError } = await supabase
+          .from('server_group_safety_checks')
+          .select('*')
+          .in('server_group_id', formData.server_group_ids)
+          .gte('check_timestamp', new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString())
+          .order('check_timestamp', { ascending: false });
 
-      const warnings: string[] = [];
-      if (!allSafe) {
-        warnings.push('Some clusters may not be safe for maintenance');
-      }
+        if (groupError) throw groupError;
 
-      const missingChecks = formData.cluster_ids.filter(c => !latestByCluster.has(c));
-      if (missingChecks.length > 0) {
-        warnings.push(`No recent safety checks for: ${missingChecks.join(', ')}`);
+        const latestByGroup = new Map();
+        for (const check of groupChecks || []) {
+          if (!latestByGroup.has(check.server_group_id)) {
+            latestByGroup.set(check.server_group_id, check);
+          }
+        }
+
+        const allGroupsSafe = formData.server_group_ids.every(groupId => {
+          const check = latestByGroup.get(groupId);
+          return check && check.safe_to_proceed;
+        });
+
+        const missingGroupChecks = formData.server_group_ids.filter(g => !latestByGroup.has(g));
+        
+        if (!allGroupsSafe) {
+          warnings.push('Some server groups may not be safe for maintenance');
+          allSafe = false;
+        }
+        
+        if (missingGroupChecks.length > 0) {
+          const groupNames = missingGroupChecks
+            .map(id => serverGroups?.find(g => g.id === id)?.name || id)
+            .join(', ');
+          warnings.push(`No recent safety checks for server groups: ${groupNames}`);
+          allSafe = false;
+        }
       }
 
       setValidation({
-        is_safe: allSafe && missingChecks.length === 0,
-        warnings,
-        clusters_status: Array.from(latestByCluster.values())
+        is_safe: allSafe,
+        warnings
       });
 
       toast({
@@ -128,10 +171,10 @@ export function CreateMaintenanceWindowDialog({
       return;
     }
 
-    if (formData.cluster_ids.length === 0) {
+    if (formData.cluster_ids.length === 0 && formData.server_group_ids.length === 0) {
       toast({
         title: "Validation Error",
-        description: "Please select at least one cluster",
+        description: "Please select at least one cluster or server group",
         variant: "destructive"
       });
       return;
@@ -271,6 +314,42 @@ export function CreateMaintenanceWindowDialog({
               ))}
             </div>
           </div>
+
+          {/* Server Groups */}
+          {serverGroups && serverGroups.length > 0 && (
+            <div className="space-y-2">
+              <Label>Server Groups (Optional) ({formData.server_group_ids.length} selected)</Label>
+              <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto p-2 border rounded-md">
+                {serverGroups.map(group => (
+                  <label key={group.id} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.server_group_ids.includes(group.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setFormData({ 
+                            ...formData, 
+                            server_group_ids: [...formData.server_group_ids, group.id] 
+                          });
+                        } else {
+                          setFormData({ 
+                            ...formData, 
+                            server_group_ids: formData.server_group_ids.filter(id => id !== group.id) 
+                          });
+                        }
+                        setValidation(null);
+                      }}
+                      className="rounded"
+                    />
+                    <span className="text-sm">{group.name}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Server groups can be used alongside or instead of vCenter clusters
+              </p>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label htmlFor="notify_before">Notification (hours before)</Label>
