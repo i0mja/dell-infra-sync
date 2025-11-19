@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -65,11 +65,11 @@ export function ManageServerGroupsDialog({ server, open, onOpenChange }: ManageS
   });
 
   // Initialize selected groups when memberships load
-  useState(() => {
+  useEffect(() => {
     if (memberships) {
       setSelectedGroups(new Set(memberships));
     }
-  });
+  }, [memberships]);
 
   // Add/remove membership mutation
   const membershipMutation = useMutation({
