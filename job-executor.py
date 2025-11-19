@@ -2100,6 +2100,79 @@ class JobExecutor:
             self.log(f"  Error getting firmware inventory: {e}", "WARN")
             return {}
 
+    def initiate_catalog_firmware_update(self, ip: str, session_token: str, 
+                                          catalog_url: str, targets: List[str] = None,
+                                          apply_time: str = "OnReset") -> Optional[str]:
+        """
+        Initiate firmware update from Dell online catalog using InstallURI
+        
+        Args:
+            ip: iDRAC IP address
+            session_token: Authenticated session token
+            catalog_url: URL to Dell firmware catalog (e.g., downloads.dell.com/catalog/Catalog.xml)
+            targets: Optional list of specific components to update (e.g., ["BIOS", "iDRAC"])
+            apply_time: "Immediate" or "OnReset"
+            
+        Returns:
+            Task URI for monitoring progress
+        """
+        try:
+            url = f"https://{ip}/redfish/v1/UpdateService/Actions/UpdateService.SimpleUpdate"
+            headers = {
+                "X-Auth-Token": session_token,
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "InstallURI": catalog_url,
+                "TransferProtocol": "HTTPS",
+                "@Redfish.OperationApplyTime": apply_time
+            }
+            
+            if targets:
+                payload["Targets"] = targets
+            
+            self.log(f"  Initiating catalog-based firmware update from: {catalog_url}")
+            if targets:
+                self.log(f"  Target components: {', '.join(targets)}")
+            else:
+                self.log(f"  Will update all applicable components")
+            
+            response, response_time_ms = self.throttler.request_with_safety(
+                'POST',
+                url,
+                ip,
+                self.log,
+                json=payload,
+                headers=headers,
+                timeout=(2, 60)
+            )
+            
+            if response.status_code in [401, 403]:
+                self.throttler.record_failure(ip, response.status_code, self.log)
+            elif response.status_code == 202:
+                self.throttler.record_success(ip)
+                task_uri = response.headers.get('Location')
+                if not task_uri:
+                    data = _safe_json_parse(response)
+                    task_uri = data.get('@odata.id') or data.get('TaskUri')
+                
+                self.log(f"  Catalog-based firmware update initiated, task URI: {task_uri}")
+                return task_uri
+            else:
+                error_msg = f"Failed to initiate catalog update: {response.status_code}"
+                try:
+                    error_data = response.json()
+                    error_msg += f" - {error_data.get('error', {}).get('message', response.text)}"
+                except:
+                    error_msg += f" - {response.text}"
+                self.log(f"  {error_msg}", "ERROR")
+                return None
+                
+        except Exception as e:
+            self.log(f"  Error initiating catalog-based firmware update: {e}", "ERROR")
+            return None
+
     def initiate_firmware_update(self, ip: str, session_token: str, firmware_uri: str, apply_time: str = "OnReset") -> Optional[str]:
         """
         Initiate firmware update via SimpleUpdate action
@@ -2308,15 +2381,28 @@ class JobExecutor:
             return False
 
     def execute_firmware_update(self, job: Dict):
-        """Execute firmware update job with actual Dell iDRAC Redfish API calls"""
+        """Execute firmware update job with support for manual repository and Dell online catalog"""
         self.log(f"Starting firmware update job {job['id']}")
         
         # Get firmware details from job
         details = job.get('details', {})
+        firmware_source = details.get('firmware_source', 'manual_repository')
         firmware_uri = details.get('firmware_uri')
+        dell_catalog_url = details.get('dell_catalog_url', 'https://downloads.dell.com/catalog/Catalog.xml')
         component = details.get('component', 'BIOS')
         version = details.get('version', 'latest')
         apply_time = details.get('apply_time', 'OnReset')
+        auto_select_latest = details.get('auto_select_latest', True)
+        
+        use_catalog = firmware_source == 'dell_online_catalog'
+        
+        if use_catalog:
+            self.log(f"Using Dell online catalog: {dell_catalog_url}")
+            self.log(f"Component filter: {component}")
+        else:
+            if not firmware_uri:
+                firmware_uri = f"{FIRMWARE_REPO_URL}/{component}_{version}.exe"
+            self.log(f"Firmware URI: {firmware_uri}")
         
         # Construct firmware URI if not provided
         if not firmware_uri:
@@ -2406,7 +2492,7 @@ class JobExecutor:
                             error_msg = maintenance_mode_result.get('error', 'Unknown error')
                             raise Exception(f"Failed to enter maintenance mode: {error_msg}")
                     
-                    # Step 4: Initiate firmware update
+                    # Step 4: Initiate firmware update (catalog or traditional)
                     self.log(f"  Initiating firmware update...")
                     log_msg = "✓ Connected to iDRAC\n✓ Current firmware checked\n"
                     if maintenance_mode_enabled:
@@ -2415,7 +2501,26 @@ class JobExecutor:
                     
                     self.update_task_status(task['id'], 'running', log=log_msg)
                     
-                    task_uri = self.initiate_firmware_update(ip, session_token, firmware_uri, apply_time)
+                    if use_catalog:
+                        # Map component names to Redfish targets
+                        target_map = {
+                            'BIOS': 'BIOS',
+                            'iDRAC': 'iDRAC',
+                            'NIC': 'NIC',
+                            'RAID': 'RAID',
+                            'PSU': 'PSU'
+                        }
+                        
+                        targets = [target_map.get(component, component)] if component and not auto_select_latest else None
+                        
+                        task_uri = self.initiate_catalog_firmware_update(
+                            ip, session_token, dell_catalog_url, targets, apply_time
+                        )
+                    else:
+                        # Traditional ImageURI-based update
+                        task_uri = self.initiate_firmware_update(
+                            ip, session_token, firmware_uri, apply_time
+                        )
                     
                     if not task_uri:
                         raise Exception("Failed to initiate firmware update")

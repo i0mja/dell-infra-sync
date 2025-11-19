@@ -2728,6 +2728,21 @@ export default function Settings() {
                   </p>
                 </div>
 
+                {/* Dell Online Repository Info */}
+                <Alert className="border-t pt-6">
+                  <Info className="h-4 w-4" />
+                  <AlertDescription>
+                    <strong>Dell Online Repository (downloads.dell.com)</strong>
+                    <ul className="list-disc list-inside mt-2 text-sm space-y-1">
+                      <li>iDRAC servers must have internet connectivity</li>
+                      <li>Firewall must allow HTTPS (443) to downloads.dell.com</li>
+                      <li>DNS resolution must be configured on iDRAC</li>
+                      <li>For air-gapped environments, use Manual Repository option</li>
+                      <li>Select firmware source when creating firmware update jobs</li>
+                    </ul>
+                  </AlertDescription>
+                </Alert>
+
                 {/* Alerts Section */}
                 <div className="space-y-4 border-t pt-6">
                   <h3 className="text-lg font-medium flex items-center gap-2">
