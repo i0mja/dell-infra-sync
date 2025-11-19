@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Search, RefreshCw, Link2, Wrench, RotateCw, Edit, History, Trash2, CheckCircle, Info, Power, Activity, FileText, HardDrive, Disc, FileJson, Settings2, Shield, Users, Calendar, Zap, FolderCog, FileStack, List, Layers, Server, AlertCircle, MoreVertical } from "lucide-react";
+import { Plus, Search, RefreshCw, Link2, Wrench, RotateCw, Edit, History, Trash2, CheckCircle, Info, Power, Activity, FileText, HardDrive, Disc, FileJson, Settings2, Shield, Users, Calendar, Zap, FolderCog, FileStack, List, Layers, Server, AlertCircle, MoreVertical, Boxes } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -164,6 +164,19 @@ const Servers = () => {
       const { data, error } = await supabase
         .from('server_group_members')
         .select('server_id, server_group_id, server_groups(id, name, color, icon)');
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  // Fetch vCenter hosts for cluster grouping
+  const { data: vCenterHosts } = useQuery({
+    queryKey: ['vcenter-hosts'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('vcenter_hosts')
+        .select('id, name, cluster, server_id')
+        .not('cluster', 'is', null);
       if (error) throw error;
       return data;
     },
@@ -635,7 +648,13 @@ const Servers = () => {
     } else if (groupFilter === "ungrouped") {
       const hasGroup = groupMemberships?.some(m => m.server_id === server.id);
       return matchesSearch && !hasGroup;
+    } else if (groupFilter.startsWith('vcenter-cluster-')) {
+      // vCenter cluster filter
+      const clusterName = groupFilter.replace('vcenter-cluster-', '');
+      const vCenterHost = vCenterHosts?.find(h => h.id === server.vcenter_host_id);
+      return matchesSearch && vCenterHost?.cluster === clusterName;
     } else {
+      // Manual group filter
       const inGroup = groupMemberships?.some(
         m => m.server_id === server.id && m.server_group_id === groupFilter
       );
@@ -648,17 +667,41 @@ const Servers = () => {
     const grouped: Map<string, {
       group: any | null;
       servers: Server[];
+      isVCenterCluster?: boolean;
+      clusterName?: string;
     }> = new Map();
 
-    // Add each server group
+    // Add each manual server group
     serverGroups?.forEach(group => {
-      grouped.set(group.id, { group, servers: [] });
+      grouped.set(group.id, { group, servers: [], isVCenterCluster: false });
+    });
+
+    // Add vCenter cluster groups
+    const uniqueClusters = new Set<string>();
+    vCenterHosts?.forEach(host => {
+      if (host.cluster) {
+        uniqueClusters.add(host.cluster);
+      }
+    });
+    uniqueClusters.forEach(clusterName => {
+      const clusterId = `vcenter-cluster-${clusterName}`;
+      grouped.set(clusterId, { 
+        group: {
+          id: clusterId,
+          name: clusterName,
+          color: '#10b981', // green for vCenter clusters
+          icon: 'Boxes',
+        }, 
+        servers: [], 
+        isVCenterCluster: true,
+        clusterName 
+      });
     });
 
     // Add ungrouped section
-    grouped.set('ungrouped', { group: null, servers: [] });
+    grouped.set('ungrouped', { group: null, servers: [], isVCenterCluster: false });
 
-    // Distribute servers
+    // Distribute servers to manual groups
     filteredServers.forEach(server => {
       const memberships = groupMemberships?.filter(m => m.server_id === server.id);
       
@@ -669,7 +712,27 @@ const Servers = () => {
             entry.servers.push(server);
           }
         });
-      } else {
+      }
+    });
+
+    // Distribute servers to vCenter cluster groups
+    filteredServers.forEach(server => {
+      if (server.vcenter_host_id) {
+        const vCenterHost = vCenterHosts?.find(h => h.id === server.vcenter_host_id);
+        if (vCenterHost?.cluster) {
+          const clusterId = `vcenter-cluster-${vCenterHost.cluster}`;
+          const entry = grouped.get(clusterId);
+          if (entry) {
+            entry.servers.push(server);
+          }
+        }
+      }
+    });
+
+    // Add servers to ungrouped if they're not in any manual group
+    filteredServers.forEach(server => {
+      const memberships = groupMemberships?.filter(m => m.server_id === server.id);
+      if (!memberships || memberships.length === 0) {
         grouped.get('ungrouped')?.servers.push(server);
       }
     });
@@ -786,7 +849,7 @@ const Servers = () => {
                 className="pl-10"
               />
             </div>
-            {serverGroups && serverGroups.length > 0 && (
+            {(serverGroups && serverGroups.length > 0 || vCenterHosts && vCenterHosts.length > 0) && (
               <Select value={groupFilter} onValueChange={setGroupFilter}>
                 <SelectTrigger className="w-[200px]">
                   <SelectValue placeholder="All Groups" />
@@ -794,9 +857,22 @@ const Servers = () => {
                 <SelectContent>
                   <SelectItem value="all">All Groups</SelectItem>
                   <SelectItem value="ungrouped">Ungrouped Servers</SelectItem>
-                  {serverGroups.map((g) => (
-                    <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
-                  ))}
+                  {serverGroups && serverGroups.length > 0 && (
+                    <>
+                      {serverGroups.map((g) => (
+                        <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
+                      ))}
+                    </>
+                  )}
+                  {vCenterHosts && Array.from(new Set(vCenterHosts.map(h => h.cluster).filter(Boolean))).length > 0 && (
+                    <>
+                      {Array.from(new Set(vCenterHosts.map(h => h.cluster).filter(Boolean))).map((cluster) => (
+                        <SelectItem key={`vcenter-cluster-${cluster}`} value={`vcenter-cluster-${cluster}`}>
+                          🔷 {cluster}
+                        </SelectItem>
+                      ))}
+                    </>
+                  )}
                 </SelectContent>
               </Select>
             )}
@@ -855,7 +931,7 @@ const Servers = () => {
         viewMode === 'grouped' ? (
           // Grouped View with Accordions
           <Accordion type="multiple" defaultValue={organizeServersByGroup().map(g => g.group?.id || 'ungrouped')} className="space-y-4">
-            {organizeServersByGroup().map(({ group, servers }) => {
+            {organizeServersByGroup().map(({ group, servers, isVCenterCluster }) => {
               const groupId = group?.id || 'ungrouped';
               const onlineCount = servers.filter(s => s.connection_status === 'online').length;
               const offlineCount = servers.filter(s => s.connection_status === 'offline').length;
@@ -871,12 +947,25 @@ const Servers = () => {
                               className="w-10 h-10 rounded-lg flex items-center justify-center"
                               style={{ backgroundColor: `${group.color}20`, color: group.color }}
                             >
-                              {group.icon === 'Server' ? <Server className="h-5 w-5" /> : <Users className="h-5 w-5" />}
+                              {group.icon === 'Boxes' ? (
+                                <Boxes className="h-5 w-5" />
+                              ) : group.icon === 'Server' ? (
+                                <Server className="h-5 w-5" />
+                              ) : (
+                                <Users className="h-5 w-5" />
+                              )}
                             </div>
                             <div className="text-left">
-                              <h3 className="text-lg font-semibold">{group.name}</h3>
+                              <div className="flex items-center gap-2">
+                                <h3 className="text-lg font-semibold">{group.name}</h3>
+                                {isVCenterCluster && (
+                                  <Badge variant="outline" className="gap-1 border-green-600 text-green-700 dark:border-green-500 dark:text-green-400">
+                                    vCenter Cluster
+                                  </Badge>
+                                )}
+                              </div>
                               <p className="text-sm text-muted-foreground">
-                                {group.description || `${group.group_type} group`}
+                                {isVCenterCluster ? 'ESXi cluster from vCenter' : (group.description || `${group.group_type} group`)}
                               </p>
                             </div>
                           </>
@@ -920,40 +1009,74 @@ const Servers = () => {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-                              <DropdownMenuItem
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  navigate('/maintenance-calendar', {
-                                    state: {
-                                      openDialog: true,
-                                      prefilledData: {
-                                        maintenance_type: 'firmware_update',
-                                        server_group_ids: [group.id],
-                                        details: { group_name: group.name }
-                                      }
-                                    }
-                                  });
-                                }}
-                              >
-                                <Calendar className="mr-2 h-4 w-4" />
-                                Schedule Maintenance
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedServer(null);
-                                setJobDialogOpen(true);
-                              }}>
-                                <Zap className="mr-2 h-4 w-4" />
-                                Run Discovery on Group
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem onClick={(e) => {
-                                e.stopPropagation();
-                                navigate('/settings?tab=server-groups');
-                              }}>
-                                <Settings2 className="mr-2 h-4 w-4" />
-                                Edit Group
-                              </DropdownMenuItem>
+                              {isVCenterCluster ? (
+                                <>
+                                  <DropdownMenuItem
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      navigate('/maintenance-calendar', {
+                                        state: {
+                                          openDialog: true,
+                                          prefilledData: {
+                                            maintenance_type: 'firmware_update',
+                                            cluster_ids: [group.name],
+                                            details: { cluster_name: group.name }
+                                          }
+                                        }
+                                      });
+                                    }}
+                                  >
+                                    <Calendar className="mr-2 h-4 w-4" />
+                                    Schedule Cluster Maintenance
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      navigate('/vcenter');
+                                    }}
+                                  >
+                                    <Link2 className="mr-2 h-4 w-4" />
+                                    View in vCenter
+                                  </DropdownMenuItem>
+                                </>
+                              ) : (
+                                <>
+                                  <DropdownMenuItem
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      navigate('/maintenance-calendar', {
+                                        state: {
+                                          openDialog: true,
+                                          prefilledData: {
+                                            maintenance_type: 'firmware_update',
+                                            server_group_ids: [group.id],
+                                            details: { group_name: group.name }
+                                          }
+                                        }
+                                      });
+                                    }}
+                                  >
+                                    <Calendar className="mr-2 h-4 w-4" />
+                                    Schedule Maintenance
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedServer(null);
+                                    setJobDialogOpen(true);
+                                  }}>
+                                    <Zap className="mr-2 h-4 w-4" />
+                                    Run Discovery on Group
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigate('/settings?tab=server-groups');
+                                  }}>
+                                    <Settings2 className="mr-2 h-4 w-4" />
+                                    Edit Group
+                                  </DropdownMenuItem>
+                                </>
+                              )}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         )}
