@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { MaintenanceCalendarView } from "@/components/maintenance/MaintenanceCalendarView";
 import { OptimalWindowsSidebar } from "@/components/maintenance/OptimalWindowsSidebar";
@@ -38,9 +39,22 @@ interface ClusterSafetyDay {
 
 export default function MaintenanceCalendar() {
   const { toast } = useToast();
+  const location = useLocation();
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [prefilledData, setPrefilledData] = useState<any>(null);
+
+  // Handle navigation state for opening dialog with prefilled data
+  useEffect(() => {
+    if (location.state?.openDialog) {
+      setCreateDialogOpen(true);
+      if (location.state?.prefilledData) {
+        setPrefilledData(location.state.prefilledData);
+      }
+      // Clear the state to prevent re-opening on refresh
+      window.history.replaceState({}, document.title);
+    }
+  }, [location]);
 
   // Fetch maintenance windows
   const { data: maintenanceWindows, refetch: refetchWindows } = useQuery({
