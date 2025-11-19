@@ -24,7 +24,10 @@ interface CreateMaintenanceWindowDialogProps {
     start?: Date;
     end?: Date;
     clusters?: string[];
+    cluster_ids?: string[];
     serverGroupIds?: string[];
+    server_group_ids?: string[];
+    server_ids?: string[];
     maintenance_type?: "firmware_update" | "host_maintenance" | "cluster_update" | "full_update" | "safety_check";
     details?: any;
   };
@@ -45,10 +48,19 @@ export function CreateMaintenanceWindowDialog({
   const [validation, setValidation] = useState<{ is_safe: boolean; warnings: string[]; clusters_status?: any[] } | null>(null);
 
   const [formData, setFormData] = useState({
-    title: prefilledData?.details?.server_name ? `Firmware Update - ${prefilledData.details.server_name}` : "",
-    description: prefilledData?.details?.server_name ? `Scheduled firmware update for server ${prefilledData.details.server_name}` : "",
-    cluster_ids: prefilledData?.clusters || [],
-    server_group_ids: prefilledData?.serverGroupIds || [],
+    title: prefilledData?.details?.server_name 
+      ? `Firmware Update - ${prefilledData.details.server_name}` 
+      : prefilledData?.details?.group_name
+      ? `Maintenance - ${prefilledData.details.group_name}`
+      : "",
+    description: prefilledData?.details?.server_name 
+      ? `Scheduled firmware update for server ${prefilledData.details.server_name}` 
+      : prefilledData?.details?.group_name
+      ? `Scheduled maintenance for ${prefilledData.details.group_name}`
+      : "",
+    cluster_ids: prefilledData?.clusters || prefilledData?.cluster_ids || [],
+    server_group_ids: prefilledData?.serverGroupIds || prefilledData?.server_group_ids || [],
+    server_ids: prefilledData?.server_ids || [],
     planned_start: prefilledData?.start ? format(prefilledData.start, "yyyy-MM-dd'T'HH:mm") : format(new Date(), "yyyy-MM-dd'T'HH:mm"),
     planned_end: prefilledData?.end ? format(prefilledData.end, "yyyy-MM-dd'T'HH:mm") : format(addHours(new Date(), 4), "yyyy-MM-dd'T'HH:mm"),
     maintenance_type: prefilledData?.maintenance_type || "firmware_update" as "firmware_update" | "host_maintenance" | "cluster_update" | "full_update" | "safety_check",
@@ -65,10 +77,10 @@ export function CreateMaintenanceWindowDialog({
   const hasClusterSelection = formData.cluster_ids.length > 0;
 
   const validateWindow = async () => {
-    if (formData.cluster_ids.length === 0 && formData.server_group_ids.length === 0) {
+    if (formData.cluster_ids.length === 0 && formData.server_group_ids.length === 0 && formData.server_ids.length === 0) {
       toast({
         title: "Validation Error",
-        description: "Please select at least one cluster or server group",
+        description: "Please select at least one cluster, server group, or server",
         variant: "destructive"
       });
       return;
@@ -221,6 +233,7 @@ export function CreateMaintenanceWindowDialog({
           description: formData.description || null,
           cluster_ids: formData.cluster_ids.length > 0 ? formData.cluster_ids : null,
           server_group_ids: formData.server_group_ids.length > 0 ? formData.server_group_ids : null,
+          server_ids: formData.server_ids.length > 0 ? formData.server_ids : null,
           planned_start: new Date(formData.planned_start).toISOString(),
           planned_end: new Date(formData.planned_end).toISOString(),
           maintenance_type: formData.maintenance_type,

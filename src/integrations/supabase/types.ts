@@ -624,6 +624,7 @@ export type Database = {
           requires_approval: boolean | null
           safety_check_snapshot: Json | null
           server_group_ids: string[] | null
+          server_ids: string[] | null
           started_at: string | null
           status: string
           title: string
@@ -654,6 +655,7 @@ export type Database = {
           requires_approval?: boolean | null
           safety_check_snapshot?: Json | null
           server_group_ids?: string[] | null
+          server_ids?: string[] | null
           started_at?: string | null
           status?: string
           title: string
@@ -684,6 +686,7 @@ export type Database = {
           requires_approval?: boolean | null
           safety_check_snapshot?: Json | null
           server_group_ids?: string[] | null
+          server_ids?: string[] | null
           started_at?: string | null
           status?: string
           title?: string
