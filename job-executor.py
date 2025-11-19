@@ -6662,6 +6662,126 @@ class JobExecutor:
                 verify=VERIFY_SSL
             )
             
+            # Handle scheduled check alerting
+            is_scheduled = details.get('is_scheduled', False)
+            scheduled_check_id = details.get('scheduled_check_id')
+            
+            if is_scheduled and scheduled_check_id:
+                # Get check_id from the insert response
+                check_response = requests.get(
+                    f"{DSM_URL}/rest/v1/cluster_safety_checks?job_id=eq.{job['id']}",
+                    headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                    verify=VERIFY_SSL
+                )
+                check_data = _safe_json_parse(check_response)
+                check_id = check_data[0]['id'] if check_data else None
+                
+                # Get previous check results
+                prev_response = requests.get(
+                    f"{DSM_URL}/rest/v1/cluster_safety_checks?" +
+                    f"cluster_id=eq.{cluster_name}&" +
+                    f"is_scheduled=eq.true&" +
+                    f"order=check_timestamp.desc&limit=2",
+                    headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                    verify=VERIFY_SSL
+                )
+                previous_checks = _safe_json_parse(prev_response)
+                
+                status_changed = False
+                previous_status = None
+                
+                if len(previous_checks) >= 2:
+                    prev_check = previous_checks[1]
+                    prev_safe = prev_check.get('safe_to_proceed', True)
+                    current_safe = safe_to_proceed
+                    previous_status = 'safe' if prev_safe else 'unsafe'
+                    current_status = 'safe' if current_safe else 'unsafe'
+                    status_changed = previous_status != current_status
+                
+                # Update cluster_safety_checks with scheduling metadata
+                if check_id:
+                    requests.patch(
+                        f"{DSM_URL}/rest/v1/cluster_safety_checks?id=eq.{check_id}",
+                        json={
+                            'is_scheduled': True,
+                            'scheduled_check_id': scheduled_check_id,
+                            'previous_status': previous_status,
+                            'status_changed': status_changed
+                        },
+                        headers={
+                            'apikey': SERVICE_ROLE_KEY,
+                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=minimal'
+                        },
+                        verify=VERIFY_SSL
+                    )
+                
+                # Fetch scheduled check config
+                config_response = requests.get(
+                    f"{DSM_URL}/rest/v1/scheduled_safety_checks?id=eq.{scheduled_check_id}",
+                    headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                    verify=VERIFY_SSL
+                )
+                config_data = _safe_json_parse(config_response)
+                config = config_data[0] if config_data else {}
+                
+                # Determine if notification should be sent
+                send_notification = False
+                notification_severity = 'normal'
+                
+                if not safe_to_proceed:
+                    if config.get('notify_on_unsafe', True):
+                        send_notification = True
+                        notification_severity = 'critical'
+                elif warnings:
+                    if config.get('notify_on_warnings', False):
+                        send_notification = True
+                        notification_severity = 'warning'
+                
+                if status_changed and config.get('notify_on_safe_to_unsafe_change', True):
+                    send_notification = True
+                    notification_severity = 'critical' if not safe_to_proceed else 'normal'
+                
+                # Send notification if needed
+                if send_notification:
+                    self.log(f"Sending cluster safety alert (severity: {notification_severity})")
+                    
+                    notification_payload = {
+                        'notification_type': 'cluster_safety_alert',
+                        'cluster_name': cluster_name,
+                        'safe_to_proceed': safe_to_proceed,
+                        'total_hosts': total_hosts,
+                        'healthy_hosts': healthy_hosts,
+                        'drs_enabled': result.get('drs_enabled', False),
+                        'drs_mode': result.get('drs_mode', 'unknown'),
+                        'warnings': warnings,
+                        'status_changed': status_changed,
+                        'previous_status': previous_status,
+                        'severity': notification_severity,
+                        'check_timestamp': datetime.now().isoformat(),
+                        'target_host_vms': result.get('target_host_vms', 0),
+                        'estimated_evacuation_seconds': result.get('estimated_evacuation_seconds', 0)
+                    }
+                    
+                    try:
+                        notification_response = requests.post(
+                            f"{DSM_URL}/functions/v1/send-notification",
+                            json=notification_payload,
+                            headers={
+                                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                'Content-Type': 'application/json'
+                            },
+                            verify=VERIFY_SSL
+                        )
+                        
+                        if notification_response.status_code == 200:
+                            self.log(f"[OK] Cluster safety alert sent")
+                        else:
+                            self.log(f"[!] Failed to send alert: {notification_response.text}", "WARNING")
+                    except Exception as e:
+                        self.log(f"[!] Error sending alert: {e}", "WARNING")
+            
             self.log(f"✓ Safety check: {'PASSED' if safe_to_proceed else 'FAILED'}")
             self.update_job_status(job['id'], 'completed', completed_at=datetime.now().isoformat(), details=result)
             

@@ -112,6 +112,13 @@ export default function ActivityMonitor() {
       if (operationTypeFilter !== 'all') {
         query = query.eq('operation_type', operationTypeFilter as 'idrac_api' | 'vcenter_api' | 'openmanage_api');
       }
+      
+      // Apply command source filter
+      if (commandSource === 'manual') {
+        query = query.is('job_id', null);
+      } else if (commandSource === 'jobs') {
+        query = query.not('job_id', 'is', null);
+      }
 
       const { data, error } = await query;
       if (error) {
@@ -445,6 +452,17 @@ export default function ActivityMonitor() {
               <SelectItem value="all">All Status</SelectItem>
               <SelectItem value="success">Success</SelectItem>
               <SelectItem value="failed">Failed</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={commandSource} onValueChange={setCommandSource}>
+            <SelectTrigger>
+              <SelectValue placeholder="Source" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Sources</SelectItem>
+              <SelectItem value="manual">Manual Operations</SelectItem>
+              <SelectItem value="jobs">Job Operations</SelectItem>
             </SelectContent>
           </Select>
 

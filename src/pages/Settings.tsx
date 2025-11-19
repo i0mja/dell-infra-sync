@@ -13,6 +13,7 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTheme } from "next-themes";
 import { Activity, AlertCircle, Bell, Briefcase, CheckCircle2, ChevronDown, ChevronRight, Copy, Database, FileText, Globe, Info, Loader2, Mail, MessageSquare, Monitor, Moon, Network, Palette, Plus, RefreshCw, Save, Server, Settings as SettingsIcon, Shield, Sun, Terminal, Users, X, XCircle } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { DiagnosticsDialog } from "@/components/settings/DiagnosticsDialog";
 import { JobExecutorDiagnostics } from "@/components/settings/JobExecutorDiagnostics";
@@ -119,6 +120,19 @@ export default function Settings() {
   const [staleRunningHours, setStaleRunningHours] = useState(48);
   const [autoCancelStaleJobs, setAutoCancelStaleJobs] = useState(true);
   const [staleJobCount, setStaleJobCount] = useState(0);
+
+  // Scheduled cluster safety checks
+  const [scheduledChecksEnabled, setScheduledChecksEnabled] = useState(false);
+  const [checkFrequency, setCheckFrequency] = useState('0 */6 * * *');
+  const [checkAllClusters, setCheckAllClusters] = useState(true);
+  const [specificClusters, setSpecificClusters] = useState<string[]>([]);
+  const [minRequiredHosts, setMinRequiredHosts] = useState(2);
+  const [notifyOnUnsafeCluster, setNotifyOnUnsafeCluster] = useState(true);
+  const [notifyOnClusterWarning, setNotifyOnClusterWarning] = useState(false);
+  const [notifyOnClusterStatusChange, setNotifyOnClusterStatusChange] = useState(true);
+  const [lastScheduledCheck, setLastScheduledCheck] = useState<any>(null);
+  const [runningScheduledCheck, setRunningScheduledCheck] = useState(false);
+  const [scheduledCheckId, setScheduledCheckId] = useState<string | null>(null);
 
   // Credential Sets State
   const [credentialSets, setCredentialSets] = useState<any[]>([]);
@@ -607,6 +621,82 @@ export default function Settings() {
     });
   };
 
+  const saveScheduledCheckConfig = async () => {
+    if (userRole !== 'admin') {
+      toast({
+        title: "Permission Denied",
+        description: "Only admins can modify scheduled check settings",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const configData = {
+        enabled: scheduledChecksEnabled,
+        schedule_cron: checkFrequency,
+        check_all_clusters: checkAllClusters,
+        specific_clusters: specificClusters,
+        min_required_hosts: minRequiredHosts,
+        notify_on_unsafe: notifyOnUnsafeCluster,
+        notify_on_warnings: notifyOnClusterWarning,
+        notify_on_safe_to_unsafe_change: notifyOnClusterStatusChange,
+        updated_at: new Date().toISOString()
+      };
+
+      if (scheduledCheckId) {
+        const { error } = await supabase
+          .from('scheduled_safety_checks')
+          .update(configData)
+          .eq('id', scheduledCheckId);
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase
+          .from('scheduled_safety_checks')
+          .insert(configData)
+          .select()
+          .single();
+        if (error) throw error;
+        setScheduledCheckId(data.id);
+      }
+
+      toast({
+        title: "Success",
+        description: "Scheduled check configuration saved",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const runScheduledChecksNow = async () => {
+    setRunningScheduledCheck(true);
+    try {
+      const { error } = await supabase.rpc('run_scheduled_cluster_safety_checks');
+      if (error) throw error;
+      
+      toast({
+        title: "Checks Started",
+        description: "Cluster safety checks are running. Check Activity Monitor for results.",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setRunningScheduledCheck(false);
+    }
+  };
+
   const loadSettings = async () => {
     try {
       const { data, error } = await supabase
@@ -642,6 +732,29 @@ export default function Settings() {
         description: "Failed to load notification settings",
         variant: "destructive",
       });
+    }
+
+    // Load scheduled safety check configuration
+    try {
+      const { data: scheduledCheckData } = await supabase
+        .from('scheduled_safety_checks')
+        .select('*')
+        .single();
+
+      if (scheduledCheckData) {
+        setScheduledChecksEnabled(scheduledCheckData.enabled);
+        setCheckFrequency(scheduledCheckData.schedule_cron);
+        setCheckAllClusters(scheduledCheckData.check_all_clusters);
+        setSpecificClusters(scheduledCheckData.specific_clusters || []);
+        setMinRequiredHosts(scheduledCheckData.min_required_hosts);
+        setNotifyOnUnsafeCluster(scheduledCheckData.notify_on_unsafe);
+        setNotifyOnClusterWarning(scheduledCheckData.notify_on_warnings);
+        setNotifyOnClusterStatusChange(scheduledCheckData.notify_on_safe_to_unsafe_change);
+        setLastScheduledCheck(scheduledCheckData);
+        setScheduledCheckId(scheduledCheckData.id);
+      }
+    } catch (error: any) {
+      console.error("Error loading scheduled check settings:", error);
     }
 
     // Load OpenManage settings
@@ -2853,6 +2966,178 @@ export default function Settings() {
                   <Button onClick={handleSaveSettings} disabled={loading}>
                     {loading ? "Saving..." : "Save Preferences"}
                   </Button>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Shield className="h-5 w-5" />
+                    Scheduled Cluster Safety Checks
+                  </CardTitle>
+                  <CardDescription>
+                    Automatically monitor cluster health and receive alerts when conditions become unsafe for maintenance
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Enable scheduled checks */}
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label>Enable Scheduled Checks</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Automatically run safety checks on a schedule
+                      </p>
+                    </div>
+                    <Switch
+                      checked={scheduledChecksEnabled}
+                      onCheckedChange={setScheduledChecksEnabled}
+                      disabled={userRole !== 'admin'}
+                    />
+                  </div>
+
+                  {scheduledChecksEnabled && (
+                    <>
+                      {/* Schedule frequency */}
+                      <div className="space-y-2">
+                        <Label>Check Frequency</Label>
+                        <Select 
+                          value={checkFrequency} 
+                          onValueChange={setCheckFrequency}
+                          disabled={userRole !== 'admin'}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="0 */4 * * *">Every 4 hours</SelectItem>
+                            <SelectItem value="0 */6 * * *">Every 6 hours (recommended)</SelectItem>
+                            <SelectItem value="0 */12 * * *">Every 12 hours</SelectItem>
+                            <SelectItem value="0 0 * * *">Daily at midnight</SelectItem>
+                            <SelectItem value="0 6,18 * * *">Twice daily (6 AM, 6 PM)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          More frequent checks provide earlier warnings but use more resources
+                        </p>
+                      </div>
+
+                      {/* Min required hosts */}
+                      <div className="space-y-2">
+                        <Label>Minimum Required Hosts</Label>
+                        <Input
+                          type="number"
+                          min="1"
+                          max="10"
+                          value={minRequiredHosts}
+                          onChange={(e) => setMinRequiredHosts(parseInt(e.target.value))}
+                          disabled={userRole !== 'admin'}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Minimum healthy hosts required after taking one offline
+                        </p>
+                      </div>
+
+                      {/* Notification preferences */}
+                      <div className="space-y-3 pt-4 border-t">
+                        <Label className="text-base">Alert Preferences</Label>
+                        
+                        <div className="flex items-center justify-between">
+                          <div className="space-y-0.5">
+                            <Label className="font-normal">Alert on Unsafe Conditions</Label>
+                            <p className="text-xs text-muted-foreground">
+                              Send alert when cluster becomes unsafe for maintenance
+                            </p>
+                          </div>
+                          <Switch
+                            checked={notifyOnUnsafeCluster}
+                            onCheckedChange={setNotifyOnUnsafeCluster}
+                            disabled={userRole !== 'admin'}
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                          <div className="space-y-0.5">
+                            <Label className="font-normal">Alert on Warnings</Label>
+                            <p className="text-xs text-muted-foreground">
+                              Send alert for warnings (DRS disabled, low capacity)
+                            </p>
+                          </div>
+                          <Switch
+                            checked={notifyOnClusterWarning}
+                            onCheckedChange={setNotifyOnClusterWarning}
+                            disabled={userRole !== 'admin'}
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                          <div className="space-y-0.5">
+                            <Label className="font-normal">Alert on Status Changes</Label>
+                            <p className="text-xs text-muted-foreground">
+                              Send alert when cluster status changes (safe ↔ unsafe)
+                            </p>
+                          </div>
+                          <Switch
+                            checked={notifyOnClusterStatusChange}
+                            onCheckedChange={setNotifyOnClusterStatusChange}
+                            disabled={userRole !== 'admin'}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Last check status */}
+                      {lastScheduledCheck?.last_run_at && (
+                        <div className="p-3 bg-muted rounded-lg space-y-1">
+                          <p className="text-sm font-medium">Last Scheduled Check</p>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(lastScheduledCheck.last_run_at).toLocaleString()}
+                          </p>
+                          {lastScheduledCheck.last_status && (
+                            <Badge variant={lastScheduledCheck.last_status === 'safe' ? 'default' : 'destructive'}>
+                              {lastScheduledCheck.last_status.toUpperCase()}
+                            </Badge>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={saveScheduledCheckConfig}
+                          disabled={loading || userRole !== 'admin'}
+                          className="flex-1"
+                        >
+                          {loading ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Saving...
+                            </>
+                          ) : (
+                            <>
+                              <Save className="mr-2 h-4 w-4" />
+                              Save Configuration
+                            </>
+                          )}
+                        </Button>
+                        
+                        <Button
+                          onClick={runScheduledChecksNow}
+                          disabled={runningScheduledCheck || userRole !== 'admin'}
+                          variant="outline"
+                        >
+                          {runningScheduledCheck ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Running...
+                            </>
+                          ) : (
+                            <>
+                              <RefreshCw className="mr-2 h-4 w-4" />
+                              Run Now
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
 
