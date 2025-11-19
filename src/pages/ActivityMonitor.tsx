@@ -46,6 +46,7 @@ export default function ActivityMonitor() {
   const [commandTypeFilter, setCommandTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [operationTypeFilter, setOperationTypeFilter] = useState<string>("all");
+  const [commandSource, setCommandSource] = useState<string>("all");
   const [timeRangeFilter, setTimeRangeFilter] = useState<string>("24h");
   const [searchTerm, setSearchTerm] = useState("");
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
@@ -86,7 +87,7 @@ export default function ActivityMonitor() {
 
   // Fetch commands
   const { data: commandsData, refetch, isError, error, isFetching } = useQuery({
-    queryKey: ['idrac-commands', serverFilter, commandTypeFilter, statusFilter, operationTypeFilter, timeRangeFilter],
+    queryKey: ['idrac-commands', serverFilter, commandTypeFilter, statusFilter, operationTypeFilter, commandSource, timeRangeFilter],
     queryFn: async () => {
       let query = supabase
         .from('idrac_commands')

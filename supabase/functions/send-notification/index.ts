@@ -40,9 +40,10 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const { jobId, jobType, status, details, isTest, testMessage }: NotificationPayload = await req.json();
+    const payload: any = await req.json();
+    const { jobId, jobType, status, details, isTest, testMessage, notification_type } = payload;
 
-    console.log('Processing notification:', { jobId, jobType, status, isTest });
+    console.log('Processing notification:', { jobId, jobType, status, isTest, notification_type });
 
     // Get notification settings
     const { data: settings, error: settingsError } = await supabaseClient
@@ -61,6 +62,119 @@ Deno.serve(async (req) => {
       return new Response(
         JSON.stringify({ message: 'No notification settings configured' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+      );
+    }
+
+    // Handle cluster safety alerts (scheduled checks)
+    if (notification_type === 'cluster_safety_alert') {
+      const {
+        cluster_name,
+        safe_to_proceed,
+        total_hosts,
+        healthy_hosts,
+        drs_enabled,
+        drs_mode,
+        warnings = [],
+        status_changed,
+        previous_status,
+        severity,
+        check_timestamp
+      } = payload;
+      
+      const statusEmoji = safe_to_proceed ? '✅' : '🚨';
+      const statusText = safe_to_proceed ? 'SAFE' : 'UNSAFE';
+      const changeText = status_changed 
+        ? `\n⚠️ Status Changed: ${previous_status?.toUpperCase()} → ${statusText}` 
+        : '';
+      
+      // Email notification
+      if (settings.smtp_host && settings.smtp_user && settings.smtp_from_email) {
+        const subject = `${statusEmoji} Cluster Safety Alert: ${cluster_name} - ${statusText}`;
+        const body = `
+          <h2>${statusEmoji} Cluster Safety Alert</h2>
+          <p><strong>Cluster:</strong> ${cluster_name}</p>
+          <p><strong>Status:</strong> ${statusText}${changeText}</p>
+          
+          <h3>Cluster Details</h3>
+          <ul>
+            <li><strong>Total Hosts:</strong> ${total_hosts}</li>
+            <li><strong>Healthy Hosts:</strong> ${healthy_hosts}</li>
+            <li><strong>DRS Enabled:</strong> ${drs_enabled ? 'Yes' : 'No'}</li>
+            <li><strong>DRS Mode:</strong> ${drs_mode}</li>
+          </ul>
+          
+          ${warnings.length > 0 ? `
+            <h3>⚠️ Warnings</h3>
+            <ul>
+              ${warnings.map((w: string) => `<li>${w}</li>`).join('')}
+            </ul>
+          ` : ''}
+          
+          <p><strong>Recommendation:</strong> ${safe_to_proceed 
+            ? 'Cluster is safe for maintenance operations.' 
+            : 'Do NOT perform maintenance operations until issues are resolved.'}</p>
+          
+          <p><small>Check Time: ${new Date(check_timestamp).toLocaleString()}</small></p>
+        `;
+        
+        try {
+          await sendEmailNotification(settings, 'cluster-safety', cluster_name, statusText, { body, subject });
+          console.log('Cluster safety email sent');
+        } catch (error) {
+          console.error('Failed to send cluster safety email:', error);
+        }
+      }
+      
+      // Teams notification
+      if (settings.teams_webhook_url) {
+        const color = safe_to_proceed ? '28a745' : 'dc3545';
+        const card = {
+          "@type": "MessageCard",
+          "@context": "https://schema.org/extensions",
+          "themeColor": color,
+          "summary": `Cluster Safety Alert: ${cluster_name}`,
+          "sections": [{
+            "activityTitle": `${statusEmoji} Cluster Safety Alert`,
+            "activitySubtitle": cluster_name,
+            "facts": [
+              { "name": "Status", "value": statusText },
+              { "name": "Total Hosts", "value": total_hosts.toString() },
+              { "name": "Healthy Hosts", "value": healthy_hosts.toString() },
+              { "name": "DRS Enabled", "value": drs_enabled ? 'Yes' : 'No' },
+              { "name": "DRS Mode", "value": drs_mode },
+              ...(status_changed ? [{ "name": "Status Change", "value": `${previous_status?.toUpperCase()} → ${statusText}` }] : []),
+              ...(warnings.length > 0 ? [{ "name": "Warnings", "value": warnings.join('; ') }] : [])
+            ],
+            "text": safe_to_proceed 
+              ? '✅ Cluster is safe for maintenance operations.'
+              : '🚨 **Do NOT perform maintenance** until issues are resolved.'
+          }]
+        };
+        
+        try {
+          const teamsResponse = await fetch(settings.teams_webhook_url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(card)
+          });
+          if (!teamsResponse.ok) throw new Error('Teams webhook failed');
+          console.log('Cluster safety Teams notification sent');
+        } catch (error) {
+          console.error('Failed to send Teams notification:', error);
+        }
+      }
+      
+      // Log the alert
+      await supabaseClient.from('notification_logs').insert({
+        notification_type: 'cluster_safety_alert',
+        status: 'success',
+        delivery_details: { cluster_name, status: statusText, severity },
+        severity
+      });
+      
+      return new Response(
+        JSON.stringify({ success: true, message: 'Cluster safety alert sent' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
