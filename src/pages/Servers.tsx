@@ -27,7 +27,7 @@ import { WorkflowJobDialog } from "@/components/jobs/WorkflowJobDialog";
 import { PreFlightCheckDialog } from "@/components/jobs/PreFlightCheckDialog";
 import { ManageServerGroupsDialog } from "@/components/servers/ManageServerGroupsDialog";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Select,
   SelectContent,
@@ -87,6 +87,7 @@ interface Server {
 
 const Servers = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   // Job Executor is always enabled - iDRACs are always on private networks
   const useJobExecutorForIdrac = true;
   const [servers, setServers] = useState<Server[]>([]);
@@ -144,6 +145,23 @@ const Servers = () => {
       return data;
     },
   });
+
+  // Query for active health check jobs
+  const { data: activeHealthCheckJobs } = useQuery({
+    queryKey: ['active-health-check-jobs'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('jobs')
+        .select('id, target_scope, details')
+        .eq('job_type', 'health_check')
+        .in('status', ['pending', 'running'])
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      return data || [];
+    },
+    refetchInterval: 3000, // Poll every 3 seconds to detect job completion
+  });
   
   const getServerStatus = (server: any) => {
     if (server.discovery_job_id) {
@@ -153,6 +171,20 @@ const Servers = () => {
       return { status: "discovered", label: "Discovered", variant: "default" as const };
     }
     return { status: "minimal", label: "Minimal Info", variant: "outline" as const };
+  };
+
+  const hasActiveHealthCheck = (serverId: string): boolean => {
+    if (!activeHealthCheckJobs || activeHealthCheckJobs.length === 0) return false;
+    
+    return activeHealthCheckJobs.some(job => {
+      const scope = job.target_scope as any;
+      if (scope?.type === 'specific' && Array.isArray(scope.server_ids)) {
+        return scope.server_ids.includes(serverId);
+      }
+      // Also check details.server_ip if target_scope not set
+      const details = job.details as any;
+      return details?.server_ip === serverId || details?.server_id === serverId;
+    });
   };
 
   const fetchServers = async () => {
@@ -432,17 +464,19 @@ const Servers = () => {
         if (updatedJob?.status === 'completed') {
           toast({
             title: 'Health check completed',
-            description: 'View results in Health Status dialog',
-          });
-          fetchServers();
+        description: 'View results in Health Status dialog',
+      });
+      fetchServers();
+      queryClient.invalidateQueries({ queryKey: ['active-health-check-jobs'] });
         } else if (updatedJob?.status === 'failed') {
           const error = (updatedJob.details as any)?.error || 'Unknown error';
           toast({
             title: 'Health check failed',
             description: error,
-            variant: 'destructive',
-          });
-        }
+        variant: 'destructive',
+      });
+      queryClient.invalidateQueries({ queryKey: ['active-health-check-jobs'] });
+    }
         setHealthCheckServer(null);
       }, 10000);
 
@@ -783,10 +817,16 @@ const Servers = () => {
                               </Tooltip>
                             </TooltipProvider>
                           )}
-                          {refreshing === server.id && (
-                            <Badge variant="outline" className="animate-pulse">Refreshing...</Badge>
-                          )}
-                          {groupMemberships
+                    {refreshing === server.id && (
+                      <Badge variant="outline" className="animate-pulse">Refreshing...</Badge>
+                    )}
+                    {hasActiveHealthCheck(server.id) && (
+                      <Badge variant="outline" className="gap-1">
+                        <Activity className="h-3 w-3 animate-spin" />
+                        Health Check
+                      </Badge>
+                    )}
+                    {groupMemberships
                             ?.filter(m => m.server_id === server.id)
                             .map((m) => {
                               const group = m.server_groups as any;
