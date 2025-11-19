@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Search, RefreshCw, Link2, Wrench, RotateCw, Edit, History, Trash2, CheckCircle, Info, Power, Activity, FileText, HardDrive, Disc, FileJson, Settings2, Shield, Users } from "lucide-react";
+import { Plus, Search, RefreshCw, Link2, Wrench, RotateCw, Edit, History, Trash2, CheckCircle, Info, Power, Activity, FileText, HardDrive, Disc, FileJson, Settings2, Shield, Users, Calendar, Zap, FolderCog, FileStack } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -42,6 +42,10 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
+  ContextMenuSub,
+  ContextMenuSubTrigger,
+  ContextMenuSubContent,
+  ContextMenuLabel,
 } from "@/components/ui/context-menu";
 import {
   AlertDialog,
@@ -867,7 +871,7 @@ const Servers = () => {
                   </CardContent>
                 </Card>
               </ContextMenuTrigger>
-              <ContextMenuContent className="w-64">
+              <ContextMenuContent className="w-72">
                 {server.credential_test_status === 'invalid' && (
                   <>
                     <ContextMenuItem 
@@ -878,134 +882,287 @@ const Servers = () => {
                       className="text-yellow-600 dark:text-yellow-500 font-medium"
                     >
                       <CheckCircle className="mr-2 h-4 w-4" />
-                      Assign Credentials
+                      <div className="flex flex-col">
+                        <span>Assign Credentials</span>
+                        <span className="text-xs text-muted-foreground">Required to access iDRAC</span>
+                      </div>
                     </ContextMenuItem>
                     <ContextMenuSeparator />
                   </>
                 )}
-                <ContextMenuItem onClick={() => {
-                  setSelectedServer(server);
-                  setPowerControlDialogOpen(true);
-                }}>
-                  <Power className="mr-2 h-4 w-4" />
-                  Power Control
-                </ContextMenuItem>
-                <ContextMenuItem onClick={() => {
-                  setSelectedServer(server);
-                  setHealthDialogOpen(true);
-                }}>
-                  <Activity className="mr-2 h-4 w-4" />
-                  Health Status
-                </ContextMenuItem>
-                <ContextMenuItem onClick={() => {
-                  setSelectedServer(server);
-                  setEventLogDialogOpen(true);
-                }}>
-                  <FileText className="mr-2 h-4 w-4" />
-                  Event Logs
-                </ContextMenuItem>
-                <ContextMenuItem onClick={() => {
-                  setSelectedServer(server);
-                  setBootConfigDialogOpen(true);
-                }}>
-                  <HardDrive className="mr-2 h-4 w-4" />
-                  Boot Configuration
-                </ContextMenuItem>
-                <ContextMenuItem onClick={() => {
-                  setSelectedServer(server);
-                  setVirtualMediaDialogOpen(true);
-                }}>
-                  <Disc className="mr-2 h-4 w-4" />
-                  Virtual Media
-                </ContextMenuItem>
-                <ContextMenuItem onClick={() => {
-                  setSelectedServer(server);
-                  setScpBackupDialogOpen(true);
-                }}>
-                  <FileJson className="mr-2 h-4 w-4" />
-                  SCP Backup/Restore
-                </ContextMenuItem>
-                <ContextMenuItem onClick={() => {
-                  setSelectedServer(server);
-                  setBiosConfigDialogOpen(true);
-                }}>
-                  <Settings2 className="mr-2 h-4 w-4" />
-                  BIOS Configuration
-                </ContextMenuItem>
-                <ContextMenuSeparator />
-                <ContextMenuItem onClick={() => {
-                  setSelectedServer(server);
-                  setManageGroupsDialogOpen(true);
-                }}>
-                  <Users className="mr-2 h-4 w-4" />
-                  Manage Group Membership
-                </ContextMenuItem>
-                <ContextMenuSeparator />
-                <ContextMenuItem
-                  onClick={() => {
-                    setSelectedServer(server);
-                    setPreFlightCheckDialogOpen(true);
-                  }}
-                  disabled={!server.vcenter_host_id}
-                >
-                  <Shield className="mr-2 h-4 w-4" />
-                  Check Update Readiness
-                </ContextMenuItem>
-                <ContextMenuItem onClick={() => handleLinkToVCenter(server)}>
-                  <Link2 className="mr-2 h-4 w-4" />
-                  Link to vCenter Host
-                </ContextMenuItem>
-                <ContextMenuItem onClick={() => handleCreateJob(server)}>
-                  <Wrench className="mr-2 h-4 w-4" />
-                  Create Firmware Update Job
-                </ContextMenuItem>
-                <ContextMenuSeparator />
+                
+                {/* Monitoring & Diagnostics Submenu */}
+                <ContextMenuSub>
+                  <ContextMenuSubTrigger>
+                    <Activity className="mr-2 h-4 w-4" />
+                    Monitoring & Diagnostics
+                  </ContextMenuSubTrigger>
+                  <ContextMenuSubContent className="w-64">
+                    <ContextMenuLabel className="text-xs text-muted-foreground">Real-time monitoring and logs</ContextMenuLabel>
+                    <ContextMenuItem onClick={() => {
+                      setSelectedServer(server);
+                      setPowerControlDialogOpen(true);
+                    }}>
+                      <Power className="mr-2 h-4 w-4" />
+                      <div className="flex flex-col">
+                        <span>Power Control</span>
+                        <span className="text-xs text-muted-foreground">Power on/off/reset server</span>
+                      </div>
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => {
+                      setSelectedServer(server);
+                      setHealthDialogOpen(true);
+                    }}>
+                      <Activity className="mr-2 h-4 w-4" />
+                      <div className="flex flex-col">
+                        <span>Health Status</span>
+                        <span className="text-xs text-muted-foreground">View current health metrics</span>
+                      </div>
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => {
+                      setSelectedServer(server);
+                      setEventLogDialogOpen(true);
+                    }}>
+                      <FileText className="mr-2 h-4 w-4" />
+                      <div className="flex flex-col">
+                        <span>Event Logs</span>
+                        <span className="text-xs text-muted-foreground">View iDRAC event history</span>
+                      </div>
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem 
+                      onClick={() => handleRunHealthCheck(server)}
+                      disabled={healthCheckServer === server.id}
+                    >
+                      <Zap className="mr-2 h-4 w-4" />
+                      <div className="flex flex-col">
+                        <span>Run Health Check</span>
+                        <span className="text-xs text-muted-foreground">Fetch latest health data</span>
+                      </div>
+                    </ContextMenuItem>
                     <ContextMenuItem 
                       onClick={() => handleTestConnection(server)}
                       disabled={refreshing === server.id}
                     >
                       <CheckCircle className="mr-2 h-4 w-4" />
-                      Test iDRAC Connection
+                      <div className="flex flex-col">
+                        <span>Test iDRAC Connection</span>
+                        <span className="text-xs text-muted-foreground">Verify network connectivity</span>
+                      </div>
                     </ContextMenuItem>
-                    <ContextMenuItem 
-                      onClick={() => handleRunHealthCheck(server)}
-                      disabled={healthCheckServer === server.id}
+                  </ContextMenuSubContent>
+                </ContextMenuSub>
+
+                {/* Configuration Submenu */}
+                <ContextMenuSub>
+                  <ContextMenuSubTrigger>
+                    <FolderCog className="mr-2 h-4 w-4" />
+                    Configuration
+                  </ContextMenuSubTrigger>
+                  <ContextMenuSubContent className="w-64">
+                    <ContextMenuLabel className="text-xs text-muted-foreground">Server settings and backups</ContextMenuLabel>
+                    <ContextMenuItem onClick={() => {
+                      setSelectedServer(server);
+                      setBootConfigDialogOpen(true);
+                    }}>
+                      <HardDrive className="mr-2 h-4 w-4" />
+                      <div className="flex flex-col">
+                        <span>Boot Configuration</span>
+                        <span className="text-xs text-muted-foreground">Manage boot order and mode</span>
+                      </div>
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => {
+                      setSelectedServer(server);
+                      setBiosConfigDialogOpen(true);
+                    }}>
+                      <Settings2 className="mr-2 h-4 w-4" />
+                      <div className="flex flex-col">
+                        <span>BIOS Configuration</span>
+                        <span className="text-xs text-muted-foreground">Read/modify BIOS settings</span>
+                      </div>
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => {
+                      setSelectedServer(server);
+                      setVirtualMediaDialogOpen(true);
+                    }}>
+                      <Disc className="mr-2 h-4 w-4" />
+                      <div className="flex flex-col">
+                        <span>Virtual Media</span>
+                        <span className="text-xs text-muted-foreground">Mount ISO/IMG remotely</span>
+                      </div>
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => {
+                      setSelectedServer(server);
+                      setScpBackupDialogOpen(true);
+                    }}>
+                      <FileJson className="mr-2 h-4 w-4" />
+                      <div className="flex flex-col">
+                        <span>SCP Backup/Restore</span>
+                        <span className="text-xs text-muted-foreground">Export/import full config</span>
+                      </div>
+                    </ContextMenuItem>
+                  </ContextMenuSubContent>
+                </ContextMenuSub>
+
+                {/* Firmware & Updates Submenu */}
+                <ContextMenuSub>
+                  <ContextMenuSubTrigger>
+                    <Wrench className="mr-2 h-4 w-4" />
+                    Firmware & Updates
+                  </ContextMenuSubTrigger>
+                  <ContextMenuSubContent className="w-64">
+                    <ContextMenuLabel className="text-xs text-muted-foreground">Update firmware and workflows</ContextMenuLabel>
+                    <ContextMenuItem onClick={() => handleCreateJob(server)}>
+                      <Zap className="mr-2 h-4 w-4" />
+                      <div className="flex flex-col">
+                        <span>Update Now</span>
+                        <span className="text-xs text-muted-foreground">Create immediate update job</span>
+                      </div>
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onClick={() => {
+                        navigate('/maintenance-calendar', { 
+                          state: { 
+                            openDialog: true,
+                            prefilledData: {
+                              maintenance_type: 'firmware_update',
+                              server_group_ids: [],
+                              cluster_ids: [],
+                              details: {
+                                server_ids: [server.id],
+                                server_name: server.hostname || server.ip_address
+                              }
+                            }
+                          }
+                        });
+                      }}
                     >
-                      <Activity className="mr-2 h-4 w-4" />
-                      Run Health Check
+                      <Calendar className="mr-2 h-4 w-4" />
+                      <div className="flex flex-col">
+                        <span>Schedule Maintenance</span>
+                        <span className="text-xs text-muted-foreground">Plan future update window</span>
+                      </div>
                     </ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      onClick={() => {
+                        setSelectedServer(server);
+                        setWorkflowDialogOpen(true);
+                      }}
+                    >
+                      <FileStack className="mr-2 h-4 w-4" />
+                      <div className="flex flex-col">
+                        <span>Prepare for Update</span>
+                        <span className="text-xs text-muted-foreground">Full orchestration workflow</span>
+                      </div>
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onClick={() => {
+                        setSelectedServer(server);
+                        setPreFlightCheckDialogOpen(true);
+                      }}
+                      disabled={!server.vcenter_host_id}
+                    >
+                      <Shield className="mr-2 h-4 w-4" />
+                      <div className="flex flex-col">
+                        <span>Check Update Readiness</span>
+                        <span className="text-xs text-muted-foreground">
+                          {!server.vcenter_host_id ? 'Requires vCenter link' : 'Pre-flight safety checks'}
+                        </span>
+                      </div>
+                    </ContextMenuItem>
+                  </ContextMenuSubContent>
+                </ContextMenuSub>
+
+                {/* Management Submenu */}
+                <ContextMenuSub>
+                  <ContextMenuSubTrigger>
+                    <Settings2 className="mr-2 h-4 w-4" />
+                    Management
+                  </ContextMenuSubTrigger>
+                  <ContextMenuSubContent className="w-64">
+                    <ContextMenuLabel className="text-xs text-muted-foreground">Server inventory management</ContextMenuLabel>
                     <ContextMenuItem 
                       onClick={() => handleRefreshInfo(server)}
                       disabled={refreshing === server.id}
                       className={isIncompleteServer(server) ? "text-yellow-600 dark:text-yellow-500 font-medium" : ""}
                     >
                       <RotateCw className={`mr-2 h-4 w-4 ${refreshing === server.id ? 'animate-spin' : ''} ${isIncompleteServer(server) ? 'text-yellow-600 dark:text-yellow-500' : ''}`} />
-                      {isIncompleteServer(server) ? '⚠ Refresh Missing Information' : 'Refresh Server Information'}
+                      <div className="flex flex-col">
+                        <span>{isIncompleteServer(server) ? '⚠ Refresh Server Info' : 'Refresh Server Info'}</span>
+                        <span className="text-xs text-muted-foreground">Update from iDRAC</span>
+                      </div>
                     </ContextMenuItem>
+                    <ContextMenuItem onClick={() => handleLinkToVCenter(server)}>
+                      <Link2 className="mr-2 h-4 w-4" />
+                      <div className="flex flex-col">
+                        <span>Link to vCenter Host</span>
+                        <span className="text-xs text-muted-foreground">Associate with ESXi host</span>
+                      </div>
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => {
+                      setSelectedServer(server);
+                      setManageGroupsDialogOpen(true);
+                    }}>
+                      <Users className="mr-2 h-4 w-4" />
+                      <div className="flex flex-col">
+                        <span>Manage Groups</span>
+                        <span className="text-xs text-muted-foreground">Add/remove group membership</span>
+                      </div>
+                    </ContextMenuItem>
+                    {server.credential_test_status !== 'invalid' && (
+                      <ContextMenuItem 
+                        onClick={() => {
+                          setSelectedServer(server);
+                          setAssignCredentialsDialogOpen(true);
+                        }}
+                      >
+                        <CheckCircle className="mr-2 h-4 w-4" />
+                        <div className="flex flex-col">
+                          <span>Update Credentials</span>
+                          <span className="text-xs text-muted-foreground">Change iDRAC login</span>
+                        </div>
+                      </ContextMenuItem>
+                    )}
+                  </ContextMenuSubContent>
+                </ContextMenuSub>
+
+                {/* Information Submenu */}
+                <ContextMenuSub>
+                  <ContextMenuSubTrigger>
+                    <Info className="mr-2 h-4 w-4" />
+                    Information
+                  </ContextMenuSubTrigger>
+                  <ContextMenuSubContent className="w-64">
+                    <ContextMenuLabel className="text-xs text-muted-foreground">View server details</ContextMenuLabel>
+                    <ContextMenuItem onClick={() => handleViewProperties(server)}>
+                      <Info className="mr-2 h-4 w-4" />
+                      <div className="flex flex-col">
+                        <span>View Properties</span>
+                        <span className="text-xs text-muted-foreground">Full server details</span>
+                      </div>
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => handleViewAudit(server)}>
+                      <History className="mr-2 h-4 w-4" />
+                      <div className="flex flex-col">
+                        <span>Audit History</span>
+                        <span className="text-xs text-muted-foreground">View all changes</span>
+                      </div>
+                    </ContextMenuItem>
+                  </ContextMenuSubContent>
+                </ContextMenuSub>
+
+                <ContextMenuSeparator />
+
+                {/* Top-level actions */}
                 <ContextMenuItem onClick={() => handleEditServer(server)}>
                   <Edit className="mr-2 h-4 w-4" />
-                  Edit Server Details
+                  <div className="flex flex-col">
+                    <span>Edit Server Details</span>
+                    <span className="text-xs text-muted-foreground">Modify hostname, notes, etc.</span>
+                  </div>
                 </ContextMenuItem>
-                <ContextMenuItem onClick={() => handleViewAudit(server)}>
-                  <History className="mr-2 h-4 w-4" />
-                  View Audit History
-                </ContextMenuItem>
-                <ContextMenuItem onClick={() => handleViewProperties(server)}>
-                  <Info className="mr-2 h-4 w-4" />
-                  View Properties
-                </ContextMenuItem>
-                <ContextMenuSeparator />
                 
-                <ContextMenuItem
-                  onClick={() => {
-                    setSelectedServer(server);
-                    setWorkflowDialogOpen(true);
-                  }}
-                >
-                  <Wrench className="h-4 w-4 mr-2" />
-                  Prepare for Update
-                </ContextMenuItem>
-
                 <ContextMenuSeparator />
                 
                 <ContextMenuItem 
@@ -1013,7 +1170,10 @@ const Servers = () => {
                   className="text-destructive focus:text-destructive"
                 >
                   <Trash2 className="mr-2 h-4 w-4" />
-                  Remove from Inventory
+                  <div className="flex flex-col">
+                    <span>Remove from Inventory</span>
+                    <span className="text-xs text-muted-foreground">Permanently delete server</span>
+                  </div>
                 </ContextMenuItem>
               </ContextMenuContent>
             </ContextMenu>

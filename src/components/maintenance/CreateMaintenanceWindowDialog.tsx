@@ -21,10 +21,12 @@ interface CreateMaintenanceWindowDialogProps {
   clusters: string[];
   serverGroups?: Array<{ id: string; name: string; }>;
   prefilledData?: {
-    start: Date;
-    end: Date;
+    start?: Date;
+    end?: Date;
     clusters?: string[];
     serverGroupIds?: string[];
+    maintenance_type?: "firmware_update" | "host_maintenance" | "cluster_update" | "full_update" | "safety_check";
+    details?: any;
   };
   onSuccess: () => void;
 }
@@ -43,13 +45,13 @@ export function CreateMaintenanceWindowDialog({
   const [validation, setValidation] = useState<{ is_safe: boolean; warnings: string[]; clusters_status?: any[] } | null>(null);
 
   const [formData, setFormData] = useState({
-    title: "",
-    description: "",
+    title: prefilledData?.details?.server_name ? `Firmware Update - ${prefilledData.details.server_name}` : "",
+    description: prefilledData?.details?.server_name ? `Scheduled firmware update for server ${prefilledData.details.server_name}` : "",
     cluster_ids: prefilledData?.clusters || [],
     server_group_ids: prefilledData?.serverGroupIds || [],
     planned_start: prefilledData?.start ? format(prefilledData.start, "yyyy-MM-dd'T'HH:mm") : format(new Date(), "yyyy-MM-dd'T'HH:mm"),
     planned_end: prefilledData?.end ? format(prefilledData.end, "yyyy-MM-dd'T'HH:mm") : format(addHours(new Date(), 4), "yyyy-MM-dd'T'HH:mm"),
-    maintenance_type: "firmware_update" as "firmware_update" | "host_maintenance" | "cluster_update" | "full_update" | "safety_check",
+    maintenance_type: prefilledData?.maintenance_type || "firmware_update" as "firmware_update" | "host_maintenance" | "cluster_update" | "full_update" | "safety_check",
     update_scope: "full_stack" as "firmware_only" | "bios_only" | "full_stack" | "safety_check",
     notify_before_hours: 24,
     auto_execute: true,
