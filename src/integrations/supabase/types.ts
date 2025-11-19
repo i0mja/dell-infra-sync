@@ -1855,6 +1855,7 @@ export type Database = {
         | "prepare_host_for_update"
         | "verify_host_after_update"
         | "rolling_cluster_update"
+        | "server_group_safety_check"
       operation_type: "idrac_api" | "vcenter_api" | "openmanage_api"
     }
     CompositeTypes: {
@@ -2007,6 +2008,7 @@ export const Constants = {
         "prepare_host_for_update",
         "verify_host_after_update",
         "rolling_cluster_update",
+        "server_group_safety_check",
       ],
       operation_type: ["idrac_api", "vcenter_api", "openmanage_api"],
     },

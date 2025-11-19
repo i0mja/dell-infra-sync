@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Plus, Trash2, Edit, Server, Users } from "lucide-react";
+import { Plus, Trash2, Edit, Server, Users, ShieldCheck, AlertTriangle } from "lucide-react";
 import * as Icons from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -46,6 +46,9 @@ export function ServerGroupsManagement() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<ServerGroup | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+  const [safetyCheckGroup, setSafetyCheckGroup] = useState<string | null>(null);
+  const [safetyCheckLoading, setSafetyCheckLoading] = useState(false);
+  const [safetyCheckResult, setSafetyCheckResult] = useState<any>(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -215,6 +218,97 @@ export function ServerGroupsManagement() {
     },
     onError: (error) => {
       toast.error(`Failed to remove server: ${error.message}`);
+    },
+  });
+
+  // Run safety check mutation
+  const runSafetyCheckMutation = useMutation({
+    mutationFn: async (groupId: string) => {
+      const group = serverGroups.find(g => g.id === groupId);
+      if (!group) throw new Error("Group not found");
+
+      const { data: job, error: jobError } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'server_group_safety_check',
+          created_by: user?.id,
+          status: 'pending',
+          details: {
+            server_group_id: groupId,
+            server_group_name: group.name,
+            min_required_servers: group.min_healthy_servers,
+          },
+        })
+        .select()
+        .single();
+
+      if (jobError) throw jobError;
+      return job;
+    },
+    onSuccess: async (job) => {
+      setSafetyCheckLoading(true);
+      setSafetyCheckResult(null);
+
+      const maxAttempts = 30;
+      let attempts = 0;
+
+      const poll = async () => {
+        attempts++;
+
+        const { data: updatedJob, error: jobError } = await supabase
+          .from('jobs')
+          .select('*')
+          .eq('id', job.id)
+          .single();
+
+        if (jobError) {
+          setSafetyCheckLoading(false);
+          toast.error(`Failed to check job status: ${jobError.message}`);
+          return;
+        }
+
+        if (updatedJob.status === 'completed') {
+          const { data: checkResult, error: checkError } = await supabase
+            .from('server_group_safety_checks')
+            .select('*')
+            .eq('job_id', job.id)
+            .order('check_timestamp', { ascending: false })
+            .limit(1)
+            .single();
+
+          if (checkError) {
+            setSafetyCheckLoading(false);
+            toast.error(`Failed to fetch safety check result: ${checkError.message}`);
+            return;
+          }
+
+          setSafetyCheckResult(checkResult);
+          setSafetyCheckLoading(false);
+
+          const safe = checkResult.safe_to_proceed;
+          toast.success(
+            safe 
+              ? `✓ Safe for maintenance - ${checkResult.healthy_servers}/${checkResult.total_servers} servers healthy`
+              : `⚠ Not safe - need ${checkResult.min_required_servers} healthy servers minimum`,
+            { duration: 5000 }
+          );
+        } else if (updatedJob.status === 'failed') {
+          setSafetyCheckLoading(false);
+          const errorMsg = (updatedJob.details as any)?.error || 'Unknown error';
+          toast.error(`Safety check failed: ${errorMsg}`);
+        } else if (attempts < maxAttempts) {
+          setTimeout(poll, 2000);
+        } else {
+          setSafetyCheckLoading(false);
+          toast.error('Safety check timed out');
+        }
+      };
+
+      poll();
+    },
+    onError: (error) => {
+      setSafetyCheckLoading(false);
+      toast.error(`Failed to start safety check: ${error.message}`);
     },
   });
 
@@ -421,6 +515,23 @@ export function ServerGroupsManagement() {
                         variant="ghost"
                         onClick={(e) => {
                           e.stopPropagation();
+                          setSafetyCheckGroup(group.id);
+                          runSafetyCheckMutation.mutate(group.id);
+                        }}
+                        disabled={safetyCheckLoading && safetyCheckGroup === group.id}
+                        title="Run Safety Check"
+                      >
+                        {safetyCheckLoading && safetyCheckGroup === group.id ? (
+                          <div className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                        ) : (
+                          <ShieldCheck className="h-3 w-3" />
+                        )}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={(e) => {
+                          e.stopPropagation();
                           if (confirm(`Delete group "${group.name}"?`)) {
                             deleteGroupMutation.mutate(group.id);
                           }
@@ -434,6 +545,33 @@ export function ServerGroupsManagement() {
                 {group.description && (
                   <CardContent className="pt-0 pb-3">
                     <p className="text-sm text-muted-foreground">{group.description}</p>
+                  </CardContent>
+                )}
+                {safetyCheckResult && safetyCheckGroup === group.id && (
+                  <CardContent className="pt-0 pb-3 border-t">
+                    <div className="flex items-start gap-2">
+                      {safetyCheckResult.safe_to_proceed ? (
+                        <ShieldCheck className="h-4 w-4 text-green-500 mt-0.5" />
+                      ) : (
+                        <AlertTriangle className="h-4 w-4 text-orange-500 mt-0.5" />
+                      )}
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">
+                          {safetyCheckResult.safe_to_proceed ? "Safe for Maintenance" : "Not Safe for Maintenance"}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {safetyCheckResult.healthy_servers} of {safetyCheckResult.total_servers} servers healthy
+                          (min required: {safetyCheckResult.min_required_servers})
+                        </p>
+                        {safetyCheckResult.warnings && safetyCheckResult.warnings.length > 0 && (
+                          <ul className="text-xs text-orange-600 mt-2 space-y-1">
+                            {safetyCheckResult.warnings.map((warning: string, idx: number) => (
+                              <li key={idx}>• {warning}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    </div>
                   </CardContent>
                 )}
               </Card>
