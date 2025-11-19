@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Search, RefreshCw, Link2, Wrench, RotateCw, Edit, History, Trash2, CheckCircle, Info, Power, Activity, FileText, HardDrive, Disc, FileJson, Settings2, Shield, Users, Calendar, Zap, FolderCog, FileStack } from "lucide-react";
+import { Plus, Search, RefreshCw, Link2, Wrench, RotateCw, Edit, History, Trash2, CheckCircle, Info, Power, Activity, FileText, HardDrive, Disc, FileJson, Settings2, Shield, Users, Calendar, Zap, FolderCog, FileStack, List, Layers, Server, AlertCircle, MoreVertical } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -57,6 +57,19 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface Server {
   id: string;
@@ -94,6 +107,12 @@ const Servers = () => {
   const queryClient = useQueryClient();
   // Job Executor is always enabled - iDRACs are always on private networks
   const useJobExecutorForIdrac = true;
+
+  // View mode state with localStorage persistence
+  const [viewMode, setViewMode] = useState<'flat' | 'grouped'>(() => {
+    const saved = localStorage.getItem('server-view-mode');
+    return (saved as 'flat' | 'grouped') || 'grouped';
+  });
   const [servers, setServers] = useState<Server[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -597,6 +616,11 @@ const Servers = () => {
     }
   };
 
+  // Persist view mode preference
+  useEffect(() => {
+    localStorage.setItem('server-view-mode', viewMode);
+  }, [viewMode]);
+
   const filteredServers = servers.filter((server) => {
     // Text search filter
     const matchesSearch = 
@@ -618,6 +642,40 @@ const Servers = () => {
       return matchesSearch && inGroup;
     }
   });
+
+  // Organize servers by groups for grouped view
+  const organizeServersByGroup = () => {
+    const grouped: Map<string, {
+      group: any | null;
+      servers: Server[];
+    }> = new Map();
+
+    // Add each server group
+    serverGroups?.forEach(group => {
+      grouped.set(group.id, { group, servers: [] });
+    });
+
+    // Add ungrouped section
+    grouped.set('ungrouped', { group: null, servers: [] });
+
+    // Distribute servers
+    filteredServers.forEach(server => {
+      const memberships = groupMemberships?.filter(m => m.server_id === server.id);
+      
+      if (memberships && memberships.length > 0) {
+        memberships.forEach(m => {
+          const entry = grouped.get(m.server_group_id!);
+          if (entry) {
+            entry.servers.push(server);
+          }
+        });
+      } else {
+        grouped.get('ungrouped')?.servers.push(server);
+      }
+    });
+
+    return Array.from(grouped.values()).filter(g => g.servers.length > 0);
+  };
 
   return (
     <div className="container mx-auto p-6">
@@ -718,7 +776,7 @@ const Servers = () => {
           <CardDescription>Filter by IP, hostname, service tag, model, or group</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex gap-3">
+          <div className="flex gap-3 mb-3">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
               <Input
@@ -742,6 +800,26 @@ const Servers = () => {
                 </SelectContent>
               </Select>
             )}
+          </div>
+          
+          {/* View Mode Toggle */}
+          <div className="flex gap-2">
+            <Button 
+              variant={viewMode === 'flat' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setViewMode('flat')}
+            >
+              <List className="h-4 w-4 mr-2" />
+              Flat View
+            </Button>
+            <Button 
+              variant={viewMode === 'grouped' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setViewMode('grouped')}
+            >
+              <Layers className="h-4 w-4 mr-2" />
+              Grouped View
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -774,17 +852,220 @@ const Servers = () => {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-4">
-          {filteredServers.map((server) => (
-            <ContextMenu key={server.id}>
-              <ContextMenuTrigger>
-                <Card className="hover:shadow-md transition-shadow">
-                  <CardContent className="p-6">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <h3 className="text-lg font-semibold">{server.hostname || server.ip_address}</h3>
-                          <ConnectionStatusBadge 
+        viewMode === 'grouped' ? (
+          // Grouped View with Accordions
+          <Accordion type="multiple" defaultValue={organizeServersByGroup().map(g => g.group?.id || 'ungrouped')} className="space-y-4">
+            {organizeServersByGroup().map(({ group, servers }) => {
+              const groupId = group?.id || 'ungrouped';
+              const onlineCount = servers.filter(s => s.connection_status === 'online').length;
+              const offlineCount = servers.filter(s => s.connection_status === 'offline').length;
+              
+              return (
+                <AccordionItem key={groupId} value={groupId} className="border rounded-lg">
+                  <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-accent/50">
+                    <div className="flex items-center justify-between w-full pr-4">
+                      <div className="flex items-center gap-3">
+                        {group ? (
+                          <>
+                            <div 
+                              className="w-10 h-10 rounded-lg flex items-center justify-center"
+                              style={{ backgroundColor: `${group.color}20`, color: group.color }}
+                            >
+                              {group.icon === 'Server' ? <Server className="h-5 w-5" /> : <Users className="h-5 w-5" />}
+                            </div>
+                            <div className="text-left">
+                              <h3 className="text-lg font-semibold">{group.name}</h3>
+                              <p className="text-sm text-muted-foreground">
+                                {group.description || `${group.group_type} group`}
+                              </p>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-muted">
+                              <Server className="h-5 w-5 text-muted-foreground" />
+                            </div>
+                            <div className="text-left">
+                              <h3 className="text-lg font-semibold">Ungrouped Servers</h3>
+                              <p className="text-sm text-muted-foreground">
+                                Servers not assigned to any group
+                              </p>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                      
+                      <div className="flex items-center gap-4">
+                        <Badge variant="outline" className="gap-1">
+                          <Server className="h-3 w-3" />
+                          {servers.length}
+                        </Badge>
+                        {onlineCount > 0 && (
+                          <Badge variant="outline" className="gap-1 border-green-500 text-green-700 dark:border-green-600 dark:text-green-400">
+                            <CheckCircle className="h-3 w-3" />
+                            {onlineCount} online
+                          </Badge>
+                        )}
+                        {offlineCount > 0 && (
+                          <Badge variant="outline" className="gap-1 border-red-500 text-red-700 dark:border-red-600 dark:text-red-400">
+                            <AlertCircle className="h-3 w-3" />
+                            {offlineCount} offline
+                          </Badge>
+                        )}
+                        {group && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                              <DropdownMenuItem
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigate('/maintenance-calendar', {
+                                    state: {
+                                      openDialog: true,
+                                      prefilledData: {
+                                        maintenance_type: 'firmware_update',
+                                        server_group_ids: [group.id],
+                                        details: { group_name: group.name }
+                                      }
+                                    }
+                                  });
+                                }}
+                              >
+                                <Calendar className="mr-2 h-4 w-4" />
+                                Schedule Maintenance
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedServer(null);
+                                setJobDialogOpen(true);
+                              }}>
+                                <Zap className="mr-2 h-4 w-4" />
+                                Run Discovery on Group
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onClick={(e) => {
+                                e.stopPropagation();
+                                navigate('/settings?tab=server-groups');
+                              }}>
+                                <Settings2 className="mr-2 h-4 w-4" />
+                                Edit Group
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
+                      </div>
+                    </div>
+                  </AccordionTrigger>
+                  
+                  <AccordionContent className="px-6 pb-4">
+                    <div className="space-y-3 pt-2">
+                      {servers.map((server) => (
+                        <ContextMenu key={server.id}>
+                          <ContextMenuTrigger>
+                            <Card className="hover:shadow-md transition-shadow">
+                              <CardContent className="p-6">
+                                <div className="flex items-start justify-between">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-3 mb-2">
+                                      <h3 className="text-lg font-semibold">{server.hostname || server.ip_address}</h3>
+                                      <ConnectionStatusBadge 
+                                        status={server.connection_status}
+                                        lastTest={server.last_connection_test}
+                                        error={server.connection_error}
+                                        credentialTestStatus={server.credential_test_status}
+                                        isIncomplete={isIncompleteServer(server)}
+                                      />
+                                      <Badge variant={getServerStatus(server).variant}>
+                                        {getServerStatus(server).label}
+                                      </Badge>
+                                      {server.vcenter_host_id ? (
+                                        <Badge variant="secondary">
+                                          <CheckCircle className="mr-1 h-3 w-3" />
+                                          Linked
+                                        </Badge>
+                                      ) : (
+                                        <TooltipProvider>
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <Badge 
+                                                variant="outline" 
+                                                className="cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  handleLinkToVCenter(server);
+                                                }}
+                                              >
+                                                <Link2 className="mr-1 h-3 w-3" />
+                                                Unlinked
+                                              </Badge>
+                                            </TooltipTrigger>
+                                            <TooltipContent>
+                                              <p>Click to link to vCenter host</p>
+                                            </TooltipContent>
+                                          </Tooltip>
+                                        </TooltipProvider>
+                                      )}
+                                      {refreshing === server.id && (
+                                        <Badge variant="outline" className="animate-pulse">Refreshing...</Badge>
+                                      )}
+                                      {hasActiveHealthCheck(server.id) && (
+                                        <Badge variant="outline" className="gap-1">
+                                          <Activity className="h-3 w-3 animate-spin" />
+                                          Health Check
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                                      <div>
+                                        <span className="text-muted-foreground">IP Address:</span>
+                                        <p className="font-medium">{server.ip_address}</p>
+                                      </div>
+                                      <div>
+                                        <span className="text-muted-foreground">Model:</span>
+                                        <p className="font-medium">{server.model || "N/A"}</p>
+                                      </div>
+                                      <div>
+                                        <span className="text-muted-foreground">Service Tag:</span>
+                                        <p className="font-medium">{server.service_tag || "N/A"}</p>
+                                      </div>
+                                      <div>
+                                        <span className="text-muted-foreground">iDRAC Version:</span>
+                                        <p className="font-medium">{server.idrac_firmware || "N/A"}</p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent className="w-72">
+                            {/* Context menu items - reuse from flat view */}
+                          </ContextMenuContent>
+                        </ContextMenu>
+                      ))}
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              );
+            })}
+          </Accordion>
+        ) : (
+          // Flat View
+          <div className="space-y-4">
+            {filteredServers.map((server) => (
+              <ContextMenu key={server.id}>
+                <ContextMenuTrigger>
+                  <Card className="hover:shadow-md transition-shadow">
+                    <CardContent className="p-6">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <h3 className="text-lg font-semibold">{server.hostname || server.ip_address}</h3>
+                            <ConnectionStatusBadge
                             status={server.connection_status}
                             lastTest={server.last_connection_test}
                             error={server.connection_error}
@@ -1175,13 +1456,14 @@ const Servers = () => {
                     <span className="text-xs text-muted-foreground">Permanently delete server</span>
                   </div>
                 </ContextMenuItem>
-              </ContextMenuContent>
-            </ContextMenu>
-          ))}
-        </div>
+                </ContextMenuContent>
+              </ContextMenu>
+            ))}
+          </div>
+        )
       )}
 
-      <AddServerDialog 
+      <AddServerDialog
         open={dialogOpen} 
         onOpenChange={setDialogOpen} 
         onSuccess={fetchServers}
