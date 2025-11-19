@@ -589,6 +589,90 @@ export type Database = {
           },
         ]
       }
+      maintenance_windows: {
+        Row: {
+          approved_at: string | null
+          approved_by: string | null
+          cluster_ids: string[]
+          completed_at: string | null
+          created_at: string | null
+          created_by: string | null
+          description: string | null
+          id: string
+          job_ids: string[] | null
+          maintenance_type: string
+          notification_sent: boolean | null
+          notify_before_hours: number | null
+          planned_end: string
+          planned_start: string
+          requires_approval: boolean | null
+          safety_check_snapshot: Json | null
+          started_at: string | null
+          status: string
+          title: string
+          updated_at: string | null
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
+          cluster_ids: string[]
+          completed_at?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          job_ids?: string[] | null
+          maintenance_type: string
+          notification_sent?: boolean | null
+          notify_before_hours?: number | null
+          planned_end: string
+          planned_start: string
+          requires_approval?: boolean | null
+          safety_check_snapshot?: Json | null
+          started_at?: string | null
+          status?: string
+          title: string
+          updated_at?: string | null
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by?: string | null
+          cluster_ids?: string[]
+          completed_at?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          job_ids?: string[] | null
+          maintenance_type?: string
+          notification_sent?: boolean | null
+          notify_before_hours?: number | null
+          planned_end?: string
+          planned_start?: string
+          requires_approval?: boolean | null
+          safety_check_snapshot?: Json | null
+          started_at?: string | null
+          status?: string
+          title?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "maintenance_windows_approved_by_fkey"
+            columns: ["approved_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "maintenance_windows_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       network_settings: {
         Row: {
           connection_timeout_seconds: number
@@ -1575,6 +1659,7 @@ export type Database = {
         Returns: boolean
       }
       run_scheduled_cluster_safety_checks: { Args: never; Returns: undefined }
+      send_maintenance_reminders: { Args: never; Returns: undefined }
       validate_api_token: { Args: { token_input: string }; Returns: string }
     }
     Enums: {

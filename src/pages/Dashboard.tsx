@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Server, Database, Briefcase, Activity } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ClusterSafetyWidget } from "@/components/dashboard/ClusterSafetyWidget";
+import { NextMaintenanceWidget } from "@/components/dashboard/NextMaintenanceWidget";
 
 interface Stats {
   serverCount: number;
@@ -112,6 +113,7 @@ const Dashboard = () => {
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         <ClusterSafetyWidget />
+        <NextMaintenanceWidget />
         
         <Card>
           <CardHeader>
