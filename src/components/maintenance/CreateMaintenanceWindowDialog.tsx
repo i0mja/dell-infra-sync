@@ -20,6 +20,7 @@ interface CreateMaintenanceWindowDialogProps {
   onOpenChange: (open: boolean) => void;
   clusters: string[];
   serverGroups?: Array<{ id: string; name: string; }>;
+  servers?: Array<{ id: string; hostname?: string | null; ip_address?: string | null; product_name?: string | null; manufacturer?: string | null; }>;
   prefilledData?: {
     start?: Date;
     end?: Date;
@@ -39,6 +40,7 @@ export function CreateMaintenanceWindowDialog({
   onOpenChange,
   clusters,
   serverGroups = [],
+  servers = [],
   prefilledData,
   onSuccess
 }: CreateMaintenanceWindowDialogProps) {
@@ -46,6 +48,7 @@ export function CreateMaintenanceWindowDialog({
   const [loading, setLoading] = useState(false);
   const [validating, setValidating] = useState(false);
   const [validation, setValidation] = useState<{ is_safe: boolean; warnings: string[]; clusters_status?: any[] } | null>(null);
+  const [hostSearch, setHostSearch] = useState("");
 
   const [formData, setFormData] = useState({
     title: prefilledData?.details?.server_name 
@@ -75,6 +78,14 @@ export function CreateMaintenanceWindowDialog({
   });
 
   const hasClusterSelection = formData.cluster_ids.length > 0;
+  const filteredHosts = servers.filter(server => {
+    const search = hostSearch.toLowerCase();
+    if (!search) return true;
+    const hostname = server.hostname?.toLowerCase() || "";
+    const ip = server.ip_address?.toLowerCase() || "";
+    const product = server.product_name?.toLowerCase() || "";
+    return hostname.includes(search) || ip.includes(search) || product.includes(search);
+  });
 
   const validateWindow = async () => {
     if (formData.cluster_ids.length === 0 && formData.server_group_ids.length === 0 && formData.server_ids.length === 0) {
@@ -198,10 +209,10 @@ export function CreateMaintenanceWindowDialog({
       return;
     }
 
-    if (formData.cluster_ids.length === 0 && formData.server_group_ids.length === 0) {
+    if (formData.cluster_ids.length === 0 && formData.server_group_ids.length === 0 && formData.server_ids.length === 0) {
       toast({
         title: "Validation Error",
-        description: "Please select at least one cluster or server group",
+        description: "Please select at least one cluster, server group, or host",
         variant: "destructive"
       });
       return;
@@ -581,6 +592,61 @@ export function CreateMaintenanceWindowDialog({
               </div>
               <p className="text-xs text-muted-foreground">
                 Server groups can be used alongside or instead of vCenter clusters
+              </p>
+            </div>
+          )}
+
+          {/* Dell Hosts */}
+          {servers && servers.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>Dell Hosts (Optional) ({formData.server_ids.length} selected)</Label>
+                <Input
+                  placeholder="Search hosts..."
+                  value={hostSearch}
+                  onChange={(e) => setHostSearch(e.target.value)}
+                  className="h-8 w-48"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto p-2 border rounded-md">
+                {filteredHosts.map(server => {
+                  const subtitle = server.product_name || server.ip_address;
+                  return (
+                    <label key={server.id} className="flex items-start gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.server_ids.includes(server.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setFormData({
+                              ...formData,
+                              server_ids: [...formData.server_ids, server.id]
+                            });
+                          } else {
+                            setFormData({
+                              ...formData,
+                              server_ids: formData.server_ids.filter(id => id !== server.id)
+                            });
+                          }
+                          setValidation(null);
+                        }}
+                        className="rounded mt-1"
+                      />
+                      <div className="text-sm leading-tight">
+                        <div className="font-medium">{server.hostname || server.ip_address || 'Unknown Host'}</div>
+                        {subtitle && <div className="text-xs text-muted-foreground">{subtitle}</div>}
+                      </div>
+                    </label>
+                  );
+                })}
+                {filteredHosts.length === 0 && (
+                  <div className="col-span-2 text-sm text-muted-foreground text-center py-2">
+                    No hosts match your search.
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Select individual Dell hosts for targeted maintenance tasks
               </p>
             </div>
           )}

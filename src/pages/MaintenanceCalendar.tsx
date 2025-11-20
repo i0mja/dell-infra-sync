@@ -100,6 +100,20 @@ export default function MaintenanceCalendar() {
     }
   });
 
+  const { data: dellHosts = [] } = useQuery({
+    queryKey: ['dell-hosts-list'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('servers')
+        .select('id, hostname, ip_address, manufacturer, product_name')
+        .ilike('manufacturer', '%dell%')
+        .order('hostname', { ascending: true });
+
+      if (error) throw error;
+      return data || [];
+    }
+  });
+
   // Fetch safety checks for calendar view
   const { data: safetyChecks = [] } = useQuery({
     queryKey: ['safety-checks-calendar', selectedDate],
@@ -585,6 +599,7 @@ export default function MaintenanceCalendar() {
         onOpenChange={setCreateDialogOpen}
         clusters={clusters}
         serverGroups={serverGroups}
+        servers={dellHosts}
         prefilledData={prefilledData}
         onSuccess={() => {
           refetchWindows();
