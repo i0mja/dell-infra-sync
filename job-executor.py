@@ -1790,7 +1790,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
         """Connect to vCenter if not already connected"""
         if self.vcenter_conn:
             return self.vcenter_conn
-        
+
         # Use provided settings or fall back to environment variables
         host = settings.get('host') if settings else VCENTER_HOST
         user = settings.get('username') if settings else VCENTER_USER
@@ -1811,13 +1811,27 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             )
             atexit.register(Disconnect, self.vcenter_conn)
             self.log(f"Connected to vCenter at {host}")
+            self.log_vcenter_activity(
+                operation="connect_vcenter",
+                endpoint=host,
+                success=True,
+                details={"verify_ssl": verify_ssl}
+            )
             return self.vcenter_conn
         except Exception as e:
             self.log(f"Failed to connect to vCenter: {e}", "ERROR")
+            self.log_vcenter_activity(
+                operation="connect_vcenter",
+                endpoint=host,
+                success=False,
+                error=str(e)
+            )
             return None
-    
+
     def execute_vcenter_sync(self, job: Dict):
         """Execute vCenter sync - fetch ESXi hosts and auto-link to Dell servers"""
+        sync_start = time.time()
+        vcenter_host = None
         try:
             self.log(f"Starting vCenter sync job: {job['id']}")
             self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
@@ -1839,10 +1853,11 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             settings_list = _safe_json_parse(response)
             if not settings_list:
                 raise Exception("vCenter settings not configured")
-            
+
             settings = settings_list[0]
+            vcenter_host = settings.get('host')
             self.log(f"vCenter host: {settings['host']}")
-            
+
             # Connect to vCenter using database settings
             vc = self.connect_vcenter(settings)
             if not vc:
@@ -2018,9 +2033,24 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 completed_at=datetime.now().isoformat(),
                 details=result_details
             )
-            
+
+            self.log_vcenter_activity(
+                operation="vcenter_sync",
+                endpoint=vcenter_host or "unknown",
+                success=True,
+                response_time_ms=int((time.time() - sync_start) * 1000),
+                details=result_details
+            )
+
         except Exception as e:
             self.log(f"vCenter sync failed: {e}", "ERROR")
+            self.log_vcenter_activity(
+                operation="vcenter_sync",
+                endpoint=vcenter_host or "unknown",
+                success=False,
+                response_time_ms=int((time.time() - sync_start) * 1000),
+                error=str(e)
+            )
             self.update_job_status(
                 job['id'],
                 'failed',
@@ -5229,7 +5259,8 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
     def enter_vcenter_maintenance_mode(self, host_id: str, timeout: int = 600) -> dict:
         """Put ESXi host into maintenance mode"""
         start_time = time.time()
-        
+        host_name = host_id
+
         try:
             # Fetch host details from database
             response = requests.get(
@@ -5239,18 +5270,37 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             )
             
             if response.status_code != 200:
+                self.log_vcenter_activity(
+                    operation="enter_maintenance_mode",
+                    endpoint=host_id,
+                    success=False,
+                    error='Failed to fetch host from database'
+                )
                 return {'success': False, 'error': 'Failed to fetch host from database'}
-            
+
             hosts = _safe_json_parse(response)
             if not hosts:
+                self.log_vcenter_activity(
+                    operation="enter_maintenance_mode",
+                    endpoint=host_id,
+                    success=False,
+                    error='Host not found in database'
+                )
                 return {'success': False, 'error': 'Host not found in database'}
-            
+
             host_data = hosts[0]
             vcenter_id = host_data.get('vcenter_id')
-            
+            host_name = host_data.get('name', host_id)
+
             # Connect to vCenter
             vc = self.connect_vcenter()
             if not vc:
+                self.log_vcenter_activity(
+                    operation="enter_maintenance_mode",
+                    endpoint=host_name,
+                    success=False,
+                    error='Failed to connect to vCenter'
+                )
                 return {'success': False, 'error': 'Failed to connect to vCenter'}
             
             # Find the host object
@@ -5266,13 +5316,26 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     break
             
             container.Destroy()
-            
+
             if not host_obj:
+                self.log_vcenter_activity(
+                    operation="enter_maintenance_mode",
+                    endpoint=host_name,
+                    success=False,
+                    error='Host not found in vCenter'
+                )
                 return {'success': False, 'error': f'Host not found in vCenter'}
-            
+
             # Check if already in maintenance mode
             if host_obj.runtime.inMaintenanceMode:
                 self.log(f"  Host {host_data['name']} already in maintenance mode")
+                self.log_vcenter_activity(
+                    operation="enter_maintenance_mode",
+                    endpoint=host_name,
+                    success=True,
+                    response_time_ms=int((time.time() - start_time) * 1000),
+                    details={'in_maintenance': True, 'vms_evacuated': 0}
+                )
                 return {
                     'success': True,
                     'in_maintenance': True,
@@ -5286,15 +5349,29 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             
             # Enter maintenance mode
             task = host_obj.EnterMaintenanceMode_Task(timeout=timeout, evacuatePoweredOffVms=False)
-            
+
             self.log(f"  Entering maintenance mode (timeout: {timeout}s)...")
             while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
                 time.sleep(2)
                 if time.time() - start_time > timeout:
+                    self.log_vcenter_activity(
+                        operation="enter_maintenance_mode",
+                        endpoint=host_name,
+                        success=False,
+                        response_time_ms=int((time.time() - start_time) * 1000),
+                        error=f'Maintenance mode timeout after {timeout}s'
+                    )
                     return {'success': False, 'error': f'Maintenance mode timeout after {timeout}s'}
-            
+
             if task.info.state == vim.TaskInfo.State.error:
                 error_msg = str(task.info.error) if task.info.error else 'Unknown error'
+                self.log_vcenter_activity(
+                    operation="enter_maintenance_mode",
+                    endpoint=host_name,
+                    success=False,
+                    response_time_ms=int((time.time() - start_time) * 1000),
+                    error=f'Maintenance mode failed: {error_msg}'
+                )
                 return {'success': False, 'error': f'Maintenance mode failed: {error_msg}'}
             
             # Verify maintenance mode active
@@ -5310,21 +5387,37 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 json={'maintenance_mode': True, 'updated_at': datetime.now().isoformat()},
                 verify=VERIFY_SSL
             )
-            
+
+            self.log_vcenter_activity(
+                operation="enter_maintenance_mode",
+                endpoint=host_name,
+                success=True,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                details={'in_maintenance': True, 'vms_evacuated': vms_before - vms_after, 'time_taken_seconds': time_taken}
+            )
+
             return {
                 'success': True,
                 'in_maintenance': True,
                 'vms_evacuated': vms_before - vms_after,
                 'time_taken_seconds': time_taken
             }
-            
+
         except Exception as e:
+            self.log_vcenter_activity(
+                operation="enter_maintenance_mode",
+                endpoint=host_name,
+                success=False,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                error=str(e)
+            )
             return {'success': False, 'error': str(e)}
     
     def exit_vcenter_maintenance_mode(self, host_id: str, timeout: int = 300) -> dict:
         """Exit ESXi host from maintenance mode"""
         start_time = time.time()
-        
+        host_name = host_id
+
         try:
             # Fetch host details
             response = requests.get(
@@ -5332,17 +5425,30 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
                 verify=VERIFY_SSL
             )
-            
+
             hosts = _safe_json_parse(response)
             if not hosts:
+                self.log_vcenter_activity(
+                    operation="exit_maintenance_mode",
+                    endpoint=host_id,
+                    success=False,
+                    error='Host not found'
+                )
                 return {'success': False, 'error': 'Host not found'}
-            
+
             host_data = hosts[0]
             vcenter_id = host_data.get('vcenter_id')
-            
+            host_name = host_data.get('name', host_id)
+
             # Connect to vCenter
             vc = self.connect_vcenter()
             if not vc:
+                self.log_vcenter_activity(
+                    operation="exit_maintenance_mode",
+                    endpoint=host_name,
+                    success=False,
+                    error='Failed to connect to vCenter'
+                )
                 return {'success': False, 'error': 'Failed to connect to vCenter'}
             
             # Find host object
@@ -5358,13 +5464,26 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     break
             
             container.Destroy()
-            
+
             if not host_obj:
+                self.log_vcenter_activity(
+                    operation="exit_maintenance_mode",
+                    endpoint=host_name,
+                    success=False,
+                    error='Host not found in vCenter'
+                )
                 return {'success': False, 'error': 'Host not found in vCenter'}
-            
+
             # Check if already out of maintenance
             if not host_obj.runtime.inMaintenanceMode:
                 self.log(f"  Host {host_data['name']} already out of maintenance mode")
+                self.log_vcenter_activity(
+                    operation="exit_maintenance_mode",
+                    endpoint=host_name,
+                    success=True,
+                    response_time_ms=int((time.time() - start_time) * 1000),
+                    details={'in_maintenance': False}
+                )
                 return {
                     'success': True,
                     'in_maintenance': False,
@@ -5378,12 +5497,26 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
                 time.sleep(2)
                 if time.time() - start_time > timeout:
+                    self.log_vcenter_activity(
+                        operation="exit_maintenance_mode",
+                        endpoint=host_name,
+                        success=False,
+                        response_time_ms=int((time.time() - start_time) * 1000),
+                        error=f'Exit timeout after {timeout}s'
+                    )
                     return {'success': False, 'error': f'Exit timeout after {timeout}s'}
-            
+
             if task.info.state == vim.TaskInfo.State.error:
                 error_msg = str(task.info.error) if task.info.error else 'Unknown error'
+                self.log_vcenter_activity(
+                    operation="exit_maintenance_mode",
+                    endpoint=host_name,
+                    success=False,
+                    response_time_ms=int((time.time() - start_time) * 1000),
+                    error=f'Exit failed: {error_msg}'
+                )
                 return {'success': False, 'error': f'Exit failed: {error_msg}'}
-            
+
             time_taken = int(time.time() - start_time)
             self.log(f"  [OK] Exited maintenance mode ({time_taken}s)")
             
@@ -5394,14 +5527,29 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 json={'maintenance_mode': False, 'updated_at': datetime.now().isoformat()},
                 verify=VERIFY_SSL
             )
-            
+
+            self.log_vcenter_activity(
+                operation="exit_maintenance_mode",
+                endpoint=host_name,
+                success=True,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                details={'in_maintenance': False, 'time_taken_seconds': time_taken}
+            )
+
             return {
                 'success': True,
                 'in_maintenance': False,
                 'time_taken_seconds': time_taken
             }
-            
+
         except Exception as e:
+            self.log_vcenter_activity(
+                operation="exit_maintenance_mode",
+                endpoint=host_name,
+                success=False,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                error=str(e)
+            )
             return {'success': False, 'error': str(e)}
     
     def wait_for_vcenter_host_connected(self, host_id: str, timeout: int = 600) -> bool:
