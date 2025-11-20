@@ -1,7 +1,14 @@
 import { Calendar } from "@/components/ui/calendar";
 import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { CheckCircle, AlertTriangle, XCircle, Calendar as CalendarIcon } from "lucide-react";
+import {
+  CheckCircle,
+  AlertTriangle,
+  XCircle,
+  Calendar as CalendarIcon,
+  Sparkles,
+  Dot
+} from "lucide-react";
+import { DayContentProps } from "react-day-picker";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 
@@ -23,14 +30,14 @@ interface MaintenanceCalendarViewProps {
   date: Date;
   onDateChange: (date: Date | undefined) => void;
   dailyStatus: Map<string, ClusterSafetyDay>;
-  onDayClick: (day: ClusterSafetyDay) => void;
+  onDayClick?: (day: ClusterSafetyDay | null, date: Date) => void;
 }
 
-export function MaintenanceCalendarView({ 
-  date, 
-  onDateChange, 
+export function MaintenanceCalendarView({
+  date,
+  onDateChange,
   dailyStatus,
-  onDayClick 
+  onDayClick
 }: MaintenanceCalendarViewProps) {
   
   const getDayStatus = (checkDate: Date): ClusterSafetyDay | null => {
@@ -80,29 +87,66 @@ export function MaintenanceCalendarView({
     return null;
   };
 
-  return (
-    <Card className="p-4">
-      <div className="mb-4 flex items-center gap-2">
-        <CalendarIcon className="h-5 w-5" />
-        <h2 className="text-lg font-semibold">Cluster Safety Calendar</h2>
+  const DayContent = (props: DayContentProps) => {
+    const status = getDayStatus(props.date);
+    const hasMaintenance = (status?.maintenanceWindows?.length || 0) > 0;
+
+    const bgClass = getDayClass(status);
+
+    return (
+      <div
+        className={cn(
+          "relative flex h-9 w-9 items-center justify-center rounded-md text-sm font-medium transition-colors",
+          bgClass || "hover:bg-accent/50",
+        )}
+      >
+        <span>{format(props.date, 'd')}</span>
+
+        {status && (
+          <span className="absolute top-1 right-1">{renderDayIcon(status)}</span>
+        )}
+
+        {hasMaintenance && (
+          <span className="absolute bottom-1.5 flex items-center gap-0.5 text-[10px] font-semibold text-primary">
+            <Dot className="h-3 w-3" />
+          </span>
+        )}
       </div>
-      
-      <div className="mb-4 flex gap-4 text-xs">
-        <div className="flex items-center gap-1">
-          <div className="w-3 h-3 bg-green-100 border border-green-200 rounded" />
-          <span>All Safe</span>
+    );
+  };
+
+  return (
+    <Card className="p-5 shadow-sm border-primary/10">
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <CalendarIcon className="h-5 w-5" />
+          <div>
+            <h2 className="text-lg font-semibold">Maintenance readiness calendar</h2>
+            <p className="text-xs text-muted-foreground">Tap a day to inspect safety checks and maintenance windows.</p>
+          </div>
         </div>
-        <div className="flex items-center gap-1">
-          <div className="w-3 h-3 bg-yellow-100 border border-yellow-200 rounded" />
-          <span>Warnings</span>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Sparkles className="h-4 w-4 text-primary" />
+          <span>Optimal days are highlighted</span>
         </div>
-        <div className="flex items-center gap-1">
-          <div className="w-3 h-3 bg-red-100 border border-red-200 rounded" />
-          <span>Unsafe</span>
+      </div>
+
+      <div className="mb-4 flex flex-wrap gap-4 text-xs">
+        <div className="flex items-center gap-2 rounded-md border bg-card px-3 py-2 shadow-sm">
+          <div className="h-3 w-3 rounded-full bg-green-500/80" />
+          <span className="font-medium">All safe</span>
         </div>
-        <div className="flex items-center gap-1">
-          <div className="w-3 h-3 bg-gray-100 border border-gray-200 rounded" />
-          <span>No Data</span>
+        <div className="flex items-center gap-2 rounded-md border bg-card px-3 py-2 shadow-sm">
+          <div className="h-3 w-3 rounded-full bg-yellow-400/80" />
+          <span className="font-medium">Warnings</span>
+        </div>
+        <div className="flex items-center gap-2 rounded-md border bg-card px-3 py-2 shadow-sm">
+          <div className="h-3 w-3 rounded-full bg-red-500/80" />
+          <span className="font-medium">Unsafe</span>
+        </div>
+        <div className="flex items-center gap-2 rounded-md border bg-card px-3 py-2 shadow-sm">
+          <Dot className="h-4 w-4 text-primary" />
+          <span className="font-medium">Has maintenance</span>
         </div>
       </div>
 
@@ -126,18 +170,24 @@ export function MaintenanceCalendarView({
             const status = getDayStatus(checkDate);
             if (!status) return false;
             return Object.values(status.clusters).every(c => !c.safe);
+          },
+          maintenance: (checkDate) => {
+            const status = getDayStatus(checkDate);
+            return (status?.maintenanceWindows?.length || 0) > 0;
           }
         }}
-        modifiersClassNames={{
-          safe: 'bg-green-50 dark:bg-green-950 border-green-200 dark:border-green-800',
-          warning: 'bg-yellow-50 dark:bg-yellow-950 border-yellow-200 dark:border-yellow-800',
-          unsafe: 'bg-red-50 dark:bg-red-950 border-red-200 dark:border-red-800'
+        classNames={{
+          day: cn(
+            "relative flex h-10 w-10 items-center justify-center rounded-md p-0 font-medium aria-selected:bg-primary aria-selected:text-primary-foreground",
+          ),
+          cell: "p-0",
+        }}
+        components={{
+          DayContent,
         }}
         onDayClick={(clickedDate) => {
           const status = getDayStatus(clickedDate);
-          if (status) {
-            onDayClick(status);
-          }
+          onDayClick?.(status, clickedDate);
         }}
       />
     </Card>

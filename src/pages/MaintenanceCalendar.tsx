@@ -10,8 +10,9 @@ import { ClusterSafetyTrendChart } from "@/components/maintenance/ClusterSafetyT
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Calendar, Plus, TrendingUp } from "lucide-react";
+import { Calendar, Plus } from "lucide-react";
 import { format, subMonths, addMonths, startOfMonth, endOfMonth } from "date-fns";
 
 interface ClusterSafetyDay {
@@ -280,9 +281,15 @@ export default function MaintenanceCalendar() {
     setCreateDialogOpen(true);
   };
 
-  const handleDayClick = (day: any) => {
-    setSelectedDate(day.date);
-  };
+  const selectedDayKey = format(selectedDate, 'yyyy-MM-dd');
+  const selectedDayStatus = dailyStatus.get(selectedDayKey);
+  const selectedDayWindows = maintenanceWindows?.filter(w =>
+    format(new Date(w.planned_start), 'yyyy-MM-dd') === selectedDayKey
+  ) || [];
+
+  const safeDays = Array.from(dailyStatus.values()).filter(day => day.allTargetsSafe).length;
+  const totalWindows = maintenanceWindows?.length || 0;
+  const recommendationCount = analysisData?.optimal_windows?.length || 0;
 
   const handleDeleteWindow = async (windowId: string) => {
     try {
@@ -318,20 +325,67 @@ export default function MaintenanceCalendar() {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <Calendar className="h-8 w-8" />
-            Maintenance Calendar
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Plan maintenance during optimal windows when all clusters are safe
-          </p>
+      <div className="relative overflow-hidden rounded-xl border bg-gradient-to-br from-primary/5 via-background to-background p-6">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-sm font-medium text-primary">Scheduling hub</p>
+            <h1 className="text-3xl font-bold flex items-center gap-2 mt-1">
+              <Calendar className="h-8 w-8" />
+              Maintenance Calendar
+            </h1>
+            <p className="text-muted-foreground mt-2 max-w-2xl">
+              Track cluster and server group readiness, review planned work, and quickly schedule maintenance during safe windows.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => setSelectedDate(new Date())}>
+              Jump to today
+            </Button>
+            <Button onClick={() => setCreateDialogOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Schedule Maintenance
+            </Button>
+          </div>
         </div>
-        <Button onClick={() => setCreateDialogOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Schedule Maintenance
-        </Button>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <Card>
+          <CardHeader>
+            <CardDescription>Days marked safe</CardDescription>
+            <CardTitle className="text-3xl">{safeDays}</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            Days where all clusters or server groups reported green checks.
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription>Planned windows</CardDescription>
+            <CardTitle className="text-3xl">{totalWindows}</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            Includes all planned and historical maintenance windows.
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription>Upcoming this month</CardDescription>
+            <CardTitle className="text-3xl">{upcomingWindows.length}</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            Quickly scan the next planned activities at a glance.
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription>Optimal suggestions</CardDescription>
+            <CardTitle className="text-3xl">{recommendationCount}</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            AI-driven safe windows to minimize disruption.
+          </CardContent>
+        </Card>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -340,8 +394,106 @@ export default function MaintenanceCalendar() {
             date={selectedDate}
             onDateChange={(date) => date && setSelectedDate(date)}
             dailyStatus={dailyStatus}
-            onDayClick={handleDayClick}
+            onDayClick={(_, clickedDate) => setSelectedDate(clickedDate)}
           />
+
+          <Card>
+            <CardHeader className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <CardTitle className="text-xl">Day insights</CardTitle>
+                <CardDescription>{format(selectedDate, 'EEEE, MMMM do yyyy')}</CardDescription>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {selectedDayStatus?.allTargetsSafe ? (
+                  <Badge className="bg-green-500/20 text-green-800 dark:text-green-100" variant="secondary">All clear</Badge>
+                ) : selectedDayStatus?.allTargetsChecked ? (
+                  <Badge className="bg-yellow-500/20 text-yellow-900" variant="secondary">Attention needed</Badge>
+                ) : (
+                  <Badge variant="outline">No safety data</Badge>
+                )}
+                <Badge variant="outline">{selectedDayWindows.length} windows</Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {selectedDayWindows.length > 0 ? (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">Scheduled maintenance on this date:</p>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {selectedDayWindows.map(window => (
+                      <MaintenanceWindowCard
+                        key={window.id}
+                        window={window}
+                        onDelete={handleDeleteWindow}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-start justify-between gap-3 rounded-lg border bg-muted/40 p-4 text-sm text-muted-foreground sm:flex-row sm:items-center">
+                  <div>
+                    No maintenance is scheduled for this day yet.
+                  </div>
+                  <Button size="sm" onClick={() => {
+                    setPrefilledData({
+                      start: selectedDate,
+                      end: selectedDate,
+                      clusters: []
+                    });
+                    setCreateDialogOpen(true);
+                  }}>
+                    Plan maintenance
+                  </Button>
+                </div>
+              )}
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <Card className="border-dashed">
+                  <CardHeader>
+                    <CardTitle className="text-base">Cluster safety checks</CardTitle>
+                    <CardDescription>Latest checks for this date</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-2 text-sm">
+                    {selectedDayStatus && Object.keys(selectedDayStatus.clusters).length > 0 ? (
+                      Object.entries(selectedDayStatus.clusters).map(([cluster, status]) => (
+                        <div key={cluster} className="flex items-center justify-between rounded-md border bg-card px-3 py-2">
+                          <span className="font-medium">{cluster}</span>
+                          <Badge variant={status.safe ? "secondary" : "destructive"}>
+                            {status.safe ? 'Safe' : 'Blocked'}
+                          </Badge>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-muted-foreground">No cluster checks recorded.</p>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card className="border-dashed">
+                  <CardHeader>
+                    <CardTitle className="text-base">Server group readiness</CardTitle>
+                    <CardDescription>Health per group</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-2 text-sm">
+                    {selectedDayStatus && selectedDayStatus.serverGroups && Object.keys(selectedDayStatus.serverGroups).length > 0 ? (
+                      Object.entries(selectedDayStatus.serverGroups).map(([groupId, status]) => {
+                        const groupName = serverGroups.find(g => g.id === groupId)?.name || groupId.substring(0, 8);
+                        return (
+                          <div key={groupId} className="flex items-center justify-between rounded-md border bg-card px-3 py-2">
+                            <span className="font-medium">{groupName}</span>
+                            <Badge variant={status.safe ? "secondary" : "destructive"}>
+                              {status.safe ? 'Safe' : 'Blocked'}
+                            </Badge>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <p className="text-muted-foreground">No server group checks recorded.</p>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            </CardContent>
+          </Card>
 
           <Tabs defaultValue="upcoming" className="w-full">
             <TabsList className="grid w-full grid-cols-2">
