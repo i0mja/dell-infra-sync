@@ -487,42 +487,42 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             return []
 
     def get_server_credentials(self, server_id: str) -> tuple:
-        """Fetch server-specific credentials from database, fallback to defaults"""
+        """Resolve credentials for a server using the full credential resolution pipeline."""
         try:
-            url = f"{DSM_URL}/rest/v1/servers"
-            headers = {
-                "apikey": SERVICE_ROLE_KEY,
-                "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
-            }
-            params = {
-                "id": f"eq.{server_id}",
-                "select": "idrac_username,idrac_password_encrypted"
-            }
-            
-            response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
-            if response.status_code == 200:
-                servers = _safe_json_parse(response)
-                if servers and len(servers) > 0:
-                    server = servers[0]
-                    # Use server-specific credentials if available, otherwise use defaults
-                    username = server.get('idrac_username') or IDRAC_DEFAULT_USER
-                    encrypted_password = server.get('idrac_password_encrypted')
-                    
-                    if encrypted_password:
-                        password = self.decrypt_password(encrypted_password) or IDRAC_DEFAULT_PASSWORD
-                    else:
-                        password = IDRAC_DEFAULT_PASSWORD
-                    
-                    if server.get('idrac_username'):
-                        self.log(f"Using server-specific credentials for server {server_id}", "INFO")
-                    else:
-                        self.log(f"Using default credentials for server {server_id}", "INFO")
-                    
-                    return (username, password)
+            server = self.get_server_by_id(server_id)
+            if not server:
+                self.log(f"Server {server_id} not found while resolving credentials", "WARN")
+                return (None, None)
+
+            username, password, source, cred_set_id = self.resolve_credentials_for_server(server)
+
+            if source == 'decrypt_failed':
+                self.log(
+                    f"Credential resolution for {server.get('ip_address', 'unknown')}: "
+                    "decryption failed (check encryption key)",
+                    "ERROR",
+                )
+                return (None, None)
+
+            if not username or not password or source == 'none':
+                self.log(
+                    f"No credentials available for server {server.get('ip_address', 'unknown')} (ID: {server_id})",
+                    "WARN",
+                )
+                return (None, None)
+
+            source_msg = (
+                f"credential_set_id {cred_set_id}" if source == 'credential_set_id' else source
+            )
+            self.log(
+                f"Using {source_msg} credentials for server {server.get('ip_address', 'unknown')} (ID: {server_id})",
+                "INFO",
+            )
+
+            return (username, password)
         except Exception as e:
-            self.log(f"Error fetching server credentials: {str(e)}, using defaults", "WARN")
-        
-        return (IDRAC_DEFAULT_USER, IDRAC_DEFAULT_PASSWORD)
+            self.log(f"Error resolving credentials for server {server_id}: {str(e)}", "ERROR")
+            return (None, None)
 
     def get_pending_jobs(self) -> List[Dict]:
         """Fetch pending jobs from the cloud"""
@@ -2486,7 +2486,9 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 try:
                     # Step 1: Get server-specific credentials
                     username, password = self.get_server_credentials(server['id'])
-                    
+                    if not username or not password:
+                        raise Exception("No credentials configured for server")
+
                     # Step 2: Create iDRAC session
                     session_token = self.create_idrac_session(
                         ip, username, password
@@ -3621,7 +3623,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 self.log(f"Fetching event logs from {ip}...")
                 
                 # Get credentials
-                username, password = self.get_server_credentials(server)
+                username, password = self.get_server_credentials(server['id'])
                 if not username or not password:
                     self.log(f"  ✗ No credentials for {ip}", "WARN")
                     failed_count += 1
@@ -4039,7 +4041,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 self.log(f"Processing boot configuration for {ip}...")
                 
                 # Get credentials
-                username, password = self.get_server_credentials(server)
+                username, password = self.get_server_credentials(server['id'])
                 if not username or not password:
                     self.log(f"  ✗ No credentials for {ip}", "WARN")
                     failed_count += 1
@@ -6260,8 +6262,8 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 # Check iDRAC health
                 try:
                     # Fetch credentials
-                    creds = self.get_server_credentials(server_id)
-                    if not creds:
+                    username, password = self.get_server_credentials(server_id)
+                    if not username or not password:
                         self.log(f"  ⚠️ {hostname}: No credentials configured", "WARN")
                         warnings.append(f"Server {hostname} has no credentials")
                         server_details.append({
@@ -6271,8 +6273,6 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                             'reason': 'No credentials'
                         })
                         continue
-                    
-                    username, password = creds
                     
                     # Get system health from iDRAC
                     system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
