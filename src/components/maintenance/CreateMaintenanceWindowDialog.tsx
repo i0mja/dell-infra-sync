@@ -212,8 +212,8 @@ export function CreateMaintenanceWindowDialog({
     if (formData.cluster_ids.length === 0 && formData.server_group_ids.length === 0 && formData.server_ids.length === 0) {
       toast({
         title: "Validation Error",
-        description: "Please select at least one cluster, server group, or host",
-        variant: "destructive"
+        description: "Please select at least one cluster, server group, or server",
+        variant: "destructive",
       });
       return;
     }
