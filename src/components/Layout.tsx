@@ -67,7 +67,7 @@ const Layout = () => {
     { name: "Dashboard", href: "/", icon: LayoutDashboard },
     { name: "Servers", href: "/servers", icon: Server },
     { name: "vCenter", href: "/vcenter", icon: Database },
-    { name: "Maintenance Calendar", href: "/maintenance-calendar", icon: Calendar },
+    { name: "Maintenance Planner", href: "/maintenance-planner", icon: Calendar },
     { name: "Activity Monitor", href: "/activity", icon: Activity },
   ];
 

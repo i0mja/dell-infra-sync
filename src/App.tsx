@@ -13,7 +13,7 @@ import Jobs from "./pages/Jobs";
 import Settings from "./pages/Settings";
 import VCenter from "./pages/VCenter";
 import ActivityMonitor from "./pages/ActivityMonitor";
-import MaintenanceCalendar from "./pages/MaintenanceCalendar";
+import MaintenancePlanner from "./pages/MaintenancePlanner";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -32,7 +32,7 @@ const App = () => (
                 <Route index element={<Dashboard />} />
         <Route path="servers" element={<Servers />} />
         <Route path="vcenter" element={<VCenter />} />
-        <Route path="maintenance-calendar" element={<MaintenanceCalendar />} />
+        <Route path="maintenance-planner" element={<MaintenancePlanner />} />
         <Route path="jobs" element={<Jobs />} />
         <Route path="activity" element={<ActivityMonitor />} />
         <Route path="settings" element={<Settings />} />

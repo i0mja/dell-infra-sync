@@ -38,7 +38,7 @@ interface ClusterSafetyDay {
   allTargetsSafe?: boolean;
 }
 
-export default function MaintenanceCalendar() {
+export default function MaintenancePlanner() {
   const { toast } = useToast();
   const location = useLocation();
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
@@ -328,13 +328,13 @@ export default function MaintenanceCalendar() {
       <div className="relative overflow-hidden rounded-xl border bg-gradient-to-br from-primary/5 via-background to-background p-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-sm font-medium text-primary">Scheduling hub</p>
+            <p className="text-sm font-medium text-primary">Planning and scheduling hub</p>
             <h1 className="text-3xl font-bold flex items-center gap-2 mt-1">
               <Calendar className="h-8 w-8" />
-              Maintenance Calendar
+              Maintenance Planner
             </h1>
             <p className="text-muted-foreground mt-2 max-w-2xl">
-              Track cluster and server group readiness, review planned work, and quickly schedule maintenance during safe windows.
+              Track cluster and server group readiness, review planned work, and quickly schedule maintenance during safe windows with built-in safety checks.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
