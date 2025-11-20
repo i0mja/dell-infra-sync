@@ -179,7 +179,7 @@ export function MaintenanceCalendarView({
         classNames={{
           months: "w-full",
           month: "w-full space-y-4",
-          caption: "flex items-center justify-between px-1",
+          caption: "relative flex items-center justify-between px-1",
           table: "w-full border-collapse space-y-2",
           head_row: "grid grid-cols-7 text-center text-[11px] font-medium text-muted-foreground",
           head_cell: "py-1",
