@@ -98,13 +98,13 @@ export function NextMaintenanceWidget() {
               ))}h window
             </div>
 
-            <Button 
-              size="sm" 
-              variant="outline" 
+            <Button
+              size="sm"
+              variant="outline"
               className="w-full"
-              onClick={() => navigate('/maintenance-calendar')}
+              onClick={() => navigate('/maintenance-planner')}
             >
-              View Calendar
+              Open Planner
               <ArrowRight className="ml-2 h-3 w-3" />
             </Button>
           </div>
@@ -113,10 +113,10 @@ export function NextMaintenanceWidget() {
             <p className="text-sm text-muted-foreground mb-3">
               No maintenance scheduled
             </p>
-            <Button 
-              size="sm" 
+            <Button
+              size="sm"
               variant="outline"
-              onClick={() => navigate('/maintenance-calendar')}
+              onClick={() => navigate('/maintenance-planner')}
             >
               Schedule Maintenance
             </Button>

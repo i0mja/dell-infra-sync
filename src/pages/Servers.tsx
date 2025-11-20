@@ -1023,7 +1023,7 @@ const Servers = () => {
                                   <DropdownMenuItem
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      navigate('/maintenance-calendar', {
+                                      navigate('/maintenance-planner', {
                                         state: {
                                           openDialog: true,
                                           prefilledData: {
@@ -1053,7 +1053,7 @@ const Servers = () => {
                                   <DropdownMenuItem
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      navigate('/maintenance-calendar', {
+                                      navigate('/maintenance-planner', {
                                         state: {
                                           openDialog: true,
                                           prefilledData: {
@@ -1324,7 +1324,7 @@ const Servers = () => {
                                 </ContextMenuItem>
                                 <ContextMenuItem
                                   onClick={() => {
-                                    navigate('/maintenance-calendar', { 
+                                    navigate('/maintenance-planner', { 
                                       state: { 
                                         openDialog: true,
                                         prefilledData: {
@@ -1734,7 +1734,7 @@ const Servers = () => {
                     </ContextMenuItem>
                     <ContextMenuItem
                       onClick={() => {
-                        navigate('/maintenance-calendar', { 
+                        navigate('/maintenance-planner', { 
                           state: { 
                             openDialog: true,
                             prefilledData: {
