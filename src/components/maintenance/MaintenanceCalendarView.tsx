@@ -96,18 +96,18 @@ export function MaintenanceCalendarView({
     return (
       <div
         className={cn(
-          "relative flex h-9 w-9 items-center justify-center rounded-md text-sm font-medium transition-colors",
-          bgClass || "hover:bg-accent/50",
+          "relative flex h-full w-full flex-col items-center justify-center gap-1 rounded-lg border text-sm font-semibold transition-all",
+          bgClass || "bg-card/70 hover:border-primary/30 hover:bg-accent/40",
         )}
       >
-        <span>{format(props.date, 'd')}</span>
+        <span className="text-base">{format(props.date, 'd')}</span>
 
         {status && (
-          <span className="absolute top-1 right-1">{renderDayIcon(status)}</span>
+          <span className="absolute right-2 top-2">{renderDayIcon(status)}</span>
         )}
 
         {hasMaintenance && (
-          <span className="absolute bottom-1.5 flex items-center gap-0.5 text-[10px] font-semibold text-primary">
+          <span className="absolute bottom-2 flex items-center gap-0.5 text-[10px] font-semibold text-primary">
             <Dot className="h-3 w-3" />
           </span>
         )}
@@ -131,20 +131,20 @@ export function MaintenanceCalendarView({
         </div>
       </div>
 
-      <div className="mb-4 flex flex-wrap gap-4 text-xs">
-        <div className="flex items-center gap-2 rounded-md border bg-card px-3 py-2 shadow-sm">
+      <div className="mb-4 grid grid-cols-2 gap-2 text-xs sm:flex sm:flex-wrap sm:items-center sm:gap-3">
+        <div className="flex items-center gap-2 rounded-full border bg-card/80 px-3 py-1.5 shadow-sm">
           <div className="h-3 w-3 rounded-full bg-green-500/80" />
           <span className="font-medium">All safe</span>
         </div>
-        <div className="flex items-center gap-2 rounded-md border bg-card px-3 py-2 shadow-sm">
+        <div className="flex items-center gap-2 rounded-full border bg-card/80 px-3 py-1.5 shadow-sm">
           <div className="h-3 w-3 rounded-full bg-yellow-400/80" />
           <span className="font-medium">Warnings</span>
         </div>
-        <div className="flex items-center gap-2 rounded-md border bg-card px-3 py-2 shadow-sm">
+        <div className="flex items-center gap-2 rounded-full border bg-card/80 px-3 py-1.5 shadow-sm">
           <div className="h-3 w-3 rounded-full bg-red-500/80" />
           <span className="font-medium">Unsafe</span>
         </div>
-        <div className="flex items-center gap-2 rounded-md border bg-card px-3 py-2 shadow-sm">
+        <div className="flex items-center gap-2 rounded-full border bg-card/80 px-3 py-1.5 shadow-sm">
           <Dot className="h-4 w-4 text-primary" />
           <span className="font-medium">Has maintenance</span>
         </div>
@@ -154,7 +154,7 @@ export function MaintenanceCalendarView({
         mode="single"
         selected={date}
         onSelect={onDateChange}
-        className="pointer-events-auto"
+        className="pointer-events-auto w-full"
         modifiers={{
           safe: (checkDate) => {
             const status = getDayStatus(checkDate);
@@ -177,10 +177,18 @@ export function MaintenanceCalendarView({
           }
         }}
         classNames={{
-          day: cn(
-            "relative flex h-10 w-10 items-center justify-center rounded-md p-0 font-medium aria-selected:bg-primary aria-selected:text-primary-foreground",
-          ),
+          months: "w-full",
+          month: "w-full space-y-4",
+          caption: "flex items-center justify-between px-1",
+          table: "w-full border-collapse space-y-2",
+          head_row: "grid grid-cols-7 text-center text-[11px] font-medium text-muted-foreground",
+          head_cell: "py-1",
+          row: "grid grid-cols-7 gap-2",
           cell: "p-0",
+          day: cn(
+            "relative flex aspect-square w-full items-center justify-center rounded-lg p-0 text-base font-semibold aria-selected:bg-primary aria-selected:text-primary-foreground",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
+          ),
         }}
         components={{
           DayContent,
