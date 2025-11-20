@@ -2989,7 +2989,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 self.log(f"Executing {action} on {ip}...")
                 
                 # Get credentials
-                username, password = self.get_server_credentials(server)
+                username, password = self.get_server_credentials(server['id'])
                 if not username or not password:
                     self.log(f"  ✗ No credentials for {ip}", "WARN")
                     failed_count += 1
@@ -3148,7 +3148,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 task_id = task_data_result[0]['id'] if task_data_result else None
                 
                 # Get credentials
-                username, password = self.get_server_credentials(server)
+                username, password = self.get_server_credentials(server['id'])
                 if not username or not password:
                     error_msg = f"No credentials configured for {ip}"
                     self.log(f"  ✗ {error_msg}", "WARN")
