@@ -8,11 +8,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTheme } from "next-themes";
-import { Activity, AlertCircle, Bell, Briefcase, CheckCircle2, ChevronDown, ChevronRight, Copy, Database, FileText, Globe, Info, Loader2, Mail, MessageSquare, Monitor, Moon, Network, Palette, Plus, RefreshCw, Save, Server, Settings as SettingsIcon, Shield, Sun, Terminal, Users, X, XCircle } from "lucide-react";
+import { Activity, AlertCircle, Bell, Briefcase, CheckCircle2, ChevronDown, ChevronRight, Copy, Database, Disc, FileText, Globe, Info, Loader2, Mail, MessageSquare, Monitor, Moon, Network, Palette, Plus, RefreshCw, Save, Server, Settings as SettingsIcon, Shield, Sun, Terminal, Users, X, XCircle } from "lucide-react";
 import { ServerGroupsManagement } from "@/components/settings/ServerGroupsManagement";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -192,6 +193,19 @@ export default function Settings() {
   const [validatingPrereqs, setValidatingPrereqs] = useState(false);
   const [prereqResults, setPrereqResults] = useState<any | null>(null);
 
+  // Virtual Media Settings
+  const [vmSettingsId, setVmSettingsId] = useState<string | null>(null);
+  const [vmShareType, setVmShareType] = useState<'nfs' | 'cifs' | 'http' | 'https'>('nfs');
+  const [vmHost, setVmHost] = useState("");
+  const [vmExportPath, setVmExportPath] = useState("");
+  const [vmIsoPath, setVmIsoPath] = useState("");
+  const [vmUseAuth, setVmUseAuth] = useState(false);
+  const [vmUsername, setVmUsername] = useState("");
+  const [vmPassword, setVmPassword] = useState("");
+  const [vmNotes, setVmNotes] = useState("");
+  const [vmTestResult, setVmTestResult] = useState<{ success: boolean; message: string; files?: string[]; baseUrl?: string; latency_ms?: number; port?: number; listing_error?: string; } | null>(null);
+  const [testingVirtualMediaShare, setTestingVirtualMediaShare] = useState(false);
+
   // Job Executor Configuration
   const [serviceRoleKey, setServiceRoleKey] = useState<string | null>(null);
   const [loadingServiceKey, setLoadingServiceKey] = useState(false);
@@ -210,6 +224,7 @@ export default function Settings() {
     loadCredentialSets();
     loadServersAndVCenter();
     loadNetworkSettings();
+    loadVirtualMediaSettings();
   }, []);
 
   const loadServersAndVCenter = async () => {
@@ -889,6 +904,155 @@ export default function Settings() {
       });
     } finally {
       setValidatingPrereqs(false);
+    }
+  };
+
+  const loadVirtualMediaSettings = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('virtual_media_settings' as any)
+        .select('*')
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      if (data) {
+        setVmSettingsId(data.id);
+        setVmShareType((data.share_type || 'nfs') as any);
+        setVmHost(data.host || "");
+        setVmExportPath(data.export_path || "");
+        setVmIsoPath(data.iso_path || "");
+        setVmUseAuth(data.use_auth ?? false);
+        setVmUsername(data.username || "");
+        setVmPassword(data.password || "");
+        setVmNotes(data.notes || "");
+      }
+    } catch (error: any) {
+      console.error("Error loading virtual media settings:", error);
+    }
+  };
+
+  const handleSaveVirtualMediaSettings = async () => {
+    if (!vmHost) {
+      toast({
+        title: "Host required",
+        description: "Please provide the share host before saving",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const payload = {
+        share_type: vmShareType,
+        host: vmHost,
+        export_path: vmExportPath,
+        iso_path: vmIsoPath,
+        use_auth: vmUseAuth,
+        username: vmUseAuth ? vmUsername : null,
+        password: vmUseAuth ? vmPassword : null,
+        notes: vmNotes,
+      };
+
+      if (vmSettingsId) {
+        const { error } = await supabase
+          .from('virtual_media_settings' as any)
+          .update(payload)
+          .eq('id', vmSettingsId);
+
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase
+          .from('virtual_media_settings' as any)
+          .insert(payload)
+          .select()
+          .single();
+
+        if (error) throw error;
+        setVmSettingsId(data.id);
+      }
+
+      toast({
+        title: "Settings saved",
+        description: "Virtual media defaults updated",
+      });
+    } catch (error: any) {
+      console.error("Error saving virtual media settings:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to save virtual media settings",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTestVirtualMediaShare = async () => {
+    if (!vmHost) {
+      toast({
+        title: "Share host required",
+        description: "Enter a host to test virtual media connectivity",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setTestingVirtualMediaShare(true);
+    setVmTestResult(null);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('test-virtual-media-share', {
+        body: {
+          host: vmHost,
+          export_path: vmExportPath,
+          iso_path: vmIsoPath,
+          share_type: vmShareType,
+          username: vmUseAuth ? vmUsername : undefined,
+          password: vmUseAuth ? vmPassword : undefined,
+          list_files: true,
+        }
+      });
+
+      if (error) throw error;
+
+      const message = data?.success
+        ? `Port ${data.port} reachable${data.latency_ms ? ` (${data.latency_ms}ms)` : ''}`
+        : data?.error || 'Share not reachable';
+
+      setVmTestResult({
+        success: !!data?.success,
+        message,
+        files: data?.files || [],
+        baseUrl: data?.base_url,
+        latency_ms: data?.latency_ms,
+        port: data?.port,
+        listing_error: data?.listing_error,
+      });
+
+      if (data?.success) {
+        toast({
+          title: "Connectivity confirmed",
+          description: message,
+        });
+      } else {
+        toast({
+          title: "Connectivity failed",
+          description: message,
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
+      console.error("Error testing virtual media share:", error);
+      toast({
+        title: "Test failed",
+        description: error.message || "Unable to reach share",
+        variant: "destructive",
+      });
+    } finally {
+      setTestingVirtualMediaShare(false);
     }
   };
 
@@ -3360,6 +3524,160 @@ export default function Settings() {
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="virtual-media">
+            <div className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <Disc className="h-5 w-5" />
+                        Virtual Media Defaults
+                      </CardTitle>
+                      <CardDescription>
+                        Define the internal share that powers ISO browsing and mount prefill.
+                      </CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Share Type</Label>
+                      <Select value={vmShareType} onValueChange={(value) => setVmShareType(value as any)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="nfs">NFS (recommended)</SelectItem>
+                          <SelectItem value="cifs">SMB/CIFS</SelectItem>
+                          <SelectItem value="http">HTTP</SelectItem>
+                          <SelectItem value="https">HTTPS</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">Host must be reachable from the Job Executor and iDRAC.</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Share Host</Label>
+                      <Input
+                        placeholder="nfs-gateway.internal"
+                        value={vmHost}
+                        onChange={(e) => setVmHost(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Export / Root Path</Label>
+                      <Input
+                        placeholder="/exports/isos"
+                        value={vmExportPath}
+                        onChange={(e) => setVmExportPath(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">Path on the share that exposes your ISO library.</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>ISO Subdirectory (optional)</Label>
+                      <Input
+                        placeholder="linux/"
+                        value={vmIsoPath}
+                        onChange={(e) => setVmIsoPath(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">Appended to the export path for a cleaner browse list.</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="flex items-center justify-between">
+                      Require authentication
+                      <Switch checked={vmUseAuth} onCheckedChange={setVmUseAuth} />
+                    </Label>
+                    <div className="grid md:grid-cols-2 gap-3">
+                      <Input
+                        placeholder="share-user"
+                        value={vmUsername}
+                        onChange={(e) => setVmUsername(e.target.value)}
+                        disabled={!vmUseAuth}
+                      />
+                      <Input
+                        type="password"
+                        placeholder="••••••••"
+                        value={vmPassword}
+                        onChange={(e) => setVmPassword(e.target.value)}
+                        disabled={!vmUseAuth}
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">Credentials are stored encrypted alongside other settings.</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Notes</Label>
+                    <Textarea
+                      placeholder="Firewall rules, maintenance windows, or cleanup policy for this share"
+                      value={vmNotes}
+                      onChange={(e) => setVmNotes(e.target.value)}
+                      rows={3}
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 justify-end">
+                    <Button
+                      variant="outline"
+                      onClick={handleTestVirtualMediaShare}
+                      disabled={testingVirtualMediaShare}
+                    >
+                      {testingVirtualMediaShare && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Test share
+                    </Button>
+                    <Button onClick={handleSaveVirtualMediaSettings} disabled={loading}>
+                      {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Save defaults
+                    </Button>
+                  </div>
+
+                  {vmTestResult && (
+                    <Alert variant={vmTestResult.success ? "default" : "destructive"}>
+                      <AlertDescription className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          {vmTestResult.success ? (
+                            <CheckCircle2 className="h-4 w-4" />
+                          ) : (
+                            <AlertCircle className="h-4 w-4" />
+                          )}
+                          <span>{vmTestResult.message}</span>
+                        </div>
+                        {vmTestResult.baseUrl && (
+                          <p className="text-xs text-muted-foreground">
+                            Base URL: {vmTestResult.baseUrl} (port {vmTestResult.port || 'auto'})
+                          </p>
+                        )}
+                        {vmTestResult.listing_error && (
+                          <p className="text-xs text-muted-foreground">Directory listing: {vmTestResult.listing_error}</p>
+                        )}
+                        {vmTestResult.files && vmTestResult.files.length > 0 && (
+                          <div className="space-y-2">
+                            <p className="text-xs text-muted-foreground">Discovered images</p>
+                            <ScrollArea className="h-32 rounded-md border p-2">
+                              <div className="space-y-1 text-xs">
+                                {vmTestResult.files.map((file) => (
+                                  <div key={file} className="flex items-center gap-2">
+                                    <Disc className="h-3 w-3" />
+                                    <span className="font-mono break-all">{file}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </ScrollArea>
+                          </div>
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
           <TabsContent value="network">

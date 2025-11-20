@@ -1,4 +1,4 @@
-import { LucideIcon, Palette, Mail, MessageSquare, Server, Briefcase, Activity, Bell, Shield, Network, Users } from "lucide-react";
+import { LucideIcon, Palette, Mail, MessageSquare, Server, Briefcase, Activity, Bell, Shield, Network, Users, Disc } from "lucide-react";
 
 export interface SettingsTab {
   id: string;
@@ -81,6 +81,15 @@ export const settingsTabs: SettingsTab[] = [
     description: 'Test connectivity to iDRAC servers and vCenter hosts',
     icon: Network,
     group: 'Monitoring',
+    order: 9,
+  },
+  {
+    id: 'virtual-media',
+    name: 'Virtual Media',
+    title: 'Virtual Media Defaults',
+    description: 'Configure default share details for ISO browsing and mounting',
+    icon: Disc,
+    group: 'Infrastructure',
     order: 8,
   },
   {
@@ -90,7 +99,7 @@ export const settingsTabs: SettingsTab[] = [
     description: 'Configure log retention, cleanup, and monitoring preferences',
     icon: Activity,
     group: 'Monitoring',
-    order: 9,
+    order: 10,
   },
   {
     id: 'jobs',
@@ -99,7 +108,7 @@ export const settingsTabs: SettingsTab[] = [
     description: 'Configure job retention, cleanup, and stale job management',
     icon: Briefcase,
     group: 'Monitoring',
-    order: 10,
+    order: 11,
   },
 ];
 
