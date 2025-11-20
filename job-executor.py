@@ -1279,6 +1279,53 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
         self.log(f"  Credential resolution for {ip}: no credentials available", "WARN")
         return (None, None, 'none', None)
 
+    def get_server_by_id(self, server_id: str) -> Optional[Dict]:
+        """
+        Fetch a server record by ID from the database.
+        Returns: Server dict or None if not found
+        """
+        try:
+            url = f"{DSM_URL}/rest/v1/servers"
+            headers = {
+                "apikey": SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+            }
+            params = {
+                "id": f"eq.{server_id}",
+                "select": "*"
+            }
+            
+            response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
+            self._handle_supabase_auth_error(response, "fetching server by ID")
+            
+            if response.status_code == 200:
+                servers = _safe_json_parse(response)
+                if servers and len(servers) > 0:
+                    return servers[0]
+            
+            self.log(f"Server {server_id} not found in database", "WARN")
+            return None
+            
+        except Exception as e:
+            self.log(f"Error fetching server by ID {server_id}: {e}", "ERROR")
+            return None
+
+    def get_credentials_for_server(self, server: Dict) -> tuple:
+        """
+        Get credentials for a server, simplified wrapper around resolve_credentials_for_server.
+        Returns: (username, password) tuple
+        Raises: Exception if credentials cannot be resolved
+        """
+        username, password, cred_source, used_cred_set_id = self.resolve_credentials_for_server(server)
+        
+        if cred_source == 'decrypt_failed':
+            raise Exception("Cannot decrypt credentials - encryption key not configured")
+        
+        if cred_source == 'none' or not username or not password:
+            raise Exception("No valid credentials available for server")
+        
+        return (username, password)
+
     def refresh_existing_servers(self, job: Dict, server_ids: List[str]):
         """Refresh information for existing servers by querying iDRAC"""
         self.log(f"Refreshing {len(server_ids)} existing server(s)")
