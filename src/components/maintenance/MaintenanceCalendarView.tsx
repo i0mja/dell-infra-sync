@@ -176,13 +176,13 @@ export function MaintenanceCalendarView({
             return (status?.maintenanceWindows?.length || 0) > 0;
           }
         }}
-        classNames={{
-          months: "w-full",
-          month: "w-full space-y-4",
-          caption: "relative flex items-center justify-between px-1",
-          table: "w-full border-collapse space-y-2",
-          head_row: "grid grid-cols-7 text-center text-[11px] font-medium text-muted-foreground",
-          head_cell: "py-1",
+          classNames={{
+            months: "w-full",
+            month: "w-full space-y-4",
+            caption: "relative flex items-center justify-center px-1",
+            table: "w-full border-collapse space-y-2",
+            head_row: "grid grid-cols-7 text-center text-[11px] font-medium text-muted-foreground",
+            head_cell: "py-1",
           row: "grid grid-cols-7 gap-2",
           cell: "p-0",
           day: cn(
