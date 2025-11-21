@@ -1,6 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Calendar, Shield, Activity, Lightbulb } from "lucide-react";
+import { Calendar, Shield, Activity, Lightbulb, Plus } from "lucide-react";
 
 interface PlannerHeaderProps {
   safeDays: number;
@@ -8,6 +8,7 @@ interface PlannerHeaderProps {
   nextWindow?: { title: string; start: string };
   optimalCount: number;
   onSchedule: () => void;
+  onCreateJob: () => void;
 }
 
 export function PlannerHeader({ 
@@ -15,7 +16,8 @@ export function PlannerHeader({
   activeJobs, 
   nextWindow, 
   optimalCount,
-  onSchedule 
+  onSchedule,
+  onCreateJob
 }: PlannerHeaderProps) {
   return (
     <div className="space-y-4">
@@ -26,10 +28,16 @@ export function PlannerHeader({
             Schedule and monitor maintenance windows with intelligent safety validation
           </p>
         </div>
-        <Button onClick={onSchedule} size="lg">
-          <Calendar className="mr-2 h-5 w-5" />
-          Schedule Maintenance
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={onSchedule} size="lg">
+            <Calendar className="mr-2 h-5 w-5" />
+            Schedule Maintenance
+          </Button>
+          <Button onClick={onCreateJob} variant="outline" size="lg">
+            <Plus className="mr-2 h-5 w-5" />
+            Create Job
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

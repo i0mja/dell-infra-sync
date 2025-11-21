@@ -6,24 +6,21 @@ import { useOptimalWindows } from "@/hooks/useOptimalWindows";
 import { PlannerHeader } from "@/components/maintenance/PlannerHeader";
 import { SafetyCalendar } from "@/components/maintenance/SafetyCalendar";
 import { DayDetailsPanel } from "@/components/maintenance/DayDetailsPanel";
-import { ActiveOperationsPanel } from "@/components/maintenance/ActiveOperationsPanel";
+import { JobsManagementCard } from "@/components/maintenance/JobsManagementCard";
 import { ScheduledWindowsList } from "@/components/maintenance/ScheduledWindowsList";
 import { OptimalWindowsSidebar } from "@/components/maintenance/OptimalWindowsSidebar";
 import { ClusterSafetyTrendChart } from "@/components/maintenance/ClusterSafetyTrendChart";
 import { ScheduleMaintenanceDialog } from "@/components/maintenance/dialogs/ScheduleMaintenanceDialog";
+import { CreateJobDialog } from "@/components/jobs/CreateJobDialog";
 import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
-import { JobsPanel } from "@/components/jobs/JobsPanel";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { subMonths, addMonths, isFuture, format } from "date-fns";
-import { useSearchParams } from "react-router-dom";
 
 export default function MaintenancePlanner() {
-  const [searchParams] = useSearchParams();
-  const showJobsPanel = searchParams.get('view') === 'all-jobs';
-  
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
+  const [createJobDialogOpen, setCreateJobDialogOpen] = useState(false);
   const [selectedJob, setSelectedJob] = useState<any>(null);
   const [jobDetailDialogOpen, setJobDetailDialogOpen] = useState(false);
   const { toast } = useToast();
@@ -73,11 +70,6 @@ export default function MaintenancePlanner() {
     setJobDetailDialogOpen(true);
   };
 
-  // Show full jobs panel if requested
-  if (showJobsPanel) {
-    return <JobsPanel defaultView="all" />;
-  }
-
   return (
     <div className="container mx-auto p-6 space-y-6">
       <PlannerHeader
@@ -86,6 +78,7 @@ export default function MaintenancePlanner() {
         nextWindow={nextWindow ? { title: nextWindow.title, start: nextWindow.planned_start } : undefined}
         optimalCount={optimalWindows.length}
         onSchedule={() => setScheduleDialogOpen(true)}
+        onCreateJob={() => setCreateJobDialogOpen(true)}
       />
 
       <div className="grid lg:grid-cols-3 gap-6">
@@ -102,9 +95,9 @@ export default function MaintenancePlanner() {
             status={selectedDayStatus || null}
           />
 
-          <ActiveOperationsPanel
-            jobs={activeJobs}
+          <JobsManagementCard
             onJobClick={handleJobClick}
+            onCreateJob={() => setCreateJobDialogOpen(true)}
           />
 
           <ScheduledWindowsList
@@ -137,6 +130,12 @@ export default function MaintenancePlanner() {
         onOpenChange={setScheduleDialogOpen}
         clusters={clusters}
         serverGroups={serverGroups}
+        onSuccess={refetchData}
+      />
+
+      <CreateJobDialog
+        open={createJobDialogOpen}
+        onOpenChange={setCreateJobDialogOpen}
         onSuccess={refetchData}
       />
 
