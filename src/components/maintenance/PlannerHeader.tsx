@@ -8,7 +8,7 @@ interface PlannerHeaderProps {
   nextWindow?: { title: string; start: string };
   optimalCount: number;
   onSchedule: () => void;
-  onCreateJob: () => void;
+  onCreateOperation: (type: 'job' | 'maintenance') => void;
 }
 
 export function PlannerHeader({ 
@@ -17,7 +17,7 @@ export function PlannerHeader({
   nextWindow, 
   optimalCount,
   onSchedule,
-  onCreateJob
+  onCreateOperation
 }: PlannerHeaderProps) {
   return (
     <div className="space-y-4">
@@ -33,9 +33,9 @@ export function PlannerHeader({
             <Calendar className="mr-2 h-5 w-5" />
             Schedule Maintenance
           </Button>
-          <Button onClick={onCreateJob} variant="outline" size="lg">
+          <Button onClick={() => onCreateOperation('job')} variant="outline" size="lg">
             <Plus className="mr-2 h-5 w-5" />
-            Create Job
+            New Operation
           </Button>
         </div>
       </div>

@@ -6,8 +6,7 @@ import { useOptimalWindows } from "@/hooks/useOptimalWindows";
 import { PlannerHeader } from "@/components/maintenance/PlannerHeader";
 import { SafetyCalendar } from "@/components/maintenance/SafetyCalendar";
 import { DayDetailsPanel } from "@/components/maintenance/DayDetailsPanel";
-import { JobsManagementCard } from "@/components/maintenance/JobsManagementCard";
-import { ScheduledWindowsList } from "@/components/maintenance/ScheduledWindowsList";
+import { OperationsTimeline } from "@/components/maintenance/OperationsTimeline";
 import { OptimalWindowsSidebar } from "@/components/maintenance/OptimalWindowsSidebar";
 import { ClusterSafetyTrendChart } from "@/components/maintenance/ClusterSafetyTrendChart";
 import { ScheduleMaintenanceDialog } from "@/components/maintenance/dialogs/ScheduleMaintenanceDialog";
@@ -70,6 +69,14 @@ export default function MaintenancePlanner() {
     setJobDetailDialogOpen(true);
   };
 
+  const handleCreateOperation = (type: 'job' | 'maintenance') => {
+    if (type === 'job') {
+      setCreateJobDialogOpen(true);
+    } else {
+      setScheduleDialogOpen(true);
+    }
+  };
+
   return (
     <div className="container mx-auto p-6 space-y-6">
       <PlannerHeader
@@ -78,7 +85,7 @@ export default function MaintenancePlanner() {
         nextWindow={nextWindow ? { title: nextWindow.title, start: nextWindow.planned_start } : undefined}
         optimalCount={optimalWindows.length}
         onSchedule={() => setScheduleDialogOpen(true)}
-        onCreateJob={() => setCreateJobDialogOpen(true)}
+        onCreateOperation={handleCreateOperation}
       />
 
       <div className="grid lg:grid-cols-3 gap-6">
@@ -95,14 +102,10 @@ export default function MaintenancePlanner() {
             status={selectedDayStatus || null}
           />
 
-          <JobsManagementCard
+          <OperationsTimeline 
             onJobClick={handleJobClick}
-            onCreateJob={() => setCreateJobDialogOpen(true)}
-          />
-
-          <ScheduledWindowsList
-            windows={windows}
-            onDelete={handleDeleteWindow}
+            onWindowDelete={handleDeleteWindow}
+            onCreateOperation={handleCreateOperation}
           />
 
           <ClusterSafetyTrendChart
