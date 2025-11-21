@@ -28,8 +28,19 @@ export function useOptimalWindows(clusters: string[]) {
 
       try {
         setLoading(true);
+        
+        // Analyze from today to 90 days in the future
+        const startDate = new Date();
+        const endDate = new Date();
+        endDate.setDate(endDate.getDate() + 90);
+        
         const { data, error } = await supabase.functions.invoke('analyze-maintenance-windows', {
-          body: { clusters }
+          body: { 
+            clusters,
+            start_date: startDate.toISOString(),
+            end_date: endDate.toISOString(),
+            min_window_duration_hours: 4
+          }
         });
 
         if (error) throw error;
