@@ -414,7 +414,7 @@ const VCenter = () => {
     setSelectedHost(null);
   };
 
-  const selectedCluster = selectedClusterGroup 
+  const selectedCluster = selectedClusterGroup
     ? clusterGroups.find(c => c.name === selectedClusterGroup) || null
     : null;
 
@@ -446,46 +446,50 @@ const VCenter = () => {
       />
 
       {/* Main: Two Column Layout */}
-      <div className="flex-1 flex gap-4 p-4 overflow-hidden">
-        {/* Left: Filter + Table */}
-        <div className="flex-1 flex flex-col gap-4 min-w-0">
-          <div className="border rounded-lg overflow-hidden flex flex-col h-full">
-            <HostFilterToolbar
-              searchTerm={searchTerm}
-              onSearchChange={setSearchTerm}
-              clusterFilter={clusterFilter}
-              onClusterFilterChange={setClusterFilter}
-              statusFilter={statusFilter}
-              onStatusFilterChange={setStatusFilter}
-              linkFilter={linkFilter}
-              onLinkFilterChange={setLinkFilter}
-              clusters={uniqueClusters}
-            />
-            
-            <div className="flex-1 overflow-hidden">
-              <HostsTable
-                clusterGroups={clusterGroups}
-                selectedHostId={selectedHost?.id || null}
-                selectedCluster={selectedClusterGroup}
-                onHostClick={handleHostClick}
-                onClusterClick={handleClusterClick}
-                loading={loading}
-              />
+      <div className="flex-1 overflow-hidden px-4 pb-6 pt-4">
+        <div className="grid h-full gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(340px,1fr)] xl:items-start">
+          {/* Left: Filter + Table */}
+          <div className="flex min-w-0 flex-col gap-4">
+            <div className="flex h-full flex-col rounded-xl border bg-card shadow-sm">
+              <div className="border-b p-4">
+                <HostFilterToolbar
+                  searchTerm={searchTerm}
+                  onSearchChange={setSearchTerm}
+                  clusterFilter={clusterFilter}
+                  onClusterFilterChange={setClusterFilter}
+                  statusFilter={statusFilter}
+                  onStatusFilterChange={setStatusFilter}
+                  linkFilter={linkFilter}
+                  onLinkFilterChange={setLinkFilter}
+                  clusters={uniqueClusters}
+                />
+              </div>
+
+              <div className="flex-1 overflow-hidden p-2 sm:p-4">
+                <HostsTable
+                  clusterGroups={clusterGroups}
+                  selectedHostId={selectedHost?.id || null}
+                  selectedCluster={selectedClusterGroup}
+                  onHostClick={handleHostClick}
+                  onClusterClick={handleClusterClick}
+                  loading={loading}
+                />
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Right: Host Details Sidebar */}
-        <div className="w-[450px] flex-shrink-0">
-          <HostDetailsSidebar
-            selectedHost={selectedHost}
-            selectedCluster={selectedCluster}
-            onClusterUpdate={handleClusterUpdate}
-            onClose={() => {
-              setSelectedHost(null);
-              setSelectedClusterGroup(null);
-            }}
-          />
+          {/* Right: Host Details Sidebar */}
+          <div className="min-h-[320px] rounded-xl border bg-card shadow-sm">
+            <HostDetailsSidebar
+              selectedHost={selectedHost}
+              selectedCluster={selectedCluster}
+              onClusterUpdate={handleClusterUpdate}
+              onClose={() => {
+                setSelectedHost(null);
+                setSelectedClusterGroup(null);
+              }}
+            />
+          </div>
         </div>
       </div>
 
