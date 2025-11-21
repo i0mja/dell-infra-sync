@@ -33,53 +33,45 @@ export const ActivityStatsBar = ({
   };
 
   return (
-    <div className="border-b bg-card px-6 py-3 flex items-center justify-between">
-      <div className="flex items-center gap-6 text-sm">
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground">📊 Commands:</span>
-          <span className="font-medium">{totalCommands.toLocaleString()}</span>
+    <div className="border-b bg-card">
+      <div className="flex flex-col gap-3 px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-3 text-sm sm:gap-6">
+          <div className="flex items-center gap-2 whitespace-nowrap">
+            <span className="text-muted-foreground">📊 Commands:</span>
+            <span className="font-medium">{totalCommands.toLocaleString()}</span>
+          </div>
+          <div className="hidden h-4 w-px bg-border sm:block" />
+          <div className="flex items-center gap-2 whitespace-nowrap">
+            <span className="text-muted-foreground">✓ Success:</span>
+            <span className="font-medium">{successRate.toFixed(1)}%</span>
+          </div>
+          <div className="hidden h-4 w-px bg-border sm:block" />
+          <div className="flex items-center gap-2 whitespace-nowrap">
+            <span className="text-muted-foreground">⚡ Live Jobs:</span>
+            <span className="font-medium">{activeJobs}</span>
+          </div>
+          <div className="hidden h-4 w-px bg-border sm:block" />
+          <div className="flex items-center gap-2 whitespace-nowrap">
+            <span className="text-muted-foreground">🔴 Failed:</span>
+            <span className="font-medium text-destructive">{failedCount}</span>
+          </div>
         </div>
-        <div className="h-4 w-px bg-border" />
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground">✓ Success:</span>
-          <span className="font-medium">{successRate.toFixed(1)}%</span>
-        </div>
-        <div className="h-4 w-px bg-border" />
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground">⚡ Live Jobs:</span>
-          <span className="font-medium">{activeJobs}</span>
-        </div>
-        <div className="h-4 w-px bg-border" />
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground">🔴 Failed:</span>
-          <span className="font-medium text-destructive">{failedCount}</span>
-        </div>
-      </div>
 
-      <div className="flex items-center gap-3">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onRefresh}
-          className="h-8"
-        >
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Refresh
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onExport}
-          className="h-8"
-        >
-          <Download className="h-4 w-4 mr-2" />
-          Export
-        </Button>
-        <div className="flex items-center gap-2 ml-2">
-          <div className={`h-2 w-2 rounded-full ${statusColors[liveStatus]} animate-pulse`} />
-          <span className={`text-xs font-medium ${statusColors[liveStatus]}`}>
-            {statusLabels[liveStatus]}
-          </span>
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          <Button variant="ghost" size="sm" onClick={onRefresh} className="h-8">
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Refresh
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onExport} className="h-8">
+            <Download className="mr-2 h-4 w-4" />
+            Export
+          </Button>
+          <div className="flex items-center gap-2 sm:ml-2 sm:border-l sm:pl-2">
+            <div className={`h-2 w-2 rounded-full ${statusColors[liveStatus]} animate-pulse`} />
+            <span className={`text-xs font-medium ${statusColors[liveStatus]}`}>
+              {statusLabels[liveStatus]}
+            </span>
+          </div>
         </div>
       </div>
     </div>
