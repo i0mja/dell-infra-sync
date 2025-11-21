@@ -213,9 +213,11 @@ const Layout = () => {
         </header>
 
         {/* Main Content */}
-        <main className="flex-1 overflow-auto">
-          <div className="animate-in fade-in duration-300">
-            <Outlet key={location.pathname} />
+        <main className="flex-1 overflow-auto bg-background">
+          <div className="mx-auto w-full max-w-screen-2xl px-4 py-6 sm:px-6 lg:px-8">
+            <div className="animate-in fade-in duration-300">
+              <Outlet key={location.pathname} />
+            </div>
           </div>
         </main>
       </div>
