@@ -83,7 +83,7 @@ export const LocalModeHelper = ({ show }: LocalModeHelperProps) => {
           <Button
             size="sm"
             variant="outline"
-            onClick={() => window.open('/jobs', '_blank')}
+            onClick={() => window.open('/maintenance-planner?tab=jobs', '_blank')}
             className="gap-2"
           >
             <ExternalLink className="h-3 w-3" />

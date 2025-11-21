@@ -9,7 +9,6 @@ import Layout from "@/components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Auth from "./pages/Auth";
 import Servers from "./pages/Servers";
-import Jobs from "./pages/Jobs";
 import Settings from "./pages/Settings";
 import VCenter from "./pages/VCenter";
 import ActivityMonitor from "./pages/ActivityMonitor";
@@ -33,7 +32,6 @@ const App = () => (
         <Route path="servers" element={<Servers />} />
         <Route path="vcenter" element={<VCenter />} />
         <Route path="maintenance-planner" element={<MaintenancePlanner />} />
-        <Route path="jobs" element={<Jobs />} />
         <Route path="activity" element={<ActivityMonitor />} />
         <Route path="settings" element={<Settings />} />
               </Route>

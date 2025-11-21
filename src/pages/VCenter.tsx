@@ -293,7 +293,7 @@ const VCenter = () => {
           title: "Job Executor sync started",
           description: "Private network detected. Job queued for local Job Executor.",
           action: (
-            <Button variant="outline" size="sm" onClick={() => navigate('/jobs')}>
+            <Button variant="outline" size="sm" onClick={() => navigate('/maintenance-planner?tab=jobs')}>
               View Jobs
             </Button>
           ),
@@ -342,7 +342,7 @@ const VCenter = () => {
             title: "Switched to Job Executor",
             description: "Cloud could not reach vCenter. Job queued for local Job Executor.",
             action: (
-              <Button variant="outline" size="sm" onClick={() => navigate('/jobs')}>
+              <Button variant="outline" size="sm" onClick={() => navigate('/maintenance-planner?tab=jobs')}>
                 View Jobs
               </Button>
             ),
