@@ -910,7 +910,7 @@ export default function Settings() {
   const loadVirtualMediaSettings = async () => {
     try {
       const { data, error } = await supabase
-        .from('virtual_media_settings' as any)
+        .from('virtual_media_settings')
         .select('*')
         .limit(1)
         .maybeSingle();
@@ -958,20 +958,20 @@ export default function Settings() {
 
       if (vmSettingsId) {
         const { error } = await supabase
-          .from('virtual_media_settings' as any)
+          .from('virtual_media_settings')
           .update(payload)
           .eq('id', vmSettingsId);
 
         if (error) throw error;
       } else {
         const { data, error } = await supabase
-          .from('virtual_media_settings' as any)
+          .from('virtual_media_settings')
           .insert(payload)
           .select()
           .single();
 
         if (error) throw error;
-        setVmSettingsId(data.id);
+        if (data) setVmSettingsId(data.id);
       }
 
       toast({
