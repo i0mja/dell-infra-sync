@@ -270,39 +270,47 @@ export default function ActivityMonitor() {
 
       {jobs.length > 0 && <ActiveJobsBanner jobs={jobs} />}
 
-      <div className="flex-1 flex gap-4 p-4 overflow-hidden">
-        <div className="flex-1 flex flex-col gap-4 min-w-0">
-          <FilterToolbar
-            searchTerm={searchTerm}
-            onSearchChange={setSearchTerm}
-            operationType={operationTypeFilter}
-            onOperationTypeChange={setOperationTypeFilter}
-            selectedServer={serverFilter}
-            onServerChange={setServerFilter}
-            commandType={commandTypeFilter}
-            onCommandTypeChange={setCommandTypeFilter}
-            status={statusFilter}
-            onStatusChange={setStatusFilter}
-            source={commandSource}
-            onSourceChange={setCommandSource}
-            timeRange={timeRangeFilter}
-            onTimeRangeChange={setTimeRangeFilter}
-            servers={servers || []}
-          />
+      <div className="flex-1 overflow-hidden px-4 pb-6 pt-4">
+        <div className="grid h-full gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(340px,1fr)] xl:items-start">
+          <div className="flex min-w-0 flex-col gap-4">
+            <div className="flex h-full flex-col rounded-xl border bg-card shadow-sm">
+              <div className="border-b p-4">
+                <FilterToolbar
+                  searchTerm={searchTerm}
+                  onSearchChange={setSearchTerm}
+                  operationType={operationTypeFilter}
+                  onOperationTypeChange={setOperationTypeFilter}
+                  selectedServer={serverFilter}
+                  onServerChange={setServerFilter}
+                  commandType={commandTypeFilter}
+                  onCommandTypeChange={setCommandTypeFilter}
+                  status={statusFilter}
+                  onStatusChange={setStatusFilter}
+                  source={commandSource}
+                  onSourceChange={setCommandSource}
+                  timeRange={timeRangeFilter}
+                  onTimeRangeChange={setTimeRangeFilter}
+                  servers={servers || []}
+                />
+              </div>
 
-          <CommandsTable
-            commands={filteredCommands}
-            selectedId={selectedCommand?.id}
-            onRowClick={(cmd) => setSelectedCommand(cmd as IdracCommand)}
-            isLive={realtimeStatus === 'connected'}
-          />
-        </div>
+              <div className="flex-1 overflow-hidden p-2 sm:p-4">
+                <CommandsTable
+                  commands={filteredCommands}
+                  selectedId={selectedCommand?.id}
+                  onRowClick={(cmd) => setSelectedCommand(cmd as IdracCommand)}
+                  isLive={realtimeStatus === 'connected'}
+                />
+              </div>
+            </div>
+          </div>
 
-        <div className="w-[450px] flex-shrink-0">
-          <CommandDetailsSidebar
-            command={selectedCommand}
-            onClose={() => setSelectedCommand(null)}
-          />
+          <div className="min-h-[320px] rounded-xl border bg-card shadow-sm">
+            <CommandDetailsSidebar
+              command={selectedCommand}
+              onClose={() => setSelectedCommand(null)}
+            />
+          </div>
         </div>
       </div>
     </div>

@@ -245,34 +245,42 @@ export default function MaintenancePlanner() {
       />
 
       {/* Main Content: Two Column Layout */}
-      <div className="flex-1 flex gap-4 p-4 overflow-hidden">
-        {/* Left Column: Calendar + Operations Table */}
-        <div className="flex-1 flex flex-col gap-4 min-w-0">
-          <MiniCalendar
-            date={selectedDate}
-            onDateChange={setSelectedDate}
-            dailyStatus={dailyStatus}
-          />
+      <div className="flex-1 overflow-hidden px-4 pb-6 pt-4">
+        <div className="grid h-full gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)] xl:items-start">
+          {/* Left Column: Calendar + Operations Table */}
+          <div className="flex min-w-0 flex-col gap-4">
+            <div className="rounded-xl border bg-card shadow-sm">
+              <div className="p-4">
+                <MiniCalendar
+                  date={selectedDate}
+                  onDateChange={setSelectedDate}
+                  dailyStatus={dailyStatus}
+                />
+              </div>
+            </div>
 
-          <OperationsTable
-            operations={operations}
-            onRowClick={handleOperationClick}
-            onCancel={handleCancelJob}
-            onRetry={handleRetryJob}
-            onDelete={handleDeleteWindow}
-            canManage={canManage}
-          />
-        </div>
+            <div className="flex h-full flex-col rounded-xl border bg-card shadow-sm p-2 sm:p-4">
+              <OperationsTable
+                operations={operations}
+                onRowClick={handleOperationClick}
+                onCancel={handleCancelJob}
+                onRetry={handleRetryJob}
+                onDelete={handleDeleteWindow}
+                canManage={canManage}
+              />
+            </div>
+          </div>
 
-        {/* Right Column: Details Sidebar */}
-        <div className="w-[400px] flex-shrink-0">
-          <DetailsSidebar
-            selectedDate={selectedDate}
-            selectedOperation={selectedOperation}
-            dailyStatus={dailyStatus}
-            optimalWindows={optimalWindows}
-            onScheduleOptimal={handleScheduleOptimal}
-          />
+          {/* Right Column: Details Sidebar */}
+          <div className="min-h-[320px] rounded-xl border bg-card shadow-sm">
+            <DetailsSidebar
+              selectedDate={selectedDate}
+              selectedOperation={selectedOperation}
+              dailyStatus={dailyStatus}
+              optimalWindows={optimalWindows}
+              onScheduleOptimal={handleScheduleOptimal}
+            />
+          </div>
         </div>
       </div>
 

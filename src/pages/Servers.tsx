@@ -707,7 +707,7 @@ const Servers = () => {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Top: Compact Stats Bar */}
-      <ServerStatsBar 
+      <ServerStatsBar
         totalServers={servers.length}
         onlineCount={servers.filter(s => s.connection_status === 'online').length}
         offlineCount={servers.filter(s => s.connection_status === 'offline').length}
@@ -723,7 +723,7 @@ const Servers = () => {
       {/* Incomplete Servers Banner (conditional) */}
       {incompleteServers.length > 0 && showIncompleteBanner && (
         <div className="px-4 pt-4">
-          <IncompleteServersBanner 
+          <IncompleteServersBanner
             count={incompleteServers.length}
             onRefreshAll={handleRefreshIncomplete}
             onDismiss={() => setShowIncompleteBanner(false)}
@@ -731,75 +731,82 @@ const Servers = () => {
           />
         </div>
       )}
-      
+
       {/* Main: Two Column Layout */}
-      <div className="flex-1 flex gap-4 p-4 overflow-hidden">
-        
-        {/* Left: Servers Table */}
-        <div className="flex-1 flex flex-col gap-4 min-w-0">
-          <ServerFilterToolbar
-            searchTerm={searchTerm}
-            onSearchChange={setSearchTerm}
-            groupFilter={groupFilter}
-            onGroupFilterChange={setGroupFilter}
-            statusFilter={statusFilter}
-            onStatusFilterChange={setStatusFilter}
-            groups={serverGroups || []}
-            vCenterClusters={uniqueVCenterClusters}
-          />
-          
-          <ServersTable
-            servers={filteredServers}
-            groupedData={groupFilter !== 'all' || searchTerm ? null : organizeServersByGroup()}
-            selectedServerId={selectedServer?.id || null}
-            selectedGroupId={selectedGroup}
-            onServerClick={(server) => setSelectedServer(server as any)}
-            onGroupClick={setSelectedGroup}
-            loading={loading}
-            refreshing={refreshing}
-            healthCheckServer={healthCheckServer}
-            hasActiveHealthCheck={hasActiveHealthCheck}
-            isIncomplete={isIncompleteServer}
-            groupMemberships={groupMemberships}
-            vCenterHosts={vCenterHosts}
-          />
-        </div>
-        
-        {/* Right: Server Details */}
-        <div className="w-[480px] flex-shrink-0">
-          <ServerDetailsSidebar
-            selectedServer={selectedServer}
-            selectedGroup={selectedGroup ? organizeServersByGroup().find(g => 
-              g.group?.id === selectedGroup || g.cluster === selectedGroup.replace(' (vCenter)', '')
-            ) || null : null}
-            servers={servers}
-            groupMemberships={groupMemberships}
-            vCenterHosts={vCenterHosts}
-            onClose={() => {
-              setSelectedServer(null);
-              setSelectedGroup(null);
-            }}
-            onEdit={(s: any) => { setSelectedServer(s); setEditDialogOpen(true); }}
-            onDelete={(s: any) => { setSelectedServer(s); setDeleteDialogOpen(true); }}
-            onTestConnection={(s: any) => handleTestConnection(s)}
-            onRefreshInfo={(s: any) => handleRefreshInfo(s)}
-            onHealthCheck={(s: any) => handleRunHealthCheck(s)}
-            onPowerControl={(s: any) => { setSelectedServer(s); setPowerControlDialogOpen(true); }}
-            onBiosConfig={(s: any) => { setSelectedServer(s); setBiosConfigDialogOpen(true); }}
-            onBootConfig={(s: any) => { setSelectedServer(s); setBootConfigDialogOpen(true); }}
-            onVirtualMedia={(s: any) => { setSelectedServer(s); setVirtualMediaDialogOpen(true); }}
-            onScpBackup={(s: any) => { setSelectedServer(s); setScpBackupDialogOpen(true); }}
-            onViewAudit={(s: any) => { setSelectedServer(s); setAuditDialogOpen(true); }}
-            onViewProperties={(s: any) => { setSelectedServer(s); setPropertiesDialogOpen(true); }}
-            onViewHealth={(s: any) => { setSelectedServer(s); setHealthDialogOpen(true); }}
-            onViewEventLog={(s: any) => { setSelectedServer(s); setEventLogDialogOpen(true); }}
-            onLinkVCenter={(s: any) => { setSelectedServer(s); setLinkDialogOpen(true); }}
-            onAssignCredentials={(s: any) => { setSelectedServer(s); setAssignCredentialsDialogOpen(true); }}
-            onCreateJob={(s: any) => { setSelectedServer(s); setJobDialogOpen(true); }}
-            onWorkflow={(s: any) => { setSelectedServer(s); setWorkflowDialogOpen(true); }}
-            onPreFlight={(s: any) => { setSelectedServer(s); setPreFlightCheckDialogOpen(true); }}
-            refreshing={refreshing}
-          />
+      <div className="flex-1 overflow-hidden px-4 pb-6 pt-4">
+        <div className="grid h-full gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(360px,1fr)] xl:items-start">
+          {/* Left: Servers Table */}
+          <div className="flex min-w-0 flex-col gap-4">
+            <div className="flex h-full flex-col rounded-xl border bg-card shadow-sm">
+              <div className="border-b p-4">
+                <ServerFilterToolbar
+                  searchTerm={searchTerm}
+                  onSearchChange={setSearchTerm}
+                  groupFilter={groupFilter}
+                  onGroupFilterChange={setGroupFilter}
+                  statusFilter={statusFilter}
+                  onStatusFilterChange={setStatusFilter}
+                  groups={serverGroups || []}
+                  vCenterClusters={uniqueVCenterClusters}
+                />
+              </div>
+
+              <div className="flex-1 overflow-hidden p-2 sm:p-4">
+                <ServersTable
+                  servers={filteredServers}
+                  groupedData={groupFilter !== 'all' || searchTerm ? null : organizeServersByGroup()}
+                  selectedServerId={selectedServer?.id || null}
+                  selectedGroupId={selectedGroup}
+                  onServerClick={(server) => setSelectedServer(server as any)}
+                  onGroupClick={setSelectedGroup}
+                  loading={loading}
+                  refreshing={refreshing}
+                  healthCheckServer={healthCheckServer}
+                  hasActiveHealthCheck={hasActiveHealthCheck}
+                  isIncomplete={isIncompleteServer}
+                  groupMemberships={groupMemberships}
+                  vCenterHosts={vCenterHosts}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Right: Server Details */}
+          <div className="min-h-[320px] rounded-xl border bg-card shadow-sm">
+            <ServerDetailsSidebar
+              selectedServer={selectedServer}
+              selectedGroup={selectedGroup ? organizeServersByGroup().find(g =>
+                g.group?.id === selectedGroup || g.cluster === selectedGroup.replace(' (vCenter)', '')
+              ) || null : null}
+              servers={servers}
+              groupMemberships={groupMemberships}
+              vCenterHosts={vCenterHosts}
+              onClose={() => {
+                setSelectedServer(null);
+                setSelectedGroup(null);
+              }}
+              onEdit={(s: any) => { setSelectedServer(s); setEditDialogOpen(true); }}
+              onDelete={(s: any) => { setSelectedServer(s); setDeleteDialogOpen(true); }}
+              onTestConnection={(s: any) => handleTestConnection(s)}
+              onRefreshInfo={(s: any) => handleRefreshInfo(s)}
+              onHealthCheck={(s: any) => handleRunHealthCheck(s)}
+              onPowerControl={(s: any) => { setSelectedServer(s); setPowerControlDialogOpen(true); }}
+              onBiosConfig={(s: any) => { setSelectedServer(s); setBiosConfigDialogOpen(true); }}
+              onBootConfig={(s: any) => { setSelectedServer(s); setBootConfigDialogOpen(true); }}
+              onVirtualMedia={(s: any) => { setSelectedServer(s); setVirtualMediaDialogOpen(true); }}
+              onScpBackup={(s: any) => { setSelectedServer(s); setScpBackupDialogOpen(true); }}
+              onViewAudit={(s: any) => { setSelectedServer(s); setAuditDialogOpen(true); }}
+              onViewProperties={(s: any) => { setSelectedServer(s); setPropertiesDialogOpen(true); }}
+              onViewHealth={(s: any) => { setSelectedServer(s); setHealthDialogOpen(true); }}
+              onViewEventLog={(s: any) => { setSelectedServer(s); setEventLogDialogOpen(true); }}
+              onLinkVCenter={(s: any) => { setSelectedServer(s); setLinkDialogOpen(true); }}
+              onAssignCredentials={(s: any) => { setSelectedServer(s); setAssignCredentialsDialogOpen(true); }}
+              onCreateJob={(s: any) => { setSelectedServer(s); setJobDialogOpen(true); }}
+              onWorkflow={(s: any) => { setSelectedServer(s); setWorkflowDialogOpen(true); }}
+              onPreFlight={(s: any) => { setSelectedServer(s); setPreFlightCheckDialogOpen(true); }}
+              refreshing={refreshing}
+            />
+          </div>
         </div>
       </div>
       
