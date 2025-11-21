@@ -1,17 +1,16 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Database, RefreshCw, Link as LinkIcon, Search, Settings, RefreshCcw, Activity } from "lucide-react";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { InfoIcon, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Loader2 } from "lucide-react";
 import { VCenterSettingsDialog } from "@/components/vcenter/VCenterSettingsDialog";
 import { VCenterConnectivityDialog } from "@/components/vcenter/VCenterConnectivityDialog";
 import { ClusterUpdateWizard } from "@/components/jobs/ClusterUpdateWizard";
+import { VCenterStatsBar } from "@/components/vcenter/VCenterStatsBar";
+import { HostFilterToolbar } from "@/components/vcenter/HostFilterToolbar";
+import { HostsTable } from "@/components/vcenter/HostsTable";
+import { HostDetailsSidebar } from "@/components/vcenter/HostDetailsSidebar";
+import { ModeBanner } from "@/components/vcenter/ModeBanner";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 
@@ -40,6 +39,9 @@ const VCenter = () => {
   const [hosts, setHosts] = useState<VCenterHost[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [clusterFilter, setClusterFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [linkFilter, setLinkFilter] = useState("all");
   const [syncing, setSyncing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [vcenterHost, setVCenterHost] = useState<string | null>(null);
@@ -47,7 +49,9 @@ const VCenter = () => {
   const [testResults, setTestResults] = useState<any>(null);
   const [testDialogOpen, setTestDialogOpen] = useState(false);
   const [clusterWizardOpen, setClusterWizardOpen] = useState(false);
-  const [selectedCluster, setSelectedCluster] = useState<string>('');
+  const [selectedClusterName, setSelectedClusterName] = useState<string>('');
+  const [selectedHost, setSelectedHost] = useState<VCenterHost | null>(null);
+  const [selectedClusterGroup, setSelectedClusterGroup] = useState<string | null>(null);
   const { toast } = useToast();
   
   // Detect local mode
@@ -139,11 +143,32 @@ const VCenter = () => {
     };
   }, []);
 
-  const filteredHosts = hosts.filter((host) =>
-    host.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    host.cluster?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    host.serial_number?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredHosts = hosts.filter((host) => {
+    // Search filter
+    const matchesSearch = 
+      host.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      host.cluster?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      host.serial_number?.toLowerCase().includes(searchTerm.toLowerCase());
+
+    // Cluster filter
+    const matchesCluster = 
+      clusterFilter === "all" || 
+      (host.cluster || "Unclustered") === clusterFilter;
+
+    // Status filter
+    const matchesStatus = 
+      statusFilter === "all" ||
+      (statusFilter === "maintenance" && host.maintenance_mode) ||
+      (statusFilter !== "maintenance" && host.status?.toLowerCase() === statusFilter);
+
+    // Link filter
+    const matchesLink = 
+      linkFilter === "all" ||
+      (linkFilter === "linked" && host.server_id) ||
+      (linkFilter === "unlinked" && !host.server_id);
+
+    return matchesSearch && matchesCluster && matchesStatus && matchesLink;
+  });
 
   // Group hosts by cluster
   const clusterGroups: ClusterGroup[] = filteredHosts.reduce((acc, host) => {
@@ -162,6 +187,19 @@ const VCenter = () => {
   const totalHosts = hosts.length;
   const linkedHosts = hosts.filter(h => h.server_id).length;
   const unlinkedHosts = totalHosts - linkedHosts;
+  
+  // Get latest sync time
+  const lastSyncTime = hosts.reduce((latest, host) => {
+    if (!host.last_sync) return latest;
+    const hostTime = new Date(host.last_sync);
+    return !latest || hostTime > new Date(latest) ? hostTime.toISOString() : latest;
+  }, null as string | null);
+
+  // Check if there are active clusters (not just "Unclustered")
+  const hasActiveClusters = clusterGroups.some(c => c.name !== "Unclustered");
+
+  // Get unique cluster names for filter
+  const uniqueClusters = Array.from(new Set(hosts.map(h => h.cluster || "Unclustered")));
 
   const handleTestConnectivity = async () => {
     try {
@@ -362,112 +400,96 @@ const VCenter = () => {
   };
 
   const handleClusterUpdate = (clusterName?: string) => {
-    setSelectedCluster(clusterName || '');
+    setSelectedClusterName(clusterName || '');
     setClusterWizardOpen(true);
   };
 
-  const getStatusColor = (status: string | null) => {
-    switch (status?.toLowerCase()) {
-      case 'connected':
-        return 'text-success';
-      case 'disconnected':
-        return 'text-destructive';
-      default:
-        return 'text-muted-foreground';
-    }
+  const handleHostClick = (host: VCenterHost) => {
+    setSelectedHost(host);
+    setSelectedClusterGroup(null);
   };
 
+  const handleClusterClick = (clusterName: string) => {
+    setSelectedClusterGroup(clusterName);
+    setSelectedHost(null);
+  };
+
+  const selectedCluster = selectedClusterGroup 
+    ? clusterGroups.find(c => c.name === selectedClusterGroup) || null
+    : null;
+
   return (
-    <div className="container mx-auto p-6">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-bold mb-2">vCenter Integration</h1>
-          <p className="text-muted-foreground">
-            VMware vCenter ESXi hosts and cluster management
-          </p>
+    <div className="flex flex-col h-screen overflow-hidden">
+      {/* Top: Compact Stats Bar */}
+      <VCenterStatsBar
+        totalHosts={totalHosts}
+        linkedHosts={linkedHosts}
+        unlinkedHosts={unlinkedHosts}
+        lastSync={lastSyncTime}
+        mode={useJobExecutorPath ? 'job-executor' : 'cloud'}
+        syncing={syncing}
+        testing={testing}
+        onSettings={() => setSettingsOpen(true)}
+        onTest={handleTestConnectivity}
+        onSync={handleSyncNow}
+        onRefresh={fetchHosts}
+        onClusterUpdate={() => handleClusterUpdate()}
+        hasActiveClusters={hasActiveClusters}
+      />
+
+      {/* Mode Banner (conditional) */}
+      <ModeBanner
+        mode={useJobExecutorPath ? 'job-executor' : 'cloud'}
+        vcenterHost={vcenterHost}
+        isLocal={isLocalMode}
+        isPrivate={isPrivateHost}
+      />
+
+      {/* Main: Two Column Layout */}
+      <div className="flex-1 flex gap-4 p-4 overflow-hidden">
+        {/* Left: Filter + Table */}
+        <div className="flex-1 flex flex-col gap-4 min-w-0">
+          <div className="border rounded-lg overflow-hidden flex flex-col h-full">
+            <HostFilterToolbar
+              searchTerm={searchTerm}
+              onSearchChange={setSearchTerm}
+              clusterFilter={clusterFilter}
+              onClusterFilterChange={setClusterFilter}
+              statusFilter={statusFilter}
+              onStatusFilterChange={setStatusFilter}
+              linkFilter={linkFilter}
+              onLinkFilterChange={setLinkFilter}
+              clusters={uniqueClusters}
+            />
+            
+            <div className="flex-1 overflow-hidden">
+              <HostsTable
+                clusterGroups={clusterGroups}
+                selectedHostId={selectedHost?.id || null}
+                selectedCluster={selectedClusterGroup}
+                onHostClick={handleHostClick}
+                onClusterClick={handleClusterClick}
+                loading={loading}
+              />
+            </div>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setSettingsOpen(true)}>
-            <Settings className="mr-2 h-4 w-4" />
-            Settings
-          </Button>
-          <Button 
-            variant="outline"
-            onClick={handleTestConnectivity}
-            disabled={testing}
-          >
-            {testing ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Testing...
-              </>
-            ) : (
-              <>
-                <Activity className="h-4 w-4 mr-2" />
-                Test Connectivity
-              </>
-            )}
-          </Button>
-          <Button 
-            variant="default" 
-            onClick={() => handleClusterUpdate()}
-            disabled={clusterGroups.length === 0 || clusterGroups.every(c => c.name === "Unclustered")}
-          >
-            <RefreshCcw className="mr-2 h-4 w-4" />
-            Rolling Cluster Update
-          </Button>
-          <Button onClick={handleSyncNow} disabled={syncing}>
-            {syncing ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Syncing...
-              </>
-            ) : (
-              <>
-                <RefreshCcw className="mr-2 h-4 w-4" />
-                Sync Now
-              </>
-            )}
-          </Button>
-          <Button variant="outline" size="icon" onClick={fetchHosts}>
-            <RefreshCw className="h-4 w-4" />
-          </Button>
+
+        {/* Right: Host Details Sidebar */}
+        <div className="w-[450px] flex-shrink-0">
+          <HostDetailsSidebar
+            selectedHost={selectedHost}
+            selectedCluster={selectedCluster}
+            onClusterUpdate={handleClusterUpdate}
+            onClose={() => {
+              setSelectedHost(null);
+              setSelectedClusterGroup(null);
+            }}
+          />
         </div>
       </div>
 
-      <Alert className="mb-6">
-        <InfoIcon className="h-4 w-4" />
-        <AlertTitle>
-          {useJobExecutorPath ? "Job Executor Mode" : "Cloud Sync Mode"}
-        </AlertTitle>
-        <AlertDescription>
-          {useJobExecutorPath ? (
-            <>
-              {isLocalMode && <span className="font-medium">Local deployment detected. </span>}
-              {isPrivateHost && vcenterHost && (
-                <span className="font-medium">Private vCenter detected ({vcenterHost}). </span>
-              )}
-              Clicking "Sync Now" will create a job for the Job Executor to process.
-              Ensure the Job Executor is running on your local network. Check{" "}
-              <Button 
-                variant="link" 
-                className="h-auto p-0 text-xs" 
-                onClick={() => navigate('/settings?tab=diagnostics')}
-              >
-                Settings → Diagnostics
-              </Button>{" "}
-              for Job Executor status.
-            </>
-          ) : (
-            <>
-              {vcenterHost && <span className="font-medium">Public vCenter configured ({vcenterHost}). </span>}
-              Click "Sync Now" to directly sync ESXi host data. If the cloud cannot reach your vCenter, 
-              the system will automatically fall back to using the Job Executor.
-            </>
-          )}
-        </AlertDescription>
-      </Alert>
-
+      {/* Dialogs */}
       <VCenterSettingsDialog 
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
@@ -483,188 +505,10 @@ const VCenter = () => {
         results={testResults}
       />
 
-      <div className="grid gap-6 md:grid-cols-3 mb-6">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Hosts</CardTitle>
-            <Database className="h-4 w-4 text-primary" />
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <Skeleton className="h-8 w-20" />
-            ) : (
-              <>
-                <div className="text-2xl font-bold">{totalHosts}</div>
-                <p className="text-xs text-muted-foreground">ESXi hosts in vCenter</p>
-              </>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Linked</CardTitle>
-            <LinkIcon className="h-4 w-4 text-success" />
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <Skeleton className="h-8 w-20" />
-            ) : (
-              <>
-                <div className="text-2xl font-bold">{linkedHosts}</div>
-                <p className="text-xs text-muted-foreground">Mapped to physical servers</p>
-              </>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Unlinked</CardTitle>
-            <LinkIcon className="h-4 w-4 text-warning" />
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <Skeleton className="h-8 w-20" />
-            ) : (
-              <>
-                <div className="text-2xl font-bold">{unlinkedHosts}</div>
-                <p className="text-xs text-muted-foreground">Need physical mapping</p>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle>Search Hosts</CardTitle>
-          <CardDescription>Filter by hostname, cluster, or serial number</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="relative">
-            <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search ESXi hosts..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10"
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      {loading ? (
-        <div className="space-y-4">
-          {[1, 2, 3].map((i) => (
-            <Card key={i}>
-              <CardContent className="p-6">
-                <Skeleton className="h-20 w-full" />
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      ) : clusterGroups.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center p-12 text-center">
-            <Database className="h-12 w-12 text-muted-foreground mb-4" />
-            <p className="text-lg font-medium mb-2">No vCenter hosts found</p>
-            <p className="text-muted-foreground mb-4">
-              {searchTerm
-                ? "Try a different search term"
-                : "Sync your vCenter data using the Python sync script to see ESXi hosts here"}
-            </p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-6">
-          {clusterGroups.map((cluster) => (
-            <Card key={cluster.name}>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-xl">{cluster.name}</CardTitle>
-                    <CardDescription>
-                      {cluster.hosts.length} ESXi hosts • 
-                      {cluster.hosts.filter(h => h.server_id).length} linked • 
-                      {cluster.hosts.filter(h => h.status === 'connected').length} connected
-                    </CardDescription>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {cluster.name !== "Unclustered" && (
-                      <>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleClusterUpdate(cluster.name)}
-                          disabled={cluster.hosts.filter(h => h.server_id && h.status === 'connected').length < 2}
-                        >
-                          <RefreshCcw className="mr-2 h-3 w-3" />
-                          Update Cluster
-                        </Button>
-                        <Badge variant="outline">Cluster</Badge>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {cluster.hosts.map((host) => (
-                    <div key={host.id} className="p-4 border rounded-lg hover:bg-accent/50 transition-colors">
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <div className="flex items-center gap-2 mb-1">
-                            <h4 className="font-semibold">{host.name}</h4>
-                            {host.server_id ? (
-                              <Badge variant="secondary">Linked</Badge>
-                            ) : (
-                              <Badge variant="outline">Unlinked</Badge>
-                            )}
-                            {host.maintenance_mode && (
-                              <Badge variant="destructive">Maintenance</Badge>
-                            )}
-                          </div>
-                          <p className={`text-sm ${getStatusColor(host.status)}`}>
-                            Status: {host.status || 'Unknown'}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                        <div>
-                          <span className="text-muted-foreground">Serial Number:</span>
-                          <p className="font-medium">{host.serial_number || "N/A"}</p>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">ESXi Version:</span>
-                          <p className="font-medium">{host.esxi_version || "N/A"}</p>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">vCenter ID:</span>
-                          <p className="font-medium text-xs">{host.vcenter_id || "N/A"}</p>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">Last Sync:</span>
-                          <p className="font-medium text-xs">
-                            {host.last_sync 
-                              ? new Date(host.last_sync).toLocaleString() 
-                              : "Never"}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-
       <ClusterUpdateWizard
         open={clusterWizardOpen}
         onOpenChange={setClusterWizardOpen}
-        preSelectedCluster={selectedCluster}
+        preSelectedCluster={selectedClusterName}
       />
     </div>
   );
