@@ -214,7 +214,7 @@ const Layout = () => {
 
         {/* Main Content */}
         <main className="flex-1 overflow-auto">
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
+          <div className="animate-in fade-in duration-300">
             <Outlet key={location.pathname} />
           </div>
         </main>
