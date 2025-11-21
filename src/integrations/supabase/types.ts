@@ -1759,6 +1759,48 @@ export type Database = {
           },
         ]
       }
+      virtual_media_settings: {
+        Row: {
+          created_at: string
+          export_path: string | null
+          host: string
+          id: string
+          iso_path: string | null
+          notes: string | null
+          password: string | null
+          share_type: string
+          updated_at: string
+          use_auth: boolean
+          username: string | null
+        }
+        Insert: {
+          created_at?: string
+          export_path?: string | null
+          host: string
+          id?: string
+          iso_path?: string | null
+          notes?: string | null
+          password?: string | null
+          share_type?: string
+          updated_at?: string
+          use_auth?: boolean
+          username?: string | null
+        }
+        Update: {
+          created_at?: string
+          export_path?: string | null
+          host?: string
+          id?: string
+          iso_path?: string | null
+          notes?: string | null
+          password?: string | null
+          share_type?: string
+          updated_at?: string
+          use_auth?: boolean
+          username?: string | null
+        }
+        Relationships: []
+      }
       workflow_executions: {
         Row: {
           cluster_id: string | null
