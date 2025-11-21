@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useLocation } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { MaintenanceCalendarView } from "@/components/maintenance/MaintenanceCalendarView";
 import { OptimalWindowsSidebar } from "@/components/maintenance/OptimalWindowsSidebar";
@@ -12,6 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { JobsPanel } from "@/components/jobs/JobsPanel";
 import { Calendar, Plus } from "lucide-react";
 import { format, subMonths, addMonths, startOfMonth, endOfMonth } from "date-fns";
 
@@ -41,9 +42,11 @@ interface ClusterSafetyDay {
 export default function MaintenancePlanner() {
   const { toast } = useToast();
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [prefilledData, setPrefilledData] = useState<any>(null);
+  const activeTab = searchParams.get('tab') || 'planner';
 
   // Handle navigation state for opening dialog with prefilled data
   useEffect(() => {
@@ -349,6 +352,17 @@ export default function MaintenancePlanner() {
         </div>
       </div>
 
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => setSearchParams({ tab: value })}
+        className="space-y-6"
+      >
+        <TabsList className="w-full justify-start overflow-x-auto">
+          <TabsTrigger value="planner">Planner</TabsTrigger>
+          <TabsTrigger value="jobs">Jobs</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="planner" className="space-y-6">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
         <Card>
           <CardHeader>
@@ -579,6 +593,13 @@ export default function MaintenancePlanner() {
           maintenanceWindows={maintenanceWindows?.filter(w => w.status === 'planned') || []}
         />
       )}
+
+        </TabsContent>
+
+        <TabsContent value="jobs">
+          <JobsPanel />
+        </TabsContent>
+      </Tabs>
 
       <CreateMaintenanceWindowDialog
         open={createDialogOpen}

@@ -1,19 +1,39 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Briefcase, Plus, RefreshCw, Clock, CheckCircle, XCircle, PlayCircle, RotateCcw, FileText, Settings, Calendar, Filter, BarChart3, AlertCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { CreateJobDialog } from "@/components/jobs/CreateJobDialog";
 import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger
+} from "@/components/ui/context-menu";
 import { useAuth } from "@/hooks/useAuth";
-import { Link, useSearchParams } from "react-router-dom";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
+import {
+  Briefcase,
+  CheckCircle,
+  Clock,
+  FileText,
+  PlayCircle,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Settings,
+  XCircle,
+  Calendar,
+  Filter,
+  BarChart3,
+  AlertCircle
+} from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Link } from "react-router-dom";
 
 interface Job {
   id: string;
@@ -57,7 +77,9 @@ const viewMetadata = {
   },
 };
 
-const Jobs = () => {
+type JobView = keyof typeof viewMetadata;
+
+export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -65,13 +87,12 @@ const Jobs = () => {
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
   const [subJobCounts, setSubJobCounts] = useState<Record<string, number>>({});
   const [staleThresholds, setStaleThresholds] = useState({ pending: 24, running: 48 });
-  const [searchParams] = useSearchParams();
   const [selectedJobType, setSelectedJobType] = useState<string>("all");
+  const [view, setView] = useState<JobView>(defaultView);
   const { toast } = useToast();
   const { userRole } = useAuth();
-  
-  const view = searchParams.get('view') || 'all';
-  const currentView = viewMetadata[view as keyof typeof viewMetadata] || viewMetadata.all;
+
+  const currentView = viewMetadata[view] || viewMetadata.all;
   const canManageJobs = userRole === 'admin' || userRole === 'operator';
 
   const fetchJobs = async () => {
@@ -86,7 +107,6 @@ const Jobs = () => {
       if (error) throw error;
       setJobs(data || []);
 
-      // Fetch sub-job counts for full_server_update jobs
       const fullUpdateJobs = (data || []).filter(j => j.job_type === 'full_server_update');
       if (fullUpdateJobs.length > 0) {
         const counts: Record<string, number> = {};
@@ -114,7 +134,6 @@ const Jobs = () => {
     fetchJobs();
     fetchStaleThresholds();
 
-    // Set up realtime subscription
     const channel = supabase
       .channel('jobs-changes')
       .on(
@@ -125,7 +144,6 @@ const Jobs = () => {
           table: 'jobs'
         },
         () => {
-          console.log('Jobs updated, refreshing...');
           fetchJobs();
         }
       )
@@ -143,7 +161,7 @@ const Jobs = () => {
         .select('stale_pending_hours, stale_running_hours')
         .limit(1)
         .maybeSingle();
-      
+
       if (data) {
         setStaleThresholds({
           pending: data.stale_pending_hours || 24,
@@ -168,13 +186,13 @@ const Jobs = () => {
   };
 
   const getJobAge = (job: Job): string => {
-    const referenceDate = job.status === 'running' && job.started_at 
-      ? new Date(job.started_at) 
+    const referenceDate = job.status === 'running' && job.started_at
+      ? new Date(job.started_at)
       : new Date(job.created_at);
-    
+
     const hoursOld = (new Date().getTime() - referenceDate.getTime()) / (1000 * 60 * 60);
     const daysOld = Math.floor(hoursOld / 24);
-    
+
     if (daysOld > 0) {
       return `${daysOld} day${daysOld !== 1 ? 's' : ''}`;
     }
@@ -217,10 +235,9 @@ const Jobs = () => {
     return labels[type] || type;
   };
 
-  const filterJobs = (filterView: string) => {
+  const filterJobs = (filterView: JobView) => {
     let filtered = jobs;
 
-    // Filter by view
     if (filterView === 'active') {
       filtered = filtered.filter(j => j.status === 'pending' || j.status === 'running');
     } else if (filterView === 'completed') {
@@ -231,7 +248,6 @@ const Jobs = () => {
       filtered = filtered.filter(j => j.schedule_at !== null && j.status === 'pending');
     }
 
-    // Filter by job type if not 'all'
     if (selectedJobType !== 'all') {
       filtered = filtered.filter(j => j.job_type === selectedJobType);
     }
@@ -262,7 +278,6 @@ const Jobs = () => {
 
       if (error) throw error;
 
-
       toast({
         title: "Job cancelled",
         description: "The job has been cancelled successfully",
@@ -289,7 +304,7 @@ const Jobs = () => {
 
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      
+
       const { data: result, error } = await supabase.functions.invoke('create-job', {
         body: {
           job_type: job.job_type as "firmware_update" | "discovery_scan" | "vcenter_sync" | "full_server_update",
@@ -321,7 +336,9 @@ const Jobs = () => {
     setDetailDialogOpen(true);
   };
 
-  const renderJobsList = (filteredJobs: Job[]) => {
+  const filteredJobs = useMemo(() => filterJobs(view), [jobs, view, selectedJobType]);
+
+  const renderJobsList = () => {
     if (loading) {
       return (
         <div className="space-y-4">
@@ -341,16 +358,22 @@ const Jobs = () => {
         <Card>
           <CardContent className="flex flex-col items-center justify-center p-12 text-center">
             <currentView.icon className="h-12 w-12 text-muted-foreground mb-4" />
-            <p className="text-lg font-medium mb-2">No jobs found</p>
-            <p className="text-muted-foreground mb-4">
-              {view === 'scheduled' 
-                ? "No jobs are scheduled for future execution"
-                : "Create your first job to start automating server management"}
+            <p className="text-lg font-semibold mb-2">No {currentView.title.toLowerCase()}</p>
+            <p className="text-muted-foreground mb-6">
+              {currentView.description}
             </p>
-            <Button onClick={() => setCreateDialogOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Create Job
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={() => setCreateDialogOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Create Job
+              </Button>
+              <Button variant="outline" asChild>
+                <Link to="/settings?tab=jobs">
+                  <Settings className="mr-2 h-4 w-4" />
+                  Configure
+                </Link>
+              </Button>
+            </div>
           </CardContent>
         </Card>
       );
@@ -361,88 +384,100 @@ const Jobs = () => {
         {filteredJobs.map((job) => (
           <ContextMenu key={job.id}>
             <ContextMenuTrigger asChild>
-              <Card 
-                className="hover:shadow-md transition-shadow cursor-pointer"
-                onClick={() => {
-                  setSelectedJob(job);
-                  setDetailDialogOpen(true);
-                }}
+              <Card
+                className="hover:border-primary/50 transition-colors cursor-pointer"
+                onClick={() => handleViewDetails(job)}
               >
-                <CardContent className="p-6">
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-center gap-3">
-                      {getStatusIcon(job.status)}
-                      <div>
-                        <h3 className="text-lg font-semibold">{getJobTypeLabel(job.job_type)}</h3>
-                        <p className="text-sm text-muted-foreground">
-                          Created {new Date(job.created_at).toLocaleString()}
-                        </p>
+                <CardContent className="p-6 space-y-4">
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-lg bg-primary/10">
+                          {getStatusIcon(job.status)}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-lg font-semibold flex items-center gap-2">
+                              {getJobTypeLabel(job.job_type)}
+                              {job.status === 'running' && (
+                                <Badge variant="secondary" className="animate-pulse bg-primary/10 text-primary border-primary/20">
+                                  Live
+                                </Badge>
+                              )}
+                              {isJobStale(job) && (
+                                <Badge variant="destructive" className="flex items-center gap-1">
+                                  <AlertCircle className="h-3 w-3" />
+                                  Stale
+                                </Badge>
+                              )}
+                            </h3>
+                          </div>
+                          <p className="text-sm text-muted-foreground">
+                            Created {new Date(job.created_at).toLocaleString()} by {job.created_by || 'system'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {getStatusBadge(job.status)}
+                        <Badge variant="outline">
+                          <BarChart3 className="h-3 w-3 mr-1" />
+                          {getJobAge(job)}
+                        </Badge>
                       </div>
                     </div>
-                    <div className="flex gap-2">
-                      {getStatusBadge(job.status)}
-                      {isJobStale(job) && (
-                        <Badge variant="outline" className="border-warning text-warning">
-                          ⚠️ Stuck ({getJobAge(job)})
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
 
-                  {/* Error Message Preview */}
-                  {job.status === 'failed' && job.details?.error && (
-                    <div className="mt-3 p-3 bg-destructive/10 rounded-lg border border-destructive/20">
-                      <div className="flex items-start gap-2">
-                        <AlertCircle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
+                    {job.details?.error && job.status === 'failed' && (
+                      <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/5 p-3 rounded-lg">
+                        <AlertCircle className="h-4 w-4 mt-0.5" />
                         <div className="text-sm">
                           <span className="font-medium text-destructive">Error: </span>
                           <span className="font-mono text-destructive/80">
-                            {job.details.error.length > 100 
-                              ? `${job.details.error.substring(0, 100)}...` 
+                            {job.details.error.length > 100
+                              ? `${job.details.error.substring(0, 100)}...`
                               : job.details.error}
                           </span>
                         </div>
                       </div>
-                    </div>
-                  )}
-                  
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                    <div>
-                      <span className="text-muted-foreground">Started:</span>
-                      <p className="font-medium">
-                        {job.started_at ? new Date(job.started_at).toLocaleString() : "Not started"}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Completed:</span>
-                      <p className="font-medium">
-                        {job.completed_at ? new Date(job.completed_at).toLocaleString() : "-"}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">
-                        {job.job_type === 'full_server_update' ? 'Components:' : 'Target:'}
-                      </span>
-                      <p className="font-medium">
-                        {job.job_type === 'full_server_update' 
-                          ? `${subJobCounts[job.id] || 0} component updates`
-                          : (job.target_scope?.cluster_name || 
-                             (job.target_scope?.server_ids ? `${job.target_scope.server_ids.length} servers` : "N/A"))}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Scheduled:</span>
-                      <p className="font-medium">
-                        {job.schedule_at ? new Date(job.schedule_at).toLocaleString() : "Immediate"}
-                      </p>
+                    )}
+
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">Started:</span>
+                        <p className="font-medium">
+                          {job.started_at ? new Date(job.started_at).toLocaleString() : "Not started"}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Completed:</span>
+                        <p className="font-medium">
+                          {job.completed_at ? new Date(job.completed_at).toLocaleString() : "-"}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">
+                          {job.job_type === 'full_server_update' ? 'Components:' : 'Target:'}
+                        </span>
+                        <p className="font-medium">
+                          {job.job_type === 'full_server_update'
+                            ? `${subJobCounts[job.id] || 0} component updates`
+                            : (job.target_scope?.cluster_name ||
+                               (job.target_scope?.server_ids ? `${job.target_scope.server_ids.length} servers` : "N/A"))}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Scheduled:</span>
+                        <p className="font-medium">
+                          {job.schedule_at ? new Date(job.schedule_at).toLocaleString() : "Immediate"}
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </CardContent>
               </Card>
             </ContextMenuTrigger>
-            
+
             <ContextMenuContent className="w-48">
-              <ContextMenuItem 
+              <ContextMenuItem
                 onClick={(e) => {
                   e.stopPropagation();
                   handleViewDetails(job);
@@ -451,11 +486,11 @@ const Jobs = () => {
                 <FileText className="mr-2 h-4 w-4" />
                 View Details
               </ContextMenuItem>
-              
+
               {canManageJobs && (job.status === 'pending' || job.status === 'running') && (
                 <>
                   <ContextMenuSeparator />
-                  <ContextMenuItem 
+                  <ContextMenuItem
                     onClick={(e) => {
                       e.stopPropagation();
                       handleCancelJob(job.id);
@@ -467,11 +502,11 @@ const Jobs = () => {
                   </ContextMenuItem>
                 </>
               )}
-              
+
               {canManageJobs && job.status === 'failed' && (
                 <>
                   <ContextMenuSeparator />
-                  <ContextMenuItem 
+                  <ContextMenuItem
                     onClick={(e) => {
                       e.stopPropagation();
                       handleRetryJob(job);
@@ -493,18 +528,15 @@ const Jobs = () => {
   const completedJobs = jobs.filter(j => j.status === 'completed').length;
   const failedJobs = jobs.filter(j => j.status === 'failed' || j.status === 'cancelled').length;
 
-  const filteredJobs = filterJobs(view);
-
   return (
-    <div className="container mx-auto p-6">
-      {/* Dynamic Page Header */}
-      <div className="flex items-start justify-between mb-8">
+    <div className="space-y-8">
+      <div className="flex items-start justify-between">
         <div className="flex items-start gap-4">
           <div className="p-3 rounded-lg bg-primary/10">
             <currentView.icon className="h-6 w-6 text-primary" />
           </div>
           <div>
-            <h1 className="text-3xl font-bold mb-2">{currentView.title}</h1>
+            <h2 className="text-2xl font-bold mb-2">{currentView.title}</h2>
             <p className="text-muted-foreground">
               {currentView.description}
             </p>
@@ -527,94 +559,105 @@ const Jobs = () => {
         </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid gap-6 md:grid-cols-3 mb-6">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Jobs</CardTitle>
-            <PlayCircle className="h-4 w-4 text-primary" />
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <Skeleton className="h-8 w-20" />
-            ) : (
-              <>
-                <div className="text-2xl font-bold">{activeJobs}</div>
-                <p className="text-xs text-muted-foreground">Running or pending</p>
-              </>
-            )}
-          </CardContent>
-        </Card>
+      <Tabs value={view} onValueChange={(value) => setView(value as JobView)}>
+        <div className="flex flex-col gap-4 mb-4">
+          <TabsList className="w-full justify-start overflow-x-auto">
+            <TabsTrigger value="all">All</TabsTrigger>
+            <TabsTrigger value="active">Active</TabsTrigger>
+            <TabsTrigger value="completed">Completed</TabsTrigger>
+            <TabsTrigger value="failed">Failed</TabsTrigger>
+            <TabsTrigger value="scheduled">Scheduled</TabsTrigger>
+          </TabsList>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Completed</CardTitle>
-            <CheckCircle className="h-4 w-4 text-success" />
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <Skeleton className="h-8 w-20" />
-            ) : (
-              <>
-                <div className="text-2xl font-bold">{completedJobs}</div>
-                <p className="text-xs text-muted-foreground">Successfully finished</p>
-              </>
-            )}
-          </CardContent>
-        </Card>
+          <div className="grid gap-6 md:grid-cols-3">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Active Jobs</CardTitle>
+                <PlayCircle className="h-4 w-4 text-primary" />
+              </CardHeader>
+              <CardContent>
+                {loading ? (
+                  <Skeleton className="h-8 w-20" />
+                ) : (
+                  <>
+                    <div className="text-2xl font-bold">{activeJobs}</div>
+                    <p className="text-xs text-muted-foreground">Running or pending</p>
+                  </>
+                )}
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Failed</CardTitle>
-            <XCircle className="h-4 w-4 text-destructive" />
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <Skeleton className="h-8 w-20" />
-            ) : (
-              <>
-                <div className="text-2xl font-bold">{failedJobs}</div>
-                <p className="text-xs text-muted-foreground">Errors or cancelled</p>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Completed</CardTitle>
+                <CheckCircle className="h-4 w-4 text-success" />
+              </CardHeader>
+              <CardContent>
+                {loading ? (
+                  <Skeleton className="h-8 w-20" />
+                ) : (
+                  <>
+                    <div className="text-2xl font-bold">{completedJobs}</div>
+                    <p className="text-xs text-muted-foreground">Successfully finished</p>
+                  </>
+                )}
+              </CardContent>
+            </Card>
 
-      {/* Job Type Filter (shown for all views) */}
-      <div className="mb-6 flex items-center gap-4">
-        <div className="flex items-center gap-2">
-          <Filter className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium">Filter by type:</span>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Failed</CardTitle>
+                <XCircle className="h-4 w-4 text-destructive" />
+              </CardHeader>
+              <CardContent>
+                {loading ? (
+                  <Skeleton className="h-8 w-20" />
+                ) : (
+                  <>
+                    <div className="text-2xl font-bold">{failedJobs}</div>
+                    <p className="text-xs text-muted-foreground">Errors or cancelled</p>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Filter className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-medium">Filter by type:</span>
+            </div>
+            <Select value={selectedJobType} onValueChange={setSelectedJobType}>
+              <SelectTrigger className="w-[200px]">
+                <SelectValue placeholder="All job types" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Types</SelectItem>
+                <SelectItem value="firmware_update">Firmware Update</SelectItem>
+                <SelectItem value="discovery_scan">Discovery Scan</SelectItem>
+                <SelectItem value="vcenter_sync">vCenter Sync</SelectItem>
+                <SelectItem value="full_server_update">Full Server Update</SelectItem>
+              </SelectContent>
+            </Select>
+            {selectedJobType !== 'all' && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelectedJobType('all')}
+              >
+                Clear filter
+              </Button>
+            )}
+          </div>
         </div>
-        <Select value={selectedJobType} onValueChange={setSelectedJobType}>
-          <SelectTrigger className="w-[200px]">
-            <SelectValue placeholder="All job types" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Types</SelectItem>
-            <SelectItem value="firmware_update">Firmware Update</SelectItem>
-            <SelectItem value="discovery_scan">Discovery Scan</SelectItem>
-            <SelectItem value="vcenter_sync">vCenter Sync</SelectItem>
-            <SelectItem value="full_server_update">Full Server Update</SelectItem>
-          </SelectContent>
-        </Select>
-        {selectedJobType !== 'all' && (
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            onClick={() => setSelectedJobType('all')}
-          >
-            Clear filter
-          </Button>
-        )}
-      </div>
 
-      {/* Jobs List */}
-      {renderJobsList(filteredJobs)}
+        <TabsContent value={view} className="space-y-4">
+          {renderJobsList()}
+        </TabsContent>
+      </Tabs>
 
-      <CreateJobDialog 
-        open={createDialogOpen} 
+      <CreateJobDialog
+        open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         onSuccess={fetchJobs}
       />
@@ -630,4 +673,4 @@ const Jobs = () => {
   );
 };
 
-export default Jobs;
+export default JobsPanel;

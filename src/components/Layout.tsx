@@ -1,7 +1,7 @@
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { Server, Database, Briefcase, Activity, LogOut, Menu, Settings, LayoutDashboard, ChevronRight, Palette, Mail, MessageSquare, Bell, PlayCircle, CheckCircle, XCircle, Clock, Shield, Network, Calendar } from "lucide-react";
+import { Server, Database, Activity, LogOut, Menu, Settings, LayoutDashboard, ChevronRight, Palette, Mail, MessageSquare, Bell, Shield, Network, Calendar } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
 import {
@@ -26,20 +26,9 @@ const Layout = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchParams] = useSearchParams();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [jobsOpen, setJobsOpen] = useState(false);
 
-  // Make Jobs & Settings mutually exclusive
   useEffect(() => {
-    if (location.pathname === '/settings') {
-      setSettingsOpen(true);
-      setJobsOpen(false);
-    } else if (location.pathname === '/jobs') {
-      setJobsOpen(true);
-      setSettingsOpen(false);
-    } else {
-      setSettingsOpen(false);
-      setJobsOpen(false);
-    }
+    setSettingsOpen(location.pathname === '/settings');
   }, [location.pathname]);
 
   useEffect(() => {
@@ -73,16 +62,7 @@ const Layout = () => {
 
   const settingsNavigation = getSettingsNavigation();
 
-  const jobsNavigation = [
-    { name: "All Jobs", href: "/jobs?view=all", icon: Briefcase },
-    { name: "Active", href: "/jobs?view=active", icon: PlayCircle },
-    { name: "Completed", href: "/jobs?view=completed", icon: CheckCircle },
-    { name: "Failed", href: "/jobs?view=failed", icon: XCircle },
-    { name: "Scheduled", href: "/jobs?view=scheduled", icon: Clock },
-  ];
-
   const activeTab = searchParams.get('tab') || 'appearance';
-  const activeJobView = searchParams.get('view') || 'all';
 
   const NavLinks = () => (
     <>
@@ -107,56 +87,6 @@ const Layout = () => {
           </Button>
         );
       })}
-      
-      {/* Jobs Dropdown */}
-      <Collapsible open={jobsOpen}>
-        <CollapsibleTrigger asChild>
-          <Button
-            variant={location.pathname === '/jobs' ? "secondary" : "ghost"}
-            className={cn(
-              "w-full justify-start transition-all duration-200",
-              location.pathname === '/jobs' && "bg-secondary"
-            )}
-            onClick={() => {
-              if (location.pathname !== '/jobs') {
-                navigate('/jobs?view=all');
-              }
-            }}
-          >
-            <Briefcase className="mr-2 h-4 w-4" />
-            <span className="flex-1 text-left">Jobs</span>
-            <ChevronRight className={cn(
-              "h-4 w-4 transition-transform duration-300 ease-in-out",
-              jobsOpen && "rotate-90"
-            )} />
-          </Button>
-        </CollapsibleTrigger>
-        <CollapsibleContent className="space-y-1 mt-1">
-          {jobsNavigation.map((item) => {
-            const isActive = location.pathname === '/jobs' && 
-                            (item.href.includes(`view=${activeJobView}`) || 
-                             (!activeJobView && item.href.includes('view=all')));
-            return (
-              <Button
-                key={item.name}
-                variant={isActive ? "secondary" : "ghost"}
-                className={cn(
-                  "w-full justify-start pl-10 text-sm transition-all duration-200 truncate",
-                  isActive && "bg-muted text-foreground font-medium"
-                )}
-                onClick={() => {
-                  navigate(item.href);
-                  setMobileOpen(false);
-                }}
-                title={item.name}
-              >
-                <item.icon className="mr-2 h-3.5 w-3.5 flex-shrink-0" />
-                <span className="truncate">{item.name}</span>
-              </Button>
-            );
-          })}
-        </CollapsibleContent>
-      </Collapsible>
       
       {/* Settings Dropdown */}
       <Collapsible open={settingsOpen}>

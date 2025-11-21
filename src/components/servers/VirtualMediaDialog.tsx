@@ -243,7 +243,7 @@ export const VirtualMediaDialog = ({ open, onOpenChange, server }: VirtualMediaD
 
       toast({
         title: "Mount Job Created",
-        description: `Virtual media mount job created. Check Jobs page for status.`,
+        description: `Virtual media mount job created. Check Maintenance Planner → Jobs for status.`,
       });
 
       // Refresh status after a delay
@@ -301,7 +301,7 @@ export const VirtualMediaDialog = ({ open, onOpenChange, server }: VirtualMediaD
 
       toast({
         title: "Unmount Job Created",
-        description: `Virtual media unmount job created. Check Jobs page for status.`,
+        description: `Virtual media unmount job created. Check Maintenance Planner → Jobs for status.`,
       });
 
       // Refresh status after a delay

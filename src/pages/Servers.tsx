@@ -442,7 +442,7 @@ const Servers = () => {
           setRefreshing(null);
           toast({
             title: "Refresh Timed Out",
-            description: "Job Executor may not be running - check Jobs page for status",
+            description: "Job Executor may not be running - check Maintenance Planner → Jobs for status",
             variant: "destructive",
           });
         }
