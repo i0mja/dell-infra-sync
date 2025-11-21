@@ -14,12 +14,20 @@ interface Command {
   timestamp: string;
   operation_type: string;
   endpoint: string;
+  full_url?: string;
   command_type: string;
   status_code: number | null;
   success: boolean;
   server_id: string | null;
   response_time_ms: number | null;
   source: string | null;
+  job_id?: string | null;
+  task_id?: string | null;
+  initiated_by?: string | null;
+  request_headers?: any;
+  request_body?: any;
+  response_body?: any;
+  error_message?: string | null;
 }
 
 interface CommandsTableProps {
