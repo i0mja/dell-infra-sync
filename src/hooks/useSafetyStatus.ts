@@ -10,6 +10,7 @@ interface ClusterSafetyDay {
   maintenanceWindows: any[];
   allTargetsChecked: boolean;
   allTargetsSafe: boolean;
+  hasWarnings: boolean;
 }
 
 export function useSafetyStatus(startDate: Date, endDate: Date) {
@@ -56,7 +57,8 @@ export function useSafetyStatus(startDate: Date, endDate: Date) {
           serverGroups: {},
           maintenanceWindows: [],
           allTargetsChecked: false,
-          allTargetsSafe: false
+          allTargetsSafe: false,
+          hasWarnings: false
         });
       }
       
@@ -80,7 +82,8 @@ export function useSafetyStatus(startDate: Date, endDate: Date) {
           serverGroups: {},
           maintenanceWindows: [],
           allTargetsChecked: false,
-          allTargetsSafe: false
+          allTargetsSafe: false,
+          hasWarnings: false
         });
       }
       
@@ -102,6 +105,11 @@ export function useSafetyStatus(startDate: Date, endDate: Date) {
       
       dayData.allTargetsChecked = allTargets.length > 0;
       dayData.allTargetsSafe = allTargets.length > 0 && allTargets.every(t => t.safe);
+      
+      // Has warnings if some targets are unsafe but not all
+      dayData.hasWarnings = allTargets.length > 0 && 
+        !allTargets.every(t => t.safe) && 
+        allTargets.some(t => t.safe);
     }
 
     return statusMap;
