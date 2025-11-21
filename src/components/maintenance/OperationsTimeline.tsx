@@ -187,55 +187,7 @@ export function OperationsTimeline({
     };
   }, []);
 
-  // Map statuses to unified timeline statuses
-  const mapJobStatus = (job: Job): TimelineItem['status'] => {
-    if (job.status === 'completed') return 'completed';
-    if (job.status === 'failed' || job.status === 'cancelled') return 'failed';
-    if (job.status === 'running') return 'active';
-    if (job.status === 'pending' && job.schedule_at) return 'planned';
-    return 'active'; // pending without schedule = queued = active
-  };
-
-  const mapWindowStatus = (window: MaintenanceWindow): TimelineItem['status'] => {
-    if (window.status === 'completed') return 'completed';
-    if (window.status === 'failed' || window.status === 'cancelled') return 'failed';
-    if (window.status === 'in_progress') return 'active';
-    return 'planned';
-  };
-
-  // Convert to unified timeline items
-  const timelineItems = useMemo<TimelineItem[]>(() => {
-    const jobItems: TimelineItem[] = jobs.map(j => ({
-      type: 'job',
-      id: j.id,
-      title: getJobTypeLabel(j.job_type),
-      status: mapJobStatus(j),
-      timestamp: new Date(j.started_at || j.created_at),
-      data: j
-    }));
-
-    const windowItems: TimelineItem[] = windows.map(w => ({
-      type: 'maintenance_window',
-      id: w.id,
-      title: w.title,
-      status: mapWindowStatus(w),
-      timestamp: new Date(w.planned_start),
-      data: w
-    }));
-
-    const all = [...jobItems, ...windowItems];
-    
-    // Sort by relevance: active → planned → recent completed/failed
-    return all.sort((a, b) => {
-      const statusOrder = { active: 0, planned: 1, completed: 2, failed: 3 };
-      const aOrder = statusOrder[a.status];
-      const bOrder = statusOrder[b.status];
-      
-      if (aOrder !== bOrder) return aOrder - bOrder;
-      return b.timestamp.getTime() - a.timestamp.getTime();
-    });
-  }, [jobs, windows]);
-
+  // Helper functions - must be defined before useMemo
   const getJobTypeLabel = (type: string) => {
     const labels: Record<string, string> = {
       firmware_update: "Firmware Update",
@@ -293,6 +245,55 @@ export function OperationsTimeline({
     };
     return <Badge variant={variants[status]}>{status.toUpperCase()}</Badge>;
   };
+
+  // Map statuses to unified timeline statuses
+  const mapJobStatus = (job: Job): TimelineItem['status'] => {
+    if (job.status === 'completed') return 'completed';
+    if (job.status === 'failed' || job.status === 'cancelled') return 'failed';
+    if (job.status === 'running') return 'active';
+    if (job.status === 'pending' && job.schedule_at) return 'planned';
+    return 'active'; // pending without schedule = queued = active
+  };
+
+  const mapWindowStatus = (window: MaintenanceWindow): TimelineItem['status'] => {
+    if (window.status === 'completed') return 'completed';
+    if (window.status === 'failed' || window.status === 'cancelled') return 'failed';
+    if (window.status === 'in_progress') return 'active';
+    return 'planned';
+  };
+
+  // Convert to unified timeline items
+  const timelineItems = useMemo<TimelineItem[]>(() => {
+    const jobItems: TimelineItem[] = jobs.map(j => ({
+      type: 'job',
+      id: j.id,
+      title: getJobTypeLabel(j.job_type),
+      status: mapJobStatus(j),
+      timestamp: new Date(j.started_at || j.created_at),
+      data: j
+    }));
+
+    const windowItems: TimelineItem[] = windows.map(w => ({
+      type: 'maintenance_window',
+      id: w.id,
+      title: w.title,
+      status: mapWindowStatus(w),
+      timestamp: new Date(w.planned_start),
+      data: w
+    }));
+
+    const all = [...jobItems, ...windowItems];
+    
+    // Sort by relevance: active → planned → recent completed/failed
+    return all.sort((a, b) => {
+      const statusOrder = { active: 0, planned: 1, completed: 2, failed: 3 };
+      const aOrder = statusOrder[a.status];
+      const bOrder = statusOrder[b.status];
+      
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return b.timestamp.getTime() - a.timestamp.getTime();
+    });
+  }, [jobs, windows]);
 
   const filterItems = (items: TimelineItem[]) => {
     let filtered = items;
