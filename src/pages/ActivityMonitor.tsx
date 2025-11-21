@@ -257,7 +257,7 @@ export default function ActivityMonitor() {
   });
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden">
       <ActivityStatsBar
         totalCommands={commands.length}
         successRate={calculateSuccessRate()}
