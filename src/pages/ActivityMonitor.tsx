@@ -225,8 +225,13 @@ export default function ActivityMonitor() {
           toast.error('Realtime connection lost, using polling fallback');
         }
       });
+    return () => {
+      setRealtimeStatus('disconnected');
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
-    return (
+  return (
     <div className="container mx-auto p-6 space-y-6">
       <Tabs
         value={activeTab}
