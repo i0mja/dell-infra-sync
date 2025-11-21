@@ -226,7 +226,140 @@ export default function ActivityMonitor() {
         }
       });
 
+    return () => {
+      channel.unsubscribe();
+    };
+  }, []);
+
+  // Helper functions for badges and status
+  const runLiveTest = async () => {
+    setIsRunningTest(true);
+    try {
+      toast.info('Running live test - activity log will update momentarily');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      await refetch();
+      toast.success('Live test completed');
+    } catch (error) {
+      toast.error('Live test failed');
+    } finally {
+      setIsRunningTest(false);
+    }
+  };
+
+  const handleManualRefresh = () => {
+    refetch();
+    refetchActiveJobs();
+  };
+
+  const getOperationTypeBadge = (type: string) => {
+    switch (type) {
+      case 'idrac_api':
+        return { label: 'iDRAC', color: 'text-blue-600 border-blue-600' };
+      case 'vcenter_api':
+        return { label: 'vCenter', color: 'text-purple-600 border-purple-600' };
+      case 'openmanage_api':
+        return { label: 'OpenManage', color: 'text-green-600 border-green-600' };
+      default:
+        return { label: type, color: '' };
+    }
+  };
+
+  const getStatusBadge = (success: boolean, statusCode: number | null) => {
+    if (success) {
+      return <Badge variant="outline" className="text-green-600 border-green-600">Success</Badge>;
+    }
+    return <Badge variant="outline" className="text-red-600 border-red-600">Failed ({statusCode || 'N/A'})</Badge>;
+  };
+
+  const getCommandTypeBadge = (type: string) => {
+    const colorMap: Record<string, string> = {
+      GET: 'text-blue-600 border-blue-600',
+      POST: 'text-green-600 border-green-600',
+      PATCH: 'text-yellow-600 border-yellow-600',
+      DELETE: 'text-red-600 border-red-600',
+      POWER_CONTROL: 'text-purple-600 border-purple-600',
+      BIOS_READ: 'text-cyan-600 border-cyan-600',
+      BIOS_WRITE: 'text-orange-600 border-orange-600',
+      VCENTER_AUTH: 'text-purple-600 border-purple-600',
+      VCENTER_SYNC: 'text-indigo-600 border-indigo-600',
+      SCP_EXPORT: 'text-teal-600 border-teal-600',
+      SCP_IMPORT: 'text-pink-600 border-pink-600',
+    };
+    return <Badge variant="outline" className={colorMap[type] || ''}>{type}</Badge>;
+  };
+
+  const getJobStatusBadge = (status: string) => {
+    switch (status) {
+      case 'running':
+        return <Badge className="bg-blue-600 text-white">Running</Badge>;
+      case 'pending':
+        return <Badge className="bg-amber-600 text-white">Pending</Badge>;
+      case 'completed':
+        return <Badge className="bg-green-600 text-white">Completed</Badge>;
+      case 'failed':
+        return <Badge className="bg-red-600 text-white">Failed</Badge>;
+      default:
+        return <Badge variant="outline">{status}</Badge>;
+    }
+  };
+
+  const getJobTypeLabel = (jobType: string) => {
+    const labels: Record<string, string> = {
+      firmware_update: 'Firmware Update',
+      discovery_scan: 'Discovery Scan',
+      vcenter_sync: 'vCenter Sync',
+      full_server_update: 'Full Server Update',
+      test_credentials: 'Test Credentials',
+      power_action: 'Power Action',
+      health_check: 'Health Check',
+      fetch_event_logs: 'Fetch Event Logs',
+      boot_configuration: 'Boot Configuration',
+      virtual_media_mount: 'Virtual Media Mount',
+      virtual_media_unmount: 'Virtual Media Unmount',
+      bios_config_read: 'BIOS Configuration Read',
+      bios_config_write: 'BIOS Configuration Write',
+      scp_export: 'SCP Export',
+      scp_import: 'SCP Import',
+      vcenter_connectivity_test: 'vCenter Connectivity Test',
+      openmanage_sync: 'OpenManage Sync',
+      cluster_safety_check: 'Cluster Safety Check',
+      prepare_host_for_update: 'Prepare Host for Update',
+      verify_host_after_update: 'Verify Host After Update',
+      rolling_cluster_update: 'Rolling Cluster Update',
+      server_group_safety_check: 'Server Group Safety Check',
+    };
+    return labels[jobType] || jobType;
+  };
+
+  const formatJobTiming = (job: Job) => {
+    if (job.started_at) {
+      const elapsed = Math.floor((new Date().getTime() - new Date(job.started_at).getTime()) / 1000);
+      return `Running for ${elapsed}s`;
+    }
+    return `Created ${format(new Date(job.created_at), 'MMM d, HH:mm')}`;
+  };
+
+  // Import Server icon for rendering
+  const ServerIcon = Activity;
+
+  // Filter commands based on search
+  const filteredCommands = commands.filter(cmd => {
+    if (!searchTerm) return true;
+    const search = searchTerm.toLowerCase();
     return (
+      cmd.endpoint.toLowerCase().includes(search) ||
+      cmd.full_url.toLowerCase().includes(search) ||
+      cmd.error_message?.toLowerCase().includes(search) ||
+      cmd.servers?.hostname?.toLowerCase().includes(search) ||
+      cmd.servers?.ip_address?.toLowerCase().includes(search)
+    );
+  });
+
+  // Calculate job stats
+  const runningJobs = jobs.filter(j => j.status === 'running').length;
+  const pendingJobs = jobs.filter(j => j.status === 'pending').length;
+
+  return (
     <div className="container mx-auto p-6 space-y-6">
       <Tabs
         value={activeTab}
