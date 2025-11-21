@@ -753,7 +753,7 @@ const Servers = () => {
             groupedData={groupFilter !== 'all' || searchTerm ? null : organizeServersByGroup()}
             selectedServerId={selectedServer?.id || null}
             selectedGroupId={selectedGroup}
-            onServerClick={setSelectedServer}
+            onServerClick={(server) => setSelectedServer(server as any)}
             onGroupClick={setSelectedGroup}
             loading={loading}
             refreshing={refreshing}
@@ -877,7 +877,8 @@ const Servers = () => {
       <WorkflowJobDialog
         open={workflowDialogOpen}
         onOpenChange={setWorkflowDialogOpen}
-        server={selectedServer}
+        preSelectedServerId={selectedServer?.id}
+        onSuccess={fetchServers}
       />
       <PreFlightCheckDialog
         open={preFlightCheckDialogOpen}
