@@ -21,7 +21,7 @@ export function CompactStatsBar({
 }: CompactStatsBarProps) {
   return (
     <div className="border-b bg-card">
-      <div className="flex flex-col gap-3 px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-3 px-4 py-3 sm:px-6 lg:px-8 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap items-center gap-3 text-sm sm:gap-6">
           <div className="flex items-center gap-2 whitespace-nowrap">
             <CheckCircle className="h-4 w-4 text-success" />
