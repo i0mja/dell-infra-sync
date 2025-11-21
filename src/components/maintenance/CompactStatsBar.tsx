@@ -20,26 +20,26 @@ export function CompactStatsBar({
   onCreateOperation
 }: CompactStatsBarProps) {
   return (
-    <div className="border-b bg-card px-6 py-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-6 text-sm">
-          <div className="flex items-center gap-2">
+    <div className="border-b bg-card">
+      <div className="flex flex-col gap-3 px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-3 text-sm sm:gap-6">
+          <div className="flex items-center gap-2 whitespace-nowrap">
             <CheckCircle className="h-4 w-4 text-success" />
             <span className="text-muted-foreground">Safe Days:</span>
             <Badge variant="secondary">{safeDays}</Badge>
           </div>
-          
-          <div className="h-4 w-px bg-border" />
-          
-          <div className="flex items-center gap-2">
+
+          <div className="hidden h-4 w-px bg-border sm:block" />
+
+          <div className="flex items-center gap-2 whitespace-nowrap">
             <Activity className="h-4 w-4 text-primary" />
             <span className="text-muted-foreground">Active Jobs:</span>
             <Badge variant={activeJobs > 0 ? "default" : "outline"}>{activeJobs}</Badge>
           </div>
-          
-          <div className="h-4 w-px bg-border" />
-          
-          <div className="flex items-center gap-2">
+
+          <div className="hidden h-4 w-px bg-border sm:block" />
+
+          <div className="flex items-center gap-2 whitespace-nowrap">
             <Clock className="h-4 w-4 text-warning" />
             <span className="text-muted-foreground">Next:</span>
             {nextWindow ? (
@@ -48,17 +48,17 @@ export function CompactStatsBar({
               <span className="text-muted-foreground">None scheduled</span>
             )}
           </div>
-          
-          <div className="h-4 w-px bg-border" />
-          
-          <div className="flex items-center gap-2">
+
+          <div className="hidden h-4 w-px bg-border sm:block" />
+
+          <div className="flex items-center gap-2 whitespace-nowrap">
             <Lightbulb className="h-4 w-4 text-amber-500" />
             <span className="text-muted-foreground">Recommendations:</span>
             <Badge variant="outline">{optimalCount}</Badge>
           </div>
         </div>
-        
-        <div className="flex items-center gap-2">
+
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           <Button size="sm" onClick={onSchedule}>
             <Calendar className="mr-2 h-4 w-4" />
             Schedule Maintenance

@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, RefreshCw, Users, Wrench, Settings } from "lucide-react";
+import { Plus, RefreshCw, Users, Wrench } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface ServerStatsBarProps {
@@ -30,34 +30,34 @@ export function ServerStatsBar({
 }: ServerStatsBarProps) {
   return (
     <div className="border-b bg-card">
-      <div className="flex items-center justify-between px-6 py-3">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2 text-sm">
+      <div className="flex flex-col gap-4 px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-3 sm:gap-6">
+          <div className="flex items-center gap-2 text-sm whitespace-nowrap">
             <span className="font-medium text-muted-foreground">Total:</span>
             <span className="font-semibold">{totalServers}</span>
           </div>
-          <div className="h-4 w-px bg-border" />
-          <div className="flex items-center gap-2 text-sm">
+          <div className="hidden h-4 w-px bg-border sm:block" />
+          <div className="flex items-center gap-2 text-sm whitespace-nowrap">
             <span className="text-green-600 dark:text-green-400">●</span>
             <span className="font-medium text-muted-foreground">Online:</span>
             <span className="font-semibold">{onlineCount}</span>
           </div>
-          <div className="h-4 w-px bg-border" />
-          <div className="flex items-center gap-2 text-sm">
+          <div className="hidden h-4 w-px bg-border sm:block" />
+          <div className="flex items-center gap-2 text-sm whitespace-nowrap">
             <span className="text-red-600 dark:text-red-400">●</span>
             <span className="font-medium text-muted-foreground">Offline:</span>
             <span className="font-semibold">{offlineCount}</span>
           </div>
-          <div className="h-4 w-px bg-border" />
-          <div className="flex items-center gap-2 text-sm">
+          <div className="hidden h-4 w-px bg-border sm:block" />
+          <div className="flex items-center gap-2 text-sm whitespace-nowrap">
             <span className="text-yellow-600 dark:text-yellow-400">●</span>
             <span className="font-medium text-muted-foreground">Unknown:</span>
             <span className="font-semibold">{unknownCount}</span>
           </div>
           {incompleteCount > 0 && (
             <>
-              <div className="h-4 w-px bg-border" />
-              <div className="flex items-center gap-2 text-sm">
+              <div className="hidden h-4 w-px bg-border sm:block" />
+              <div className="flex items-center gap-2 text-sm whitespace-nowrap">
                 <span className="text-orange-600 dark:text-orange-400">⚠</span>
                 <span className="font-medium text-muted-foreground">Incomplete:</span>
                 <span className="font-semibold">{incompleteCount}</span>
@@ -66,7 +66,7 @@ export function ServerStatsBar({
           )}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -115,7 +115,7 @@ export function ServerStatsBar({
             </Tooltip>
           </TooltipProvider>
 
-          <div className="ml-2 pl-2 border-l">
+          <div className="flex items-center gap-2 sm:ml-2 sm:border-l sm:pl-2">
             <Badge variant={useJobExecutor ? "default" : "secondary"} className="gap-1">
               <span className={useJobExecutor ? "text-green-400" : "text-blue-400"}>●</span>
               {useJobExecutor ? "Job Executor" : "Cloud Mode"}
