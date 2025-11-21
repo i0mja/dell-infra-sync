@@ -20,7 +20,7 @@ export function CompactStatsBar({
   onCreateOperation
 }: CompactStatsBarProps) {
   return (
-    <div className="border-b bg-muted/30 px-6 py-3">
+    <div className="border-b bg-card px-6 py-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-6 text-sm">
           <div className="flex items-center gap-2">
