@@ -1,20 +1,12 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Activity, ChevronDown, ChevronRight, Search, RefreshCw, Filter, Wifi, WifiOff, Loader2, Briefcase, PlayCircle, Clock, CheckCircle, Terminal } from "lucide-react";
 import { toast } from "sonner";
-import { CommandDetailDialog } from "@/components/activity/CommandDetailDialog";
-import { format } from "date-fns";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ActivityStatsBar } from "@/components/activity/ActivityStatsBar";
+import { FilterToolbar } from "@/components/activity/FilterToolbar";
+import { CommandsTable } from "@/components/activity/CommandsTable";
+import { CommandDetailsSidebar } from "@/components/activity/CommandDetailsSidebar";
+import { ActiveJobsBanner } from "@/components/activity/ActiveJobsBanner";
 
 interface IdracCommand {
   id: string;
@@ -51,13 +43,8 @@ interface Job {
 
 export default function ActivityMonitor() {
   const [commands, setCommands] = useState<IdracCommand[]>([]);
-  const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [selectedCommand, setSelectedCommand] = useState<IdracCommand | null>(null);
-  const [detailDialogOpen, setDetailDialogOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'activity' | 'jobs'>('activity');
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
-  const [jobDialogOpen, setJobDialogOpen] = useState(false);
   
   // Filters
   const [serverFilter, setServerFilter] = useState<string>("all");
@@ -67,16 +54,9 @@ export default function ActivityMonitor() {
   const [commandSource, setCommandSource] = useState<string>("all");
   const [timeRangeFilter, setTimeRangeFilter] = useState<string>("24h");
   const [searchTerm, setSearchTerm] = useState("");
-  const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
 
   // Connection state
   const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
-  const [lastEventAt, setLastEventAt] = useState<Date>(new Date());
-  const [isRunningTest, setIsRunningTest] = useState(false);
-
-  // Detect deployment mode
-  const isLocalMode = import.meta.env.VITE_SUPABASE_URL?.includes('localhost') || 
-                      import.meta.env.VITE_SUPABASE_URL?.includes('127.0.0.1');
 
   // Fetch servers for filter dropdown
   const { data: servers } = useQuery({
@@ -92,7 +72,7 @@ export default function ActivityMonitor() {
   });
 
   // Fetch active jobs for live view
-  const { data: activeJobsData, refetch: refetchActiveJobs, isFetching: isFetchingActiveJobs } = useQuery({
+  const { data: activeJobsData, refetch: refetchActiveJobs } = useQuery({
     queryKey: ['active-jobs'],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -113,15 +93,17 @@ export default function ActivityMonitor() {
     const now = new Date();
     switch (timeRangeFilter) {
       case '1h': return new Date(now.getTime() - 60 * 60 * 1000);
+      case '6h': return new Date(now.getTime() - 6 * 60 * 60 * 1000);
       case '24h': return new Date(now.getTime() - 24 * 60 * 60 * 1000);
       case '7d': return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      case 'all': return new Date(0); // Beginning of time
+      case '30d': return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      case 'all': return new Date(0);
       default: return new Date(now.getTime() - 24 * 60 * 60 * 1000);
     }
   };
 
   // Fetch commands
-  const { data: commandsData, refetch, isError, error, isFetching } = useQuery({
+  const { data: commandsData, refetch, isError, error } = useQuery({
     queryKey: ['idrac-commands', serverFilter, commandTypeFilter, statusFilter, operationTypeFilter, commandSource, timeRangeFilter],
     queryFn: async () => {
       let query = supabase
@@ -130,7 +112,6 @@ export default function ActivityMonitor() {
         .order('timestamp', { ascending: false })
         .limit(500);
 
-      // Only apply time filter if not "all"
       if (timeRangeFilter !== 'all') {
         query = query.gte('timestamp', getTimeRangeDate().toISOString());
       }
@@ -148,11 +129,12 @@ export default function ActivityMonitor() {
         query = query.eq('operation_type', operationTypeFilter as 'idrac_api' | 'vcenter_api' | 'openmanage_api');
       }
       
-      // Apply command source filter
       if (commandSource === 'manual') {
-        query = query.is('job_id', null);
-      } else if (commandSource === 'jobs') {
-        query = query.not('job_id', 'is', null);
+        query = query.is('job_id', null).eq('source', 'manual');
+      } else if (commandSource === 'job_executor') {
+        query = query.eq('source', 'job_executor');
+      } else if (commandSource === 'edge_function') {
+        query = query.eq('source', 'edge_function');
       }
 
       const { data, error } = await query;
@@ -162,14 +144,13 @@ export default function ActivityMonitor() {
       }
       return data as unknown as IdracCommand[];
     },
-    staleTime: 0, // Data immediately stale, always refetch when needed
-    refetchOnWindowFocus: false, // Don't auto-refetch on window focus
+    staleTime: 0,
+    refetchOnWindowFocus: false,
   });
 
   useEffect(() => {
     if (commandsData) {
       setCommands(commandsData);
-      setLastRefresh(new Date());
     }
   }, [commandsData]);
 
@@ -179,7 +160,6 @@ export default function ActivityMonitor() {
     }
   }, [activeJobsData]);
 
-  // Handle query errors
   useEffect(() => {
     if (isError) {
       toast.error('Failed to load activity logs', {
@@ -188,7 +168,7 @@ export default function ActivityMonitor() {
     }
   }, [isError, error]);
 
-  // Set up realtime subscription with connection tracking
+  // Set up realtime subscription
   useEffect(() => {
     const channel = supabase
       .channel('idrac-commands-realtime')
@@ -200,8 +180,6 @@ export default function ActivityMonitor() {
           table: 'idrac_commands'
         },
         async (payload) => {
-          setLastEventAt(new Date());
-          // Fetch the full record with server info
           const { data } = await supabase
             .from('idrac_commands')
             .select('*, servers(hostname, ip_address)')
@@ -212,7 +190,7 @@ export default function ActivityMonitor() {
             setCommands(prev => [data as IdracCommand, ...prev].slice(0, 500));
             
             if (!data.success) {
-              toast.error(`iDRAC Command Failed: ${data.error_message}`);
+              toast.error(`Command Failed: ${data.error_message}`);
             }
           }
         }
@@ -222,7 +200,6 @@ export default function ActivityMonitor() {
           setRealtimeStatus('connected');
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           setRealtimeStatus('disconnected');
-          toast.error('Realtime connection lost, using polling fallback');
         }
       });
 
@@ -231,116 +208,40 @@ export default function ActivityMonitor() {
     };
   }, []);
 
-  // Helper functions for badges and status
-  const runLiveTest = async () => {
-    setIsRunningTest(true);
-    try {
-      toast.info('Running live test - activity log will update momentarily');
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      await refetch();
-      toast.success('Live test completed');
-    } catch (error) {
-      toast.error('Live test failed');
-    } finally {
-      setIsRunningTest(false);
-    }
-  };
-
+  // Helper functions
   const handleManualRefresh = () => {
     refetch();
     refetchActiveJobs();
   };
 
-  const getOperationTypeBadge = (type: string) => {
-    switch (type) {
-      case 'idrac_api':
-        return { label: 'iDRAC', color: 'text-blue-600 border-blue-600' };
-      case 'vcenter_api':
-        return { label: 'vCenter', color: 'text-purple-600 border-purple-600' };
-      case 'openmanage_api':
-        return { label: 'OpenManage', color: 'text-green-600 border-green-600' };
-      default:
-        return { label: type, color: '' };
-    }
+  const calculateSuccessRate = () => {
+    if (commands.length === 0) return 0;
+    const successCount = commands.filter(c => c.success).length;
+    return (successCount / commands.length) * 100;
   };
 
-  const getStatusBadge = (success: boolean, statusCode: number | null) => {
-    if (success) {
-      return <Badge variant="outline" className="text-green-600 border-green-600">Success</Badge>;
-    }
-    return <Badge variant="outline" className="text-red-600 border-red-600">Failed ({statusCode || 'N/A'})</Badge>;
-  };
+  const handleExport = () => {
+    const csv = [
+      ['Timestamp', 'Operation', 'Endpoint', 'Type', 'Status', 'Server', 'Response Time (ms)'].join(','),
+      ...filteredCommands.map(cmd => [
+        cmd.timestamp,
+        cmd.operation_type,
+        cmd.endpoint,
+        cmd.command_type,
+        cmd.success ? 'Success' : 'Failed',
+        cmd.servers?.hostname || cmd.servers?.ip_address || 'N/A',
+        cmd.response_time_ms?.toString() || 'N/A'
+      ].join(','))
+    ].join('\n');
 
-  const getCommandTypeBadge = (type: string) => {
-    const colorMap: Record<string, string> = {
-      GET: 'text-blue-600 border-blue-600',
-      POST: 'text-green-600 border-green-600',
-      PATCH: 'text-yellow-600 border-yellow-600',
-      DELETE: 'text-red-600 border-red-600',
-      POWER_CONTROL: 'text-purple-600 border-purple-600',
-      BIOS_READ: 'text-cyan-600 border-cyan-600',
-      BIOS_WRITE: 'text-orange-600 border-orange-600',
-      VCENTER_AUTH: 'text-purple-600 border-purple-600',
-      VCENTER_SYNC: 'text-indigo-600 border-indigo-600',
-      SCP_EXPORT: 'text-teal-600 border-teal-600',
-      SCP_IMPORT: 'text-pink-600 border-pink-600',
-    };
-    return <Badge variant="outline" className={colorMap[type] || ''}>{type}</Badge>;
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `activity-log-${new Date().toISOString()}.csv`;
+    a.click();
+    toast.success('Activity log exported');
   };
-
-  const getJobStatusBadge = (status: string) => {
-    switch (status) {
-      case 'running':
-        return <Badge className="bg-blue-600 text-white">Running</Badge>;
-      case 'pending':
-        return <Badge className="bg-amber-600 text-white">Pending</Badge>;
-      case 'completed':
-        return <Badge className="bg-green-600 text-white">Completed</Badge>;
-      case 'failed':
-        return <Badge className="bg-red-600 text-white">Failed</Badge>;
-      default:
-        return <Badge variant="outline">{status}</Badge>;
-    }
-  };
-
-  const getJobTypeLabel = (jobType: string) => {
-    const labels: Record<string, string> = {
-      firmware_update: 'Firmware Update',
-      discovery_scan: 'Discovery Scan',
-      vcenter_sync: 'vCenter Sync',
-      full_server_update: 'Full Server Update',
-      test_credentials: 'Test Credentials',
-      power_action: 'Power Action',
-      health_check: 'Health Check',
-      fetch_event_logs: 'Fetch Event Logs',
-      boot_configuration: 'Boot Configuration',
-      virtual_media_mount: 'Virtual Media Mount',
-      virtual_media_unmount: 'Virtual Media Unmount',
-      bios_config_read: 'BIOS Configuration Read',
-      bios_config_write: 'BIOS Configuration Write',
-      scp_export: 'SCP Export',
-      scp_import: 'SCP Import',
-      vcenter_connectivity_test: 'vCenter Connectivity Test',
-      openmanage_sync: 'OpenManage Sync',
-      cluster_safety_check: 'Cluster Safety Check',
-      prepare_host_for_update: 'Prepare Host for Update',
-      verify_host_after_update: 'Verify Host After Update',
-      rolling_cluster_update: 'Rolling Cluster Update',
-      server_group_safety_check: 'Server Group Safety Check',
-    };
-    return labels[jobType] || jobType;
-  };
-
-  const formatJobTiming = (job: Job) => {
-    if (job.started_at) {
-      const elapsed = Math.floor((new Date().getTime() - new Date(job.started_at).getTime()) / 1000);
-      return `Running for ${elapsed}s`;
-    }
-    return `Created ${format(new Date(job.created_at), 'MMM d, HH:mm')}`;
-  };
-
-  // Import Server icon for rendering
-  const ServerIcon = Activity;
 
   // Filter commands based on search
   const filteredCommands = commands.filter(cmd => {
@@ -355,536 +256,55 @@ export default function ActivityMonitor() {
     );
   });
 
-  // Calculate job stats
-  const runningJobs = jobs.filter(j => j.status === 'running').length;
-  const pendingJobs = jobs.filter(j => j.status === 'pending').length;
-
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <Tabs
-        value={activeTab}
-        onValueChange={(value) => setActiveTab(value as 'activity' | 'jobs')}
-        className="space-y-6"
-      >
-        <TabsList className="w-full max-w-md justify-start overflow-x-auto">
-          <TabsTrigger value="activity">Activity Feed</TabsTrigger>
-          <TabsTrigger value="jobs">Active Jobs</TabsTrigger>
-        </TabsList>
+    <div className="flex flex-col h-screen overflow-hidden">
+      <ActivityStatsBar
+        totalCommands={commands.length}
+        successRate={calculateSuccessRate()}
+        activeJobs={jobs.length}
+        failedCount={commands.filter(c => !c.success).length}
+        liveStatus={realtimeStatus}
+        onRefresh={handleManualRefresh}
+        onExport={handleExport}
+      />
 
-        <TabsContent value="activity" className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Activity className="h-8 w-8 text-primary" />
-              <div>
-                <h1 className="text-3xl font-bold">Activity Monitor</h1>
-                <p className="text-muted-foreground">
-                  Unified activity log for iDRAC and vCenter operations
-                  {isLocalMode && <Badge variant="outline" className="ml-2">Local Mode</Badge>}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                {realtimeStatus === 'connected' && (
-                  <>
-                    <Wifi className="h-4 w-4 text-green-600" />
-                    <span className="text-xs text-green-600 font-medium">Live</span>
-                  </>
-                )}
-                {realtimeStatus === 'connecting' && (
-                  <>
-                    <Loader2 className="h-4 w-4 text-yellow-600 animate-spin" />
-                    <span className="text-xs text-yellow-600 font-medium">Connecting</span>
-                  </>
-                )}
-                {realtimeStatus === 'disconnected' && (
-                  <>
-                    <WifiOff className="h-4 w-4 text-red-600" />
-                    <span className="text-xs text-red-600 font-medium">Polling</span>
-                  </>
-                )}
-              </div>
+      {jobs.length > 0 && <ActiveJobsBanner jobs={jobs} />}
 
-              <span className="text-xs text-muted-foreground">
-                Last updated: {format(lastRefresh, 'HH:mm:ss')}
-              </span>
+      <div className="flex-1 flex gap-4 p-4 overflow-hidden">
+        <div className="flex-1 flex flex-col gap-4 min-w-0">
+          <FilterToolbar
+            searchTerm={searchTerm}
+            onSearchChange={setSearchTerm}
+            operationType={operationTypeFilter}
+            onOperationTypeChange={setOperationTypeFilter}
+            selectedServer={serverFilter}
+            onServerChange={setServerFilter}
+            commandType={commandTypeFilter}
+            onCommandTypeChange={setCommandTypeFilter}
+            status={statusFilter}
+            onStatusChange={setStatusFilter}
+            source={commandSource}
+            onSourceChange={setCommandSource}
+            timeRange={timeRangeFilter}
+            onTimeRangeChange={setTimeRangeFilter}
+            servers={servers || []}
+          />
 
-              <Button
-                onClick={runLiveTest}
-                variant="outline"
-                size="sm"
-                disabled={isRunningTest}
-              >
-                {isRunningTest ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Activity className="h-4 w-4 mr-2" />
-                )}
-                Run Live Test
-              </Button>
+          <CommandsTable
+            commands={filteredCommands}
+            selectedId={selectedCommand?.id}
+            onRowClick={(cmd) => setSelectedCommand(cmd as IdracCommand)}
+            isLive={realtimeStatus === 'connected'}
+          />
+        </div>
 
-              <Button
-                onClick={handleManualRefresh}
-                variant="outline"
-                size="sm"
-                disabled={isFetching || isFetchingActiveJobs}
-              >
-                <RefreshCw className={`h-4 w-4 mr-2 ${(isFetching || isFetchingActiveJobs) ? 'animate-spin' : ''}`} />
-                {isFetching ? 'Refreshing...' : 'Refresh'}
-              </Button>
-            </div>
-          </div>
-
-          <Card className="p-4">
-            <div className="flex items-center gap-2 mb-4">
-              <Filter className="h-4 w-4 text-muted-foreground" />
-              <h2 className="font-semibold">Filters</h2>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
-              <div className="relative">
-                <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search endpoint, error..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-9"
-                />
-              </div>
-
-              <Select value={operationTypeFilter} onValueChange={setOperationTypeFilter}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Operation Type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Operations</SelectItem>
-                  <SelectItem value="idrac_api">iDRAC API</SelectItem>
-                  <SelectItem value="vcenter_api">vCenter API</SelectItem>
-                  <SelectItem value="openmanage_api">OpenManage API</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <Select value={serverFilter} onValueChange={setServerFilter}>
-                <SelectTrigger>
-                  <SelectValue placeholder="All Servers" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Servers</SelectItem>
-                  {servers?.map(server => (
-                    <SelectItem key={server.id} value={server.id}>
-                      {server.hostname || server.ip_address}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              <Select value={commandTypeFilter} onValueChange={setCommandTypeFilter}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Command Type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Types</SelectItem>
-                  <SelectItem value="GET">GET</SelectItem>
-                  <SelectItem value="POST">POST</SelectItem>
-                  <SelectItem value="PATCH">PATCH</SelectItem>
-                  <SelectItem value="DELETE">DELETE</SelectItem>
-                  <SelectItem value="BIOS_READ">BIOS Read</SelectItem>
-                  <SelectItem value="BIOS_WRITE">BIOS Write</SelectItem>
-                  <SelectItem value="POWER_CONTROL">Power Control</SelectItem>
-                  <SelectItem value="VCENTER_AUTH">vCenter Auth</SelectItem>
-                  <SelectItem value="VCENTER_SYNC">vCenter Sync</SelectItem>
-                  <SelectItem value="AUTHENTICATE">OpenManage Auth</SelectItem>
-                  <SelectItem value="network_validation">Network Tests</SelectItem>
-                  <SelectItem value="SCP_EXPORT">SCP Export</SelectItem>
-                  <SelectItem value="SCP_IMPORT">SCP Import</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Status</SelectItem>
-                  <SelectItem value="success">Success</SelectItem>
-                  <SelectItem value="failed">Failed</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <Select value={commandSource} onValueChange={setCommandSource}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Source" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Sources</SelectItem>
-                  <SelectItem value="manual">Manual Operations</SelectItem>
-                  <SelectItem value="jobs">Job Operations</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <Select value={timeRangeFilter} onValueChange={setTimeRangeFilter}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Time Range" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="1h">Last Hour</SelectItem>
-                  <SelectItem value="24h">Last 24 Hours</SelectItem>
-                  <SelectItem value="7d">Last 7 Days</SelectItem>
-                  <SelectItem value="all">All Time</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </Card>
-
-          <Card>
-            {filteredCommands.length === 0 ? (
-              <div className="p-12 text-center space-y-4">
-                <Activity className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
-                <h3 className="text-lg font-semibold mb-2">No Activity Logs Found</h3>
-                <p className="text-muted-foreground mb-4">
-                  Activity logs are created when iDRAC operations are performed.
-                </p>
-
-                {isLocalMode && (
-                  <Alert className="max-w-md mx-auto mb-4">
-                    <AlertDescription className="space-y-2">
-                      <div>
-                        <strong>Local Mode Detected:</strong> Activity logs come from the Job Executor in local deployments.
-                      </div>
-                      <div className="text-sm">
-                        If no updates appear, ensure the Job Executor is running. Check status in{' '}
-                        <a href="/settings" className="underline">Settings → Diagnostics</a>.
-                      </div>
-                    </AlertDescription>
-                  </Alert>
-                )}
-
-                <div>
-                  <Button onClick={runLiveTest} disabled={isRunningTest}>
-                    {isRunningTest ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Running Test...
-                      </>
-                    ) : (
-                      <>
-                        <Activity className="h-4 w-4 mr-2" />
-                        Run Live Test
-                      </>
-                    )}
-                  </Button>
-
-                  <Button variant="outline" onClick={handleManualRefresh} className="ml-2">
-                    <RefreshCw className={`h-4 w-4 mr-2 ${(isFetching || isFetchingActiveJobs) ? 'animate-spin' : ''}`} />
-                    Refresh Now
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <div className="flex items-center justify-between p-4 border-b bg-muted/30">
-                  <div className="flex items-center gap-2">
-                    <Activity className="h-4 w-4" />
-                    <span className="text-sm text-muted-foreground">Realtime updates when Job Executor is connected</span>
-                  </div>
-
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <Wifi className="h-3 w-3 text-green-500" /> Live
-                    </span>
-                    <ChevronRight className="h-3 w-3" />
-                    <span className="flex items-center gap-1">
-                      <Clock className="h-3 w-3" /> Last refresh {format(lastRefresh, 'HH:mm:ss')}
-                    </span>
-                  </div>
-                </div>
-
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-[220px]">Timestamp</TableHead>
-                      <TableHead>Endpoint</TableHead>
-                      <TableHead>Server</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Response</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredCommands.map((command) => {
-                      const operationBadge = getOperationTypeBadge(command.operation_type);
-                      const statusBadge = getStatusBadge(command.success, command.status_code);
-                      const commandTypeBadge = getCommandTypeBadge(command.command_type);
-
-                      return (
-                        <>
-                          <TableRow
-                            key={command.id}
-                            className="cursor-pointer hover:bg-muted/50"
-                            onClick={() => setExpandedRow(expandedRow === command.id ? null : command.id)}
-                          >
-                            <TableCell>
-                              <div className="flex items-center gap-2">
-                                <Badge variant="outline" className={operationBadge.color}>{operationBadge.label}</Badge>
-                                <div className="flex flex-col">
-                                  <span className="font-medium">{format(new Date(command.timestamp), 'HH:mm:ss')}</span>
-                                  <span className="text-xs text-muted-foreground">{format(new Date(command.timestamp), 'MMM d, yyyy')}</span>
-                                </div>
-                              </div>
-                            </TableCell>
-                            <TableCell className="font-mono text-sm">
-                              <div className="flex items-center gap-2">
-                                <span className="truncate max-w-[240px]">{command.endpoint}</span>
-                                {command.task_id && (
-                                  <Badge variant="outline" className="text-xs">Task {command.task_id.slice(0, 4)}</Badge>
-                                )}
-                              </div>
-                              <div className="text-xs text-muted-foreground truncate max-w-[240px]">
-                                {command.full_url}
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              {command.servers ? (
-                                <div className="space-y-1">
-                                  <div className="font-medium flex items-center gap-2">
-                                    <ServerIcon className="h-4 w-4" />
-                                    <span>{command.servers.hostname || command.servers.ip_address}</span>
-                                  </div>
-                                  <div className="text-xs text-muted-foreground">{command.servers.ip_address}</div>
-                                </div>
-                              ) : (
-                                <span className="text-muted-foreground">N/A</span>
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {commandTypeBadge}
-                            </TableCell>
-                            <TableCell>
-                              {statusBadge}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <div className="flex items-center justify-end gap-2">
-                                <span className="text-sm font-medium">{command.response_time_ms}ms</span>
-                                <ChevronRight className={`h-4 w-4 transition-transform ${expandedRow === command.id ? 'rotate-90' : ''}`} />
-                              </div>
-                              {command.error_message && (
-                                <div className="text-xs text-destructive mt-1">{command.error_message}</div>
-                              )}
-                            </TableCell>
-                          </TableRow>
-
-                          {expandedRow === command.id && (
-                            <TableRow className="bg-muted/30">
-                              <TableCell colSpan={6}>
-                                <div className="space-y-4 p-4">
-                                  <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                                    <Badge variant="outline">Source: {command.source}</Badge>
-                                    {command.job_id && (
-                                      <Badge variant="outline">Job: {command.job_id}</Badge>
-                                    )}
-                                    {command.task_id && (
-                                      <Badge variant="outline">Task: {command.task_id}</Badge>
-                                    )}
-                                    <Badge variant="outline">Response Time: {command.response_time_ms}ms</Badge>
-                                    <Badge variant="outline">Status Code: {command.status_code || 'N/A'}</Badge>
-                                  </div>
-
-                                  <div className="grid md:grid-cols-2 gap-4">
-                                    <div className="space-y-2">
-                                      <h4 className="font-semibold text-sm">Request Details</h4>
-                                      <pre className="bg-card border rounded-lg p-3 text-xs overflow-x-auto">
-                                        {JSON.stringify(command.request_body, null, 2)}
-                                      </pre>
-                                    </div>
-                                    <div className="space-y-2">
-                                      <h4 className="font-semibold text-sm">Response Body</h4>
-                                      <pre className="bg-card border rounded-lg p-3 text-xs overflow-x-auto">
-                                        {JSON.stringify(command.response_body, null, 2)}
-                                      </pre>
-                                    </div>
-                                  </div>
-
-                                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs text-muted-foreground">
-                                    <span>Headers: {Object.keys(command.request_headers || {}).length} entries</span>
-                                    <div className="flex items-center gap-2">
-                                      <span>Initiated by: {command.initiated_by || 'System'}</span>
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        className="gap-2"
-                                        onClick={() => {
-                                          setSelectedCommand(command);
-                                          setDetailDialogOpen(true);
-                                        }}
-                                      >
-                                        <Terminal className="h-4 w-4" />
-                                        View Details
-                                      </Button>
-                                    </div>
-                                  </div>
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          )}
-                        </>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="jobs" className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Briefcase className="h-8 w-8 text-primary" />
-              <div>
-                <h2 className="text-3xl font-bold">Active Jobs</h2>
-                <p className="text-muted-foreground">
-                  Monitor pending and running jobs without leaving the activity console.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className="text-xs">{runningJobs} running</Badge>
-              <Badge variant="outline" className="text-xs">{pendingJobs} pending</Badge>
-              <Button variant="outline" size="sm" onClick={() => refetchActiveJobs()} disabled={isFetchingActiveJobs}>
-                <RefreshCw className={`h-4 w-4 mr-2 ${isFetchingActiveJobs ? 'animate-spin' : ''}`} />
-                Refresh Jobs
-              </Button>
-            </div>
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-3">
-            <Card>
-              <CardHeader>
-                <CardDescription>Running</CardDescription>
-                <CardTitle className="text-3xl flex items-center gap-2">
-                  <PlayCircle className="h-5 w-5 text-primary" />
-                  {runningJobs}
-                </CardTitle>
-              </CardHeader>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardDescription>Pending</CardDescription>
-                <CardTitle className="text-3xl flex items-center gap-2">
-                  <Clock className="h-5 w-5 text-amber-600" />
-                  {pendingJobs}
-                </CardTitle>
-              </CardHeader>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardDescription>Tracked</CardDescription>
-                <CardTitle className="text-3xl flex items-center gap-2">
-                  <CheckCircle className="h-5 w-5 text-green-600" />
-                  {jobs.length}
-                </CardTitle>
-              </CardHeader>
-            </Card>
-          </div>
-
-          <div className="grid gap-4">
-            {isFetchingActiveJobs ? (
-              Array.from({ length: 3 }).map((_, idx) => (
-                <Card key={idx}>
-                  <CardContent className="p-6 space-y-3">
-                    <Skeleton className="h-5 w-1/4" />
-                    <Skeleton className="h-4 w-1/2" />
-                    <Skeleton className="h-4 w-full" />
-                  </CardContent>
-                </Card>
-              ))
-            ) : jobs.length === 0 ? (
-              <Card>
-                <CardContent className="p-8 text-center space-y-3">
-                  <Briefcase className="h-10 w-10 text-muted-foreground mx-auto" />
-                  <h3 className="text-lg font-semibold">No active jobs</h3>
-                  <p className="text-muted-foreground text-sm">
-                    Jobs will appear here while running or pending. Create or schedule them from the Maintenance Planner.
-                  </p>
-                  <Button variant="outline" asChild>
-                    <a href="/maintenance-planner?tab=jobs">Open Maintenance Planner</a>
-                  </Button>
-                </CardContent>
-              </Card>
-            ) : (
-              jobs.map((job) => (
-                <Card key={job.id} className="border-primary/20">
-                  <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-lg bg-primary/10">
-                        {job.status === 'running' ? (
-                          <PlayCircle className="h-5 w-5 text-primary" />
-                        ) : (
-                          <Clock className="h-5 w-5 text-amber-600" />
-                        )}
-                      </div>
-                      <div>
-                        <CardTitle className="text-lg">{getJobTypeLabel(job.job_type)}</CardTitle>
-                        <CardDescription>{formatJobTiming(job)}</CardDescription>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {getJobStatusBadge(job.status)}
-                      <Badge variant="outline" className="text-xs">{job.id.slice(0, 8)}</Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
-                      <span className="flex items-center gap-2">
-                        <ServerIcon className="h-4 w-4" />
-                        {job.target_scope?.cluster_name || `${job.target_scope?.server_ids?.length || 0} servers`}
-                      </span>
-                      <span className="flex items-center gap-2">
-                        <Clock className="h-4 w-4" />
-                        {job.started_at ? 'In progress' : 'Queued'}
-                      </span>
-                    </div>
-
-                    {job.details?.error && job.status === 'failed' && (
-                      <div className="text-sm text-destructive bg-destructive/5 border border-destructive/20 p-3 rounded-lg">
-                        {job.details.error}
-                      </div>
-                    )}
-
-                    <div className="flex justify-end">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setSelectedJob(job);
-                          setJobDialogOpen(true);
-                        }}
-                      >
-                        View details
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))
-            )}
-          </div>
-        </TabsContent>
-      </Tabs>
-
-      {selectedCommand && (
-        <CommandDetailDialog
-          command={selectedCommand}
-          open={detailDialogOpen}
-          onOpenChange={setDetailDialogOpen}
-        />
-      )}
-
-      {selectedJob && (
-        <JobDetailDialog
-          job={selectedJob}
-          open={jobDialogOpen}
-          onOpenChange={setJobDialogOpen}
-        />
-      )}
+        <div className="w-[450px] flex-shrink-0">
+          <CommandDetailsSidebar
+            command={selectedCommand}
+            onClose={() => setSelectedCommand(null)}
+          />
+        </div>
+      </div>
     </div>
   );
 }
