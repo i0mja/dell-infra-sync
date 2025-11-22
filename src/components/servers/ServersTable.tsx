@@ -1,23 +1,7 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  ChevronDown,
-  ChevronRight,
-  CheckCircle,
-  AlertCircle,
-  Activity,
-  Users,
-  Power,
-  RefreshCw,
-  Stethoscope,
-  FileText,
-  ClipboardList,
-  Info,
-  KeyRound,
-  Link2,
-  HeartPulse,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, CheckCircle, AlertCircle, Activity, Users, Power, RefreshCw, Stethoscope } from "lucide-react";
 import { ReactNode, useState } from "react";
 import { ConnectionStatusBadge } from "./ConnectionStatusBadge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,11 +9,9 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
-  ContextMenuLabel,
   ContextMenuSeparator,
   ContextMenuTrigger
 } from "@/components/ui/context-menu";
-import { formatDistanceToNow } from "date-fns";
 
 interface Server {
   id: string;
@@ -70,12 +52,6 @@ interface ServersTableProps {
   onServerHealth: (server: Server) => void;
   onServerPower: (server: Server) => void;
   onServerDetails: (server: Server) => void;
-  onServerHealthDetails: (server: Server) => void;
-  onServerEventLog: (server: Server) => void;
-  onServerAudit: (server: Server) => void;
-  onServerProperties: (server: Server) => void;
-  onServerAssignCredentials: (server: Server) => void;
-  onServerLinkVCenter: (server: Server) => void;
   loading: boolean;
   refreshing: string | null;
   healthCheckServer: string | null;
@@ -97,12 +73,6 @@ export function ServersTable({
   onServerHealth,
   onServerPower,
   onServerDetails,
-  onServerHealthDetails,
-  onServerEventLog,
-  onServerAudit,
-  onServerProperties,
-  onServerAssignCredentials,
-  onServerLinkVCenter,
   loading,
   refreshing,
   healthCheckServer,
@@ -152,135 +122,62 @@ export function ServersTable({
       .map(m => m.server_groups as any) || [];
   };
 
-  const renderServerContextMenu = (server: Server, row: ReactNode) => {
-    const lastHealthRun = server.last_health_check
-      ? formatDistanceToNow(new Date(server.last_health_check), { addSuffix: true })
-      : 'Never run';
-
-    const healthState = server.overall_health || server.last_health_status;
-
-    return (
-      <ContextMenu key={server.id}>
-        <ContextMenuTrigger asChild>
-          {row}
-        </ContextMenuTrigger>
-        <ContextMenuContent className="w-64">
-          <ContextMenuLabel className="space-y-1">
-            <div className="text-xs uppercase text-muted-foreground">Health</div>
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <HeartPulse className="h-4 w-4 text-muted-foreground" />
-                {getHealthBadge(healthState)}
-              </div>
-              <span className="text-xs text-muted-foreground">{lastHealthRun}</span>
-            </div>
-          </ContextMenuLabel>
-          <ContextMenuItem
-            onClick={(e) => {
-              e.stopPropagation();
-              onServerHealthDetails(server);
-            }}
-          >
-            <Activity className="h-4 w-4 mr-2" />
-            Open health details
-          </ContextMenuItem>
-          <ContextMenuItem
-            onClick={(e) => {
-              e.stopPropagation();
-              onServerHealth(server);
-            }}
-          >
-            <Stethoscope className="h-4 w-4 mr-2" />
-            Run new health check
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem
-            onClick={(e) => {
-              e.stopPropagation();
-              onServerRefresh(server);
-            }}
-          >
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh inventory
-          </ContextMenuItem>
-          <ContextMenuItem
-            onClick={(e) => {
-              e.stopPropagation();
-              onServerTest(server);
-            }}
-          >
-            <ConnectionStatusBadge status={server.connection_status} />
-            <span className="ml-2">Test credentials</span>
-          </ContextMenuItem>
-          <ContextMenuItem
-            onClick={(e) => {
-              e.stopPropagation();
-              onServerAssignCredentials(server);
-            }}
-          >
-            <KeyRound className="h-4 w-4 mr-2" />
-            Assign credentials
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem
-            onClick={(e) => {
-              e.stopPropagation();
-              onServerEventLog(server);
-            }}
-          >
-            <FileText className="h-4 w-4 mr-2" />
-            View event log
-          </ContextMenuItem>
-          <ContextMenuItem
-            onClick={(e) => {
-              e.stopPropagation();
-              onServerAudit(server);
-            }}
-          >
-            <ClipboardList className="h-4 w-4 mr-2" />
-            View audit trail
-          </ContextMenuItem>
-          <ContextMenuItem
-            onClick={(e) => {
-              e.stopPropagation();
-              onServerProperties(server);
-            }}
-          >
-            <Info className="h-4 w-4 mr-2" />
-            View properties
-          </ContextMenuItem>
-          <ContextMenuItem
-            onClick={(e) => {
-              e.stopPropagation();
-              onServerDetails(server);
-            }}
-          >
-            <CheckCircle className="h-4 w-4 mr-2" />
-            View details panel
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem
-            onClick={(e) => {
-              e.stopPropagation();
-              onServerPower(server);
-            }}
-          >
-            <Power className="h-4 w-4 mr-2" />
-            Power controls
-          </ContextMenuItem>
-          <ContextMenuItem
-            onClick={(e) => {
-              e.stopPropagation();
-              onServerLinkVCenter(server);
-            }}
-          >
-            <Link2 className="h-4 w-4 mr-2" />
-            Link to vCenter
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-    );
-  };
+  const renderServerContextMenu = (server: Server, row: ReactNode) => (
+    <ContextMenu key={server.id}>
+      <ContextMenuTrigger asChild>
+        {row}
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-56">
+        <ContextMenuItem
+          onClick={(e) => {
+            e.stopPropagation();
+            onServerDetails(server);
+          }}
+        >
+          <CheckCircle className="h-4 w-4 mr-2" />
+          View details
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          onClick={(e) => {
+            e.stopPropagation();
+            onServerRefresh(server);
+          }}
+        >
+          <RefreshCw className="h-4 w-4 mr-2" />
+          Refresh inventory
+        </ContextMenuItem>
+        <ContextMenuItem
+          onClick={(e) => {
+            e.stopPropagation();
+            onServerTest(server);
+          }}
+        >
+          <ConnectionStatusBadge status={server.connection_status} />
+          <span className="ml-2">Test credentials</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onClick={(e) => {
+            e.stopPropagation();
+            onServerHealth(server);
+          }}
+        >
+          <Stethoscope className="h-4 w-4 mr-2" />
+          Run health check
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          onClick={(e) => {
+            e.stopPropagation();
+            onServerPower(server);
+          }}
+        >
+          <Power className="h-4 w-4 mr-2" />
+          Power controls
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
 
   if (loading) {
     return (

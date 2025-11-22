@@ -499,6 +499,11 @@ const Servers = () => {
     setPowerControlDialogOpen(true);
   };
 
+  const handleOpenHealthDialog = (server: Server) => {
+    setSelectedServer(server);
+    setHealthDialogOpen(true);
+  };
+
   const handleContextRefresh = (server: Server) => {
     setSelectedServer(server);
     handleRefreshInfo(server);
@@ -513,30 +518,6 @@ const Servers = () => {
     handleRunHealthCheck(server);
     setSelectedServer(server);
     setHealthDialogOpen(true);
-  };
-
-  const handleContextHealthDetails = (server: Server) => {
-    setSelectedServer(server);
-    setHealthDialogOpen(true);
-  };
-
-  const handleContextEventLog = (server: Server) => {
-    setSelectedServer(server);
-    setEventLogDialogOpen(true);
-  };
-
-  const handleContextAudit = (server: Server) => {
-    setSelectedServer(server);
-    setAuditDialogOpen(true);
-  };
-
-  const handleContextProperties = (server: Server) => {
-    setSelectedServer(server);
-    setPropertiesDialogOpen(true);
-  };
-
-  const handleContextAssignCredentials = (server: Server) => {
-    handleAssignCredentials(server);
   };
 
   const handleDiscoveryQuickAction = () => {
@@ -836,14 +817,8 @@ const Servers = () => {
                   onServerRefresh={handleContextRefresh}
                   onServerTest={handleContextTest}
                   onServerHealth={handleContextHealth}
-                  onServerHealthDetails={handleContextHealthDetails}
                   onServerPower={handleOpenPowerControls}
                   onServerDetails={(server) => setSelectedServer(server as any)}
-                  onServerEventLog={handleContextEventLog}
-                  onServerAudit={handleContextAudit}
-                  onServerProperties={handleContextProperties}
-                  onServerAssignCredentials={handleContextAssignCredentials}
-                  onServerLinkVCenter={handleLinkToVCenter}
                   loading={loading}
                   refreshing={refreshing}
                   healthCheckServer={healthCheckServer}
