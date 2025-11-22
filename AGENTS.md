@@ -1113,6 +1113,7 @@ serve(async (req) => {
 - Context menus for actions (power, update, configure)
 - Add/edit server dialogs
 - Credential assignment
+- Uses edge-to-edge layout with stats bar
 
 #### vCenter (`src/pages/VCenter.tsx`)
 - ESXi host management
@@ -1120,6 +1121,7 @@ serve(async (req) => {
 - Sync status and controls
 - Link servers to ESXi hosts
 - vCenter settings
+- Uses edge-to-edge layout with stats bar
 
 #### Maintenance Planner (`src/pages/MaintenancePlanner.tsx`)
 - Calendar view of maintenance windows
@@ -1127,6 +1129,7 @@ serve(async (req) => {
 - Approval workflow
 - Cluster safety checks
 - Optimal window recommendations
+- Uses edge-to-edge layout (no default container padding)
 
 #### Activity Monitor (`src/pages/ActivityMonitor.tsx`)
 - Real-time activity feed
@@ -1134,6 +1137,7 @@ serve(async (req) => {
 - Detailed command logs
 - Active jobs panel
 - Live connection status indicator
+- Uses edge-to-edge layout with stats bar
 
 #### Settings (`src/pages/Settings.tsx`)
 - Credential management
@@ -1211,6 +1215,50 @@ import { useLiveConsole } from "@/hooks/useLiveConsole";
 
 const { logs, isConnected } = useLiveConsole(jobId);
 ```
+
+### Layout Patterns
+
+#### Edge-to-Edge Layout (`src/components/Layout.tsx`)
+
+Pages with stats bars use an **edge-to-edge layout** to ensure proper alignment:
+
+```typescript
+// In Layout.tsx
+const edgeToEdgeRoutes = ["/servers", "/vcenter", "/activity", "/maintenance-planner"];
+const useEdgeToEdgeLayout = edgeToEdgeRoutes.some((path) =>
+  location.pathname.startsWith(path)
+);
+
+const containerClasses = cn(
+  "w-full",
+  useEdgeToEdgeLayout
+    ? "max-w-full px-0 pb-6 pt-0"  // No padding - page manages its own
+    : "mx-auto max-w-screen-2xl px-4 py-6 sm:px-6 lg:px-8"  // Standard padding
+);
+```
+
+**When to Add a Route to `edgeToEdgeRoutes`:**
+- Page has a stats bar component (ServerStatsBar, VCenterStatsBar, ActivityStatsBar, CompactStatsBar)
+- Stats bar needs to align perfectly with the header border
+- Page content manages its own padding
+
+**Stats Bar Pattern:**
+```tsx
+// Stats bar with built-in padding
+<div className="border-b bg-card">
+  <div className="px-4 py-3 sm:px-6 lg:px-8">
+    {/* Stats content */}
+  </div>
+</div>
+
+// Main content with padding
+<div className="flex-1 overflow-hidden px-4 pb-6 pt-4">
+  {/* Page content */}
+</div>
+```
+
+**Common Mistake:**
+Adding a page with a stats bar but forgetting to add it to `edgeToEdgeRoutes` causes double padding and misalignment.
 
 ### UI Patterns
 
@@ -1836,8 +1884,8 @@ const validated = serverSchema.parse(formData);
 
 ---
 
-**Last Updated**: 2025-01-20  
-**Version**: 1.0.0  
+**Last Updated**: 2025-11-22  
+**Version**: 1.0.1  
 **Maintained By**: Dell Server Manager Development Team
 
 ---

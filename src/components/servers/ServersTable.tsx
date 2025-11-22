@@ -153,7 +153,12 @@ export function ServersTable({
             onServerTest(server);
           }}
         >
-          <ConnectionStatusBadge status={server.connection_status} />
+          <ConnectionStatusBadge 
+            status={server.connection_status}
+            lastTest={server.last_connection_test}
+            error={server.connection_error}
+            credentialTestStatus={server.credential_test_status}
+          />
           <span className="ml-2">Test credentials</span>
         </ContextMenuItem>
         <ContextMenuItem
