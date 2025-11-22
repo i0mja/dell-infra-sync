@@ -275,20 +275,24 @@ export default function ActivityMonitor() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="space-y-4 px-4 pb-6 pt-3 lg:px-6">
-        <ActivityStatsBar
-          totalCommands={commands.length}
-          successRate={calculateSuccessRate()}
-          activeJobs={jobs.length}
-          failedCount={commands.filter(c => !c.success).length}
-          liveStatus={realtimeStatus}
-          onRefresh={handleManualRefresh}
-          onExport={handleExport}
-        />
+      <ActivityStatsBar
+        totalCommands={commands.length}
+        successRate={calculateSuccessRate()}
+        activeJobs={jobs.length}
+        failedCount={commands.filter(c => !c.success).length}
+        liveStatus={realtimeStatus}
+        onRefresh={handleManualRefresh}
+        onExport={handleExport}
+      />
 
-        {jobs.length > 0 && <ActiveJobsBanner jobs={jobs} />}
+      {jobs.length > 0 && (
+        <div className="px-4 pt-4 lg:px-6">
+          <ActiveJobsBanner jobs={jobs} />
+        </div>
+      )}
 
-        <div className="grid min-h-[70vh] gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(380px,1fr)] xl:items-start">
+      <div className="flex-1 overflow-hidden px-4 pb-6 pt-4 lg:px-6">
+        <div className="grid h-full gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(380px,1fr)] xl:items-start">
           <div className="flex min-w-0 flex-col gap-3">
             <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
               <div className="border-b bg-muted/40 px-4 py-3">
