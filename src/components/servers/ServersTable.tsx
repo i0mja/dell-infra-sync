@@ -1,10 +1,35 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ChevronDown, ChevronRight, CheckCircle, AlertCircle, Activity, Users } from "lucide-react";
-import { useState } from "react";
+import {
+  ChevronDown,
+  ChevronRight,
+  CheckCircle,
+  AlertCircle,
+  Activity,
+  Users,
+  Power,
+  RefreshCw,
+  Stethoscope,
+  FileText,
+  ClipboardList,
+  Info,
+  KeyRound,
+  Link2,
+  HeartPulse,
+} from "lucide-react";
+import { ReactNode, useState } from "react";
 import { ConnectionStatusBadge } from "./ConnectionStatusBadge";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuTrigger
+} from "@/components/ui/context-menu";
+import { formatDistanceToNow } from "date-fns";
 
 interface Server {
   id: string;
@@ -18,6 +43,10 @@ interface Server {
   credential_test_status: string | null;
   last_connection_test: string | null;
   vcenter_host_id: string | null;
+  power_state?: string | null;
+  overall_health?: string | null;
+  last_health_check?: string | null;
+  last_health_status?: string | null;
 }
 
 interface GroupData {
@@ -36,6 +65,17 @@ interface ServersTableProps {
   selectedGroupId: string | null;
   onServerClick: (server: Server) => void;
   onGroupClick: (groupId: string) => void;
+  onServerRefresh: (server: Server) => void;
+  onServerTest: (server: Server) => void;
+  onServerHealth: (server: Server) => void;
+  onServerPower: (server: Server) => void;
+  onServerDetails: (server: Server) => void;
+  onServerHealthDetails: (server: Server) => void;
+  onServerEventLog: (server: Server) => void;
+  onServerAudit: (server: Server) => void;
+  onServerProperties: (server: Server) => void;
+  onServerAssignCredentials: (server: Server) => void;
+  onServerLinkVCenter: (server: Server) => void;
   loading: boolean;
   refreshing: string | null;
   healthCheckServer: string | null;
@@ -52,6 +92,17 @@ export function ServersTable({
   selectedGroupId,
   onServerClick,
   onGroupClick,
+  onServerRefresh,
+  onServerTest,
+  onServerHealth,
+  onServerPower,
+  onServerDetails,
+  onServerHealthDetails,
+  onServerEventLog,
+  onServerAudit,
+  onServerProperties,
+  onServerAssignCredentials,
+  onServerLinkVCenter,
   loading,
   refreshing,
   healthCheckServer,
@@ -83,6 +134,13 @@ export function ServersTable({
     }
   };
 
+  const getHealthBadge = (health?: string | null) => {
+    if (!health) return <Badge variant="secondary">Unknown</Badge>;
+
+    const variant = health === 'OK' ? 'default' : health === 'Warning' ? 'outline' : 'destructive';
+    return <Badge variant={variant}>{health}</Badge>;
+  };
+
   const getVCenterLink = (serverId: string) => {
     const host = vCenterHosts?.find(h => h.server_id === serverId);
     return host ? { linked: true, cluster: host.cluster } : { linked: false, cluster: null };
@@ -92,6 +150,136 @@ export function ServersTable({
     return groupMemberships
       ?.filter(m => m.server_id === serverId)
       .map(m => m.server_groups as any) || [];
+  };
+
+  const renderServerContextMenu = (server: Server, row: ReactNode) => {
+    const lastHealthRun = server.last_health_check
+      ? formatDistanceToNow(new Date(server.last_health_check), { addSuffix: true })
+      : 'Never run';
+
+    const healthState = server.overall_health || server.last_health_status;
+
+    return (
+      <ContextMenu key={server.id}>
+        <ContextMenuTrigger asChild>
+          {row}
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-64">
+          <ContextMenuLabel className="space-y-1">
+            <div className="text-xs uppercase text-muted-foreground">Health</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <HeartPulse className="h-4 w-4 text-muted-foreground" />
+                {getHealthBadge(healthState)}
+              </div>
+              <span className="text-xs text-muted-foreground">{lastHealthRun}</span>
+            </div>
+          </ContextMenuLabel>
+          <ContextMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              onServerHealthDetails(server);
+            }}
+          >
+            <Activity className="h-4 w-4 mr-2" />
+            Open health details
+          </ContextMenuItem>
+          <ContextMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              onServerHealth(server);
+            }}
+          >
+            <Stethoscope className="h-4 w-4 mr-2" />
+            Run new health check
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              onServerRefresh(server);
+            }}
+          >
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh inventory
+          </ContextMenuItem>
+          <ContextMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              onServerTest(server);
+            }}
+          >
+            <ConnectionStatusBadge status={server.connection_status} />
+            <span className="ml-2">Test credentials</span>
+          </ContextMenuItem>
+          <ContextMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              onServerAssignCredentials(server);
+            }}
+          >
+            <KeyRound className="h-4 w-4 mr-2" />
+            Assign credentials
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              onServerEventLog(server);
+            }}
+          >
+            <FileText className="h-4 w-4 mr-2" />
+            View event log
+          </ContextMenuItem>
+          <ContextMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              onServerAudit(server);
+            }}
+          >
+            <ClipboardList className="h-4 w-4 mr-2" />
+            View audit trail
+          </ContextMenuItem>
+          <ContextMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              onServerProperties(server);
+            }}
+          >
+            <Info className="h-4 w-4 mr-2" />
+            View properties
+          </ContextMenuItem>
+          <ContextMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              onServerDetails(server);
+            }}
+          >
+            <CheckCircle className="h-4 w-4 mr-2" />
+            View details panel
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              onServerPower(server);
+            }}
+          >
+            <Power className="h-4 w-4 mr-2" />
+            Power controls
+          </ContextMenuItem>
+          <ContextMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              onServerLinkVCenter(server);
+            }}
+          >
+            <Link2 className="h-4 w-4 mr-2" />
+            Link to vCenter
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+    );
   };
 
   if (loading) {
@@ -133,9 +321,8 @@ export function ServersTable({
               servers.map((server) => {
                 const vcLink = getVCenterLink(server.id);
                 const serverGroups = getServerGroups(server.id);
-                return (
+                return renderServerContextMenu(server, (
                   <TableRow
-                    key={server.id}
                     className={`cursor-pointer ${selectedServerId === server.id ? 'bg-muted' : ''}`}
                     onClick={() => onServerClick(server)}
                   >
@@ -206,7 +393,7 @@ export function ServersTable({
                       </div>
                     </TableCell>
                   </TableRow>
-                );
+                ));
               })
             )}
           </TableBody>
@@ -273,9 +460,8 @@ export function ServersTable({
                   {!isCollapsed && groupData.servers.map((server) => {
                     const vcLink = getVCenterLink(server.id);
                     const serverGroups = getServerGroups(server.id);
-                    return (
+                    return renderServerContextMenu(server, (
                       <TableRow
-                        key={server.id}
                         className={`cursor-pointer ${selectedServerId === server.id ? 'bg-muted' : ''}`}
                         onClick={() => onServerClick(server)}
                       >
@@ -346,7 +532,7 @@ export function ServersTable({
                           </div>
                         </TableCell>
                       </TableRow>
-                    );
+                    ));
                   })}
                 </>
               );
