@@ -25,6 +25,10 @@ interface Server {
   credential_test_status: string | null;
   last_connection_test: string | null;
   vcenter_host_id: string | null;
+  power_state?: string | null;
+  overall_health?: string | null;
+  last_health_check?: string | null;
+  last_health_status?: string | null;
 }
 
 interface GroupData {
@@ -98,6 +102,13 @@ export function ServersTable({
       default:
         return <Badge variant="secondary" className="gap-1"><span className="text-yellow-400">●</span> Unknown</Badge>;
     }
+  };
+
+  const getHealthBadge = (health?: string | null) => {
+    if (!health) return <Badge variant="secondary">Unknown</Badge>;
+
+    const variant = health === 'OK' ? 'default' : health === 'Warning' ? 'outline' : 'destructive';
+    return <Badge variant={variant}>{health}</Badge>;
   };
 
   const getVCenterLink = (serverId: string) => {

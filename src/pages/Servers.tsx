@@ -216,6 +216,11 @@ const Servers = () => {
     setLinkDialogOpen(true);
   };
 
+  const handleAssignCredentials = (server: Server) => {
+    setSelectedServer(server);
+    setAssignCredentialsDialogOpen(true);
+  };
+
   const handleCreateJob = (server: Server) => {
     setSelectedServer(server);
     setJobDialogOpen(true);
