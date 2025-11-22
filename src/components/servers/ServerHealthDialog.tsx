@@ -31,20 +31,22 @@ interface HealthData {
   network_health?: string;
   cpu_health?: string;
   timestamp: string;
+  sensors?: Record<string, any> | null;
 }
 
 export function ServerHealthDialog({ open, onOpenChange, server }: ServerHealthDialogProps) {
-  const [healthData, setHealthData] = useState<HealthData | null>(null);
+  const [healthHistory, setHealthHistory] = useState<HealthData[]>([]);
+  const [selectedEntry, setSelectedEntry] = useState<HealthData | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (open) {
-      fetchLatestHealth();
+      fetchHealthHistory();
     }
   }, [open, server.id]);
 
-  const fetchLatestHealth = async () => {
+  const fetchHealthHistory = async () => {
     setLoading(true);
     try {
       const { data, error } = await supabase
@@ -52,11 +54,12 @@ export function ServerHealthDialog({ open, onOpenChange, server }: ServerHealthD
         .select('*')
         .eq('server_id', server.id)
         .order('timestamp', { ascending: false })
-        .limit(1)
-        .single();
+        .limit(10);
 
       if (error && error.code !== 'PGRST116') throw error;
-      setHealthData(data || null);
+      const rows = (data as HealthData[]) || [];
+      setHealthHistory(rows);
+      setSelectedEntry(rows[0] || null);
     } catch (error: any) {
       console.error('Error fetching health data:', error);
     } finally {
@@ -86,6 +89,10 @@ export function ServerHealthDialog({ open, onOpenChange, server }: ServerHealthD
       toast.success('Health check initiated', {
         description: 'Results will be available shortly'
       });
+
+      setTimeout(() => {
+        fetchHealthHistory();
+      }, 5000);
     } catch (error: any) {
       console.error('Error initiating health check:', error);
       toast.error('Failed to initiate health check', {
@@ -104,7 +111,7 @@ export function ServerHealthDialog({ open, onOpenChange, server }: ServerHealthD
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className="sm:max-w-[720px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Activity className="h-5 w-5" />
@@ -133,7 +140,7 @@ export function ServerHealthDialog({ open, onOpenChange, server }: ServerHealthD
             <div className="text-center py-8 text-muted-foreground">
               Loading health data...
             </div>
-          ) : !healthData ? (
+          ) : !selectedEntry ? (
             <div className="text-center py-8 text-muted-foreground">
               <p className="mb-4">No health data available</p>
               <Button onClick={handleRefresh} disabled={isRefreshing}>
@@ -141,106 +148,145 @@ export function ServerHealthDialog({ open, onOpenChange, server }: ServerHealthD
               </Button>
             </div>
           ) : (
-            <>
-              {/* Overall Status */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="p-4 rounded-lg border bg-card">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">Power State</span>
-                    <Badge variant={healthData.power_state === 'On' ? 'default' : 'outline'}>
-                      {healthData.power_state || 'Unknown'}
-                    </Badge>
+            <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
+              <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">Recent health checks</p>
+                <div className="flex flex-col gap-2">
+                  {healthHistory.map((entry) => (
+                    <Button
+                      key={entry.timestamp}
+                      variant={selectedEntry.timestamp === entry.timestamp ? 'secondary' : 'ghost'}
+                      className="w-full justify-start"
+                      onClick={() => setSelectedEntry(entry)}
+                    >
+                      <div className="flex flex-col text-left">
+                        <span className="text-sm font-semibold">{format(new Date(entry.timestamp), 'MMM d, HH:mm')}</span>
+                        <span className="text-xs text-muted-foreground flex items-center gap-2">
+                          {getHealthBadge(entry.overall_health)}
+                          <span>• {entry.power_state || 'Unknown power'}</span>
+                        </span>
+                      </div>
+                    </Button>
+                  ))}
+                  {healthHistory.length === 0 && (
+                    <div className="text-xs text-muted-foreground">No historical results</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <p className="text-sm text-muted-foreground">Recorded</p>
+                    <p className="text-lg font-semibold">{format(new Date(selectedEntry.timestamp), 'PPpp')}</p>
+                  </div>
+                  <Badge variant="outline">{selectedEntry.power_state || 'Unknown'}</Badge>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-4 rounded-lg border bg-card">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Power State</span>
+                      <Badge variant={selectedEntry.power_state === 'On' ? 'default' : 'outline'}>
+                        {selectedEntry.power_state || 'Unknown'}
+                      </Badge>
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-lg border bg-card">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Overall Health</span>
+                      {getHealthBadge(selectedEntry.overall_health)}
+                    </div>
                   </div>
                 </div>
 
-                <div className="p-4 rounded-lg border bg-card">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">Overall Health</span>
-                    {getHealthBadge(healthData.overall_health)}
-                  </div>
+                <div className="space-y-3">
+                  <h4 className="text-sm font-medium">Component Health</h4>
+
+                  {selectedEntry.temperature_celsius && (
+                    <div className="flex items-center justify-between p-3 rounded-lg border">
+                      <div className="flex items-center gap-2">
+                        <Thermometer className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm">Temperature</span>
+                      </div>
+                      <Badge variant="outline">{selectedEntry.temperature_celsius}°C</Badge>
+                    </div>
+                  )}
+
+                  {selectedEntry.fan_health && (
+                    <div className="flex items-center justify-between p-3 rounded-lg border">
+                      <div className="flex items-center gap-2">
+                        <Fan className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm">Fans</span>
+                      </div>
+                      {getHealthBadge(selectedEntry.fan_health)}
+                    </div>
+                  )}
+
+                  {selectedEntry.psu_health && (
+                    <div className="flex items-center justify-between p-3 rounded-lg border">
+                      <div className="flex items-center gap-2">
+                        <Zap className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm">Power Supplies</span>
+                      </div>
+                      {getHealthBadge(selectedEntry.psu_health)}
+                    </div>
+                  )}
+
+                  {selectedEntry.storage_health && (
+                    <div className="flex items-center justify-between p-3 rounded-lg border">
+                      <div className="flex items-center gap-2">
+                        <HardDrive className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm">Storage</span>
+                      </div>
+                      {getHealthBadge(selectedEntry.storage_health)}
+                    </div>
+                  )}
+
+                  {selectedEntry.memory_health && (
+                    <div className="flex items-center justify-between p-3 rounded-lg border">
+                      <div className="flex items-center gap-2">
+                        <MemoryStick className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm">Memory</span>
+                      </div>
+                      {getHealthBadge(selectedEntry.memory_health)}
+                    </div>
+                  )}
+
+                  {selectedEntry.network_health && (
+                    <div className="flex items-center justify-between p-3 rounded-lg border">
+                      <div className="flex items-center gap-2">
+                        <Network className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm">Network</span>
+                      </div>
+                      {getHealthBadge(selectedEntry.network_health)}
+                    </div>
+                  )}
+
+                  {selectedEntry.cpu_health && (
+                    <div className="flex items-center justify-between p-3 rounded-lg border">
+                      <div className="flex items-center gap-2">
+                        <Cpu className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm">Processors</span>
+                      </div>
+                      {getHealthBadge(selectedEntry.cpu_health)}
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="text-sm font-medium">Full sensor payload</h4>
+                  {selectedEntry.sensors ? (
+                    <pre className="max-h-72 overflow-auto rounded-md border bg-muted/40 p-3 text-xs">
+                      {JSON.stringify(selectedEntry.sensors, null, 2)}
+                    </pre>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No sensor payload captured for this check.</p>
+                  )}
                 </div>
               </div>
-
-              {/* Component Health */}
-              <div className="space-y-3">
-                <h4 className="text-sm font-medium">Component Health</h4>
-
-                {healthData.temperature_celsius && (
-                  <div className="flex items-center justify-between p-3 rounded-lg border">
-                    <div className="flex items-center gap-2">
-                      <Thermometer className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm">Temperature</span>
-                    </div>
-                    <Badge variant="outline">{healthData.temperature_celsius}°C</Badge>
-                  </div>
-                )}
-
-                {healthData.fan_health && (
-                  <div className="flex items-center justify-between p-3 rounded-lg border">
-                    <div className="flex items-center gap-2">
-                      <Fan className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm">Fans</span>
-                    </div>
-                    {getHealthBadge(healthData.fan_health)}
-                  </div>
-                )}
-
-                {healthData.psu_health && (
-                  <div className="flex items-center justify-between p-3 rounded-lg border">
-                    <div className="flex items-center gap-2">
-                      <Zap className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm">Power Supplies</span>
-                    </div>
-                    {getHealthBadge(healthData.psu_health)}
-                  </div>
-                )}
-
-                {healthData.storage_health && (
-                  <div className="flex items-center justify-between p-3 rounded-lg border">
-                    <div className="flex items-center gap-2">
-                      <HardDrive className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm">Storage</span>
-                    </div>
-                    {getHealthBadge(healthData.storage_health)}
-                  </div>
-                )}
-
-                {healthData.cpu_health && (
-                  <div className="flex items-center justify-between p-3 rounded-lg border">
-                    <div className="flex items-center gap-2">
-                      <Cpu className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm">Processors</span>
-                    </div>
-                    {getHealthBadge(healthData.cpu_health)}
-                  </div>
-                )}
-
-                {healthData.memory_health && (
-                  <div className="flex items-center justify-between p-3 rounded-lg border">
-                    <div className="flex items-center gap-2">
-                      <MemoryStick className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm">Memory</span>
-                    </div>
-                    {getHealthBadge(healthData.memory_health)}
-                  </div>
-                )}
-
-                {healthData.network_health && (
-                  <div className="flex items-center justify-between p-3 rounded-lg border">
-                    <div className="flex items-center gap-2">
-                      <Network className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm">Network</span>
-                    </div>
-                    {getHealthBadge(healthData.network_health)}
-                  </div>
-                )}
-              </div>
-
-              {/* Last Checked */}
-              <div className="text-xs text-muted-foreground text-center pt-2">
-                Last checked: {format(new Date(healthData.timestamp), 'PPpp')}
-              </div>
-            </>
+            </div>
           )}
         </div>
       </DialogContent>

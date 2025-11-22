@@ -101,6 +101,7 @@ const Servers = () => {
   const [biosConfigDialogOpen, setBiosConfigDialogOpen] = useState(false);
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
   const [preFlightCheckDialogOpen, setPreFlightCheckDialogOpen] = useState(false);
+  const [defaultJobType, setDefaultJobType] = useState<'firmware_update' | 'discovery_scan' | 'full_server_update' | 'boot_configuration' | ''>('');
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [healthCheckServer, setHealthCheckServer] = useState<string | null>(null);
   const { toast } = useToast();
@@ -488,6 +489,47 @@ const Servers = () => {
     }
   };
 
+  const handleOpenPowerControls = (server: Server) => {
+    setSelectedServer(server);
+    setPowerControlDialogOpen(true);
+  };
+
+  const handleOpenHealthDialog = (server: Server) => {
+    setSelectedServer(server);
+    setHealthDialogOpen(true);
+  };
+
+  const handleContextRefresh = (server: Server) => {
+    setSelectedServer(server);
+    handleRefreshInfo(server);
+  };
+
+  const handleContextTest = (server: Server) => {
+    setSelectedServer(server);
+    handleTestConnection(server);
+  };
+
+  const handleContextHealth = (server: Server) => {
+    handleRunHealthCheck(server);
+    setSelectedServer(server);
+    setHealthDialogOpen(true);
+  };
+
+  const handleDiscoveryQuickAction = () => {
+    setDefaultJobType('discovery_scan');
+    setJobDialogOpen(true);
+  };
+
+  const handleImportCsv = () => {
+    toast({
+      title: "CSV import coming soon",
+      description: "Use Add Server or run a discovery scan while bulk upload is finalized.",
+    });
+  };
+
+  const handleManageCredentials = () => navigate('/settings?tab=credentials');
+  const handleManageGroups = () => navigate('/settings?tab=server-groups');
+
   const handleEditServer = (server: Server) => {
     setSelectedServer(server);
     setEditDialogOpen(true);
@@ -704,6 +746,13 @@ const Servers = () => {
     vCenterHosts?.map(h => h.cluster).filter(Boolean) || []
   ));
 
+  const handleJobDialogChange = (open: boolean) => {
+    setJobDialogOpen(open);
+    if (!open) {
+      setDefaultJobType('');
+    }
+  };
+
   return (
     <div className="flex h-full w-full justify-center overflow-hidden">
       <div className="flex h-full w-full max-w-screen-2xl flex-col overflow-hidden">
@@ -760,6 +809,11 @@ const Servers = () => {
                   selectedGroupId={selectedGroup}
                   onServerClick={(server) => setSelectedServer(server as any)}
                   onGroupClick={setSelectedGroup}
+                  onServerRefresh={handleContextRefresh}
+                  onServerTest={handleContextTest}
+                  onServerHealth={handleContextHealth}
+                  onServerPower={handleOpenPowerControls}
+                  onServerDetails={(server) => setSelectedServer(server as any)}
                   loading={loading}
                   refreshing={refreshing}
                   healthCheckServer={healthCheckServer}
@@ -805,6 +859,11 @@ const Servers = () => {
               onCreateJob={(s: any) => { setSelectedServer(s); setJobDialogOpen(true); }}
               onWorkflow={(s: any) => { setSelectedServer(s); setWorkflowDialogOpen(true); }}
               onPreFlight={(s: any) => { setSelectedServer(s); setPreFlightCheckDialogOpen(true); }}
+              onAddServer={() => setDialogOpen(true)}
+              onRunDiscovery={handleDiscoveryQuickAction}
+              onImportCsv={handleImportCsv}
+              onManageCredentials={handleManageCredentials}
+              onManageGroups={handleManageGroups}
               refreshing={refreshing}
             />
           </div>
@@ -882,8 +941,9 @@ const Servers = () => {
       )}
       <CreateJobDialog
         open={jobDialogOpen}
-        onOpenChange={setJobDialogOpen}
+        onOpenChange={handleJobDialogChange}
         preSelectedServerId={selectedServer?.id}
+        defaultJobType={defaultJobType}
         onSuccess={fetchServers}
       />
       <WorkflowJobDialog

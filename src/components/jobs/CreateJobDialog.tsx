@@ -19,6 +19,7 @@ interface CreateJobDialogProps {
   onSuccess: () => void;
   preSelectedServerId?: string;
   quickScanIp?: string;
+  defaultJobType?: 'firmware_update' | 'discovery_scan' | 'full_server_update' | 'boot_configuration' | '';
 }
 
 interface Server {
@@ -35,7 +36,14 @@ interface CredentialSet {
   priority: number;
 }
 
-export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServerId, quickScanIp }: CreateJobDialogProps) => {
+export const CreateJobDialog = ({
+  open,
+  onOpenChange,
+  onSuccess,
+  preSelectedServerId,
+  quickScanIp,
+  defaultJobType = ''
+}: CreateJobDialogProps) => {
   const [loading, setLoading] = useState(false);
   const [jobType, setJobType] = useState<'firmware_update' | 'discovery_scan' | 'full_server_update' | 'boot_configuration' | ''>("");
   const [servers, setServers] = useState<Server[]>([]);
@@ -63,14 +71,19 @@ export const CreateJobDialog = ({ open, onOpenChange, onSuccess, preSelectedServ
       if (preSelectedServerId) {
         setSelectedServers([preSelectedServerId]);
         setJobType('firmware_update');
+      } else if (defaultJobType) {
+        setJobType(defaultJobType);
       }
       // Quick scan mode for discovery
       if (quickScanIp) {
         setJobType('discovery_scan');
         setScanRange(quickScanIp);
       }
+    } else {
+      // Reset type so subsequent opens reflect latest defaults
+      setJobType('');
     }
-  }, [open, preSelectedServerId, quickScanIp]);
+  }, [open, preSelectedServerId, quickScanIp, defaultJobType]);
 
   const fetchServers = async () => {
     const { data } = await supabase
