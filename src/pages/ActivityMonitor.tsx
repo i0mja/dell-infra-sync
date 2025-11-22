@@ -286,6 +286,7 @@ export default function ActivityMonitor() {
             onRefresh={handleManualRefresh}
             onExport={handleExport}
           />
+        </div>
 
           {jobs.length > 0 && <ActiveJobsBanner jobs={jobs} />}
         </div>
