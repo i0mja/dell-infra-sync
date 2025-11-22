@@ -115,12 +115,12 @@ export function ServerStatsBar({
             </Tooltip>
           </TooltipProvider>
 
-          <div className="flex items-center gap-2 sm:ml-2 sm:border-l sm:pl-2">
-            <Badge variant={useJobExecutor ? "default" : "secondary"} className="gap-1">
-              <span className={useJobExecutor ? "text-green-400" : "text-blue-400"}>●</span>
+          <Badge variant="outline" className="gap-2 sm:ml-2 sm:border-l sm:pl-2">
+            <span className={`h-2 w-2 rounded-full ${useJobExecutor ? 'bg-blue-500' : 'bg-emerald-500'}`} />
+            <span className="text-xs font-medium tracking-wide">
               {useJobExecutor ? "Job Executor" : "Cloud Mode"}
-            </Badge>
-          </div>
+            </span>
+          </Badge>
         </div>
       </div>
     </div>
