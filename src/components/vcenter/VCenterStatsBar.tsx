@@ -37,7 +37,7 @@ export function VCenterStatsBar({
   return (
     <div className="border-b bg-card">
       <div className="flex flex-col gap-3 px-4 py-3 sm:px-6 lg:px-8 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-wrap items-center gap-3 sm:gap-6">
+        <div className="flex min-w-0 flex-wrap items-center gap-3 sm:gap-6">
           <div className="flex items-center gap-2 text-sm whitespace-nowrap">
             <Database className="h-4 w-4 text-muted-foreground" />
             <span className="font-medium text-muted-foreground">Hosts:</span>
@@ -62,9 +62,9 @@ export function VCenterStatsBar({
 
           <div className="hidden h-4 w-px bg-border sm:block" />
 
-          <div className="flex items-center gap-2 text-sm whitespace-nowrap">
+          <div className="flex min-w-0 items-center gap-2 text-sm whitespace-nowrap">
             <span className="text-muted-foreground">Last Sync:</span>
-            <span className="font-medium">
+            <span className="font-medium truncate max-w-[200px]">
               {lastSync ? formatDistanceToNow(new Date(lastSync), { addSuffix: true }) : 'Never'}
             </span>
           </div>

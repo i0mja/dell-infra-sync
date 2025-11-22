@@ -140,6 +140,18 @@ const Layout = () => {
     </>
   );
 
+  const edgeToEdgeRoutes = ["/servers", "/vcenter", "/activity"];
+  const useEdgeToEdgeLayout = edgeToEdgeRoutes.some((path) =>
+    location.pathname.startsWith(path)
+  );
+
+  const containerClasses = cn(
+    "w-full",
+    useEdgeToEdgeLayout
+      ? "max-w-full px-0 pb-6 pt-0"
+      : "mx-auto max-w-screen-2xl px-4 py-6 sm:px-6 lg:px-8"
+  );
+
   return (
     <div className="flex h-screen bg-background">
       {/* Desktop Sidebar */}
@@ -214,7 +226,7 @@ const Layout = () => {
 
         {/* Main Content */}
         <main className="flex-1 overflow-auto bg-background">
-          <div className="mx-auto w-full max-w-screen-2xl px-4 py-6 sm:px-6 lg:px-8">
+          <div className={containerClasses}>
             <div className="animate-in fade-in duration-300">
               <Outlet key={location.pathname} />
             </div>
