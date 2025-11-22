@@ -233,7 +233,7 @@ export default function MaintenancePlanner() {
   };
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex h-full w-full flex-col overflow-hidden">
       {/* Compact Stats Bar */}
       <CompactStatsBar
         safeDays={safeDays}
