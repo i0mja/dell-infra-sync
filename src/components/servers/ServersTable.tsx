@@ -1,10 +1,17 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ChevronDown, ChevronRight, CheckCircle, AlertCircle, Activity, Users } from "lucide-react";
-import { useState } from "react";
+import { ChevronDown, ChevronRight, CheckCircle, AlertCircle, Activity, Users, Power, RefreshCw, Stethoscope } from "lucide-react";
+import { ReactNode, useState } from "react";
 import { ConnectionStatusBadge } from "./ConnectionStatusBadge";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger
+} from "@/components/ui/context-menu";
 
 interface Server {
   id: string;
@@ -36,6 +43,11 @@ interface ServersTableProps {
   selectedGroupId: string | null;
   onServerClick: (server: Server) => void;
   onGroupClick: (groupId: string) => void;
+  onServerRefresh: (server: Server) => void;
+  onServerTest: (server: Server) => void;
+  onServerHealth: (server: Server) => void;
+  onServerPower: (server: Server) => void;
+  onServerDetails: (server: Server) => void;
   loading: boolean;
   refreshing: string | null;
   healthCheckServer: string | null;
@@ -52,6 +64,11 @@ export function ServersTable({
   selectedGroupId,
   onServerClick,
   onGroupClick,
+  onServerRefresh,
+  onServerTest,
+  onServerHealth,
+  onServerPower,
+  onServerDetails,
   loading,
   refreshing,
   healthCheckServer,
@@ -94,6 +111,63 @@ export function ServersTable({
       .map(m => m.server_groups as any) || [];
   };
 
+  const renderServerContextMenu = (server: Server, row: ReactNode) => (
+    <ContextMenu key={server.id}>
+      <ContextMenuTrigger asChild>
+        {row}
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-56">
+        <ContextMenuItem
+          onClick={(e) => {
+            e.stopPropagation();
+            onServerDetails(server);
+          }}
+        >
+          <CheckCircle className="h-4 w-4 mr-2" />
+          View details
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          onClick={(e) => {
+            e.stopPropagation();
+            onServerRefresh(server);
+          }}
+        >
+          <RefreshCw className="h-4 w-4 mr-2" />
+          Refresh inventory
+        </ContextMenuItem>
+        <ContextMenuItem
+          onClick={(e) => {
+            e.stopPropagation();
+            onServerTest(server);
+          }}
+        >
+          <ConnectionStatusBadge status={server.connection_status} />
+          <span className="ml-2">Test credentials</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onClick={(e) => {
+            e.stopPropagation();
+            onServerHealth(server);
+          }}
+        >
+          <Stethoscope className="h-4 w-4 mr-2" />
+          Run health check
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          onClick={(e) => {
+            e.stopPropagation();
+            onServerPower(server);
+          }}
+        >
+          <Power className="h-4 w-4 mr-2" />
+          Power controls
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+
   if (loading) {
     return (
       <div className="border rounded-lg bg-card">
@@ -133,9 +207,8 @@ export function ServersTable({
               servers.map((server) => {
                 const vcLink = getVCenterLink(server.id);
                 const serverGroups = getServerGroups(server.id);
-                return (
+                return renderServerContextMenu(server, (
                   <TableRow
-                    key={server.id}
                     className={`cursor-pointer ${selectedServerId === server.id ? 'bg-muted' : ''}`}
                     onClick={() => onServerClick(server)}
                   >
@@ -206,7 +279,7 @@ export function ServersTable({
                       </div>
                     </TableCell>
                   </TableRow>
-                );
+                ));
               })
             )}
           </TableBody>
@@ -273,9 +346,8 @@ export function ServersTable({
                   {!isCollapsed && groupData.servers.map((server) => {
                     const vcLink = getVCenterLink(server.id);
                     const serverGroups = getServerGroups(server.id);
-                    return (
+                    return renderServerContextMenu(server, (
                       <TableRow
-                        key={server.id}
                         className={`cursor-pointer ${selectedServerId === server.id ? 'bg-muted' : ''}`}
                         onClick={() => onServerClick(server)}
                       >
@@ -346,7 +418,7 @@ export function ServersTable({
                           </div>
                         </TableCell>
                       </TableRow>
-                    );
+                    ));
                   })}
                 </>
               );

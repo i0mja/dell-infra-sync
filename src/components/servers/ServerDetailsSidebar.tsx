@@ -73,6 +73,11 @@ interface ServerDetailsSidebarProps {
   onCreateJob: (server: Server) => void;
   onWorkflow: (server: Server) => void;
   onPreFlight: (server: Server) => void;
+  onAddServer: () => void;
+  onRunDiscovery: () => void;
+  onImportCsv: () => void;
+  onManageCredentials: () => void;
+  onManageGroups: () => void;
   refreshing: string | null;
 }
 
@@ -102,6 +107,11 @@ export function ServerDetailsSidebar({
   onCreateJob,
   onWorkflow,
   onPreFlight,
+  onAddServer,
+  onRunDiscovery,
+  onImportCsv,
+  onManageCredentials,
+  onManageGroups,
   refreshing,
 }: ServerDetailsSidebarProps) {
   const getVCenterHost = (serverId: string) => {
@@ -656,23 +666,48 @@ export function ServerDetailsSidebar({
           <div>
             <h5 className="font-semibold mb-3">Quick Actions</h5>
             <div className="space-y-2">
-              <Button variant="outline" size="sm" className="w-full justify-start">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full justify-start"
+                onClick={onAddServer}
+              >
                 <Plus className="h-4 w-4 mr-2" />
                 Add New Server
               </Button>
-              <Button variant="outline" size="sm" className="w-full justify-start">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full justify-start"
+                onClick={onRunDiscovery}
+              >
                 <Wrench className="h-4 w-4 mr-2" />
                 Run Discovery Scan
               </Button>
-              <Button variant="outline" size="sm" className="w-full justify-start">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full justify-start"
+                onClick={onImportCsv}
+              >
                 <FileText className="h-4 w-4 mr-2" />
                 Import from CSV
               </Button>
-              <Button variant="outline" size="sm" className="w-full justify-start">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full justify-start"
+                onClick={onManageCredentials}
+              >
                 <Shield className="h-4 w-4 mr-2" />
                 Manage Credentials
               </Button>
-              <Button variant="outline" size="sm" className="w-full justify-start">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full justify-start"
+                onClick={onManageGroups}
+              >
                 <Users className="h-4 w-4 mr-2" />
                 Manage Server Groups
               </Button>
