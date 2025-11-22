@@ -257,7 +257,7 @@ export default function ActivityMonitor() {
   });
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex h-full w-full flex-col overflow-hidden">
       <ActivityStatsBar
         totalCommands={commands.length}
         successRate={calculateSuccessRate()}
@@ -270,7 +270,7 @@ export default function ActivityMonitor() {
 
       {jobs.length > 0 && <ActiveJobsBanner jobs={jobs} />}
 
-      <div className="flex-1 overflow-hidden px-4 pb-6 pt-4">
+      <div className="flex-1 overflow-hidden px-4 pb-6 pt-4 sm:px-6 lg:px-8">
         <div className="grid h-full gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(340px,1fr)] xl:items-start">
           <div className="flex min-w-0 flex-col gap-4">
             <div className="flex h-full flex-col rounded-xl border bg-card shadow-sm">
