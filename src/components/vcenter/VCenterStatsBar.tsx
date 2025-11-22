@@ -40,31 +40,31 @@ export function VCenterStatsBar({
         <div className="flex min-w-0 flex-wrap items-center gap-3 sm:gap-6">
           <div className="flex items-center gap-2 text-sm whitespace-nowrap">
             <Database className="h-4 w-4 text-muted-foreground" />
-            <span className="font-medium text-muted-foreground">Hosts:</span>
-            <span className="font-bold">{totalHosts}</span>
+            <span className="text-muted-foreground">Hosts:</span>
+            <span className="font-semibold">{totalHosts}</span>
           </div>
 
           <div className="hidden h-4 w-px bg-border sm:block" />
 
           <div className="flex items-center gap-2 text-sm whitespace-nowrap">
-            <LinkIcon className="h-3.5 w-3.5 text-success" />
+            <LinkIcon className="h-4 w-4 text-success" />
             <span className="text-muted-foreground">Linked:</span>
-            <span className="font-medium text-success">{linkedHosts}</span>
+            <span className="font-semibold text-success">{linkedHosts}</span>
           </div>
 
           <div className="hidden h-4 w-px bg-border sm:block" />
 
           <div className="flex items-center gap-2 text-sm whitespace-nowrap">
-            <LinkIcon className="h-3.5 w-3.5 text-warning" />
+            <LinkIcon className="h-4 w-4 text-warning" />
             <span className="text-muted-foreground">Unlinked:</span>
-            <span className="font-medium text-warning">{unlinkedHosts}</span>
+            <span className="font-semibold text-warning">{unlinkedHosts}</span>
           </div>
 
           <div className="hidden h-4 w-px bg-border sm:block" />
 
           <div className="flex min-w-0 items-center gap-2 text-sm whitespace-nowrap">
             <span className="text-muted-foreground">Last Sync:</span>
-            <span className="font-medium truncate max-w-[200px]">
+            <span className="font-semibold truncate max-w-[200px]">
               {lastSync ? formatDistanceToNow(new Date(lastSync), { addSuffix: true }) : 'Never'}
             </span>
           </div>
@@ -120,14 +120,16 @@ export function VCenterStatsBar({
           </Button>
 
           <Button variant="outline" size="sm" onClick={onRefresh}>
-            <RefreshCw className="h-4 w-4" />
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Refresh
           </Button>
 
-          <div className="flex items-center gap-2 sm:ml-2 sm:border-l sm:pl-2">
-            <Badge variant={mode === 'job-executor' ? 'secondary' : 'default'} className="text-xs">
-              {mode === 'job-executor' ? '⚙️ Job Executor' : '☁️ Cloud'}
-            </Badge>
-          </div>
+          <Badge variant="outline" className="gap-2 sm:ml-2 sm:border-l sm:pl-2">
+            <span className={`h-2 w-2 rounded-full ${mode === 'job-executor' ? 'bg-blue-500' : 'bg-emerald-500'}`} />
+            <span className="text-xs font-medium tracking-wide">
+              {mode === 'job-executor' ? 'Job Executor' : 'Cloud Mode'}
+            </span>
+          </Badge>
         </div>
       </div>
     </div>

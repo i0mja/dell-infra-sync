@@ -1,5 +1,6 @@
-import { RefreshCw, Download } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { AlertCircle, BarChart3, CheckCircle2, Download, RefreshCw, Zap } from "lucide-react";
 
 interface ActivityStatsBarProps {
   totalCommands: number;
@@ -21,9 +22,9 @@ export const ActivityStatsBar = ({
   onExport
 }: ActivityStatsBarProps) => {
   const statusColors = {
-    connecting: 'text-yellow-500',
-    connected: 'text-green-500',
-    disconnected: 'text-red-500'
+    connecting: 'bg-yellow-500',
+    connected: 'bg-green-500',
+    disconnected: 'bg-red-500'
   };
 
   const statusLabels = {
@@ -37,41 +38,45 @@ export const ActivityStatsBar = ({
       <div className="flex flex-col gap-3 px-4 py-3 sm:px-6 lg:px-8 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 flex-wrap items-center gap-3 text-sm sm:gap-6">
           <div className="flex items-center gap-2 whitespace-nowrap">
-            <span className="text-muted-foreground">📊 Commands:</span>
-            <span className="font-medium">{totalCommands.toLocaleString()}</span>
+            <BarChart3 className="h-4 w-4 text-muted-foreground" />
+            <span className="text-muted-foreground">Commands:</span>
+            <span className="font-semibold">{totalCommands.toLocaleString()}</span>
           </div>
           <div className="hidden h-4 w-px bg-border sm:block" />
           <div className="flex items-center gap-2 whitespace-nowrap">
-            <span className="text-muted-foreground">✓ Success:</span>
-            <span className="font-medium">{successRate.toFixed(1)}%</span>
+            <CheckCircle2 className="h-4 w-4 text-green-500" />
+            <span className="text-muted-foreground">Success:</span>
+            <span className="font-semibold">{successRate.toFixed(1)}%</span>
           </div>
           <div className="hidden h-4 w-px bg-border sm:block" />
           <div className="flex items-center gap-2 whitespace-nowrap">
-            <span className="text-muted-foreground">⚡ Live Jobs:</span>
-            <span className="font-medium">{activeJobs}</span>
+            <Zap className="h-4 w-4 text-primary" />
+            <span className="text-muted-foreground">Live Jobs:</span>
+            <span className="font-semibold">{activeJobs}</span>
           </div>
           <div className="hidden h-4 w-px bg-border sm:block" />
           <div className="flex items-center gap-2 whitespace-nowrap">
-            <span className="text-muted-foreground">🔴 Failed:</span>
-            <span className="font-medium text-destructive">{failedCount}</span>
+            <AlertCircle className="h-4 w-4 text-destructive" />
+            <span className="text-muted-foreground">Failed:</span>
+            <span className="font-semibold text-destructive">{failedCount}</span>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-          <Button variant="ghost" size="sm" onClick={onRefresh} className="h-8">
+          <Button variant="outline" size="sm" onClick={onRefresh}>
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
           </Button>
-          <Button variant="ghost" size="sm" onClick={onExport} className="h-8">
+          <Button variant="outline" size="sm" onClick={onExport}>
             <Download className="mr-2 h-4 w-4" />
             Export
           </Button>
-          <div className="flex items-center gap-2 sm:ml-2 sm:border-l sm:pl-2">
-            <div className={`h-2 w-2 rounded-full ${statusColors[liveStatus]} animate-pulse`} />
-            <span className={`text-xs font-medium ${statusColors[liveStatus]}`}>
+          <Badge variant="outline" className="gap-2 sm:ml-2 sm:border-l sm:pl-2">
+            <span className={`h-2 w-2 rounded-full ${statusColors[liveStatus]} animate-pulse`} />
+            <span className="text-xs font-medium tracking-wide">
               {statusLabels[liveStatus]}
             </span>
-          </div>
+          </Badge>
         </div>
       </div>
     </div>
