@@ -7,6 +7,8 @@ import { FilterToolbar } from "@/components/activity/FilterToolbar";
 import { CommandsTable } from "@/components/activity/CommandsTable";
 import { CommandDetailsSidebar } from "@/components/activity/CommandDetailsSidebar";
 import { ActiveJobsBanner } from "@/components/activity/ActiveJobsBanner";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { useMediaQuery } from "@/hooks/use-media-query";
 
 interface IdracCommand {
   id: string;
@@ -45,6 +47,7 @@ export default function ActivityMonitor() {
   const [commands, setCommands] = useState<IdracCommand[]>([]);
   const [selectedCommand, setSelectedCommand] = useState<IdracCommand | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [isDetailsSheetOpen, setIsDetailsSheetOpen] = useState(false);
   
   // Filters
   const [serverFilter, setServerFilter] = useState<string>("all");
@@ -57,6 +60,8 @@ export default function ActivityMonitor() {
 
   // Connection state
   const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+
+  const isDesktop = useMediaQuery('(min-width: 1280px)');
 
   // Fetch servers for filter dropdown
   const { data: servers } = useQuery({
@@ -214,6 +219,18 @@ export default function ActivityMonitor() {
     refetchActiveJobs();
   };
 
+  const handleRowClick = (cmd: IdracCommand) => {
+    setSelectedCommand(cmd);
+    if (!isDesktop) {
+      setIsDetailsSheetOpen(true);
+    }
+  };
+
+  const handleCloseDetails = () => {
+    setSelectedCommand(null);
+    setIsDetailsSheetOpen(false);
+  };
+
   const calculateSuccessRate = () => {
     if (commands.length === 0) return 0;
     const successCount = commands.filter(c => c.success).length;
@@ -257,24 +274,24 @@ export default function ActivityMonitor() {
   });
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      <ActivityStatsBar
-        totalCommands={commands.length}
-        successRate={calculateSuccessRate()}
-        activeJobs={jobs.length}
-        failedCount={commands.filter(c => !c.success).length}
-        liveStatus={realtimeStatus}
-        onRefresh={handleManualRefresh}
-        onExport={handleExport}
-      />
+    <div className="flex h-full flex-col overflow-hidden">
+      <div className="space-y-4 px-4 pb-6 pt-3 lg:px-6">
+        <ActivityStatsBar
+          totalCommands={commands.length}
+          successRate={calculateSuccessRate()}
+          activeJobs={jobs.length}
+          failedCount={commands.filter(c => !c.success).length}
+          liveStatus={realtimeStatus}
+          onRefresh={handleManualRefresh}
+          onExport={handleExport}
+        />
 
-      {jobs.length > 0 && <ActiveJobsBanner jobs={jobs} />}
+        {jobs.length > 0 && <ActiveJobsBanner jobs={jobs} />}
 
-      <div className="flex-1 overflow-hidden px-4 pb-6 pt-4">
-        <div className="grid h-full gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(340px,1fr)] xl:items-start">
-          <div className="flex min-w-0 flex-col gap-4">
-            <div className="flex h-full flex-col rounded-xl border bg-card shadow-sm">
-              <div className="border-b p-4">
+        <div className="grid min-h-[70vh] gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(380px,1fr)] xl:items-start">
+          <div className="flex min-w-0 flex-col gap-3">
+            <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+              <div className="border-b bg-muted/40 px-4 py-3">
                 <FilterToolbar
                   searchTerm={searchTerm}
                   onSearchChange={setSearchTerm}
@@ -294,25 +311,36 @@ export default function ActivityMonitor() {
                 />
               </div>
 
-              <div className="flex-1 overflow-hidden p-2 sm:p-4">
+              <div className="h-full min-h-[520px] p-2 sm:p-3">
                 <CommandsTable
                   commands={filteredCommands}
                   selectedId={selectedCommand?.id}
-                  onRowClick={(cmd) => setSelectedCommand(cmd as IdracCommand)}
+                  onRowClick={handleRowClick}
                   isLive={realtimeStatus === 'connected'}
                 />
               </div>
             </div>
           </div>
 
-          <div className="min-h-[320px] rounded-xl border bg-card shadow-sm">
-            <CommandDetailsSidebar
-              command={selectedCommand}
-              onClose={() => setSelectedCommand(null)}
-            />
+          <div className="hidden xl:block">
+            <div className="sticky top-[96px] rounded-xl border bg-card shadow-sm">
+              <CommandDetailsSidebar
+                command={selectedCommand}
+                onClose={handleCloseDetails}
+              />
+            </div>
           </div>
         </div>
       </div>
+
+      <Sheet open={isDetailsSheetOpen && !isDesktop} onOpenChange={setIsDetailsSheetOpen}>
+        <SheetContent side="bottom" className="h-[85vh] overflow-hidden p-0">
+          <CommandDetailsSidebar
+            command={selectedCommand}
+            onClose={handleCloseDetails}
+          />
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

@@ -96,14 +96,27 @@ export const CommandsTable = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col border rounded-lg bg-card overflow-hidden">
-      <div className="border-b px-4 py-3 flex items-center justify-between">
-        <h3 className="font-semibold">Activity Feed</h3>
+    <div className="flex h-full flex-col rounded-lg border bg-card/60 shadow-sm backdrop-blur-sm">
+      <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
+        <div className="flex items-center gap-2">
+          <h3 className="font-semibold">Activity Feed</h3>
+          <Badge
+            variant="outline"
+            className={
+              isLive
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-500"
+                : "border-amber-500/40 bg-amber-500/10 text-amber-600"
+            }
+          >
+            <span className="mr-1 inline-flex h-2 w-2 rounded-full bg-current"></span>
+            {isLive ? "Live" : "Paused"}
+          </Badge>
+        </div>
         <div className="text-xs text-muted-foreground">
-          {commands.length} commands
+          {commands.length} command{commands.length === 1 ? "" : "s"}
         </div>
       </div>
-      
+
       <ScrollArea className="flex-1">
         <Table>
           <TableHeader className="sticky top-0 bg-muted/50 z-10">
@@ -129,10 +142,11 @@ export const CommandsTable = ({
                   key={command.id}
                   onClick={() => onRowClick(command)}
                   className={`cursor-pointer transition-colors ${
-                    selectedId === command.id 
-                      ? 'bg-primary/5 hover:bg-primary/10' 
+                    selectedId === command.id
+                      ? 'bg-primary/5 ring-1 ring-primary/40 hover:bg-primary/10'
                       : 'hover:bg-muted/50'
                   }`}
+                  data-state={selectedId === command.id ? 'selected' : undefined}
                 >
                   <TableCell className="font-mono text-xs">
                     {formatTime(command.timestamp)}
@@ -141,7 +155,7 @@ export const CommandsTable = ({
                     {getOperationBadge(command.operation_type)}
                   </TableCell>
                   <TableCell className="font-mono text-xs">
-                    {formatEndpoint(command.endpoint)}
+                    <span title={command.endpoint}>{formatEndpoint(command.endpoint)}</span>
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline" className="font-mono text-xs">
