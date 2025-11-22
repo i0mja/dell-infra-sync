@@ -36,7 +36,7 @@ export const ActivityStatsBar = ({
     <div className="border-b bg-card">
       <div className="flex flex-col gap-3 px-4 py-3 sm:px-6 lg:px-8 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 flex-wrap items-center gap-3 text-sm sm:gap-6">
-          <div className="flex min-w-0 items-center gap-2 whitespace-nowrap">
+          <div className="flex items-center gap-2 whitespace-nowrap">
             <span className="text-muted-foreground">📊 Commands:</span>
             <span className="font-medium truncate max-w-[120px]">
               {totalCommands.toLocaleString()}
