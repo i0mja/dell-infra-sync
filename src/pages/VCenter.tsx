@@ -10,7 +10,6 @@ import { VCenterStatsBar } from "@/components/vcenter/VCenterStatsBar";
 import { HostFilterToolbar } from "@/components/vcenter/HostFilterToolbar";
 import { HostsTable } from "@/components/vcenter/HostsTable";
 import { HostDetailsSidebar } from "@/components/vcenter/HostDetailsSidebar";
-import { ModeBanner } from "@/components/vcenter/ModeBanner";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 
@@ -471,14 +470,6 @@ const VCenter = () => {
         onRefresh={fetchHosts}
         onClusterUpdate={() => handleClusterUpdate()}
         hasActiveClusters={hasActiveClusters}
-      />
-
-      {/* Mode Banner (conditional) */}
-      <ModeBanner
-        mode={useJobExecutorPath ? 'job-executor' : 'cloud'}
-        vcenterHost={vcenterHost}
-        isLocal={isLocalMode}
-        isPrivate={isPrivateHost}
       />
 
       {/* Main: Two Column Layout */}
