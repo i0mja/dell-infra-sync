@@ -759,7 +759,7 @@ const Servers = () => {
   };
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden">
       {/* Top: Compact Stats Bar */}
       <ServerStatsBar
         totalServers={servers.length}
