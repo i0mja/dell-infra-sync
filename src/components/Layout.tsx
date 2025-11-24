@@ -40,9 +40,10 @@ const Layout = () => {
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-4">
+        <div className="flex flex-col items-center gap-4 p-8 rounded-lg bg-card border">
           <Server className="h-12 w-12 text-primary animate-pulse" />
-          <p className="text-muted-foreground">Loading Server Manager...</p>
+          <p className="text-foreground font-medium">Loading Server Manager...</p>
+          <p className="text-sm text-muted-foreground">Connecting to backend...</p>
         </div>
       </div>
     );
