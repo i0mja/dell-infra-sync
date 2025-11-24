@@ -14,19 +14,18 @@ import { AlertCircle, ArrowRight, CheckCircle2, Clock, Cloud, Network, Server } 
 type JobStatus = Database["public"]["Enums"]["job_status"];
 type ServerRow = Pick<
   Database["public"]["Tables"]["servers"]["Row"],
-  |
-    | "id"
-    | "hostname"
-    | "ip_address"
-    | "overall_health"
-    | "connection_status"
-    | "connection_error"
-    | "last_health_check"
-    | "last_openmanage_sync"
-    | "last_seen"
-    | "product_name"
-    | "service_tag"
-    | "idrac_firmware"
+  | "id"
+  | "hostname"
+  | "ip_address"
+  | "overall_health"
+  | "connection_status"
+  | "connection_error"
+  | "last_health_check"
+  | "last_openmanage_sync"
+  | "last_seen"
+  | "product_name"
+  | "service_tag"
+  | "idrac_firmware"
 >;
 
 type JobRow = Pick<
