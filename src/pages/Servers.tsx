@@ -759,22 +759,21 @@ const Servers = () => {
   };
 
   return (
-    <div className="flex h-full w-full justify-center overflow-hidden">
-      <div className="flex h-full w-full max-w-screen-2xl flex-col overflow-hidden">
-        {/* Top: Compact Stats Bar */}
-        <ServerStatsBar
-          totalServers={servers.length}
-          onlineCount={servers.filter(s => s.connection_status === 'online').length}
-          offlineCount={servers.filter(s => s.connection_status === 'offline').length}
-          unknownCount={servers.filter(s => !s.connection_status || s.connection_status === 'unknown').length}
-          incompleteCount={incompleteServers.length}
-          onAddServer={() => setDialogOpen(true)}
-          onRefreshAll={fetchServers}
-          onManageGroups={() => navigate('/settings?tab=server-groups')}
-          onDiscovery={() => setJobDialogOpen(true)}
-          useJobExecutor={useJobExecutorForIdrac}
-        />
-      
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Top: Compact Stats Bar */}
+      <ServerStatsBar
+        totalServers={servers.length}
+        onlineCount={servers.filter(s => s.connection_status === 'online').length}
+        offlineCount={servers.filter(s => s.connection_status === 'offline').length}
+        unknownCount={servers.filter(s => !s.connection_status || s.connection_status === 'unknown').length}
+        incompleteCount={incompleteServers.length}
+        onAddServer={() => setDialogOpen(true)}
+        onRefreshAll={fetchServers}
+        onManageGroups={() => navigate('/settings?tab=server-groups')}
+        onDiscovery={() => setJobDialogOpen(true)}
+        useJobExecutor={useJobExecutorForIdrac}
+      />
+
       {/* Incomplete Servers Banner (conditional) */}
       {incompleteServers.length > 0 && showIncompleteBanner && (
         <div className="px-4 pt-4">
@@ -978,7 +977,6 @@ const Servers = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
     </div>
   );
 };
