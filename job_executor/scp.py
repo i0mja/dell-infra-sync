@@ -425,6 +425,7 @@ class ScpMixin:
         return state.lower() in ['exception', 'killed', 'cancelled', 'failed', 'failure']
 
     def _fetch_scp_content_fallback(
+    def _fetch_scp_content_fallback(
         self,
         monitor_url: str,
         username: str,
@@ -435,21 +436,40 @@ class ScpMixin:
     ):
         """Attempt to retrieve SCP content from common fallback URLs.
 
-        Some iDRAC versions return SCP content at ``/$value`` or ``/ExportedData``
-        endpoints even when the primary task response lacks the configuration
-        payload. This helper makes one pass over those endpoints and returns the
+        Some iDRAC versions return SCP content directly from the Task URI
+        using content negotiation or Redfish-specific paths (``/$value``,
+        ``/ExportedData``). Other versions expose the exported SCP only on
+        the OEM Jobs URI (``/redfish/v1/Managers/iDRAC.Embedded.1/Jobs/JID_xxx``).
+
+        This helper makes one pass over those endpoints and returns the
         first valid configuration blob it finds.
         """
 
-        base_url = monitor_url.rstrip('/')
+        parsed_monitor = urlparse(monitor_url)
+        task_path = parsed_monitor.path or ""
+        base_url = f"{parsed_monitor.scheme}://{parsed_monitor.netloc}{task_path}".rstrip('/')
+
+        # If this looks like a TaskService JID, construct the matching Jobs URI.
+        job_base_url = None
+        job_id = task_path.rsplit('/', 1)[-1]
+        if job_id and job_id.startswith("JID_"):
+            job_base_url = f"{parsed_monitor.scheme}://{parsed_monitor.netloc}/redfish/v1/Managers/iDRAC.Embedded.1/Jobs/{job_id}"
+
         fallback_urls = [
-            # Some iDRAC versions honor content negotiation on the task URI itself.
-            # Re-request the same task with an XML/txt Accept header before trying
+            # Re-request the same task with a broad Accept header before trying
             # Redfish-specific $value/ExportedData paths.
             (base_url, {"Accept": "application/xml,application/json,text/plain"}),
             (f"{base_url}/$value", {"Accept": "application/xml,text/plain"}),
             (f"{base_url}/ExportedData", {"Accept": "application/xml,text/plain"}),
         ]
+
+        # If we detected a JID, also try the Jobs resource variants.
+        if job_base_url:
+            fallback_urls.extend([
+                (job_base_url, {"Accept": "application/json,application/xml,text/plain"}),
+                (f"{job_base_url}/$value", {"Accept": "application/xml,text/plain"}),
+                (f"{job_base_url}/ExportedData", {"Accept": "application/xml,text/plain"}),
+            ])
 
         for url, headers in fallback_urls:
             try:
@@ -463,12 +483,12 @@ class ScpMixin:
                 )
                 response_time_ms = int((time.time() - poll_start) * 1000)
 
-                parsed_body = _safe_json_parse(response)
-                content = self._extract_scp_content(parsed_body)
+                data = _safe_json_parse(response)
+                content = self._extract_scp_content(data)
 
-                # If JSON parsing failed (common when XML/text is returned), fall back
-                # to the raw body so we still capture the SCP payload.
-                if content is None:
+                # If JSON parsing fails (common when XML/text is returned),
+                # fall back to the raw body so we still capture the SCP payload.
+                if content is None and isinstance(response.text, str) and response.text.strip():
                     content = self._maybe_parse_content(response.text)
 
                 success = response.status_code == 200 and content is not None
@@ -484,7 +504,7 @@ class ScpMixin:
                     request_body=None,
                     status_code=response.status_code,
                     response_time_ms=response_time_ms,
-                    response_body=parsed_body,
+                    response_body=data,
                     success=success,
                     error_message=None if success else "SCP content not available at fallback URI",
                     operation_type='idrac_api'
@@ -492,12 +512,14 @@ class ScpMixin:
 
                 if success:
                     return content
+
             except Exception as exc:  # pragma: no cover - best-effort fallback
                 self.log(
                     f"    Fallback SCP fetch failed for {url}: {exc}",
                     level="WARN"
                 )
 
+        return None
         return None
 
     def _extract_scp_content(self, data: Dict):
@@ -636,7 +658,7 @@ class ScpMixin:
                     if backup.get('include_bios', True):
                         targets.append('BIOS')
                     if backup.get('include_idrac', True):
-                        targets.append('iDRAC')
+                        targets.append('IDRAC')
                     if backup.get('include_nic', True):
                         targets.append('NIC')
                     if backup.get('include_raid', True):
