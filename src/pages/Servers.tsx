@@ -873,7 +873,7 @@ const Servers = () => {
           </div>
         </div>
       </div>
-      
+
       {/* All Dialogs */}
       <AddServerDialog open={dialogOpen} onOpenChange={setDialogOpen} onSuccess={fetchServers} />
       {selectedServer && (
