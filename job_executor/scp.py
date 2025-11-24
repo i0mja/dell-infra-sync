@@ -2,7 +2,8 @@ import hashlib
 import json
 import time
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
 import requests
 
@@ -92,18 +93,29 @@ class ScpMixin:
                         full_url=export_url,
                         request_headers={'Authorization': '[REDACTED]'},
                         request_body=payload,
-                        response_body=_safe_json_parse(response) if response.status_code == 200 else response.text,
+                        response_body=_safe_json_parse(response),
                         status_code=response.status_code,
                         response_time_ms=response_time_ms,
-                        success=response.status_code == 200,
+                        success=response.status_code in [200, 202],
                         operation_type='idrac_api'
                     )
 
-                    if response.status_code != 200:
+                    if response.status_code not in [200, 202]:
                         raise Exception(f"Export failed: {response.status_code} - {response.text}")
 
-                    export_data = _safe_json_parse(response)
-                    scp_content = export_data.get('SystemConfiguration', export_data)
+                    if response.status_code == 202:
+                        scp_content = self._wait_for_scp_export(
+                            ip,
+                            username,
+                            password,
+                            response.headers,
+                            _safe_json_parse(response),
+                            job,
+                            server_id
+                        )
+                    else:
+                        export_data = _safe_json_parse(response)
+                        scp_content = export_data.get('SystemConfiguration', export_data)
 
                     scp_json = json.dumps(scp_content, indent=2)
                     file_size = len(scp_json.encode('utf-8'))
@@ -188,6 +200,214 @@ class ScpMixin:
                 completed_at=datetime.now().isoformat(),
                 details={'error': str(e)}
             )
+
+    def _wait_for_scp_export(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        response_headers: Dict,
+        response_body: Dict,
+        job: Dict,
+        server_id: str,
+        timeout_seconds: int = 300,
+        poll_interval: int = 5
+    ) -> Dict:
+        """Poll an async SCP export task until completion and return SCP content."""
+
+        task_uri = self._extract_task_uri(response_headers, response_body)
+        if not task_uri:
+            raise Exception("Export accepted but no task URI provided")
+
+        monitor_url = task_uri if task_uri.startswith('http') else f"https://{ip}{task_uri}"
+        endpoint = urlparse(monitor_url).path
+
+        self.log(f"  SCP export accepted, polling task: {monitor_url}")
+
+        start_time = time.time()
+        last_state = None
+        last_response = None
+
+        while time.time() - start_time < timeout_seconds:
+            poll_start = time.time()
+            response = requests.get(
+                monitor_url,
+                auth=(username, password),
+                verify=False,
+                timeout=30
+            )
+            response_time_ms = int((time.time() - poll_start) * 1000)
+
+            data = _safe_json_parse(response)
+            task_state = self._extract_task_state(data)
+            messages = self._extract_task_messages(data)
+            last_response = (response, response_time_ms, data, task_state, messages)
+
+            if task_state and task_state != last_state:
+                self.log(f"    Task state: {task_state}")
+                last_state = task_state
+
+            if response.status_code == 200 and self._is_task_success(task_state):
+                scp_content = self._extract_scp_content(data)
+                self.log_idrac_command(
+                    server_id=server_id,
+                    job_id=job['id'],
+                    task_id=None,
+                    command_type='GET',
+                    endpoint=endpoint,
+                    full_url=monitor_url,
+                    request_headers={'Authorization': '[REDACTED]'},
+                    request_body=None,
+                    status_code=response.status_code,
+                    response_time_ms=response_time_ms,
+                    response_body=data,
+                    success=scp_content is not None,
+                    error_message=None if scp_content else "SCP content missing",
+                    operation_type='idrac_api'
+                )
+
+                if not scp_content:
+                    raise Exception("SCP export task completed but no configuration data was returned")
+
+                return scp_content
+
+            if response.status_code == 200 and self._is_task_failure(task_state):
+                error_message = messages[0] if messages else f"Task failed with state {task_state}"
+                self.log_idrac_command(
+                    server_id=server_id,
+                    job_id=job['id'],
+                    task_id=None,
+                    command_type='GET',
+                    endpoint=endpoint,
+                    full_url=monitor_url,
+                    request_headers={'Authorization': '[REDACTED]'},
+                    request_body=None,
+                    status_code=response.status_code,
+                    response_time_ms=response_time_ms,
+                    response_body=data,
+                    success=False,
+                    error_message=error_message,
+                    operation_type='idrac_api'
+                )
+                raise Exception(f"SCP export task failed: {error_message}")
+
+            time.sleep(poll_interval)
+
+        if last_response:
+            response, response_time_ms, data, task_state, messages = last_response
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job['id'],
+                task_id=None,
+                command_type='GET',
+                endpoint=endpoint,
+                full_url=monitor_url,
+                request_headers={'Authorization': '[REDACTED]'},
+                request_body=None,
+                status_code=response.status_code,
+                response_time_ms=response_time_ms,
+                response_body=data,
+                success=False,
+                error_message="SCP export task timed out",
+                operation_type='idrac_api'
+            )
+
+        raise TimeoutError(f"SCP export task did not complete within {timeout_seconds} seconds")
+
+    def _extract_task_state(self, data: Dict) -> Optional[str]:
+        if not isinstance(data, dict):
+            return None
+
+        oem = data.get('Oem', {}) if isinstance(data.get('Oem'), dict) else {}
+        dell = oem.get('Dell', {}) if isinstance(oem.get('Dell'), dict) else {}
+
+        return (
+            data.get('TaskState')
+            or data.get('Status')
+            or dell.get('JobState')
+            or dell.get('Status')
+        )
+
+    def _extract_task_messages(self, data: Dict) -> List[str]:
+        messages: List[str] = []
+
+        if isinstance(data, dict):
+            for msg in data.get('Messages', []) or []:
+                if isinstance(msg, dict):
+                    messages.append(msg.get('Message') or msg.get('MessageId') or str(msg))
+                else:
+                    messages.append(str(msg))
+
+            if isinstance(data.get('Message'), str):
+                messages.append(data['Message'])
+
+            oem = data.get('Oem', {}) if isinstance(data.get('Oem'), dict) else {}
+            dell = oem.get('Dell', {}) if isinstance(oem.get('Dell'), dict) else {}
+            if isinstance(dell.get('Message'), str):
+                messages.append(dell['Message'])
+
+        return messages
+
+    def _extract_task_uri(self, headers: Dict, body: Dict) -> Optional[str]:
+        if headers:
+            location = headers.get('Location') or headers.get('location')
+            if location:
+                return location
+
+        if isinstance(body, dict):
+            return body.get('@odata.id') or body.get('TaskUri')
+
+        return None
+
+    def _is_task_success(self, state: Optional[str]) -> bool:
+        if not state:
+            return False
+        return state.lower() in ['completed', 'completedok', 'success', 'succeeded']
+
+    def _is_task_failure(self, state: Optional[str]) -> bool:
+        if not state:
+            return False
+        return state.lower() in ['exception', 'killed', 'cancelled', 'failed', 'failure']
+
+    def _extract_scp_content(self, data: Dict):
+        if not isinstance(data, dict):
+            return None
+
+        for key in ['SystemConfiguration', 'ExportedSystemConfiguration']:
+            if key in data:
+                return data.get(key)
+
+        oem = data.get('Oem', {}) if isinstance(data.get('Oem'), dict) else {}
+        dell = oem.get('Dell', {}) if isinstance(oem.get('Dell'), dict) else {}
+
+        for key in ['Data', 'ExportedData']:
+            if key in data:
+                content = data.get(key)
+                parsed = self._maybe_parse_content(content)
+                if parsed is not None:
+                    return parsed
+            if key in dell:
+                content = dell.get(key)
+                parsed = self._maybe_parse_content(content)
+                if parsed is not None:
+                    return parsed
+
+        return None
+
+    def _maybe_parse_content(self, content):
+        if isinstance(content, (dict, list)):
+            return content
+
+        if isinstance(content, str):
+            stripped = content.strip()
+            if stripped.startswith('{') or stripped.startswith('['):
+                try:
+                    return json.loads(stripped)
+                except Exception:
+                    return content
+            return stripped
+
+        return None
 
     def execute_scp_import(self, job: Dict):
         """
