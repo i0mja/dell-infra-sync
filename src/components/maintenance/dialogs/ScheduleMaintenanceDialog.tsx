@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,6 +54,22 @@ export function ScheduleMaintenanceDialog({
     maintenance_type: "firmware_update" as "firmware_update" | "host_maintenance" | "cluster_update" | "full_update",
     auto_execute: true,
   });
+
+  useEffect(() => {
+    if (!open) return;
+
+    setFormData((current) => ({
+      ...current,
+      cluster_ids: prefilledData?.clusters || [],
+      server_group_ids: prefilledData?.serverGroupIds || [],
+      planned_start: prefilledData?.start
+        ? format(prefilledData.start, "yyyy-MM-dd'T'HH:mm")
+        : format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+      planned_end: prefilledData?.end
+        ? format(prefilledData.end, "yyyy-MM-dd'T'HH:mm")
+        : format(addHours(prefilledData?.start || new Date(), 4), "yyyy-MM-dd'T'HH:mm"),
+    }));
+  }, [prefilledData, open]);
 
   const validateWindow = async () => {
     if (formData.cluster_ids.length === 0 && formData.server_group_ids.length === 0) {

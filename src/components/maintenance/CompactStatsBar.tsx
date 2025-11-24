@@ -6,8 +6,8 @@ interface CompactStatsBarProps {
   activeJobs: number;
   nextWindow?: { title: string; start: string };
   optimalCount: number;
-  onSchedule: () => void;
-  onCreateOperation: (type: 'job' | 'maintenance') => void;
+  onScheduleMaintenance: () => void;
+  onCreateJob: () => void;
 }
 
 export function CompactStatsBar({
@@ -15,8 +15,8 @@ export function CompactStatsBar({
   activeJobs,
   nextWindow,
   optimalCount,
-  onSchedule,
-  onCreateOperation
+  onScheduleMaintenance,
+  onCreateJob
 }: CompactStatsBarProps) {
   return (
     <div className="border-b bg-card">
@@ -58,13 +58,13 @@ export function CompactStatsBar({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-          <Button size="sm" onClick={onSchedule}>
+          <Button size="sm" onClick={onScheduleMaintenance}>
             <Calendar className="mr-2 h-4 w-4" />
-            Schedule
+            Schedule maintenance
           </Button>
-          <Button size="sm" variant="outline" onClick={() => onCreateOperation('job')}>
+          <Button size="sm" variant="outline" onClick={onCreateJob}>
             <Plus className="mr-2 h-4 w-4" />
-            New Operation
+            Create job
           </Button>
         </div>
       </div>
