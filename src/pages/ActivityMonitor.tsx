@@ -288,8 +288,7 @@ export default function ActivityMonitor() {
           />
         </div>
 
-          {jobs.length > 0 && <ActiveJobsBanner jobs={jobs} />}
-        </div>
+        {jobs.length > 0 && <ActiveJobsBanner jobs={jobs} />}
 
         <div className="flex-1 overflow-hidden px-4 pb-6 pt-4 lg:px-6">
           <div className="grid h-full min-h-[70vh] gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(380px,1fr)] xl:items-start">
