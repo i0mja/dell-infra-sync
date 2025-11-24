@@ -5,6 +5,16 @@ import { Server, Database, Briefcase, Activity } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ClusterSafetyWidget } from "@/components/dashboard/ClusterSafetyWidget";
 import { NextMaintenanceWidget } from "@/components/dashboard/NextMaintenanceWidget";
+import { FleetHealthOverview } from "@/components/dashboard/FleetHealthOverview";
+import { JobOrchestrationPanel } from "@/components/dashboard/JobOrchestrationPanel";
+import { CompliancePanel } from "@/components/dashboard/CompliancePanel";
+import { PowerThermalOptimizationPanel } from "@/components/dashboard/PowerThermalOptimizationPanel";
+import { LifecycleAutomationPanel } from "@/components/dashboard/LifecycleAutomationPanel";
+import { AccessGovernancePanel } from "@/components/dashboard/AccessGovernancePanel";
+import { NetworkDiagnosticsPanel } from "@/components/dashboard/NetworkDiagnosticsPanel";
+import { InventoryTopologyPanel } from "@/components/dashboard/InventoryTopologyPanel";
+import { BackupRecoveryPanel } from "@/components/dashboard/BackupRecoveryPanel";
+import { ObservabilityPanel } from "@/components/dashboard/ObservabilityPanel";
 
 interface Stats {
   serverCount: number;
@@ -111,51 +121,70 @@ const Dashboard = () => {
         ))}
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        <ClusterSafetyWidget />
-        <NextMaintenanceWidget />
-        
-        <Card>
-          <CardHeader>
-            <CardTitle>Quick Actions</CardTitle>
-            <CardDescription>Common datacenter operations</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <p className="text-sm text-muted-foreground">
-              • Discover new servers via IP scan
-            </p>
-            <p className="text-sm text-muted-foreground">
-              • Sync vCenter inventory
-            </p>
-            <p className="text-sm text-muted-foreground">
-              • Create firmware update job
-            </p>
-            <p className="text-sm text-muted-foreground">
-              • Link servers to vCenter hosts
-            </p>
-          </CardContent>
-        </Card>
+      <div className="grid gap-6 xl:grid-cols-6">
+        <FleetHealthOverview />
+      </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>System Status</CardTitle>
-            <CardDescription>Platform health overview</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm">Database</span>
-              <span className="text-sm text-success">● Operational</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm">Authentication</span>
-              <span className="text-sm text-success">● Operational</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm">Job Scheduler</span>
-              <span className="text-sm text-success">● Ready</span>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="grid gap-6 xl:grid-cols-6 mt-6">
+        <JobOrchestrationPanel />
+        <CompliancePanel />
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-6 mt-6">
+        <PowerThermalOptimizationPanel />
+        <LifecycleAutomationPanel />
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-6 mt-6">
+        <InventoryTopologyPanel />
+        <NetworkDiagnosticsPanel />
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-6 mt-6">
+        <BackupRecoveryPanel />
+        <ObservabilityPanel />
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-6 mt-6">
+        <div className="xl:col-span-4 grid gap-4 md:grid-cols-2">
+          <ClusterSafetyWidget />
+          <NextMaintenanceWidget />
+          <Card>
+            <CardHeader>
+              <CardTitle>Quick Actions</CardTitle>
+              <CardDescription>Common datacenter operations</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm text-muted-foreground">
+              <p>• Discover new servers via IP scan</p>
+              <p>• Sync vCenter inventory</p>
+              <p>• Create firmware update job</p>
+              <p>• Link servers to vCenter hosts</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>System Status</CardTitle>
+              <CardDescription>Platform health overview</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <div className="flex items-center justify-between">
+                <span>Database</span>
+                <span className="text-success">● Operational</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Authentication</span>
+                <span className="text-success">● Operational</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Job Scheduler</span>
+                <span className="text-success">● Ready</span>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+        <div className="xl:col-span-2">
+          <AccessGovernancePanel />
+        </div>
       </div>
     </div>
   );
