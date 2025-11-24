@@ -302,7 +302,7 @@ usage = "For human-in-the-loop workflows; not automated by REST."
 # =====================================================
 
 [action:idrac.scp.export]
-purpose = "Export full Server Configuration Profile (BIOS/iDRAC/RAID/NIC) to a network share"
+purpose = "Export full Server Configuration Profile (BIOS/iDRAC/RAID/NIC) to a network share or inline buffer"
 method = "POST"
 url_template = "https://<idrac>/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ExportSystemConfiguration"
 headers = { "Content-Type": "application/json" }
@@ -323,6 +323,10 @@ returns = "HTTP 202 and job/task ID"
 usage = [
   "Take backup of configuration before BIOS/firmware runs.",
   "Can be used for disaster recovery if settings are lost."
+]
+notes = [
+  "Network-share exports require the full ShareParameters block above; omitting share fields results in job errors such as 'Command failed: null'.",
+  "Inline exports (used by job_executor) can skip share fields by setting ExportFormat=\"JSON\" and ShareParameters.Target=<scope> and then polling the task Location header for the JSON payload."
 ]
 
 [action:idrac.scp.import.preview]
