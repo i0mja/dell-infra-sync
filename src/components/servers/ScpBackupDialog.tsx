@@ -197,9 +197,7 @@ export function ScpBackupDialog({ open, onOpenChange, server }: ScpBackupDialogP
       if (error) throw error;
 
       if (!data?.scp_content) {
-        toast.error("Backup file is not stored", {
-          description: "Run a new export to generate a downloadable SCP file.",
-        });
+        toast.error("Run a new SCP export to generate a downloadable backup.");
         return;
       }
 
@@ -211,8 +209,12 @@ export function ScpBackupDialog({ open, onOpenChange, server }: ScpBackupDialogP
       const blob = new Blob([jsonString], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
+      const fallbackName = `${server.hostname || server.ip_address}-scp-backup-${format(
+        new Date(),
+        "yyyyMMdd-HHmmss"
+      )}`;
       link.href = url;
-      link.download = `${backupName || "scp-backup"}.json`;
+      link.download = `${backupName || fallbackName}.json`;
       document.body.appendChild(link);
       link.click();
       link.remove();
