@@ -276,7 +276,8 @@ export default function ActivityMonitor() {
   return (
     <div className="flex h-full w-full justify-center overflow-hidden">
       <div className="flex h-full w-full max-w-screen-2xl flex-col overflow-hidden">
-        <div className="space-y-4 px-4 pt-4 lg:px-6">
+        {/* Top: Compact Stats Bar */}
+        <div className="px-4 pt-4 lg:px-6">
           <ActivityStatsBar
             totalCommands={commands.length}
             successRate={calculateSuccessRate()}
@@ -287,9 +288,15 @@ export default function ActivityMonitor() {
             onExport={handleExport}
           />
         </div>
+      
+        {/* Active Jobs Banner (conditional) */}
+        {jobs.length > 0 && (
+          <div className="px-4 pt-4 lg:px-6">
+            <ActiveJobsBanner jobs={jobs} />
+          </div>
+        )}
 
-        {jobs.length > 0 && <ActiveJobsBanner jobs={jobs} />}
-
+        {/* Main: Two Column Layout */}
         <div className="flex-1 overflow-hidden px-4 pb-6 pt-4 lg:px-6">
           <div className="grid h-full min-h-[70vh] gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(380px,1fr)] xl:items-start">
             <div className="flex min-w-0 flex-col gap-4">
