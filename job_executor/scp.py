@@ -61,7 +61,7 @@ class ScpMixin:
                     if details.get('include_bios', True):
                         targets.append('BIOS')
                     if details.get('include_idrac', True):
-                        targets.append('iDRAC')
+                        targets.append('IDRAC')
                     if details.get('include_nic', True):
                         targets.append('NIC')
                     if details.get('include_raid', True):
@@ -71,14 +71,21 @@ class ScpMixin:
                     # Default to "Local" exports (content returned directly in the task monitor)
                     # unless the caller explicitly provides share details for SMB/NFS exports.
                     share_type = str(details.get('share_type', 'Local') or 'Local')
-                    share_parameters: Dict[str, str] = {
-                        "Target": ",".join(targets),
-                        "ShareType": share_type
-                    }
+                    share_parameters: Dict[str, str]
 
-                    if share_type.lower() != 'local':
+                    if share_type.lower() == 'local':
+                        # Local export: return SCP content in the task response (no share parameters required)
+                        share_parameters = {
+                            "Target": ",".join(targets)
+                        }
+                    else:
                         # Optional network share fields (commonly used by iDRAC Redfish)
                         # See https://www.dell.com/support/kbdoc/en-us/000177312 for parameters
+                        share_parameters = {
+                            "Target": ",".join(targets),
+                            "ShareType": share_type
+                        }
+
                         if details.get('share_address'):
                             share_parameters['IPAddress'] = str(details['share_address'])
                         if details.get('share_name'):
@@ -93,7 +100,7 @@ class ScpMixin:
                     payload = {
                         "ExportFormat": "JSON",
                         "ShareParameters": share_parameters,
-                        "ExportUse": details.get('export_use', 'Default'),
+                        "ExportUse": details.get('export_use', 'Clone'),
                         "IncludeInExport": details.get('include_in_export', 'Default'),
                     }
 
@@ -138,16 +145,31 @@ class ScpMixin:
                         )
                     else:
                         export_data = _safe_json_parse(response)
-                        scp_content = export_data.get('SystemConfiguration', export_data)
 
-                    scp_json = json.dumps(scp_content, indent=2)
-                    file_size = len(scp_json.encode('utf-8'))
-                    checksum = hashlib.sha256(scp_json.encode()).hexdigest()
+                        # If the controller returned raw text/XML instead of JSON, fall back to the body text.
+                        if isinstance(export_data, dict) and export_data.get('_parse_error'):
+                            raw_body = response.text or export_data.get('_raw_response') or ''
+                            scp_content = self._maybe_parse_content(raw_body) or raw_body or None
+                        else:
+                            scp_content = self._extract_scp_content(export_data) or export_data
+
+                    if scp_content is None:
+                        raise Exception("SCP export completed but returned no content")
+
+                    if isinstance(scp_content, (dict, list)):
+                        serialized_for_file = json.dumps(scp_content, indent=2)
+                        serialized_for_checksum = json.dumps(scp_content, separators=(',', ':'))
+                    else:
+                        serialized_for_file = str(scp_content)
+                        serialized_for_checksum = serialized_for_file
+
+                    file_size = len(serialized_for_file.encode('utf-8'))
+                    checksum = hashlib.sha256(serialized_for_checksum.encode()).hexdigest()
 
                     backup_data = {
                         'server_id': server_id,
                         'export_job_id': job['id'],
-                        'backup_name': f"{backup_name} - {server.get('hostname', ip)}",
+                        'backup_name': f"{backup_name} - {server.get('hostname') or ip}",
                         'description': details.get('description'),
                         'scp_content': scp_content,
                         'scp_file_size_bytes': file_size,
@@ -156,8 +178,11 @@ class ScpMixin:
                         'include_nic': details.get('include_nic', True),
                         'include_raid': details.get('include_raid', True),
                         'checksum': checksum,
+                        'scp_checksum': checksum,
+                        'components': ",".join(targets),
                         'exported_at': datetime.now().isoformat(),
-                        'created_by': job['created_by']
+                        'created_by': job['created_by'],
+                        'is_valid': True
                     }
 
                     headers = {
@@ -169,7 +194,8 @@ class ScpMixin:
                     db_response = requests.post(
                         f"{SUPABASE_URL}/rest/v1/scp_backups",
                         headers=headers,
-                        json=backup_data
+                        json=backup_data,
+                        timeout=30
                     )
 
                     if db_response.status_code not in [200, 201]:
@@ -338,6 +364,9 @@ class ScpMixin:
         raise TimeoutError(f"SCP export task did not complete within {timeout_seconds} seconds")
 
     def _extract_task_state(self, data: Dict) -> Optional[str]:
+        if isinstance(data, str):
+            return self._maybe_parse_content(data)
+
         if not isinstance(data, dict):
             return None
 
@@ -378,7 +407,7 @@ class ScpMixin:
                 return location
 
         if isinstance(body, dict):
-            return body.get('@odata.id') or body.get('TaskUri')
+            return body.get('@odata.id') or body.get('TaskUri') or body.get('Location') or body.get('task')
 
         return None
 
@@ -393,15 +422,33 @@ class ScpMixin:
         return state.lower() in ['exception', 'killed', 'cancelled', 'failed', 'failure']
 
     def _extract_scp_content(self, data: Dict):
+        if isinstance(data, str):
+            return self._maybe_parse_content(data)
+
         if not isinstance(data, dict):
             return None
 
-        for key in ['SystemConfiguration', 'ExportedSystemConfiguration']:
-            if key in data:
-                return data.get(key)
+        def _extract_from_obj(obj: Dict, keys: List[str]):
+            for key in keys:
+                if key in obj:
+                    content = obj.get(key)
+                    parsed = self._maybe_parse_content(content)
+                    if parsed is not None:
+                        return parsed
+                    if content is not None:
+                        return content
+            return None
+
+        top_level = _extract_from_obj(data, ['SystemConfiguration', 'ExportedSystemConfiguration'])
+        if top_level is not None:
+            return top_level
 
         oem = data.get('Oem', {}) if isinstance(data.get('Oem'), dict) else {}
         dell = oem.get('Dell', {}) if isinstance(oem.get('Dell'), dict) else {}
+
+        dell_config = _extract_from_obj(dell, ['SystemConfiguration', 'ExportedSystemConfiguration'])
+        if dell_config is not None:
+            return dell_config
 
         for key in ['Data', 'ExportedData']:
             if key in data:
@@ -414,6 +461,11 @@ class ScpMixin:
                 parsed = self._maybe_parse_content(content)
                 if parsed is not None:
                     return parsed
+
+        # Fallback: if the response object captured the raw body, return it so we don't lose the SCP text.
+        if isinstance(data, dict) and data.get('_raw_response'):
+            parsed = self._maybe_parse_content(data['_raw_response'])
+            return parsed if parsed is not None else data['_raw_response']
 
         return None
 

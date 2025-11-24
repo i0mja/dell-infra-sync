@@ -995,15 +995,18 @@ export type Database = {
           include_raid: boolean | null
           is_valid: boolean | null
           last_imported_at: string | null
-          scp_content: Json | null
+          scp_checksum: string | null
+          scp_content: Json | string | null
           scp_file_path: string | null
           scp_file_size_bytes: number | null
           server_id: string
+          components: string | null
           validation_errors: string | null
         }
         Insert: {
           backup_name: string
           checksum?: string | null
+          scp_checksum?: string | null
           created_at?: string | null
           created_by?: string | null
           description?: string | null
@@ -1017,15 +1020,17 @@ export type Database = {
           include_raid?: boolean | null
           is_valid?: boolean | null
           last_imported_at?: string | null
-          scp_content?: Json | null
+          scp_content?: Json | string | null
           scp_file_path?: string | null
           scp_file_size_bytes?: number | null
           server_id: string
+          components?: string | null
           validation_errors?: string | null
         }
         Update: {
           backup_name?: string
           checksum?: string | null
+          scp_checksum?: string | null
           created_at?: string | null
           created_by?: string | null
           description?: string | null
@@ -1039,10 +1044,11 @@ export type Database = {
           include_raid?: boolean | null
           is_valid?: boolean | null
           last_imported_at?: string | null
-          scp_content?: Json | null
+          scp_content?: Json | string | null
           scp_file_path?: string | null
           scp_file_size_bytes?: number | null
           server_id?: string
+          components?: string | null
           validation_errors?: string | null
         }
         Relationships: [
