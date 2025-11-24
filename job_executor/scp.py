@@ -291,7 +291,16 @@ class ScpMixin:
                 last_state = task_state
 
             if response.status_code == 200 and self._is_task_success(task_state):
-                scp_content = self._extract_scp_content(data)
+                scp_content = self._extract_scp_content(data) or self._fetch_scp_content_fallback(
+                    monitor_url,
+                    username,
+                    password,
+                    server_id,
+                    job,
+                    endpoint
+                )
+                success = scp_content is not None
+
                 self.log_idrac_command(
                     server_id=server_id,
                     job_id=job['id'],
@@ -304,8 +313,8 @@ class ScpMixin:
                     status_code=response.status_code,
                     response_time_ms=response_time_ms,
                     response_body=data,
-                    success=scp_content is not None,
-                    error_message=None if scp_content else "SCP content missing",
+                    success=success,
+                    error_message=None if success else "SCP content missing",
                     operation_type='idrac_api'
                 )
 
@@ -414,6 +423,68 @@ class ScpMixin:
         if not state:
             return False
         return state.lower() in ['exception', 'killed', 'cancelled', 'failed', 'failure']
+
+    def _fetch_scp_content_fallback(
+        self,
+        monitor_url: str,
+        username: str,
+        password: str,
+        server_id: str,
+        job: Dict,
+        endpoint: str
+    ):
+        """Attempt to retrieve SCP content from common fallback URLs.
+
+        Some iDRAC versions return SCP content at ``/$value`` or ``/ExportedData``
+        endpoints even when the primary task response lacks the configuration
+        payload. This helper makes one pass over those endpoints and returns the
+        first valid configuration blob it finds.
+        """
+
+        base_url = monitor_url.rstrip('/')
+        fallback_urls = [f"{base_url}/$value", f"{base_url}/ExportedData"]
+
+        for url in fallback_urls:
+            try:
+                poll_start = time.time()
+                response = requests.get(
+                    url,
+                    auth=(username, password),
+                    verify=False,
+                    timeout=30
+                )
+                response_time_ms = int((time.time() - poll_start) * 1000)
+                parsed_body = _safe_json_parse(response)
+                content = self._extract_scp_content(parsed_body)
+
+                success = response.status_code == 200 and content is not None
+
+                self.log_idrac_command(
+                    server_id=server_id,
+                    job_id=job['id'],
+                    task_id=None,
+                    command_type='GET',
+                    endpoint=urlparse(url).path,
+                    full_url=url,
+                    request_headers={'Authorization': '[REDACTED]'},
+                    request_body=None,
+                    status_code=response.status_code,
+                    response_time_ms=response_time_ms,
+                    response_body=parsed_body,
+                    success=success,
+                    error_message=None if success else "SCP content not available at fallback URI",
+                    operation_type='idrac_api'
+                )
+
+                if success:
+                    return content
+            except Exception as exc:  # pragma: no cover - best-effort fallback
+                self.log(
+                    f"    Fallback SCP fetch failed for {url}: {exc}",
+                    level="WARN"
+                )
+
+        return None
 
     def _extract_scp_content(self, data: Dict):
         if isinstance(data, str):
