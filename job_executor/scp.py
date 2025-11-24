@@ -425,7 +425,6 @@ class ScpMixin:
         return state.lower() in ['exception', 'killed', 'cancelled', 'failed', 'failure']
 
     def _fetch_scp_content_fallback(
-    def _fetch_scp_content_fallback(
         self,
         monitor_url: str,
         username: str,
@@ -519,7 +518,6 @@ class ScpMixin:
                     level="WARN"
                 )
 
-        return None
         return None
 
     def _extract_scp_content(self, data: Dict):
