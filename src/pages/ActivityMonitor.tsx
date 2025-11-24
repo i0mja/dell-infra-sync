@@ -276,19 +276,23 @@ export default function ActivityMonitor() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Top: Compact Stats Bar */}
-      <ActivityStatsBar
-        totalCommands={commands.length}
-        successRate={calculateSuccessRate()}
-        activeJobs={jobs.length}
-        failedCount={commands.filter(c => !c.success).length}
-        liveStatus={realtimeStatus}
-        onRefresh={handleManualRefresh}
-        onExport={handleExport}
-      />
+      <div className="px-4 pt-4 lg:px-6">
+        <ActivityStatsBar
+          totalCommands={commands.length}
+          successRate={calculateSuccessRate()}
+          activeJobs={jobs.length}
+          failedCount={commands.filter(c => !c.success).length}
+          liveStatus={realtimeStatus}
+          onRefresh={handleManualRefresh}
+          onExport={handleExport}
+        />
+      </div>
 
       {/* Active Jobs Banner (conditional) */}
       {jobs.length > 0 && (
-        <ActiveJobsBanner jobs={jobs} />
+        <div className="px-4 pt-4 lg:px-6">
+          <ActiveJobsBanner jobs={jobs} />
+        </div>
       )}
 
       {/* Main: Two Column Layout */}
