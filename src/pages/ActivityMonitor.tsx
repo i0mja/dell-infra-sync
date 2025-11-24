@@ -277,8 +277,7 @@ export default function ActivityMonitor() {
   });
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
-      {/* Top: Compact Stats Bar */}
+    <div className="space-y-4 px-4 pb-10 pt-4 sm:px-6 lg:px-8">
       <ActivityStatsBar
         totalCommands={commands.length}
         successRate={calculateSuccessRate()}
@@ -289,61 +288,105 @@ export default function ActivityMonitor() {
         onExport={handleExport}
       />
 
-      {/* Active Jobs Banner (conditional) */}
       {jobs.length > 0 && (
-        <div className="border-b bg-muted/30">
-          <div className="px-4 py-4 sm:px-6 lg:px-8">
-            <ActiveJobsBanner jobs={jobs} />
-          </div>
+        <div className="rounded-xl border bg-muted/30 px-4 py-3 shadow-sm sm:px-6">
+          <ActiveJobsBanner jobs={jobs} />
         </div>
       )}
 
-      {/* Main: Two Column Layout */}
-      <div className="flex-1 overflow-hidden px-4 pb-6 pt-4 sm:px-6 lg:px-8">
-        <div className="grid h-full min-h-[70vh] gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(380px,1fr)] xl:items-start">
-          <div className="flex min-w-0 flex-col gap-4">
-            <div className="flex h-full flex-col overflow-hidden rounded-xl border bg-card shadow-sm">
-              <div className="border-b bg-muted/40 px-4 py-3">
-                <FilterToolbar
-                  searchTerm={searchTerm}
-                  onSearchChange={setSearchTerm}
-                  operationType={operationTypeFilter}
-                  onOperationTypeChange={setOperationTypeFilter}
-                  selectedServer={serverFilter}
-                  onServerChange={setServerFilter}
-                  commandType={commandTypeFilter}
-                  onCommandTypeChange={setCommandTypeFilter}
-                  status={statusFilter}
-                  onStatusChange={setStatusFilter}
-                  source={commandSource}
-                  onSourceChange={setCommandSource}
-                  timeRange={timeRangeFilter}
-                  onTimeRangeChange={setTimeRangeFilter}
-                  servers={servers || []}
-                />
-              </div>
+      <div className="rounded-xl border bg-card shadow-sm">
+        <div className="flex flex-col gap-2 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+          <div className="space-y-1">
+            <h2 className="text-base font-semibold">Filter and search activity</h2>
+            <p className="text-sm text-muted-foreground">
+              Narrow the feed by source, timeframe, and status to focus on the events that matter.
+            </p>
+          </div>
+          <div
+            className={`inline-flex items-center gap-2 self-start rounded-full px-3 py-1 text-xs font-medium ${
+              realtimeStatus === 'connected'
+                ? 'bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/30'
+                : 'bg-amber-500/10 text-amber-700 ring-1 ring-amber-500/30'
+            }`}
+          >
+            <span className="h-2 w-2 rounded-full bg-current" />
+            {realtimeStatus === 'connected' ? 'Live updates' : 'Realtime paused'}
+          </div>
+        </div>
+        <div className="px-4 pb-5 pt-3 sm:px-6">
+          <FilterToolbar
+            searchTerm={searchTerm}
+            onSearchChange={setSearchTerm}
+            operationType={operationTypeFilter}
+            onOperationTypeChange={setOperationTypeFilter}
+            selectedServer={serverFilter}
+            onServerChange={setServerFilter}
+            commandType={commandTypeFilter}
+            onCommandTypeChange={setCommandTypeFilter}
+            status={statusFilter}
+            onStatusChange={setStatusFilter}
+            source={commandSource}
+            onSourceChange={setCommandSource}
+            timeRange={timeRangeFilter}
+            onTimeRangeChange={setTimeRangeFilter}
+            servers={servers || []}
+          />
+        </div>
+      </div>
 
-              <div className="flex-1 overflow-hidden p-2 sm:p-3">
-                <CommandsTable
-                  commands={filteredCommands}
-                  selectedId={selectedCommand?.id}
-                  onRowClick={handleRowClick}
-                  isLive={realtimeStatus === 'connected'}
-                />
+      <div className="grid gap-4 xl:grid-cols-[3fr_2fr]">
+        <div className="space-y-3">
+          <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-4 sm:px-6">
+              <div className="space-y-1">
+                <h3 className="text-lg font-semibold">Recent activity</h3>
+                <p className="text-sm text-muted-foreground">
+                  Newest commands appear first. Click any row to inspect the request and response.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span className="rounded-full bg-muted px-3 py-1 font-medium text-foreground">
+                  {filteredCommands.length} shown
+                </span>
+                <span
+                  className={`inline-flex items-center gap-2 rounded-full px-3 py-1 font-medium ${
+                    realtimeStatus === 'connected'
+                      ? 'bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/30'
+                      : 'bg-amber-500/10 text-amber-700 ring-1 ring-amber-500/30'
+                  }`}
+                >
+                  <span className="h-2 w-2 rounded-full bg-current" />
+                  {realtimeStatus === 'connected' ? 'Live' : 'Paused'}
+                </span>
               </div>
             </div>
+            <div className="px-2 pb-2 pt-1 sm:px-3">
+              <CommandsTable
+                commands={filteredCommands}
+                selectedId={selectedCommand?.id}
+                onRowClick={handleRowClick}
+                isLive={realtimeStatus === 'connected'}
+                className="border-0 bg-transparent shadow-none"
+              />
+            </div>
           </div>
+        </div>
 
-          <div className="min-h-[320px] xl:max-h-[calc(100vh-180px)]">
-            <div className="hidden xl:block h-full">
-              <div className="sticky top-[96px] h-full">
-                <CommandDetailsSidebar
-                  command={selectedCommand}
-                  onClose={handleCloseDetails}
-                  onExpand={() => setIsDetailsDialogOpen(true)}
-                  className="h-full xl:max-h-[calc(100vh-180px)]"
-                />
-              </div>
+        <div className="space-y-3">
+          <div className="rounded-xl border bg-card shadow-sm">
+            <div className="border-b px-4 py-4 sm:px-6">
+              <h3 className="text-base font-semibold">Command details</h3>
+              <p className="text-sm text-muted-foreground">
+                Inspect payloads, headers, and timing for the selected command.
+              </p>
+            </div>
+            <div className="p-3 sm:p-4">
+              <CommandDetailsSidebar
+                command={selectedCommand}
+                onClose={handleCloseDetails}
+                onExpand={() => setIsDetailsDialogOpen(true)}
+                className="h-full border-none shadow-none"
+              />
             </div>
           </div>
         </div>
