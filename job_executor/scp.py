@@ -442,20 +442,34 @@ class ScpMixin:
         """
 
         base_url = monitor_url.rstrip('/')
-        fallback_urls = [f"{base_url}/$value", f"{base_url}/ExportedData"]
+        fallback_urls = [
+            # Some iDRAC versions honor content negotiation on the task URI itself.
+            # Re-request the same task with an XML/txt Accept header before trying
+            # Redfish-specific $value/ExportedData paths.
+            (base_url, {"Accept": "application/xml,application/json,text/plain"}),
+            (f"{base_url}/$value", {"Accept": "application/xml,text/plain"}),
+            (f"{base_url}/ExportedData", {"Accept": "application/xml,text/plain"}),
+        ]
 
-        for url in fallback_urls:
+        for url, headers in fallback_urls:
             try:
                 poll_start = time.time()
                 response = requests.get(
                     url,
                     auth=(username, password),
+                    headers=headers,
                     verify=False,
                     timeout=30
                 )
                 response_time_ms = int((time.time() - poll_start) * 1000)
+
                 parsed_body = _safe_json_parse(response)
                 content = self._extract_scp_content(parsed_body)
+
+                # If JSON parsing failed (common when XML/text is returned), fall back
+                # to the raw body so we still capture the SCP payload.
+                if content is None:
+                    content = self._maybe_parse_content(response.text)
 
                 success = response.status_code == 200 and content is not None
 
