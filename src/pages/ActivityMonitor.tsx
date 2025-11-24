@@ -6,6 +6,7 @@ import { ActivityStatsBar } from "@/components/activity/ActivityStatsBar";
 import { FilterToolbar } from "@/components/activity/FilterToolbar";
 import { CommandsTable } from "@/components/activity/CommandsTable";
 import { CommandDetailsSidebar } from "@/components/activity/CommandDetailsSidebar";
+import { CommandDetailDialog } from "@/components/activity/CommandDetailDialog";
 import { ActiveJobsBanner } from "@/components/activity/ActiveJobsBanner";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { useMediaQuery } from "@/hooks/use-media-query";
@@ -48,6 +49,7 @@ export default function ActivityMonitor() {
   const [selectedCommand, setSelectedCommand] = useState<IdracCommand | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [isDetailsSheetOpen, setIsDetailsSheetOpen] = useState(false);
+  const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
   
   // Filters
   const [serverFilter, setServerFilter] = useState<string>("all");
@@ -229,6 +231,7 @@ export default function ActivityMonitor() {
   const handleCloseDetails = () => {
     setSelectedCommand(null);
     setIsDetailsSheetOpen(false);
+    setIsDetailsDialogOpen(false);
   };
 
   const calculateSuccessRate = () => {
@@ -331,12 +334,14 @@ export default function ActivityMonitor() {
             </div>
           </div>
 
-          <div className="min-h-[320px] overflow-hidden rounded-xl border bg-card shadow-sm">
-            <div className="hidden xl:block">
-              <div className="sticky top-[96px]">
+          <div className="min-h-[320px] xl:max-h-[calc(100vh-180px)]">
+            <div className="hidden xl:block h-full">
+              <div className="sticky top-[96px] h-full">
                 <CommandDetailsSidebar
                   command={selectedCommand}
                   onClose={handleCloseDetails}
+                  onExpand={() => setIsDetailsDialogOpen(true)}
+                  className="h-full xl:max-h-[calc(100vh-180px)]"
                 />
               </div>
             </div>
@@ -349,9 +354,16 @@ export default function ActivityMonitor() {
           <CommandDetailsSidebar
             command={selectedCommand}
             onClose={handleCloseDetails}
+            className="h-full"
           />
         </SheetContent>
       </Sheet>
+
+      <CommandDetailDialog
+        command={selectedCommand}
+        open={isDetailsDialogOpen}
+        onOpenChange={setIsDetailsDialogOpen}
+      />
     </div>
   );
 }
