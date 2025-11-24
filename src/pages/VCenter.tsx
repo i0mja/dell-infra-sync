@@ -414,6 +414,42 @@ const VCenter = () => {
     setSelectedHost(null);
   };
 
+  const handleHostSync = (host: VCenterHost) => {
+    setSelectedHost(host);
+    toast({
+      title: "Sync started",
+      description: `Refreshing ${host.name} through a vCenter sync.`,
+    });
+    handleSyncNow();
+  };
+
+  const handleViewLinkedServer = (host: VCenterHost) => {
+    if (!host.server_id) {
+      toast({
+        title: "No linked server",
+        description: "Use the Servers page to link this ESXi host to a physical server.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    navigate('/servers', { state: { highlightServerId: host.server_id } });
+    toast({
+      title: "Opening linked server",
+      description: "Navigating to Servers so you can run iDRAC actions.",
+    });
+  };
+
+  const handleLinkToServer = (host: VCenterHost) => {
+    navigate('/servers');
+    toast({
+      title: "Link this ESXi host",
+      description: host.serial_number
+        ? `Use Link vCenter on the Servers page to map serial ${host.serial_number}.`
+        : 'Open the Servers page to link this host to hardware.',
+    });
+  };
+
   const selectedCluster = selectedClusterGroup
     ? clusterGroups.find(c => c.name === selectedClusterGroup) || null
     : null;
@@ -472,6 +508,10 @@ const VCenter = () => {
                   selectedCluster={selectedClusterGroup}
                   onHostClick={handleHostClick}
                   onClusterClick={handleClusterClick}
+                  onHostSync={handleHostSync}
+                  onClusterUpdate={handleClusterUpdate}
+                  onViewLinkedServer={handleViewLinkedServer}
+                  onLinkToServer={handleLinkToServer}
                   loading={loading}
                 />
               </div>

@@ -1,6 +1,25 @@
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { useToast } from "@/hooks/use-toast";
+import {
+  ChevronDown,
+  ChevronRight,
+  ClipboardCopy,
+  Layers,
+  Link2,
+  RefreshCcw,
+  Server,
+} from "lucide-react";
 import { useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -28,6 +47,10 @@ interface HostsTableProps {
   selectedCluster: string | null;
   onHostClick: (host: VCenterHost) => void;
   onClusterClick: (clusterName: string) => void;
+  onHostSync?: (host: VCenterHost) => void;
+  onClusterUpdate?: (clusterName?: string) => void;
+  onViewLinkedServer?: (host: VCenterHost) => void;
+  onLinkToServer?: (host: VCenterHost) => void;
   loading: boolean;
 }
 
@@ -37,9 +60,14 @@ export function HostsTable({
   selectedCluster,
   onHostClick,
   onClusterClick,
+  onHostSync,
+  onClusterUpdate,
+  onViewLinkedServer,
+  onLinkToServer,
   loading,
 }: HostsTableProps) {
   const [collapsedClusters, setCollapsedClusters] = useState<Set<string>>(new Set());
+  const { toast } = useToast();
 
   const toggleCluster = (clusterName: string) => {
     const newCollapsed = new Set(collapsedClusters);
@@ -49,6 +77,31 @@ export function HostsTable({
       newCollapsed.add(clusterName);
     }
     setCollapsedClusters(newCollapsed);
+  };
+
+  const copyToClipboard = async (value: string | null | undefined, label: string) => {
+    if (!value) {
+      toast({
+        title: `No ${label.toLowerCase()} to copy`,
+        description: `This host does not have a ${label.toLowerCase()} available yet.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(value);
+      toast({
+        title: `${label} copied`,
+        description: value,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Copy failed",
+        description: error?.message || "Could not copy to clipboard", 
+        variant: "destructive",
+      });
+    }
   };
 
   const getStatusBadge = (host: VCenterHost) => {
@@ -139,32 +192,145 @@ export function HostsTable({
 
                   {/* Host Rows */}
                   {!isCollapsed && cluster.hosts.map((host) => (
-                    <TableRow
-                      key={host.id}
-                      className={`cursor-pointer ${
-                        selectedHostId === host.id ? 'bg-accent' : 'hover:bg-accent/50'
-                      }`}
-                      onClick={() => onHostClick(host)}
-                    >
-                      <TableCell className="font-medium pl-8">{host.name}</TableCell>
-                      <TableCell>{getStatusBadge(host)}</TableCell>
-                      <TableCell className="text-sm">{host.esxi_version || 'N/A'}</TableCell>
-                      <TableCell className="text-sm font-mono text-xs">
-                        {host.serial_number || 'N/A'}
-                      </TableCell>
-                      <TableCell>
-                        {host.server_id ? (
-                          <Badge variant="secondary" className="text-xs">✓ Yes</Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-xs">✗ No</Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {host.last_sync 
-                          ? formatDistanceToNow(new Date(host.last_sync), { addSuffix: true })
-                          : 'Never'}
-                      </TableCell>
-                    </TableRow>
+                    <ContextMenu key={host.id}>
+                      <ContextMenuTrigger asChild>
+                        <TableRow
+                          className={`cursor-pointer ${
+                            selectedHostId === host.id ? 'bg-accent' : 'hover:bg-accent/50'
+                          }`}
+                          onClick={() => onHostClick(host)}
+                        >
+                          <TableCell className="font-medium pl-8">{host.name}</TableCell>
+                          <TableCell>{getStatusBadge(host)}</TableCell>
+                          <TableCell className="text-sm">{host.esxi_version || 'N/A'}</TableCell>
+                          <TableCell className="text-sm font-mono text-xs">
+                            {host.serial_number || 'N/A'}
+                          </TableCell>
+                          <TableCell>
+                            {host.server_id ? (
+                              <Badge variant="secondary" className="text-xs">✓ Yes</Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-xs">✗ No</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {host.last_sync
+                              ? formatDistanceToNow(new Date(host.last_sync), { addSuffix: true })
+                              : 'Never'}
+                          </TableCell>
+                        </TableRow>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent className="w-72">
+                        <ContextMenuItem
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onHostClick(host);
+                          }}
+                        >
+                          <Server className="mr-2 h-4 w-4" />
+                          Open host details
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuSub>
+                          <ContextMenuSubTrigger>
+                            <Server className="mr-2 h-4 w-4" />
+                            Server mapping
+                          </ContextMenuSubTrigger>
+                          <ContextMenuSubContent>
+                            <ContextMenuItem
+                              disabled={!host.server_id}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onViewLinkedServer?.(host);
+                              }}
+                            >
+                              <Link2 className="mr-2 h-4 w-4" />
+                              {host.server_id ? 'Open linked server' : 'No linked server'}
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onLinkToServer?.(host);
+                              }}
+                            >
+                              <Layers className="mr-2 h-4 w-4" />
+                              Link or match server
+                            </ContextMenuItem>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                copyToClipboard(host.serial_number, 'Serial number');
+                              }}
+                            >
+                              <ClipboardCopy className="mr-2 h-4 w-4" />
+                              Copy serial number
+                            </ContextMenuItem>
+                          </ContextMenuSubContent>
+                        </ContextMenuSub>
+                        <ContextMenuSub>
+                          <ContextMenuSubTrigger>
+                            <Layers className="mr-2 h-4 w-4" />
+                            Cluster actions
+                          </ContextMenuSubTrigger>
+                          <ContextMenuSubContent>
+                            <ContextMenuItem
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onClusterClick(host.cluster || 'Unclustered');
+                              }}
+                            >
+                              <ChevronRight className="mr-2 h-4 w-4" />
+                              View cluster summary
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onClusterUpdate?.(host.cluster || undefined);
+                              }}
+                            >
+                              <RefreshCcw className="mr-2 h-4 w-4" />
+                              Open cluster update wizard
+                            </ContextMenuItem>
+                          </ContextMenuSubContent>
+                        </ContextMenuSub>
+                        <ContextMenuSub>
+                          <ContextMenuSubTrigger>
+                            <RefreshCcw className="mr-2 h-4 w-4" />
+                            vCenter actions
+                          </ContextMenuSubTrigger>
+                          <ContextMenuSubContent>
+                            <ContextMenuItem
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onHostSync?.(host);
+                              }}
+                            >
+                              <RefreshCcw className="mr-2 h-4 w-4" />
+                              Sync this host
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                copyToClipboard(host.vcenter_id, 'vCenter host ID');
+                              }}
+                            >
+                              <ClipboardCopy className="mr-2 h-4 w-4" />
+                              Copy vCenter host ID
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                copyToClipboard(host.name, 'Hostname');
+                              }}
+                            >
+                              <ClipboardCopy className="mr-2 h-4 w-4" />
+                              Copy hostname
+                            </ContextMenuItem>
+                          </ContextMenuSubContent>
+                        </ContextMenuSub>
+                      </ContextMenuContent>
+                    </ContextMenu>
                   ))}
                 </>
               );
