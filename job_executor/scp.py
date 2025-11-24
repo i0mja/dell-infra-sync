@@ -67,11 +67,34 @@ class ScpMixin:
                     if details.get('include_raid', True):
                         targets.append('RAID')
 
+                    # Build ShareParameters following Dell iDRAC expectations.
+                    # Default to "Local" exports (content returned directly in the task monitor)
+                    # unless the caller explicitly provides share details for SMB/NFS exports.
+                    share_type = str(details.get('share_type', 'Local') or 'Local')
+                    share_parameters: Dict[str, str] = {
+                        "Target": ",".join(targets),
+                        "ShareType": share_type
+                    }
+
+                    if share_type.lower() != 'local':
+                        # Optional network share fields (commonly used by iDRAC Redfish)
+                        # See https://www.dell.com/support/kbdoc/en-us/000177312 for parameters
+                        if details.get('share_address'):
+                            share_parameters['IPAddress'] = str(details['share_address'])
+                        if details.get('share_name'):
+                            share_parameters['ShareName'] = str(details['share_name'])
+                        if details.get('share_username'):
+                            share_parameters['UserName'] = str(details['share_username'])
+                        if details.get('share_password'):
+                            share_parameters['Password'] = str(details['share_password'])
+                        if details.get('share_file_name'):
+                            share_parameters['FileName'] = str(details['share_file_name'])
+
                     payload = {
                         "ExportFormat": "JSON",
-                        "ShareParameters": {
-                            "Target": ",".join(targets)
-                        }
+                        "ShareParameters": share_parameters,
+                        "ExportUse": details.get('export_use', 'Default'),
+                        "IncludeInExport": details.get('include_in_export', 'Default'),
                     }
 
                     start_time = time.time()
@@ -126,7 +149,7 @@ class ScpMixin:
                         'export_job_id': job['id'],
                         'backup_name': f"{backup_name} - {server.get('hostname', ip)}",
                         'description': details.get('description'),
-                        'scp_content': scp_content if file_size < 1024*1024 else None,
+                        'scp_content': scp_content,
                         'scp_file_size_bytes': file_size,
                         'include_bios': details.get('include_bios', True),
                         'include_idrac': details.get('include_idrac', True),
@@ -183,7 +206,7 @@ class ScpMixin:
                     'failed_count': failed_count,
                     'results': results,
                     'backup_name': backup_name,
-                    'note': 'Large SCP files stored externally' if any(r.get('size_kb', 0) > 1024 for r in results) else None
+                    'note': None
                 }
             )
 

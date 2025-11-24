@@ -11,7 +11,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Download, Upload, FileJson, AlertCircle, CheckCircle2, Trash2 } from "lucide-react";
+import { Download, Upload, FileJson, AlertCircle, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 
 interface ScpBackupDialogProps {
@@ -45,6 +45,7 @@ export function ScpBackupDialog({ open, onOpenChange, server }: ScpBackupDialogP
   const [loading, setLoading] = useState(false);
   const [backups, setBackups] = useState<ScpBackup[]>([]);
   const [loadingBackups, setLoadingBackups] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   // Export form state
   const [backupName, setBackupName] = useState("");
@@ -73,7 +74,9 @@ export function ScpBackupDialog({ open, onOpenChange, server }: ScpBackupDialogP
     try {
       const { data, error } = await supabase
         .from("scp_backups")
-        .select("*")
+        .select(
+          "id, backup_name, description, scp_file_size_bytes, include_bios, include_idrac, include_nic, include_raid, checksum, exported_at, last_imported_at, is_valid, created_by"
+        )
         .eq("server_id", server.id)
         .order("exported_at", { ascending: false });
 
@@ -179,6 +182,50 @@ export function ScpBackupDialog({ open, onOpenChange, server }: ScpBackupDialogP
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDownload = async (backupId: string, backupName: string) => {
+    setDownloadingId(backupId);
+    try {
+      const { data, error } = await supabase
+        .from("scp_backups")
+        .select("scp_content")
+        .eq("id", backupId)
+        .single();
+
+      if (error) throw error;
+
+      if (!data?.scp_content) {
+        toast.error("Backup file is not stored", {
+          description: "Run a new export to generate a downloadable SCP file.",
+        });
+        return;
+      }
+
+      const jsonString =
+        typeof data.scp_content === "string"
+          ? data.scp_content
+          : JSON.stringify(data.scp_content, null, 2);
+
+      const blob = new Blob([jsonString], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${backupName || "scp-backup"}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+
+      toast.success("SCP backup downloaded");
+    } catch (error: any) {
+      console.error("Error downloading backup:", error);
+      toast.error("Failed to download backup", {
+        description: error.message,
+      });
+    } finally {
+      setDownloadingId(null);
     }
   };
 
@@ -392,16 +439,29 @@ export function ScpBackupDialog({ open, onOpenChange, server }: ScpBackupDialogP
                               </div>
                             )}
                           </div>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteBackup(backup.id);
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          <div className="flex gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDownload(backup.id, backup.backup_name);
+                              }}
+                              disabled={downloadingId === backup.id}
+                            >
+                              <Download className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteBackup(backup.id);
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </div>
                       </div>
                     ))}
