@@ -145,13 +145,7 @@ class ScpMixin:
                         )
                     else:
                         export_data = _safe_json_parse(response)
-
-                        # If the controller returned raw text/XML instead of JSON, fall back to the body text.
-                        if isinstance(export_data, dict) and export_data.get('_parse_error'):
-                            raw_body = response.text or export_data.get('_raw_response') or ''
-                            scp_content = self._maybe_parse_content(raw_body) or raw_body or None
-                        else:
-                            scp_content = self._extract_scp_content(export_data) or export_data
+                        scp_content = self._extract_scp_content(export_data) or export_data
 
                     if scp_content is None:
                         raise Exception("SCP export completed but returned no content")
