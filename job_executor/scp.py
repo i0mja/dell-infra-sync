@@ -358,6 +358,9 @@ class ScpMixin:
         raise TimeoutError(f"SCP export task did not complete within {timeout_seconds} seconds")
 
     def _extract_task_state(self, data: Dict) -> Optional[str]:
+        if isinstance(data, str):
+            return self._maybe_parse_content(data)
+
         if not isinstance(data, dict):
             return None
 
@@ -413,6 +416,9 @@ class ScpMixin:
         return state.lower() in ['exception', 'killed', 'cancelled', 'failed', 'failure']
 
     def _extract_scp_content(self, data: Dict):
+        if isinstance(data, str):
+            return self._maybe_parse_content(data)
+
         if not isinstance(data, dict):
             return None
 
@@ -449,6 +455,11 @@ class ScpMixin:
                 parsed = self._maybe_parse_content(content)
                 if parsed is not None:
                     return parsed
+
+        # Fallback: if the response object captured the raw body, return it so we don't lose the SCP text.
+        if isinstance(data, dict) and data.get('_raw_response'):
+            parsed = self._maybe_parse_content(data['_raw_response'])
+            return parsed if parsed is not None else data['_raw_response']
 
         return None
 

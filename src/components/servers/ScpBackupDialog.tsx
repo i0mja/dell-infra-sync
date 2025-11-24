@@ -13,6 +13,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Download, Upload, FileJson, AlertCircle, Trash2 } from "lucide-react";
 import { format } from "date-fns";
+import { Database } from "@/integrations/supabase/types";
 
 interface ScpBackupDialogProps {
   open: boolean;
@@ -40,12 +41,25 @@ interface ScpBackup {
   created_by: string | null;
 }
 
+type JobStatus = Database["public"]["Enums"]["job_status"];
+
+interface JobSummary {
+  id: string;
+  status: JobStatus;
+  created_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  details: any;
+}
+
 export function ScpBackupDialog({ open, onOpenChange, server }: ScpBackupDialogProps) {
   const [activeTab, setActiveTab] = useState<"export" | "restore">("export");
   const [loading, setLoading] = useState(false);
   const [backups, setBackups] = useState<ScpBackup[]>([]);
   const [loadingBackups, setLoadingBackups] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [recentJobs, setRecentJobs] = useState<JobSummary[]>([]);
+  const [loadingJobs, setLoadingJobs] = useState(false);
 
   // Export form state
   const [backupName, setBackupName] = useState("");
@@ -63,9 +77,19 @@ export function ScpBackupDialog({ open, onOpenChange, server }: ScpBackupDialogP
   useEffect(() => {
     if (open) {
       fetchBackups();
+      fetchRecentJobs();
+
       // Set default backup name
       const defaultName = `${server.hostname || server.ip_address} - ${format(new Date(), "yyyy-MM-dd HH:mm")}`;
       setBackupName(defaultName);
+
+      const interval = setInterval(() => {
+        fetchRecentJobs(true);
+        fetchBackups();
+      }, 5000);
+
+      // Clear polling when dialog closes
+      return () => clearInterval(interval);
     }
   }, [open, server]);
 
@@ -87,6 +111,43 @@ export function ScpBackupDialog({ open, onOpenChange, server }: ScpBackupDialogP
       toast.error("Failed to load backups");
     } finally {
       setLoadingBackups(false);
+    }
+  };
+
+  const fetchRecentJobs = async (silent = false) => {
+    if (!silent) setLoadingJobs(true);
+    try {
+      const { data, error } = await supabase
+        .from("jobs")
+        .select("id, status, created_at, started_at, completed_at, details")
+        .eq("job_type", "scp_export")
+        .contains("target_scope", { server_ids: [server.id] })
+        .order("created_at", { ascending: false })
+        .limit(5);
+
+      if (error) throw error;
+      setRecentJobs(data || []);
+    } catch (error: any) {
+      console.error("Error fetching jobs:", error);
+      if (!silent) toast.error("Failed to load job status");
+    } finally {
+      if (!silent) setLoadingJobs(false);
+    }
+  };
+
+  const getStatusBadgeVariant = (status: JobStatus) => {
+    switch (status) {
+      case "running":
+        return "default" as const;
+      case "pending":
+        return "secondary" as const;
+      case "completed":
+        return "default" as const;
+      case "failed":
+      case "cancelled":
+        return "destructive" as const;
+      default:
+        return "secondary" as const;
     }
   };
 
@@ -121,12 +182,21 @@ export function ScpBackupDialog({ open, onOpenChange, server }: ScpBackupDialogP
 
       if (error) throw error;
 
+      if (data && "success" in data && !data.success) {
+        throw new Error((data as any).error || "Failed to create export job");
+      }
+
       toast.success("SCP Export Job Created", {
         description: "Configuration backup has been initiated",
       });
 
+      fetchRecentJobs(true);
+
       // Refresh backups list after a delay
-      setTimeout(fetchBackups, 2000);
+      setTimeout(() => {
+        fetchBackups();
+        fetchRecentJobs(true);
+      }, 2000);
 
       // Reset form
       setBackupName(`${server.hostname || server.ip_address} - ${format(new Date(), "yyyy-MM-dd HH:mm")}`);
@@ -362,6 +432,50 @@ export function ScpBackupDialog({ open, onOpenChange, server }: ScpBackupDialogP
                     </label>
                   </div>
                 </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label>Recent SCP export jobs</Label>
+                  <Button size="sm" variant="ghost" onClick={() => fetchRecentJobs()} disabled={loadingJobs}>
+                    Refresh
+                  </Button>
+                </div>
+                <div className="rounded-md border p-3 space-y-2 bg-muted/30">
+                  {loadingJobs ? (
+                    <div className="text-sm text-muted-foreground">Checking job status...</div>
+                  ) : recentJobs.length === 0 ? (
+                    <div className="text-sm text-muted-foreground">
+                      No recent SCP export jobs for this server. Start a new export to see status.
+                    </div>
+                  ) : (
+                    recentJobs.map((job) => (
+                      <div key={job.id} className="flex items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="text-sm font-medium">Job {job.id.slice(0, 8)}</div>
+                          <div className="text-xs text-muted-foreground">
+                            Status: {job.status} • Created {job.created_at ? format(new Date(job.created_at), "PPp") : "N/A"}
+                          </div>
+                          {job.started_at && (
+                            <div className="text-xs text-muted-foreground">
+                              Started {format(new Date(job.started_at), "PPp")}
+                              {job.completed_at ? ` • Completed ${format(new Date(job.completed_at), "PPp")}` : ""}
+                            </div>
+                          )}
+                          {job.details?.error && (
+                            <div className="text-xs text-destructive">{job.details.error}</div>
+                          )}
+                        </div>
+                        <Badge variant={getStatusBadgeVariant(job.status)} className="uppercase">
+                          {job.status}
+                        </Badge>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Completed jobs will add a backup entry below once the executor uploads the SCP content.
+                </p>
               </div>
 
               <Button
