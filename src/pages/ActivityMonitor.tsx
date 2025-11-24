@@ -276,27 +276,27 @@ export default function ActivityMonitor() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Top: Compact Stats Bar */}
-      <div className="px-4 pt-4 lg:px-6">
-        <ActivityStatsBar
-          totalCommands={commands.length}
-          successRate={calculateSuccessRate()}
-          activeJobs={jobs.length}
-          failedCount={commands.filter(c => !c.success).length}
-          liveStatus={realtimeStatus}
-          onRefresh={handleManualRefresh}
-          onExport={handleExport}
-        />
-      </div>
+      <ActivityStatsBar
+        totalCommands={commands.length}
+        successRate={calculateSuccessRate()}
+        activeJobs={jobs.length}
+        failedCount={commands.filter(c => !c.success).length}
+        liveStatus={realtimeStatus}
+        onRefresh={handleManualRefresh}
+        onExport={handleExport}
+      />
 
       {/* Active Jobs Banner (conditional) */}
       {jobs.length > 0 && (
-        <div className="px-4 pt-4 lg:px-6">
-          <ActiveJobsBanner jobs={jobs} />
+        <div className="border-b bg-muted/30">
+          <div className="px-4 py-4 sm:px-6 lg:px-8">
+            <ActiveJobsBanner jobs={jobs} />
+          </div>
         </div>
       )}
 
       {/* Main: Two Column Layout */}
-      <div className="flex-1 overflow-hidden px-4 pb-6 pt-4 lg:px-6">
+      <div className="flex-1 overflow-hidden px-4 pb-6 pt-4 sm:px-6 lg:px-8">
         <div className="grid h-full min-h-[70vh] gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(380px,1fr)] xl:items-start">
           <div className="flex min-w-0 flex-col gap-4">
             <div className="flex h-full flex-col overflow-hidden rounded-xl border bg-card shadow-sm">
