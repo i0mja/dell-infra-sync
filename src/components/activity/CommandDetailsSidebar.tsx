@@ -1,9 +1,10 @@
-import { X, Copy, Download } from "lucide-react";
+import { X, Copy, Expand } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 interface Command {
   id: string;
@@ -28,11 +29,15 @@ interface Command {
 interface CommandDetailsSidebarProps {
   command: Command | null;
   onClose: () => void;
+  onExpand?: () => void;
+  className?: string;
 }
 
 export const CommandDetailsSidebar = ({
   command,
-  onClose
+  onClose,
+  onExpand,
+  className
 }: CommandDetailsSidebarProps) => {
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
@@ -72,18 +77,31 @@ export const CommandDetailsSidebar = ({
   };
 
   return (
-    <div className="border rounded-lg bg-card flex flex-col h-full overflow-hidden">
+    <div className={cn("border rounded-lg bg-card flex flex-col h-full overflow-hidden", className)}>
       {/* Header */}
-      <div className="border-b px-4 py-3 flex items-center justify-between">
+      <div className="border-b px-4 py-3 flex items-center gap-2">
         <h3 className="font-semibold">Command Details</h3>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={onClose}
-        >
-          <X className="h-4 w-4" />
-        </Button>
+        <div className="ml-auto flex items-center gap-2">
+          {onExpand && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 px-2 text-xs"
+              onClick={onExpand}
+            >
+              <Expand className="mr-1 h-3.5 w-3.5" />
+              Expand
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={onClose}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       <ScrollArea className="flex-1">
