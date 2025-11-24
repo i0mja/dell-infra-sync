@@ -149,7 +149,7 @@ class ScpMixin:
                         'export_job_id': job['id'],
                         'backup_name': f"{backup_name} - {server.get('hostname', ip)}",
                         'description': details.get('description'),
-                        'scp_content': scp_content if file_size < 1024*1024 else None,
+                        'scp_content': scp_content,
                         'scp_file_size_bytes': file_size,
                         'include_bios': details.get('include_bios', True),
                         'include_idrac': details.get('include_idrac', True),
@@ -206,7 +206,7 @@ class ScpMixin:
                     'failed_count': failed_count,
                     'results': results,
                     'backup_name': backup_name,
-                    'note': 'Large SCP files stored externally' if any(r.get('size_kb', 0) > 1024 for r in results) else None
+                    'note': None
                 }
             )
 
