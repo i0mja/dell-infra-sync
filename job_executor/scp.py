@@ -67,11 +67,34 @@ class ScpMixin:
                     if details.get('include_raid', True):
                         targets.append('RAID')
 
+                    # Build ShareParameters following Dell iDRAC expectations.
+                    # Default to "Local" exports (content returned directly in the task monitor)
+                    # unless the caller explicitly provides share details for SMB/NFS exports.
+                    share_type = str(details.get('share_type', 'Local') or 'Local')
+                    share_parameters: Dict[str, str] = {
+                        "Target": ",".join(targets),
+                        "ShareType": share_type
+                    }
+
+                    if share_type.lower() != 'local':
+                        # Optional network share fields (commonly used by iDRAC Redfish)
+                        # See https://www.dell.com/support/kbdoc/en-us/000177312 for parameters
+                        if details.get('share_address'):
+                            share_parameters['IPAddress'] = str(details['share_address'])
+                        if details.get('share_name'):
+                            share_parameters['ShareName'] = str(details['share_name'])
+                        if details.get('share_username'):
+                            share_parameters['UserName'] = str(details['share_username'])
+                        if details.get('share_password'):
+                            share_parameters['Password'] = str(details['share_password'])
+                        if details.get('share_file_name'):
+                            share_parameters['FileName'] = str(details['share_file_name'])
+
                     payload = {
                         "ExportFormat": "JSON",
-                        "ShareParameters": {
-                            "Target": ",".join(targets)
-                        }
+                        "ShareParameters": share_parameters,
+                        "ExportUse": details.get('export_use', 'Default'),
+                        "IncludeInExport": details.get('include_in_export', 'Default'),
                     }
 
                     start_time = time.time()
