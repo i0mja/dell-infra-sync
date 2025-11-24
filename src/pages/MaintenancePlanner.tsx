@@ -54,10 +54,18 @@ interface Operation {
   data: Job | MaintenanceWindow;
 }
 
+interface SchedulePrefill {
+  start?: Date;
+  end?: Date;
+  clusters?: string[];
+  serverGroupIds?: string[];
+}
+
 export default function MaintenancePlanner() {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedOperation, setSelectedOperation] = useState<Operation | null>(null);
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
+  const [schedulePrefill, setSchedulePrefill] = useState<SchedulePrefill>();
   const [createJobDialogOpen, setCreateJobDialogOpen] = useState(false);
   const [selectedJob, setSelectedJob] = useState<any>(null);
   const [jobDetailDialogOpen, setJobDetailDialogOpen] = useState(false);
@@ -224,11 +232,17 @@ export default function MaintenancePlanner() {
     if (type === 'job') {
       setCreateJobDialogOpen(true);
     } else {
+      setSchedulePrefill(undefined);
       setScheduleDialogOpen(true);
     }
   };
 
-  const handleScheduleOptimal = () => {
+  const handleScheduleOptimal = (window: { start: string; end: string; affected_clusters: string[] }) => {
+    setSchedulePrefill({
+      start: new Date(window.start),
+      end: new Date(window.end),
+      clusters: window.affected_clusters
+    });
     setScheduleDialogOpen(true);
   };
 
@@ -240,8 +254,8 @@ export default function MaintenancePlanner() {
         activeJobs={activeJobs.length}
         nextWindow={nextWindow ? { title: nextWindow.title, start: nextWindow.planned_start } : undefined}
         optimalCount={optimalWindows.length}
-        onSchedule={() => setScheduleDialogOpen(true)}
-        onCreateOperation={handleCreateOperation}
+        onScheduleMaintenance={() => handleCreateOperation('maintenance')}
+        onCreateJob={() => handleCreateOperation('job')}
       />
 
       {/* Main Content: Two Column Layout */}
@@ -310,9 +324,13 @@ export default function MaintenancePlanner() {
       {/* Dialogs */}
       <ScheduleMaintenanceDialog
         open={scheduleDialogOpen}
-        onOpenChange={setScheduleDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) setSchedulePrefill(undefined);
+          setScheduleDialogOpen(open);
+        }}
         clusters={clusters}
         serverGroups={serverGroups}
+        prefilledData={schedulePrefill}
         onSuccess={refetchData}
       />
 

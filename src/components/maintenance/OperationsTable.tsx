@@ -97,14 +97,16 @@ export function OperationsTable({
 
   const filteredOps = operations.filter(op => {
     if (statusFilter !== 'all' && op.status !== statusFilter) return false;
+    if (typeFilter === 'maintenance') {
+      return op.type === 'maintenance';
+    }
+    if (typeFilter === 'job') {
+      return op.type === 'job';
+    }
     if (typeFilter !== 'all') {
-      if (typeFilter === 'maintenance' && op.type !== 'maintenance') return false;
-      if (typeFilter !== 'maintenance' && op.type === 'job') {
-        const job = op.data as Job;
-        if (job.job_type !== typeFilter) return false;
-      } else if (typeFilter !== 'maintenance') {
-        return false;
-      }
+      if (op.type !== 'job') return false;
+      const job = op.data as Job;
+      if (job.job_type !== typeFilter) return false;
     }
     return true;
   });
@@ -128,18 +130,21 @@ export function OperationsTable({
                 <SelectItem value="failed">Failed</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger className="w-[150px] h-8">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="maintenance">Maintenance</SelectItem>
-                <SelectItem value="firmware_update">Firmware Update</SelectItem>
-                <SelectItem value="discovery_scan">Discovery</SelectItem>
-                <SelectItem value="vcenter_sync">vCenter Sync</SelectItem>
-              </SelectContent>
-            </Select>
+              <Select value={typeFilter} onValueChange={setTypeFilter}>
+                <SelectTrigger className="w-[150px] h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  <SelectItem value="job">All Jobs</SelectItem>
+                  <SelectItem value="maintenance">Maintenance</SelectItem>
+                  <SelectItem value="firmware_update">Firmware Update</SelectItem>
+                  <SelectItem value="discovery_scan">Discovery</SelectItem>
+                  <SelectItem value="vcenter_sync">vCenter Sync</SelectItem>
+                  <SelectItem value="full_server_update">Full Server Update</SelectItem>
+                  <SelectItem value="cluster_safety_check">Safety Check</SelectItem>
+                </SelectContent>
+              </Select>
           </div>
         </div>
       </div>
