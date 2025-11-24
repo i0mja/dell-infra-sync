@@ -7,7 +7,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
 
 interface Command {
   id: string;
@@ -35,13 +35,15 @@ interface CommandsTableProps {
   selectedId?: string;
   onRowClick: (command: Command) => void;
   isLive: boolean;
+  className?: string;
 }
 
 export const CommandsTable = ({
   commands,
   selectedId,
   onRowClick,
-  isLive
+  isLive,
+  className
 }: CommandsTableProps) => {
   const getOperationBadge = (type: string) => {
     const variants: Record<string, string> = {
@@ -96,84 +98,73 @@ export const CommandsTable = ({
   };
 
   return (
-    <div className="flex h-full flex-col rounded-lg border bg-card/60 shadow-sm backdrop-blur-sm">
-      <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
-        <div className="flex items-center gap-2">
-          <h3 className="font-semibold">Activity Feed</h3>
-          <Badge
-            variant="outline"
-            className={
-              isLive
-                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-500"
-                : "border-amber-500/40 bg-amber-500/10 text-amber-600"
-            }
-          >
-            <span className="mr-1 inline-flex h-2 w-2 rounded-full bg-current"></span>
-            {isLive ? "Live" : "Paused"}
-          </Badge>
-        </div>
-        <div className="text-xs text-muted-foreground">
-          {commands.length} command{commands.length === 1 ? "" : "s"}
-        </div>
-      </div>
-
-      <ScrollArea className="flex-1">
-        <Table>
-          <TableHeader className="sticky top-0 bg-muted/50 z-10">
-            <TableRow>
-              <TableHead className="w-[90px]">Time</TableHead>
-              <TableHead className="w-[120px]">Operation</TableHead>
-              <TableHead>Endpoint</TableHead>
-              <TableHead className="w-[80px]">Type</TableHead>
-              <TableHead className="w-[90px]">Status</TableHead>
-              <TableHead className="w-[80px]">Time (ms)</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {commands.length === 0 ? (
+    <div
+      className={cn(
+        "overflow-hidden rounded-xl border",
+        isLive ? "border-emerald-500/30" : "border-border",
+        className
+      )}
+    >
+      <div className="overflow-x-auto">
+        <div className="max-h-[65vh] overflow-y-auto">
+          <Table className="min-w-full">
+            <TableHeader className="sticky top-0 z-10 bg-muted/60 backdrop-blur">
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                  No commands found
-                </TableCell>
+                <TableHead className="w-[120px]">Time</TableHead>
+                <TableHead className="w-[140px]">Operation</TableHead>
+                <TableHead>Endpoint</TableHead>
+                <TableHead className="w-[110px]">Type</TableHead>
+                <TableHead className="w-[110px]">Status</TableHead>
+                <TableHead className="w-[110px] text-right">Response (ms)</TableHead>
               </TableRow>
-            ) : (
-              commands.map((command) => (
-                <TableRow
-                  key={command.id}
-                  onClick={() => onRowClick(command)}
-                  className={`cursor-pointer transition-colors ${
-                    selectedId === command.id
-                      ? 'bg-primary/5 ring-1 ring-primary/40 hover:bg-primary/10'
-                      : 'hover:bg-muted/50'
-                  }`}
-                  data-state={selectedId === command.id ? 'selected' : undefined}
-                >
-                  <TableCell className="font-mono text-xs">
-                    {formatTime(command.timestamp)}
-                  </TableCell>
-                  <TableCell>
-                    {getOperationBadge(command.operation_type)}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">
-                    <span title={command.endpoint}>{formatEndpoint(command.endpoint)}</span>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className="font-mono text-xs">
-                      {command.command_type}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    {getStatusBadge(command.success, command.status_code)}
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-xs">
-                    {command.response_time_ms || '-'}
+            </TableHeader>
+            <TableBody>
+              {commands.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                    No commands found
                   </TableCell>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </ScrollArea>
+              ) : (
+                commands.map((command) => (
+                  <TableRow
+                    key={command.id}
+                    onClick={() => onRowClick(command)}
+                    className={cn(
+                      "cursor-pointer transition-colors",
+                      selectedId === command.id
+                        ? "bg-primary/5 ring-1 ring-primary/40 hover:bg-primary/10"
+                        : "hover:bg-muted/50"
+                    )}
+                    data-state={selectedId === command.id ? 'selected' : undefined}
+                  >
+                    <TableCell className="font-mono text-xs text-muted-foreground">
+                      {formatTime(command.timestamp)}
+                    </TableCell>
+                    <TableCell>
+                      {getOperationBadge(command.operation_type)}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">
+                      <span title={command.endpoint}>{formatEndpoint(command.endpoint)}</span>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="font-mono text-xs">
+                        {command.command_type}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {getStatusBadge(command.success, command.status_code)}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-xs">
+                      {command.response_time_ms || '-'}
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
     </div>
   );
 };
