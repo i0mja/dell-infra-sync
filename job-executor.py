@@ -91,6 +91,8 @@ from job_executor.config import (
 from job_executor.connectivity import ConnectivityMixin
 from job_executor.scp import ScpMixin
 from job_executor.utils import UNICODE_FALLBACKS, _normalize_unicode, _safe_json_parse, _safe_to_stdout
+from job_executor.dell_redfish.adapter import DellRedfishAdapter
+from job_executor.dell_redfish.operations import DellOperations
 
 # Best-effort: prefer UTF-8 output if available, but never crash if not
 try:
@@ -115,6 +117,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
         self.throttler = None  # Will be initialized on first use
         self.activity_settings = {}  # Cache settings
         self.last_settings_fetch = 0  # Timestamp for cache invalidation
+        self.dell_operations = None  # Will be initialized on first use
 
     def _validate_service_role_key(self):
         """Ensure SERVICE_ROLE_KEY is present before making Supabase requests"""
@@ -194,6 +197,31 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 'idrac_request_delay_ms': 500,
                 'idrac_max_concurrent': 4
             }
+    
+    def _get_dell_operations(self) -> DellOperations:
+        """
+        Get or create Dell operations instance with current throttler and logging.
+        
+        Returns:
+            DellOperations: Configured Dell operations instance
+        """
+        if self.dell_operations is None:
+            # Ensure throttler is initialized
+            if self.throttler is None:
+                self.initialize_throttler()
+            
+            # Create adapter with our throttler and Supabase logging
+            adapter = DellRedfishAdapter(
+                throttler=self.throttler,
+                supabase_url=DSM_URL,
+                service_role_key=SERVICE_ROLE_KEY
+            )
+            
+            # Create operations instance
+            self.dell_operations = DellOperations(adapter)
+            self.log("Dell Redfish operations initialized", "INFO")
+        
+        return self.dell_operations
     
     def initialize_throttler(self):
         """Initialize or update the iDRAC throttler with current settings"""

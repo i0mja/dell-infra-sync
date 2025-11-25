@@ -939,3 +939,488 @@ class DellOperations:
             'chassis_status': chassis_response.get('Status', {}).get('Health'),
             'chassis_power_state': chassis_response.get('PowerState')
         }
+    
+    # Session Management Operations
+    
+    def create_session(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        server_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Create a Redfish session with iDRAC.
+        
+        Dell endpoint: POST /redfish/v1/SessionService/Sessions
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict: Session info with 'token', 'location', 'session_id'
+            
+        Raises:
+            DellRedfishError: On session creation failure
+        """
+        payload = {
+            'UserName': username,
+            'Password': password
+        }
+        
+        response = self.adapter.make_request(
+            method='POST',
+            ip=ip,
+            endpoint='/redfish/v1/SessionService/Sessions',
+            username=username,
+            password=password,
+            json_data=payload,
+            operation_name='Create Session',
+            server_id=server_id,
+            user_id=user_id,
+            return_response=True  # Need headers
+        )
+        
+        session_token = response.headers.get('X-Auth-Token')
+        session_location = response.headers.get('Location')
+        session_data = response.json()
+        
+        return {
+            'token': session_token,
+            'location': session_location,
+            'session_id': session_data.get('Id'),
+            'username': session_data.get('UserName')
+        }
+    
+    def delete_session(
+        self,
+        ip: str,
+        session_token: str,
+        session_uri: str,
+        username: str = None,
+        password: str = None,
+        server_id: str = None,
+        user_id: str = None
+    ) -> bool:
+        """
+        Delete a Redfish session (logout).
+        
+        Dell endpoint: DELETE /redfish/v1/SessionService/Sessions/{sessionId}
+        
+        Args:
+            ip: iDRAC IP address
+            session_token: X-Auth-Token from session creation
+            session_uri: Session location URI
+            username: Optional fallback username
+            password: Optional fallback password
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            bool: True if session deleted successfully
+            
+        Raises:
+            DellRedfishError: On deletion failure
+        """
+        # Extract just the path from full URI if needed
+        if session_uri.startswith('http'):
+            from urllib.parse import urlparse
+            session_uri = urlparse(session_uri).path
+        
+        try:
+            self.adapter.make_request(
+                method='DELETE',
+                ip=ip,
+                endpoint=session_uri,
+                username=username,
+                password=password,
+                auth_token=session_token,
+                operation_name='Delete Session',
+                server_id=server_id,
+                user_id=user_id
+            )
+            return True
+        except Exception as e:
+            # Session deletion is best-effort
+            return False
+    
+    # Event Log Operations
+    
+    def get_sel_logs(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        limit: int = 50,
+        server_id: str = None,
+        user_id: str = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get System Event Log (SEL) entries from iDRAC.
+        
+        Dell endpoint: GET /redfish/v1/Managers/iDRAC.Embedded.1/Logs/Sel
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            limit: Maximum number of entries to return
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            list: SEL log entries with timestamp, severity, message
+            
+        Raises:
+            DellRedfishError: On API errors
+        """
+        response = self.adapter.make_request(
+            method='GET',
+            ip=ip,
+            endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Logs/Sel',
+            username=username,
+            password=password,
+            operation_name='Get SEL Logs',
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        members = response.get('Members', [])
+        
+        # Parse and return log entries
+        logs = []
+        for member in members[:limit]:
+            logs.append({
+                'id': member.get('Id'),
+                'timestamp': member.get('Created'),
+                'severity': member.get('Severity'),
+                'message': member.get('Message'),
+                'sensor_type': member.get('SensorType'),
+                'sensor_number': member.get('SensorNumber'),
+                'event_id': member.get('EventId'),
+                'raw_data': member
+            })
+        
+        return logs
+    
+    def get_lifecycle_logs(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        limit: int = 50,
+        server_id: str = None,
+        user_id: str = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get Lifecycle Controller logs from iDRAC.
+        
+        Dell endpoint: GET /redfish/v1/Managers/iDRAC.Embedded.1/LogServices/Lclog/Entries
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            limit: Maximum number of entries to return
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            list: Lifecycle log entries with timestamp, severity, message
+            
+        Raises:
+            DellRedfishError: On API errors
+        """
+        response = self.adapter.make_request(
+            method='GET',
+            ip=ip,
+            endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/LogServices/Lclog/Entries',
+            username=username,
+            password=password,
+            operation_name='Get Lifecycle Logs',
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        members = response.get('Members', [])
+        
+        # Parse and return log entries
+        logs = []
+        for member in members[:limit]:
+            logs.append({
+                'id': member.get('Id'),
+                'timestamp': member.get('Created'),
+                'severity': member.get('Severity'),
+                'message': member.get('Message'),
+                'message_id': member.get('MessageId'),
+                'category': member.get('Category'),
+                'raw_data': member
+            })
+        
+        return logs
+    
+    # Virtual Media Operations
+    
+    def get_virtual_media_status(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        server_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Get virtual media status from iDRAC.
+        
+        Dell endpoint: GET /redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict: Virtual media status with CD and RemovableDisk info
+            
+        Raises:
+            DellRedfishError: On API errors
+        """
+        response = self.adapter.make_request(
+            method='GET',
+            ip=ip,
+            endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia',
+            username=username,
+            password=password,
+            operation_name='Get Virtual Media Status',
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        members = response.get('Members', [])
+        
+        result = {
+            'cd': None,
+            'removable_disk': None
+        }
+        
+        for member_ref in members:
+            # Get each virtual media device details
+            device_uri = member_ref.get('@odata.id', '')
+            if not device_uri:
+                continue
+            
+            device_response = self.adapter.make_request(
+                method='GET',
+                ip=ip,
+                endpoint=device_uri,
+                username=username,
+                password=password,
+                operation_name='Get Virtual Media Device',
+                server_id=server_id,
+                user_id=user_id
+            )
+            
+            media_type = device_response.get('MediaTypes', [None])[0]
+            
+            device_info = {
+                'id': device_response.get('Id'),
+                'name': device_response.get('Name'),
+                'inserted': device_response.get('Inserted', False),
+                'image': device_response.get('Image'),
+                'write_protected': device_response.get('WriteProtected'),
+                'media_types': device_response.get('MediaTypes', [])
+            }
+            
+            if 'CD' in str(media_type):
+                result['cd'] = device_info
+            elif 'USBStick' in str(media_type):
+                result['removable_disk'] = device_info
+        
+        return result
+    
+    def mount_virtual_media(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        image_url: str,
+        media_type: str = 'CD',
+        write_protected: bool = True,
+        server_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Mount virtual media on iDRAC.
+        
+        Dell endpoint: POST /redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia/{Id}/Actions/VirtualMedia.InsertMedia
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            image_url: URL to ISO/IMG file (HTTP/HTTPS/NFS/CIFS)
+            media_type: 'CD' or 'USBStick'
+            write_protected: Whether media is write-protected
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict: Mount operation result
+            
+        Raises:
+            DellRedfishError: On mount failure
+        """
+        # Determine virtual media device ID
+        device_id = 'CD' if media_type == 'CD' else 'RemovableDisk'
+        
+        payload = {
+            'Image': image_url,
+            'Inserted': True,
+            'WriteProtected': write_protected
+        }
+        
+        response = self.adapter.make_request(
+            method='POST',
+            ip=ip,
+            endpoint=f'/redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia/{device_id}/Actions/VirtualMedia.InsertMedia',
+            username=username,
+            password=password,
+            json_data=payload,
+            operation_name='Mount Virtual Media',
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        return {
+            'success': True,
+            'message': f'Virtual media mounted: {image_url}',
+            'device_id': device_id,
+            'image_url': image_url
+        }
+    
+    def unmount_virtual_media(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        media_type: str = 'CD',
+        server_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Unmount virtual media from iDRAC.
+        
+        Dell endpoint: POST /redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia/{Id}/Actions/VirtualMedia.EjectMedia
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            media_type: 'CD' or 'USBStick'
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict: Unmount operation result
+            
+        Raises:
+            DellRedfishError: On unmount failure
+        """
+        # Determine virtual media device ID
+        device_id = 'CD' if media_type == 'CD' else 'RemovableDisk'
+        
+        response = self.adapter.make_request(
+            method='POST',
+            ip=ip,
+            endpoint=f'/redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia/{device_id}/Actions/VirtualMedia.EjectMedia',
+            username=username,
+            password=password,
+            json_data={},
+            operation_name='Unmount Virtual Media',
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        return {
+            'success': True,
+            'message': f'Virtual media unmounted from {device_id}',
+            'device_id': device_id
+        }
+    
+    # Catalog-Based Firmware Update
+    
+    def update_firmware_from_catalog(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        catalog_url: str,
+        targets: Optional[List[str]] = None,
+        apply_time: str = 'OnReset',
+        server_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Update firmware from Dell catalog URL.
+        
+        Dell endpoint: POST /redfish/v1/UpdateService/Actions/UpdateService.SimpleUpdate
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            catalog_url: URL to Dell catalog.xml or catalog.gz
+            targets: Optional list of component targets (e.g., ['BIOS', 'iDRAC'])
+            apply_time: 'Immediate', 'OnReset', or 'AtMaintenanceWindowStart'
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict: Update task information with task_uri and job_id
+            
+        Raises:
+            DellRedfishError: On update initiation failure
+        """
+        payload = {
+            'ImageURI': catalog_url,
+            '@Redfish.OperationApplyTime': apply_time
+        }
+        
+        if targets:
+            payload['Targets'] = targets
+        
+        response = self.adapter.make_request(
+            method='POST',
+            ip=ip,
+            endpoint='/redfish/v1/UpdateService/Actions/UpdateService.SimpleUpdate',
+            username=username,
+            password=password,
+            json_data=payload,
+            operation_name='Catalog Firmware Update',
+            server_id=server_id,
+            user_id=user_id,
+            return_response=True
+        )
+        
+        # Extract task URI from response
+        task_uri = None
+        if response.status_code == 202:
+            task_uri = response.headers.get('Location')
+        
+        response_data = response.json() if response.content else {}
+        
+        return {
+            'task_uri': task_uri,
+            'job_id': response_data.get('Id'),
+            'status': 'initiated',
+            'catalog_url': catalog_url,
+            'targets': targets,
+            'apply_time': apply_time
+        }
