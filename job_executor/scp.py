@@ -97,8 +97,10 @@ class ScpMixin:
                         if details.get('share_file_name'):
                             share_parameters['FileName'] = str(details['share_file_name'])
 
+                    # Try XML format first for better compatibility with older iDRAC versions
+                    # XML is more universally supported than JSON in iDRAC Redfish implementations
                     payload = {
-                        "ExportFormat": "JSON",
+                        "ExportFormat": "XML",
                         "ShareParameters": share_parameters,
                         "ExportUse": details.get('export_use', 'Clone'),
                         "IncludeInExport": details.get('include_in_export', 'Default'),
@@ -465,24 +467,43 @@ class ScpMixin:
         if job_id and job_id.startswith("JID_"):
             job_base_url = f"{parsed_monitor.scheme}://{parsed_monitor.netloc}/redfish/v1/Managers/iDRAC.Embedded.1/Jobs/{job_id}"
 
+        # CRITICAL FIX: Use individual Accept headers instead of comma-separated lists
+        # Some iDRAC versions return HTTP 406 "Unacceptable header" when given multiple types
         fallback_urls = [
-            # Re-request the same task with a broad Accept header before trying
-            # Redfish-specific $value/ExportedData paths.
-            (base_url, {"Accept": "application/xml,application/json,text/plain"}),
-            (f"{base_url}/$value", {"Accept": "application/xml,text/plain"}),
-            (f"{base_url}/ExportedData", {"Accept": "application/xml,text/plain"}),
+            # Try JSON format first (our preferred format)
+            (base_url, {"Accept": "application/json"}),
+            # Try XML format (more widely supported on older iDRAC)
+            (base_url, {"Accept": "application/xml"}),
+            # Try plain text
+            (base_url, {"Accept": "text/plain"}),
+            # Try any type
+            (base_url, {"Accept": "*/*"}),
+            # Try Redfish $value endpoint with XML
+            (f"{base_url}/$value", {"Accept": "application/xml"}),
+            (f"{base_url}/$value", {"Accept": "application/octet-stream"}),
+            (f"{base_url}/$value", {"Accept": "*/*"}),
+            # Try ExportedData endpoint
+            (f"{base_url}/ExportedData", {"Accept": "application/xml"}),
+            (f"{base_url}/ExportedData", {"Accept": "application/json"}),
         ]
 
-        # If we detected a JID, also try the Jobs resource variants.
+        # If we detected a JID, also try the Jobs resource variants
         if job_base_url:
             fallback_urls.extend([
-                (job_base_url, {"Accept": "application/json,application/xml,text/plain"}),
-                (f"{job_base_url}/$value", {"Accept": "application/xml,text/plain"}),
-                (f"{job_base_url}/ExportedData", {"Accept": "application/xml,text/plain"}),
+                (job_base_url, {"Accept": "application/json"}),
+                (job_base_url, {"Accept": "application/xml"}),
+                (job_base_url, {"Accept": "*/*"}),
+                (f"{job_base_url}/$value", {"Accept": "application/xml"}),
+                (f"{job_base_url}/$value", {"Accept": "application/octet-stream"}),
+                (f"{job_base_url}/ExportedData", {"Accept": "application/xml"}),
+                (f"{job_base_url}/ExportedData", {"Accept": "application/json"}),
             ])
 
         for url, headers in fallback_urls:
             try:
+                # Log which Accept header we're trying for debugging
+                self.log(f"    Trying {url} with Accept: {headers.get('Accept', 'none')}")
+                
                 poll_start = time.time()
                 response = requests.get(
                     url,
@@ -552,6 +573,35 @@ class ScpMixin:
                         return content
             return None
 
+        # CRITICAL: Check for embedded SCP content in task completion response
+        # Some iDRAC versions embed the SCP content directly in the task response
+        # when using "Local" export mode, especially older firmware versions
+        
+        # Check for FileContent (base64 encoded or direct content)
+        if 'FileContent' in data:
+            file_content = data.get('FileContent')
+            if isinstance(file_content, str):
+                # Try to decode base64 if it looks encoded
+                try:
+                    import base64
+                    decoded = base64.b64decode(file_content).decode('utf-8')
+                    parsed = self._maybe_parse_content(decoded)
+                    if parsed is not None:
+                        return parsed
+                except:
+                    # Not base64, treat as direct content
+                    parsed = self._maybe_parse_content(file_content)
+                    if parsed is not None:
+                        return parsed
+
+        # Check for HttpPushUri response body embedded in task
+        if 'HttpPushUri' in data:
+            http_push_uri = data.get('HttpPushUri')
+            if isinstance(http_push_uri, dict) and 'Body' in http_push_uri:
+                parsed = self._maybe_parse_content(http_push_uri['Body'])
+                if parsed is not None:
+                    return parsed
+
         top_level = _extract_from_obj(data, ['SystemConfiguration', 'ExportedSystemConfiguration'])
         if top_level is not None:
             return top_level
@@ -559,7 +609,8 @@ class ScpMixin:
         oem = data.get('Oem', {}) if isinstance(data.get('Oem'), dict) else {}
         dell = oem.get('Dell', {}) if isinstance(oem.get('Dell'), dict) else {}
 
-        dell_config = _extract_from_obj(dell, ['SystemConfiguration', 'ExportedSystemConfiguration'])
+        # Check Dell OEM section for embedded content
+        dell_config = _extract_from_obj(dell, ['SystemConfiguration', 'ExportedSystemConfiguration', 'FileContent'])
         if dell_config is not None:
             return dell_config
 
