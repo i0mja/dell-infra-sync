@@ -171,9 +171,25 @@ serve(async (req) => {
         break;
 
       case 'activity_settings':
+        // Get the activity_settings ID first (singleton table)
+        const { data: settingsData, error: settingsError } = await supabaseAdmin
+          .from('activity_settings')
+          .select('id')
+          .limit(1)
+          .single();
+        
+        if (settingsError || !settingsData) {
+          console.error('Failed to get activity_settings:', settingsError);
+          return new Response(
+            JSON.stringify({ error: 'Activity settings not found' }),
+            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
         updateResult = await supabaseAdmin
           .from('activity_settings')
-          .update({ scp_share_password_encrypted: encryptedData });
+          .update({ scp_share_password_encrypted: encryptedData })
+          .eq('id', settingsData.id);
         break;
 
       default:
