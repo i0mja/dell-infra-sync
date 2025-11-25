@@ -143,6 +143,17 @@ python job-executor.py
 
 See [Job Executor Guide](docs/JOB_EXECUTOR_GUIDE.md) for detailed setup instructions.
 
+## 🟥 Dell iDRAC Redfish API
+
+The job executor and Supabase edge functions follow Dell's published Redfish patterns for iDRAC 7/8/9. Key resources:
+
+- [Dell iDRAC-Redfish-Scripting GitHub](https://github.com/dell/iDRAC-Redfish-Scripting) – canonical examples for inventory, power, firmware, and SCP operations
+- [Dell Redfish API Support KB](https://www.dell.com/support/kbdoc/en-us/000177312/support-for-redfish-api-on-idrac) – endpoint coverage and compatibility
+- [Dell Developer Portal Redfish Reference](https://developer.dell.com/apis/2978/versions/6.xx/docs/Introduction.md) – schema and payload details
+- [DMTF Redfish Specification](https://www.dmtf.org/standards/redfish) – industry standard baseline
+
+See [docs/REDFISH_AUDIT.md](docs/REDFISH_AUDIT.md) for the full endpoint audit and Dell script mapping used across the project.
+
 ## 🔄 vCenter Sync
 
 Automated vCenter synchronization is handled by:
