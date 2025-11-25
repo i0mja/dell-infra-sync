@@ -1,6 +1,12 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, BarChart3, CheckCircle2, Download, RefreshCw, Zap } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface ActivityStatsBarProps {
   totalCommands: number;
@@ -9,7 +15,8 @@ interface ActivityStatsBarProps {
   failedCount: number;
   liveStatus: 'connecting' | 'connected' | 'disconnected';
   onRefresh: () => void;
-  onExport: () => void;
+  onExportCSV: () => void;
+  onExportJSON: () => void;
 }
 
 export const ActivityStatsBar = ({
@@ -19,7 +26,8 @@ export const ActivityStatsBar = ({
   failedCount,
   liveStatus,
   onRefresh,
-  onExport
+  onExportCSV,
+  onExportJSON
 }: ActivityStatsBarProps) => {
   const statusColors = {
     connecting: 'bg-yellow-500',
@@ -67,10 +75,22 @@ export const ActivityStatsBar = ({
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
           </Button>
-          <Button variant="outline" size="sm" onClick={onExport}>
-            <Download className="mr-2 h-4 w-4" />
-            Export
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Download className="mr-2 h-4 w-4" />
+                Export
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={onExportCSV}>
+                Export as CSV
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onExportJSON}>
+                Export as JSON (Full Details)
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Badge variant="outline" className="gap-2 sm:ml-2 sm:border-l sm:pl-2">
             <span className={`h-2 w-2 rounded-full ${statusColors[liveStatus]} animate-pulse`} />
             <span className="text-xs font-medium tracking-wide">
