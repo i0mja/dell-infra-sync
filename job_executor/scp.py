@@ -515,7 +515,9 @@ class ScpMixin:
         password: str,
         server_id: str,
         job: Dict,
-        endpoint: str
+        endpoint: str,
+        max_retry_seconds: int = 60,
+        retry_delay_seconds: int = 3,
     ):
         """Attempt to retrieve SCP content from common fallback URLs.
 
@@ -524,8 +526,9 @@ class ScpMixin:
         ``/ExportedData``). Other versions expose the exported SCP only on
         the OEM Jobs URI (``/redfish/v1/Managers/iDRAC.Embedded.1/Jobs/JID_xxx``).
 
-        This helper makes one pass over those endpoints and returns the
-        first valid configuration blob it finds.
+        This helper makes repeated passes over those endpoints for a short
+        period, allowing iDRAC to finish materializing the exported payload
+        before we give up.
         """
 
         parsed_monitor = urlparse(monitor_url)
@@ -570,59 +573,79 @@ class ScpMixin:
                 (f"{job_base_url}/ExportedData", {"Accept": "application/json"}),
             ])
 
-        for url, headers in fallback_urls:
-            try:
-                # Log which Accept header we're trying for debugging
-                self.log(f"    Trying {url} with Accept: {headers.get('Accept', 'none')}")
-                
-                poll_start = time.time()
-                response = requests.get(
-                    url,
-                    auth=(username, password),
-                    headers=headers,
-                    verify=False,
-                    timeout=30
-                )
-                response_time_ms = int((time.time() - poll_start) * 1000)
+        start_time = time.time()
+        attempts = 0
 
-                data = _safe_json_parse(response)
-                content = self._extract_scp_content(data)
+        while time.time() - start_time < max_retry_seconds:
+            attempts += 1
+            attempt_start = time.time()
 
-                # If JSON parsing fails (common when XML/text is returned),
-                # fall back to the raw body so we still capture the SCP payload.
-                if content is None and isinstance(response.text, str) and response.text.strip():
-                    parsed = self._maybe_parse_content(response.text)
-                    # Only accept if it's actual SCP data, not a task status
-                    if self._is_valid_scp_content(parsed):
-                        content = parsed
+            for url, headers in fallback_urls:
+                try:
+                    # Log which Accept header we're trying for debugging
+                    self.log(f"    Trying {url} with Accept: {headers.get('Accept', 'none')} (attempt {attempts})")
 
-                success = response.status_code == 200 and content is not None and self._is_valid_scp_content(content)
+                    poll_start = time.time()
+                    response = requests.get(
+                        url,
+                        auth=(username, password),
+                        headers=headers,
+                        verify=False,
+                        timeout=30
+                    )
+                    response_time_ms = int((time.time() - poll_start) * 1000)
 
-                self.log_idrac_command(
-                    server_id=server_id,
-                    job_id=job['id'],
-                    task_id=None,
-                    command_type='GET',
-                    endpoint=urlparse(url).path,
-                    full_url=url,
-                    request_headers={'Authorization': '[REDACTED]'},
-                    request_body=None,
-                    status_code=response.status_code,
-                    response_time_ms=response_time_ms,
-                    response_body=data,
-                    success=success,
-                    error_message=None if success else "SCP content not available at fallback URI",
-                    operation_type='idrac_api'
-                )
+                    data = _safe_json_parse(response)
+                    content = self._extract_scp_content(data)
 
-                if success:
-                    return content
+                    # If JSON parsing fails (common when XML/text is returned),
+                    # fall back to the raw body so we still capture the SCP payload.
+                    if content is None and isinstance(response.text, str) and response.text.strip():
+                        parsed = self._maybe_parse_content(response.text)
+                        # Only accept if it's actual SCP data, not a task status
+                        if self._is_valid_scp_content(parsed):
+                            content = parsed
 
-            except Exception as exc:  # pragma: no cover - best-effort fallback
-                self.log(
-                    f"    Fallback SCP fetch failed for {url}: {exc}",
-                    level="WARN"
-                )
+                    success = response.status_code == 200 and content is not None and self._is_valid_scp_content(content)
+
+                    self.log_idrac_command(
+                        server_id=server_id,
+                        job_id=job['id'],
+                        task_id=None,
+                        command_type='GET',
+                        endpoint=urlparse(url).path,
+                        full_url=url,
+                        request_headers={'Authorization': '[REDACTED]'},
+                        request_body=None,
+                        status_code=response.status_code,
+                        response_time_ms=response_time_ms,
+                        response_body=data,
+                        success=success,
+                        error_message=None if success else "SCP content not available at fallback URI",
+                        operation_type='idrac_api'
+                    )
+
+                    if success:
+                        return content
+
+                    # If the endpoint responded with "not ready" semantics, keep retrying
+                    if response.status_code in [404, 425, 503]:
+                        continue
+
+                except Exception as exc:  # pragma: no cover - best-effort fallback
+                    self.log(
+                        f"    Fallback SCP fetch failed for {url}: {exc}",
+                        level="WARN"
+                    )
+
+            elapsed = time.time() - attempt_start
+            if time.time() - start_time >= max_retry_seconds:
+                break
+
+            # Wait briefly before another pass so ExportedData can become available
+            sleep_time = max(retry_delay_seconds - int(elapsed), 1)
+            self.log(f"    SCP content not ready yet; retrying fallback URLs in {sleep_time}s...")
+            time.sleep(sleep_time)
 
         return None
 
