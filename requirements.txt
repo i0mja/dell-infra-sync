@@ -1,3 +1,6 @@
 requests>=2.31.0
 pyVmomi>=8.0.2.0.1
 urllib3>=2.0.7
+
+# Dell iDRAC Redfish Library (vendored in job_executor/dell_redfish/lib/)
+# No additional dependencies required - Dell scripts use standard library + requests
