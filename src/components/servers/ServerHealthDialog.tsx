@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Activity, RefreshCw, Thermometer, Fan, Zap, HardDrive, Cpu, MemoryStick, Network } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -111,7 +113,7 @@ export function ServerHealthDialog({ open, onOpenChange, server }: ServerHealthD
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[720px]">
+      <DialogContent className="sm:max-w-[720px] max-h-[85vh] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Activity className="h-5 w-5" />
@@ -122,7 +124,8 @@ export function ServerHealthDialog({ open, onOpenChange, server }: ServerHealthD
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-4">
+        <ScrollArea className="flex-1 -mx-6 px-6">
+          <div className="space-y-4 py-4">
           {/* Refresh Button */}
           <div className="flex justify-end">
             <Button
@@ -275,20 +278,29 @@ export function ServerHealthDialog({ open, onOpenChange, server }: ServerHealthD
                   )}
                 </div>
 
-                <div className="space-y-2">
-                  <h4 className="text-sm font-medium">Full sensor payload</h4>
-                  {selectedEntry.sensors ? (
-                    <pre className="max-h-72 overflow-auto rounded-md border bg-muted/40 p-3 text-xs">
-                      {JSON.stringify(selectedEntry.sensors, null, 2)}
-                    </pre>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">No sensor payload captured for this check.</p>
-                  )}
-                </div>
+                <Accordion type="single" collapsible className="w-full">
+                  <AccordionItem value="sensors">
+                    <AccordionTrigger className="text-sm font-medium">
+                      Full sensor payload
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      {selectedEntry.sensors ? (
+                        <ScrollArea className="h-72 w-full rounded-md border">
+                          <pre className="bg-muted/40 p-3 text-xs">
+                            {JSON.stringify(selectedEntry.sensors, null, 2)}
+                          </pre>
+                        </ScrollArea>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">No sensor payload captured for this check.</p>
+                      )}
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
               </div>
             </div>
           )}
-        </div>
+          </div>
+        </ScrollArea>
       </DialogContent>
     </Dialog>
   );
