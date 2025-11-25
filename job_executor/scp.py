@@ -359,6 +359,33 @@ class ScpMixin:
             messages = self._extract_task_messages(data)
             last_response = (response, response_time_ms, data, task_state, messages)
 
+            # Some iDRAC versions return the SCP content directly when polling the
+            # task monitor (e.g., GET .../Tasks/<id>/$value). In those cases the
+            # response may not include a traditional TaskState, so we need to
+            # accept valid SCP payloads even when no task status is present.
+            scp_content = self._extract_scp_content(data)
+            if response.status_code == 200 and scp_content and self._is_valid_scp_content(scp_content):
+                self.log(
+                    "    SCP content returned directly from task monitor; skipping task state checks"
+                )
+                self.log_idrac_command(
+                    server_id=server_id,
+                    job_id=job['id'],
+                    task_id=None,
+                    command_type='GET',
+                    endpoint=endpoint,
+                    full_url=monitor_url,
+                    request_headers={'Authorization': '[REDACTED]'},
+                    request_body=None,
+                    status_code=response.status_code,
+                    response_time_ms=response_time_ms,
+                    response_body=data,
+                    success=True,
+                    error_message=None,
+                    operation_type='idrac_api'
+                )
+                return scp_content
+
             if task_state and task_state != last_state:
                 self.log(f"    Task state: {task_state}")
                 last_state = task_state
