@@ -243,16 +243,47 @@ export default function ActivityMonitor() {
   };
 
   const handleExport = () => {
+    const formatValue = (value: unknown) => {
+      if (value === null || value === undefined) return '';
+      if (typeof value === 'object') return JSON.stringify(value);
+      return String(value);
+    };
+
+    const escapeCsv = (value: unknown) => {
+      const formatted = formatValue(value).replace(/"/g, '""').replace(/\r?\n/g, '\\n');
+      return `"${formatted}"`;
+    };
+
     const csv = [
-      ['Timestamp', 'Operation', 'Endpoint', 'Type', 'Status', 'Server', 'Response Time (ms)'].join(','),
+      [
+        'Timestamp',
+        'Operation',
+        'Endpoint',
+        'Full URL',
+        'Type',
+        'Status',
+        'Status Code',
+        'Server',
+        'Response Time (ms)',
+        'Request Headers',
+        'Request Body',
+        'Response Body',
+        'Error Message'
+      ].join(','),
       ...filteredCommands.map(cmd => [
-        cmd.timestamp,
-        cmd.operation_type,
-        cmd.endpoint,
-        cmd.command_type,
-        cmd.success ? 'Success' : 'Failed',
-        cmd.servers?.hostname || cmd.servers?.ip_address || 'N/A',
-        cmd.response_time_ms?.toString() || 'N/A'
+        escapeCsv(cmd.timestamp),
+        escapeCsv(cmd.operation_type),
+        escapeCsv(cmd.endpoint),
+        escapeCsv(cmd.full_url),
+        escapeCsv(cmd.command_type),
+        escapeCsv(cmd.success ? 'Success' : 'Failed'),
+        escapeCsv(cmd.status_code ?? ''),
+        escapeCsv(cmd.servers?.hostname || cmd.servers?.ip_address || 'N/A'),
+        escapeCsv(cmd.response_time_ms ?? ''),
+        escapeCsv(cmd.request_headers),
+        escapeCsv(cmd.request_body),
+        escapeCsv(cmd.response_body),
+        escapeCsv(cmd.error_message ?? '')
       ].join(','))
     ].join('\n');
 
