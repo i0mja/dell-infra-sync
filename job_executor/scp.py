@@ -291,14 +291,25 @@ class ScpMixin:
                 last_state = task_state
 
             if response.status_code == 200 and self._is_task_success(task_state):
-                scp_content = self._extract_scp_content(data) or self._fetch_scp_content_fallback(
-                    monitor_url,
-                    username,
-                    password,
-                    server_id,
-                    job,
-                    endpoint
-                )
+                scp_content = self._extract_scp_content(data)
+                
+                # Validate that we got actual SCP content, not task status
+                if scp_content is None or not self._is_valid_scp_content(scp_content):
+                    self.log(f"    Initial content invalid or missing, trying fallback URLs...")
+                    scp_content = self._fetch_scp_content_fallback(
+                        monitor_url,
+                        username,
+                        password,
+                        server_id,
+                        job,
+                        endpoint
+                    )
+                
+                # Final validation
+                if scp_content and not self._is_valid_scp_content(scp_content):
+                    self.log(f"    Content type validation failed: {type(scp_content)}, keys: {list(scp_content.keys()) if isinstance(scp_content, dict) else 'N/A'}", "WARN")
+                    scp_content = None
+                
                 success = scp_content is not None
 
                 self.log_idrac_command(
@@ -488,9 +499,12 @@ class ScpMixin:
                 # If JSON parsing fails (common when XML/text is returned),
                 # fall back to the raw body so we still capture the SCP payload.
                 if content is None and isinstance(response.text, str) and response.text.strip():
-                    content = self._maybe_parse_content(response.text)
+                    parsed = self._maybe_parse_content(response.text)
+                    # Only accept if it's actual SCP data, not a task status
+                    if self._is_valid_scp_content(parsed):
+                        content = parsed
 
-                success = response.status_code == 200 and content is not None
+                success = response.status_code == 200 and content is not None and self._is_valid_scp_content(content)
 
                 self.log_idrac_command(
                     server_id=server_id,
@@ -567,6 +581,51 @@ class ScpMixin:
             return parsed if parsed is not None else data['_raw_response']
 
         return None
+
+    def _is_valid_scp_content(self, content) -> bool:
+        """
+        Check if content looks like actual SCP data vs a task status response.
+        
+        Real SCP content contains SystemConfiguration or Components.
+        Task status responses contain TaskState, JobState, @odata.type, etc.
+        """
+        if isinstance(content, dict):
+            # Real SCP JSON has SystemConfiguration or Components
+            if 'SystemConfiguration' in content or 'Components' in content:
+                return True
+            
+            # Reject if it looks like a task/job status response
+            if any(key in content for key in ['TaskState', 'JobState', '@odata.type', '@odata.id']):
+                return False
+            
+            # Check for Dell OEM job status structure
+            if 'Oem' in content and isinstance(content.get('Oem'), dict):
+                dell = content['Oem'].get('Dell', {})
+                if isinstance(dell, dict) and any(key in dell for key in ['JobState', 'JobType', 'Name']):
+                    return False
+            
+            # If we got here with a dict but no clear indicators, be conservative
+            # Accept it if it has reasonable SCP-like structure
+            return True
+            
+        elif isinstance(content, str):
+            # Real SCP XML starts with <SystemConfiguration>
+            stripped = content.strip()
+            if stripped.startswith('<SystemConfiguration'):
+                return True
+            
+            # Could also be JSON string - parse and check
+            if stripped.startswith('{'):
+                try:
+                    parsed = json.loads(stripped)
+                    return self._is_valid_scp_content(parsed)
+                except:
+                    pass
+            
+            # Accept non-empty strings as potential SCP content
+            return bool(stripped)
+        
+        return False
 
     def _maybe_parse_content(self, content):
         if isinstance(content, (dict, list)):
