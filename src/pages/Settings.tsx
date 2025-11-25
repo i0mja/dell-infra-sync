@@ -124,6 +124,13 @@ export default function Settings() {
   const [autoCancelStaleJobs, setAutoCancelStaleJobs] = useState(true);
   const [staleJobCount, setStaleJobCount] = useState(0);
 
+  // SCP Share Settings (for older iDRAC firmware)
+  const [scpShareEnabled, setScpShareEnabled] = useState(false);
+  const [scpShareType, setScpShareType] = useState<'CIFS' | 'NFS'>('CIFS');
+  const [scpSharePath, setScpSharePath] = useState("");
+  const [scpShareUsername, setScpShareUsername] = useState("");
+  const [scpSharePassword, setScpSharePassword] = useState("");
+
   // Scheduled cluster safety checks
   const [scheduledChecksEnabled, setScheduledChecksEnabled] = useState(false);
   const [checkFrequency, setCheckFrequency] = useState('0 */6 * * *');
@@ -786,6 +793,12 @@ export default function Settings() {
         setDiscoveryMaxThreads(activityData.discovery_max_threads ?? 5);
         setIdracRequestDelayMs(activityData.idrac_request_delay_ms ?? 500);
         setIdracMaxConcurrent(activityData.idrac_max_concurrent ?? 4);
+        // Load SCP Share settings (for older iDRAC firmware)
+        setScpShareEnabled(activityData.scp_share_enabled ?? false);
+        setScpShareType((activityData.scp_share_type as 'CIFS' | 'NFS') ?? 'CIFS');
+        setScpSharePath(activityData.scp_share_path ?? "");
+        setScpShareUsername(activityData.scp_share_username ?? "");
+        setScpSharePassword(""); // Never load password from DB
         // useJobExecutorForIdrac is hardcoded to true - no longer stored in database
       }
     } catch (error: any) {
@@ -1216,7 +1229,8 @@ export default function Settings() {
 
     setLoading(true);
     try {
-      const activityData = {
+      // Prepare activity data
+      const activityData: any = {
         log_retention_days: logRetentionDays,
         auto_cleanup_enabled: autoCleanupEnabled,
         log_level: logLevel,
@@ -1237,8 +1251,22 @@ export default function Settings() {
         discovery_max_threads: discoveryMaxThreads,
         idrac_request_delay_ms: idracRequestDelayMs,
         idrac_max_concurrent: idracMaxConcurrent,
+        // SCP Share settings (for older iDRAC firmware)
+        scp_share_enabled: scpShareEnabled,
+        scp_share_type: scpShareType,
+        scp_share_path: scpSharePath.trim() || null,
+        scp_share_username: scpShareUsername.trim() || null,
         // use_job_executor_for_idrac removed - always true
       };
+
+      // Encrypt and add password if provided
+      if (scpSharePassword.trim()) {
+        const { data: encryptedPassword, error: encryptError } = await supabase.functions.invoke('encrypt-credentials', {
+          body: { password: scpSharePassword.trim() }
+        });
+        if (encryptError) throw encryptError;
+        activityData.scp_share_password_encrypted = encryptedPassword.encrypted;
+      }
 
       if (activitySettingsId) {
         const { error } = await supabase
@@ -2975,6 +3003,120 @@ export default function Settings() {
                       <p className="text-sm text-muted-foreground">
                         How long to keep aggregated statistics (30-730 days)
                       </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* SCP Share Configuration (for older iDRAC firmware) */}
+                <div className="space-y-4 border-t pt-6">
+                  <div className="flex items-center gap-2">
+                    <Disc className="h-5 w-5 text-muted-foreground" />
+                    <h3 className="text-lg font-medium">SCP Export Share Configuration</h3>
+                  </div>
+
+                  <Alert className="border-blue-200 bg-blue-50 dark:bg-blue-950/20">
+                    <Info className="h-4 w-4 text-blue-600" />
+                    <AlertDescription className="text-sm">
+                      <strong>For older iDRAC firmware:</strong> If iDRAC doesn't support Local export method (iDRAC 8 v2.70+, iDRAC 9 v4.x+), 
+                      configure a network share as fallback. The Job Executor will automatically use this when Local export fails.
+                      <br /><br />
+                      <strong>Supported:</strong> Windows SMB/CIFS shares or Linux NFS shares accessible from iDRAC network.
+                    </AlertDescription>
+                  </Alert>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="scp-share-enabled">Enable Network Share Export Fallback</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Automatically use network share when Local export is not supported
+                      </p>
+                    </div>
+                    <Switch
+                      id="scp-share-enabled"
+                      checked={scpShareEnabled}
+                      onCheckedChange={setScpShareEnabled}
+                    />
+                  </div>
+
+                  {scpShareEnabled && (
+                    <div className="space-y-4 pl-4 border-l-2 border-border">
+                      <div className="space-y-2">
+                        <Label htmlFor="scp-share-type">Share Type</Label>
+                        <Select value={scpShareType} onValueChange={(value: 'CIFS' | 'NFS') => setScpShareType(value)}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="CIFS">CIFS / SMB (Windows)</SelectItem>
+                            <SelectItem value="NFS">NFS (Linux/Unix)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          {scpShareType === 'CIFS' 
+                            ? 'Windows file share (SMB/CIFS protocol)' 
+                            : 'Unix/Linux network file system'}
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="scp-share-path">Share Path *</Label>
+                        <Input
+                          id="scp-share-path"
+                          placeholder={scpShareType === 'CIFS' ? '\\\\server\\share\\exports' : '/export/scp_backups'}
+                          value={scpSharePath}
+                          onChange={(e) => setScpSharePath(e.target.value)}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          {scpShareType === 'CIFS' 
+                            ? 'UNC path to Windows share (e.g., \\\\fileserver\\idrac$\\scp_exports)' 
+                            : 'NFS mount path (e.g., /mnt/nfs_share/scp_exports)'}
+                        </p>
+                      </div>
+
+                      {scpShareType === 'CIFS' && (
+                        <>
+                          <div className="space-y-2">
+                            <Label htmlFor="scp-share-username">Share Username</Label>
+                            <Input
+                              id="scp-share-username"
+                              placeholder="domain\\username or username"
+                              value={scpShareUsername}
+                              onChange={(e) => setScpShareUsername(e.target.value)}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Username with write access to the share
+                            </p>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="scp-share-password">Share Password</Label>
+                            <Input
+                              id="scp-share-password"
+                              type="password"
+                              placeholder="••••••••"
+                              value={scpSharePassword}
+                              onChange={(e) => setScpSharePassword(e.target.value)}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Password for share access (encrypted in database). Leave blank to keep existing.
+                            </p>
+                          </div>
+                        </>
+                      )}
+
+                      <Alert>
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription className="text-sm">
+                          <strong>Requirements:</strong>
+                          <ul className="list-disc list-inside mt-2 space-y-1">
+                            <li>Share must be accessible from iDRAC network (test connectivity)</li>
+                            <li>iDRAC must have network route to share server</li>
+                            <li>Share must have write permissions for the specified user</li>
+                            <li>For CIFS: Port 445 must be open between iDRAC and file server</li>
+                            <li>For NFS: NFS ports (2049, 111) must be accessible</li>
+                          </ul>
+                        </AlertDescription>
+                      </Alert>
                     </div>
                   )}
                 </div>
