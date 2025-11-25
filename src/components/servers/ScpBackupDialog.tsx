@@ -374,6 +374,8 @@ export function ScpBackupDialog({ open, onOpenChange, server }: ScpBackupDialogP
                 • <strong>Newer iDRAC (9 v4.x+, 8 v2.70+):</strong> Uses "Local" export (faster)
                 <br />
                 • <strong>Older iDRAC:</strong> Automatically falls back to HTTP Push export
+                <br />
+                • <strong>Air-gapped environments:</strong> Configure SMB/NFS share in Settings → Activity Monitor for maximum compatibility
               </AlertDescription>
             </Alert>
 

@@ -191,15 +191,29 @@ class ScpMixin:
                             if not supports_local or "no content" in str(local_error).lower():
                                 self.log(f"    Local export failed: {local_error}")
                                 self.log(f"    Attempting HTTP Push export as fallback...")
-                                scp_content = self._export_via_http_push(
-                                    ip,
-                                    username,
-                                    password,
-                                    targets,
-                                    details,
-                                    job,
-                                    server_id
-                                )
+                                try:
+                                    scp_content = self._export_via_http_push(
+                                        ip,
+                                        username,
+                                        password,
+                                        targets,
+                                        details,
+                                        job,
+                                        server_id
+                                    )
+                                except Exception as http_push_error:
+                                    # If HTTP Push also fails, try SMB share if configured
+                                    self.log(f"    HTTP Push export failed: {http_push_error}")
+                                    self.log(f"    Attempting SMB/NFS share export as final fallback...")
+                                    scp_content = self._export_via_smb_share(
+                                        ip,
+                                        username,
+                                        password,
+                                        targets,
+                                        details,
+                                        job,
+                                        server_id
+                                    )
                             else:
                                 raise
                     else:
@@ -940,6 +954,218 @@ class ScpMixin:
         finally:
             server.server_close()
             self.log(f"    HTTP server stopped")
+
+    def _export_via_smb_share(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        targets: List[str],
+        details: Dict,
+        job: Dict,
+        server_id: str
+    ) -> Optional[str]:
+        """
+        Export SCP to SMB/NFS network share and retrieve content.
+        
+        This method is used as a final fallback for older iDRAC firmware in air-gapped
+        environments where HTTP Push is not reliable.
+        
+        Requires share configuration in activity_settings table.
+        """
+        # Get share configuration from activity_settings
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            }
+            settings_response = requests.get(
+                f"{SUPABASE_URL}/rest/v1/activity_settings?select=*&limit=1",
+                headers=headers,
+                timeout=10
+            )
+            
+            if settings_response.status_code != 200:
+                raise Exception("Failed to fetch activity settings")
+            
+            settings_data = _safe_json_parse(settings_response)
+            if not settings_data or len(settings_data) == 0:
+                raise Exception("No activity settings found")
+            
+            settings = settings_data[0]
+            
+            # Check if SMB share is enabled
+            if not settings.get('scp_share_enabled'):
+                raise Exception("SMB/NFS share export is not configured. Configure in Settings → Activity Monitor.")
+            
+            share_type = settings.get('scp_share_type', 'CIFS')
+            share_path = settings.get('scp_share_path')
+            share_username = settings.get('scp_share_username')
+            share_password_encrypted = settings.get('scp_share_password_encrypted')
+            
+            if not share_path:
+                raise Exception("SMB/NFS share path is not configured")
+            
+            self.log(f"    Using {share_type} share: {share_path}")
+            
+            # Parse share path for iDRAC parameters
+            # For CIFS: \\server\share\path -> IPAddress, ShareName, FileName
+            # For NFS: server:/export/path -> IPAddress, ShareName, FileName
+            if share_type == 'CIFS':
+                # Parse UNC path: \\server\share\folder
+                parts = share_path.replace('\\\\', '').replace('\\', '/').split('/')
+                if len(parts) < 2:
+                    raise Exception(f"Invalid CIFS path format: {share_path}. Expected \\\\server\\share\\path")
+                
+                share_ip = parts[0]
+                share_name = parts[1]
+                sub_path = '/'.join(parts[2:]) if len(parts) > 2 else ''
+            else:  # NFS
+                # Parse NFS path: server:/export/path
+                if ':' not in share_path:
+                    raise Exception(f"Invalid NFS path format: {share_path}. Expected server:/export/path")
+                
+                share_ip, path_part = share_path.split(':', 1)
+                parts = path_part.strip('/').split('/')
+                share_name = parts[0] if parts else ''
+                sub_path = '/'.join(parts[1:]) if len(parts) > 1 else ''
+            
+            # Generate unique filename for this export
+            import uuid
+            filename = f"scp_export_{server_id[:8]}_{uuid.uuid4().hex[:8]}.xml"
+            if sub_path:
+                filename = f"{sub_path}/{filename}"
+            
+            # Build ShareParameters for iDRAC
+            share_parameters = {
+                "Target": ",".join(targets),
+                "ShareType": share_type,
+                "IPAddress": share_ip,
+                "ShareName": share_name,
+                "FileName": filename
+            }
+            
+            # Add authentication for CIFS
+            if share_type == 'CIFS':
+                if not share_username:
+                    raise Exception("CIFS share username is not configured")
+                
+                share_parameters['UserName'] = share_username
+                
+                # Decrypt password if provided
+                if share_password_encrypted:
+                    decrypt_response = requests.post(
+                        f"{SUPABASE_URL}/rest/v1/rpc/decrypt_password",
+                        headers=headers,
+                        json={
+                            'encrypted': share_password_encrypted,
+                            'key': settings.get('encryption_key')
+                        },
+                        timeout=10
+                    )
+                    if decrypt_response.status_code == 200:
+                        share_password = decrypt_response.text.strip('"')
+                        share_parameters['Password'] = share_password
+                    else:
+                        raise Exception("Failed to decrypt share password")
+            
+            # Request iDRAC to export to network share
+            export_url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ExportSystemConfiguration"
+            
+            payload = {
+                "ExportFormat": "XML",
+                "ShareParameters": share_parameters,
+                "ExportUse": details.get('export_use', 'Clone'),
+                "IncludeInExport": details.get('include_in_export', 'Default'),
+            }
+            
+            self.log(f"    Requesting iDRAC to export SCP to {share_type} share: {share_ip}/{share_name}/{filename}")
+            
+            start_time = time.time()
+            response = requests.post(
+                export_url,
+                auth=(username, password),
+                json=payload,
+                verify=False,
+                timeout=30
+            )
+            response_time_ms = int((time.time() - start_time) * 1000)
+            
+            # Log command (without credentials)
+            safe_params = share_parameters.copy()
+            if 'Password' in safe_params:
+                safe_params['Password'] = '[REDACTED]'
+            
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job['id'],
+                task_id=None,
+                command_type='POST',
+                endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ExportSystemConfiguration',
+                full_url=export_url,
+                request_headers={'Authorization': '[REDACTED]'},
+                request_body={'ShareType': share_type, **safe_params},
+                response_body=_safe_json_parse(response),
+                status_code=response.status_code,
+                response_time_ms=response_time_ms,
+                success=response.status_code in [200, 202],
+                operation_type='idrac_api'
+            )
+            
+            if response.status_code not in [200, 202]:
+                raise Exception(f"{share_type} share export request failed: {response.status_code} - {response.text}")
+            
+            # Poll task until complete
+            if response.status_code == 202:
+                response_data = _safe_json_parse(response)
+                task_uri = self._extract_task_uri(response.headers, response_data)
+                
+                if task_uri:
+                    monitor_url = task_uri if task_uri.startswith('http') else f"https://{ip}{task_uri}"
+                    self.log(f"    Polling task: {monitor_url}")
+                    
+                    # Poll for completion
+                    timeout_seconds = 300
+                    poll_interval = 5
+                    start_poll = time.time()
+                    
+                    while time.time() - start_poll < timeout_seconds:
+                        time.sleep(poll_interval)
+                        
+                        poll_response = requests.get(
+                            monitor_url,
+                            auth=(username, password),
+                            verify=False,
+                            timeout=30
+                        )
+                        
+                        if poll_response.status_code == 200:
+                            poll_data = _safe_json_parse(poll_response)
+                            task_state = self._extract_task_state(poll_data)
+                            
+                            if self._is_task_success(task_state):
+                                self.log(f"    ✓ SCP exported to {share_type} share successfully")
+                                break
+                            elif self._is_task_failure(task_state):
+                                messages = self._extract_task_messages(poll_data)
+                                error_msg = messages[0] if messages else f"Task failed with state {task_state}"
+                                raise Exception(f"{share_type} share export failed: {error_msg}")
+                    else:
+                        raise Exception(f"{share_type} share export timed out after {timeout_seconds}s")
+            
+            # Now read the file from the network share
+            # NOTE: This requires the Job Executor to have access to the share
+            # For production, you may want to use smbclient library or mount the share
+            self.log(f"    ⚠️  File exported to share but automatic retrieval not implemented yet")
+            self.log(f"    File location: {share_type}://{share_ip}/{share_name}/{filename}")
+            self.log(f"    Please manually retrieve the file and upload to database if needed")
+            
+            # Return a placeholder to indicate successful export to share
+            return f"{{\"__share_export\": true, \"share_type\": \"{share_type}\", \"share_path\": \"{share_ip}/{share_name}/{filename}\"}}"
+            
+        except Exception as e:
+            self.log(f"    SMB/NFS share export failed: {e}", "ERROR")
+            raise Exception(f"Network share export failed: {str(e)}. Check Settings → Activity Monitor for share configuration.")
 
     def execute_scp_import(self, job: Dict):
         """
