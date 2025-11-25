@@ -147,6 +147,9 @@ job-executor.py           # Main executor script
 - `status` (ENUM) - "pending"/"running"/"completed"/"failed"
 - `target_scope` (JSONB) - Target definition
 - `details` (JSONB) - Job-specific parameters
+- `schedule_at` (TIMESTAMP) - Scheduled execution time
+- `component_order` (INTEGER) - Firmware component order
+- `auto_select_latest` (BOOLEAN) - Auto-select latest firmware
 
 **Job Types:**
 - `firmware_update`, `discovery_scan`, `vcenter_sync`
@@ -154,6 +157,8 @@ job-executor.py           # Main executor script
 - `boot_configuration`, `virtual_media_mount/unmount`
 - `bios_config_read/write`, `scp_export/import`
 - `full_server_update`, `rolling_cluster_update`
+- `prepare_host_for_update`, `verify_host_after_update`
+- `cluster_safety_check`, `server_group_safety_check`
 
 ### `job_tasks` - Individual Tasks Within Jobs
 - `job_id` (FK) - Parent job
@@ -182,9 +187,15 @@ job-executor.py           # Main executor script
 
 ### `maintenance_windows` - Scheduled Maintenance
 - `planned_start/end` - Schedule
-- `status` - "scheduled"/"in_progress"/"completed"
+- `started_at/completed_at` - Actual execution times
+- `status` - "planned"/"approved"/"in_progress"/"completed"/"cancelled"
 - `server_ids/cluster_ids/server_group_ids` - Targets
+- `job_ids` - Associated jobs
+- `details` (JSONB) - Additional configuration
+- `last_executed_at` - Last execution (for recurring)
 - `requires_approval`, `auto_execute` - Workflow
+- `notification_sent`, `notify_before_hours` - Notifications
+- `safety_check_snapshot` (JSONB) - Pre-execution safety check
 - `recurrence_enabled`, `recurrence_pattern` - Recurring
 
 ### `profiles` - User Profiles
@@ -193,6 +204,21 @@ job-executor.py           # Main executor script
 
 ### `user_roles` - RBAC
 - `role` (ENUM) - "admin"/"operator"/"viewer"
+
+### Additional Tables
+- `api_tokens` - API token management
+- `audit_logs` - User action audit trail
+- `bios_configurations` - BIOS snapshots and pending changes
+- `cluster_safety_checks` - vCenter cluster safety results
+- `network_settings` - Global network and API throttling config
+- `notification_logs` - Notification delivery tracking
+- `notification_settings` - Teams webhook and SMTP config
+- `openmanage_settings` - Dell OpenManage Enterprise integration
+- `scheduled_safety_checks` - Scheduled cluster safety check config
+- `scp_backups` - SCP backup/restore storage
+- `server_boot_config_history` - Boot configuration change history
+- `server_event_logs` - iDRAC event logs (SEL)
+- `server_group_safety_checks` - Server group safety results
 
 ---
 
@@ -348,7 +374,7 @@ const channel = supabase
 **Key Modules:**
 - `job_executor/config.py` - Environment config
 - `job_executor/connectivity.py` - Network operations (discovery, ping, connection test)
-- `job_executor/scp.py` - SCP backup/restore operations
+- `job_executor/scp.py` - SCP backup/restore operations (supports Local export and HTTP Push for older iDRAC firmware)
 - `job_executor/utils.py` - JSON parsing, Unicode handling
 
 **Key Methods:**
@@ -384,10 +410,19 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
 - `preview-server-info/` - Quick iDRAC preview (cloud only)
 - `refresh-server-info/` - Fetch server details
 - `vcenter-sync/` - Sync ESXi hosts
+- `sync-vcenter-direct/` - Direct vCenter sync (on-demand)
 - `test-vcenter-connection/` - Test vCenter credentials
 - `encrypt-credentials/` - Encrypt passwords
 - `cleanup-activity-logs/` - Scheduled cleanup
 - `cleanup-old-jobs/` - Remove old jobs
+- `openmanage-sync/` - Sync from OpenManage Enterprise
+- `analyze-maintenance-windows/` - Analyze optimal maintenance windows
+- `execute-maintenance-windows/` - Execute scheduled maintenance
+- `get-service-key/` - Get service role key
+- `network-diagnostics/` - Network health checks
+- `send-notification/` - Teams/email notifications
+- `test-virtual-media-share/` - Test virtual media share access
+- `validate-network-prerequisites/` - Validate network prerequisites
 
 **Best Practices:**
 - Include CORS headers
