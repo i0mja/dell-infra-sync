@@ -1,4 +1,4 @@
-import { LucideIcon, Palette, Mail, MessageSquare, Server, Briefcase, Activity, Bell, Shield, Network, Users, Disc } from "lucide-react";
+import { LucideIcon, Palette, Mail, MessageSquare, Server, Briefcase, Activity, Bell, Shield, Network, Users, Disc, ShieldAlert, CloudCog } from "lucide-react";
 
 export interface SettingsTab {
   id: string;
@@ -39,13 +39,22 @@ export const settingsTabs: SettingsTab[] = [
     order: 3,
   },
   {
+    id: 'operations-safety',
+    name: 'Operations Safety',
+    title: 'Operations Safety Controls',
+    description: 'Configure iDRAC operation throttling and emergency kill switch',
+    icon: ShieldAlert,
+    group: 'Security',
+    order: 4,
+  },
+  {
     id: 'smtp',
     name: 'SMTP Email',
     title: 'SMTP Configuration',
     description: 'Configure your SMTP server for email notifications',
     icon: Mail,
     group: 'Integrations',
-    order: 4,
+    order: 5,
   },
   {
     id: 'teams',
@@ -54,7 +63,7 @@ export const settingsTabs: SettingsTab[] = [
     description: 'Configure Teams webhook for job notifications',
     icon: MessageSquare,
     group: 'Integrations',
-    order: 5,
+    order: 6,
   },
   {
     id: 'openmanage',
@@ -63,7 +72,7 @@ export const settingsTabs: SettingsTab[] = [
     description: 'Configure automatic server discovery from OpenManage Enterprise',
     icon: Server,
     group: 'Integrations',
-    order: 6,
+    order: 7,
   },
   {
     id: 'server-groups',
@@ -72,7 +81,16 @@ export const settingsTabs: SettingsTab[] = [
     description: 'Organize Dell servers into application clusters for unified maintenance planning',
     icon: Users,
     group: 'Infrastructure',
-    order: 7,
+    order: 8,
+  },
+  {
+    id: 'virtual-media',
+    name: 'Virtual Media & Backup',
+    title: 'Virtual Media & SCP Backup',
+    description: 'Configure ISO share defaults and SCP export share for backups',
+    icon: Disc,
+    group: 'Infrastructure',
+    order: 9,
   },
   {
     id: 'network',
@@ -81,16 +99,16 @@ export const settingsTabs: SettingsTab[] = [
     description: 'Test connectivity to iDRAC servers and vCenter hosts',
     icon: Network,
     group: 'Monitoring',
-    order: 9,
+    order: 10,
   },
   {
-    id: 'virtual-media',
-    name: 'Virtual Media',
-    title: 'Virtual Media Defaults',
-    description: 'Configure default share details for ISO browsing and mounting',
-    icon: Disc,
-    group: 'Infrastructure',
-    order: 8,
+    id: 'cluster-monitoring',
+    name: 'Cluster Monitoring',
+    title: 'Scheduled Cluster Safety Checks',
+    description: 'Configure automated cluster health monitoring and safety alerts',
+    icon: CloudCog,
+    group: 'Monitoring',
+    order: 11,
   },
   {
     id: 'activity',
@@ -99,7 +117,7 @@ export const settingsTabs: SettingsTab[] = [
     description: 'Configure log retention, cleanup, and monitoring preferences',
     icon: Activity,
     group: 'Monitoring',
-    order: 10,
+    order: 12,
   },
   {
     id: 'jobs',
@@ -108,7 +126,7 @@ export const settingsTabs: SettingsTab[] = [
     description: 'Configure job retention, cleanup, and stale job management',
     icon: Briefcase,
     group: 'Monitoring',
-    order: 11,
+    order: 13,
   },
 ];
 
