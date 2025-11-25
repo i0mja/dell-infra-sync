@@ -1,0 +1,47 @@
+# Dell iDRAC Redfish API Audit
+
+This document tracks Redfish usage across the project and ensures alignment with Dell's official iDRAC Redfish scripting patterns.
+
+## Official References
+- [Dell iDRAC-Redfish-Scripting](https://github.com/dell/iDRAC-Redfish-Scripting)
+- [Dell iDRAC Redfish API Support](https://www.dell.com/support/kbdoc/en-us/000177312/support-for-redfish-api-on-idrac)
+- [Dell Developer Portal (Redfish API Reference)](https://developer.dell.com/apis/2978/versions/6.xx/docs/Introduction.md)
+- [DMTF Redfish Specification](https://www.dmtf.org/standards/redfish)
+
+## Endpoint Coverage Summary
+
+| Area | Endpoint | Implementation | Dell Script Pattern |
+| --- | --- | --- | --- |
+| Session management | `/redfish/v1/SessionService/Sessions` | `supabase/functions/_shared/idrac-session.ts` (POST/DELETE) | `SessionService` examples across Dell repo |
+| System inventory | `/redfish/v1/Systems/System.Embedded.1` | `job_executor/dell_redfish/operations.py#get_system_info`, `job-executor.py` discovery and polling | `GetSystemInventoryREDFISH.py` |
+| Manager info | `/redfish/v1/Managers/iDRAC.Embedded.1` | `operations.py#get_system_info`, `job-executor.py` checks | `GetSystemInventoryREDFISH.py` |
+| Firmware inventory | `/redfish/v1/UpdateService/FirmwareInventory` | `operations.py#get_firmware_inventory`, `job-executor.py` inventory refresh | `DeviceFirmwareSimpleUpdateREDFISH.py` |
+| Firmware update | `/redfish/v1/UpdateService/Actions/UpdateService.SimpleUpdate` | `operations.py#update_firmware_simple`, `job-executor.py` update workflow | `DeviceFirmwareSimpleUpdateREDFISH.py` |
+| Power control | `/redfish/v1/Systems/.../Actions/ComputerSystem.Reset` | `job-executor.py` power actions, BIOS apply | `PowerControlREDFISH.py` |
+| Boot settings | `/redfish/v1/Systems/System.Embedded.1` (boot object) | `job-executor.py` boot order and one-time boot | `ChangeBiosBootOrderREDFISH.py`, `SetOneTimeBootDeviceREDFISH.py` |
+| Thermal | `/redfish/v1/Chassis/System.Embedded.1/Thermal` | `job-executor.py` health checks | `GetSystemInventoryREDFISH.py` |
+| Power telemetry | `/redfish/v1/Chassis/System.Embedded.1/Power` | `job-executor.py` health checks | `GetSystemInventoryREDFISH.py` |
+| Storage | `/redfish/v1/Systems/System.Embedded.1/Storage` | `job-executor.py` inventory and health | `GetSystemInventoryREDFISH.py` |
+| Event logs | `/redfish/v1/Managers/iDRAC.Embedded.1/Logs/Sel` | `job-executor.py` SEL retrieval | `GetSELLogREDFISH.py` |
+| Lifecycle logs | `/redfish/v1/Managers/.../LogServices/Lclog/Entries` | `job-executor.py` lifecycle log fetch | `GetLClogREDFISH.py` |
+| SCP export | `/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ExportSystemConfiguration` | `job_executor/scp.py#export_scp` | `ExportSystemConfigurationREDFISH.py` |
+| SCP import | `/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ImportSystemConfiguration` | `job_executor/scp.py#import_scp` | `ImportSystemConfigurationREDFISH.py` |
+
+## Python Job Executor Audit
+- **Central orchestration** (`job-executor.py`): Uses the same inventory, power, boot, thermal, power telemetry, storage, SEL, and lifecycle endpoints documented by Dell. Reset actions consistently POST to `ComputerSystem.Reset` with Dell-supported `ResetType` values for graceful/forced restart paths.
+- **Dell adapter layer** (`job_executor/dell_redfish/operations.py`): Wraps GET/POST/PATCH calls through `DellRedfishAdapter`, mirroring Dell sample scripts for system info, firmware inventory, and SimpleUpdate workflows. Helper routines handle task/job polling consistent with Dell task states.
+- **Throttling and connectivity** (`idrac_throttler.py`): Performs `GET /redfish/v1/` probes with short timeouts to mirror Dell connection checks while enforcing circuit breakers to avoid iDRAC lockups.
+- **SCP workflows** (`job_executor/scp.py`): OEM export/import follow Dell EID_674 actions with payload targets covering ALL/BIOS/IDRAC/NIC/RAID/FC, matching Dell SCP guidance.
+- **Error handling** (`job_executor/dell_redfish/errors.py`): Maps 30+ Dell codes (RAC0508, SYS403, SYS424, FWU001, etc.) and retry guidance to align with Dell documented behaviors.
+
+## Supabase Edge Function Audit
+- **Session lifecycle** (`supabase/functions/_shared/idrac-session.ts`): Creates sessions via POST to `SessionService/Sessions` and deletes via DELETE on the returned Location, matching Dell examples and using `X-Auth-Token` headers for authenticated requests.
+- **Server info retrieval** (`supabase/functions/preview-server-info/index.ts`, `supabase/functions/refresh-server-info/index.ts`): Pull system and manager resources with the same canonical endpoints as the Python executor for consistency across deployment modes.
+
+## Payloads, Authentication, and Monitoring
+- **Authentication**: Basic auth and session token headers are both supported in the executor and edge functions, following Dell recommendations.
+- **Payload formats**: Reset actions cover Dell-supported `ResetType` options (GracefulShutdown, GracefulRestart, ForceRestart, ForceOff, On, PowerCycle). SCP import/export payloads mirror Dell OEM schema with explicit `Target` fields. Boot workflows pass `Boot` objects with Pxe/Hdd/Cd/BiosSetup/UefiTarget/SDCard/UefiHttp values per Dell scripts.
+- **Task/job polling**: Task state checks handle Completed/Running/Pending/Exception, and job monitoring watches Dell OEM job queues with configurable polling intervals to mirror Dell script guidance on long-running operations.
+
+## Compliance Notes
+- Endpoints and payloads remain within the official Dell iDRAC Redfish scripting patterns. Any new Redfish call should be verified against the Dell GitHub repository and Dell Developer Portal references above before implementation.

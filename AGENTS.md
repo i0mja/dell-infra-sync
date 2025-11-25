@@ -2127,6 +2127,71 @@ const validated = serverSchema.parse(formData);
 - [VMware vCenter API](https://developer.vmware.com/apis/vsphere-automation/latest/) - VMware vSphere Automation SDK
 - [pyVmomi](https://github.com/vmware/pyvmomi) - Python SDK for vCenter API
 
+### Dell iDRAC Redfish Resources
+- [Dell iDRAC-Redfish-Scripting (GitHub)](https://github.com/dell/iDRAC-Redfish-Scripting) - Official Dell Python scripts for Redfish operations
+- [Dell iDRAC Redfish API Support](https://www.dell.com/support/kbdoc/en-us/000177312/support-for-redfish-api-on-idrac) - Dell's Redfish API documentation
+- [Dell Developer Portal](https://developer.dell.com/apis/2978/versions/6.xx/docs/Introduction.md) - Dell API reference documentation
+- [DMTF Redfish Specification](https://www.dmtf.org/standards/redfish) - Industry standard specification
+
+### Key Dell Redfish Scripts (Reference)
+| Script | Purpose | Used For |
+|--------|---------|----------|
+| DeviceFirmwareSimpleUpdateREDFISH.py | Firmware updates | `firmware_update` job type |
+| ExportSystemConfigurationREDFISH.py | SCP backup | `scp_export` job type |
+| ImportSystemConfigurationREDFISH.py | SCP restore | `scp_import` job type |
+| ChangeBiosBootOrderREDFISH.py | Boot order config | `boot_configuration` job type |
+| SetOneTimeBootDeviceREDFISH.py | One-time boot | `boot_configuration` job type |
+| PowerControlREDFISH.py | Power management | `power_action` job type |
+| GetServerPOSTStateREDFISH.py | POST state check | Pre-operation validation |
+| GetSystemInventoryREDFISH.py | System info | Server discovery/refresh |
+
+## Dell Redfish API Reference
+
+### Common Endpoints
+| Category | Endpoint Pattern | Dell Script Reference |
+|----------|------------------|----------------------|
+| System Info | `/redfish/v1/Systems/System.Embedded.1` | GetSystemInventoryREDFISH.py |
+| Manager Info | `/redfish/v1/Managers/iDRAC.Embedded.1` | GetSystemInventoryREDFISH.py |
+| Firmware Inventory | `/redfish/v1/UpdateService/FirmwareInventory` | DeviceFirmwareSimpleUpdateREDFISH.py |
+| Firmware Update | `/redfish/v1/UpdateService/Actions/UpdateService.SimpleUpdate` | DeviceFirmwareSimpleUpdateREDFISH.py |
+| Power Control | `/redfish/v1/Systems/.../Actions/ComputerSystem.Reset` | PowerControlREDFISH.py |
+| Boot Order | `/redfish/v1/Systems/System.Embedded.1` (Boot object) | ChangeBiosBootOrderREDFISH.py |
+| One-Time Boot | `/redfish/v1/Systems/System.Embedded.1` (PATCH) | SetOneTimeBootDeviceREDFISH.py |
+| SCP Export | `/Managers/.../Actions/Oem/EID_674_Manager.ExportSystemConfiguration` | ExportSystemConfigurationREDFISH.py |
+| SCP Import | `/Managers/.../Actions/Oem/EID_674_Manager.ImportSystemConfiguration` | ImportSystemConfigurationREDFISH.py |
+| Virtual Media | `/redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia/{slot}` | VirtualMediaREDFISH.py |
+| Thermal | `/redfish/v1/Chassis/System.Embedded.1/Thermal` | GetSystemInventoryREDFISH.py |
+| Power | `/redfish/v1/Chassis/System.Embedded.1/Power` | GetSystemInventoryREDFISH.py |
+| Storage | `/redfish/v1/Systems/System.Embedded.1/Storage` | GetSystemInventoryREDFISH.py |
+| Event Logs | `/redfish/v1/Managers/iDRAC.Embedded.1/Logs/Sel` | GetSELLogREDFISH.py |
+| Lifecycle Logs | `/redfish/v1/Managers/.../LogServices/Lclog/Entries` | GetLClogREDFISH.py |
+| POST State | `/redfish/v1/Managers/iDRAC.Embedded.1/Attributes` | GetServerPOSTStateREDFISH.py |
+| Sessions | `/redfish/v1/SessionService/Sessions` | Multiple scripts |
+| Jobs | `/redfish/v1/Managers/iDRAC.Embedded.1/Jobs/{job_id}` | Multiple scripts |
+| Tasks | `/redfish/v1/TaskService/Tasks/{task_id}` | Multiple scripts |
+
+### Dell OEM Extensions
+Dell extends the standard Redfish API with OEM-specific actions:
+- **EID_674_Manager.ExportSystemConfiguration** - Export server configuration
+- **EID_674_Manager.ImportSystemConfiguration** - Import server configuration
+- **DellRaid.SetControllerKey** - RAID controller operations
+- **DellOSDeploymentService** - OS deployment operations
+
+### iDRAC Version Compatibility
+| Feature | Minimum iDRAC Version |
+|---------|----------------------|
+| Local SCP Export | iDRAC 9 3.30+ |
+| HTTP Push Update | iDRAC 9 4.00+ |
+| POST State via Attributes | iDRAC 9 |
+| Session-based Auth | iDRAC 7/8/9 |
+
+### Error Code Reference
+See `job_executor/dell_redfish/errors.py` for comprehensive error mapping including:
+- RAC0508 - Configuration export in progress
+- SYS403 - Server in POST
+- SYS054 - Job already scheduled
+- [Full list of 30+ Dell-specific error codes with retry guidance]
+
 ### Technologies
 - [React Documentation](https://react.dev/)
 - [TypeScript Documentation](https://www.typescriptlang.org/docs/)
