@@ -1262,7 +1262,10 @@ export default function Settings() {
       // Encrypt and add password if provided
       if (scpSharePassword.trim()) {
         const { data: encryptedPassword, error: encryptError } = await supabase.functions.invoke('encrypt-credentials', {
-          body: { password: scpSharePassword.trim() }
+          body: { 
+            password: scpSharePassword.trim(),
+            type: 'activity_settings'
+          }
         });
         if (encryptError) throw encryptError;
         activityData.scp_share_password_encrypted = encryptedPassword.encrypted;
