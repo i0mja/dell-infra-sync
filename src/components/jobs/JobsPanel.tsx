@@ -199,6 +199,23 @@ export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) =>
     return `${Math.floor(hoursOld)} hour${Math.floor(hoursOld) !== 1 ? 's' : ''}`;
   };
 
+  const getFailureSummary = (job: Job) => {
+    if (job.details?.validation_errors) {
+      const errors = Array.isArray(job.details.validation_errors)
+        ? job.details.validation_errors
+        : typeof job.details.validation_errors === 'object'
+          ? Object.entries(job.details.validation_errors).map(([key, value]) => `${key}: ${value}`)
+          : [job.details.validation_errors];
+      return `Validation failed: ${String(errors[0])}`;
+    }
+
+    if (job.details?.error) {
+      return job.details.error;
+    }
+
+    return null;
+  };
+
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'completed':
@@ -381,60 +398,64 @@ export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) =>
 
     return (
       <div className="space-y-4">
-        {filteredJobs.map((job) => (
-          <ContextMenu key={job.id}>
-            <ContextMenuTrigger asChild>
-              <Card
-                className="hover:border-primary/50 transition-colors cursor-pointer"
-                onClick={() => handleViewDetails(job)}
-              >
-                <CardContent className="p-6 space-y-4">
-                  <div className="flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-primary/10">
-                          {getStatusIcon(job.status)}
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h3 className="text-lg font-semibold flex items-center gap-2">
-                              {getJobTypeLabel(job.job_type)}
-                              {job.status === 'running' && (
-                                <Badge variant="secondary" className="animate-pulse bg-primary/10 text-primary border-primary/20">
-                                  Live
-                                </Badge>
-                              )}
-                              {isJobStale(job) && (
-                                <Badge variant="destructive" className="flex items-center gap-1">
-                                  <AlertCircle className="h-3 w-3" />
-                                  Stale
-                                </Badge>
-                              )}
-                            </h3>
+        {filteredJobs.map((job) => {
+          const failureSummary = getFailureSummary(job);
+
+          return (
+            <ContextMenu key={job.id}>
+              <ContextMenuTrigger asChild>
+                <Card
+                  className="hover:border-primary/50 transition-colors cursor-pointer"
+                  onClick={() => handleViewDetails(job)}
+                >
+                  <CardContent className="p-6 space-y-4">
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded-lg bg-primary/10">
+                            {getStatusIcon(job.status)}
                           </div>
-                          <p className="text-sm text-muted-foreground">
-                            Created {new Date(job.created_at).toLocaleString()} by {job.created_by || 'system'}
-                          </p>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="text-lg font-semibold flex items-center gap-2">
+                                {getJobTypeLabel(job.job_type)}
+                                {job.status === 'running' && (
+                                  <Badge variant="secondary" className="animate-pulse bg-primary/10 text-primary border-primary/20">
+                                    Live
+                                  </Badge>
+                                )}
+                                {isJobStale(job) && (
+                                  <Badge variant="destructive" className="flex items-center gap-1">
+                                    <AlertCircle className="h-3 w-3" />
+                                    Stale
+                                  </Badge>
+                                )}
+                              </h3>
+                            </div>
+                            <p className="text-sm text-muted-foreground">
+                              Created {new Date(job.created_at).toLocaleString()} by {job.created_by || 'system'}
+                            </p>
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {getStatusBadge(job.status)}
-                        <Badge variant="outline">
-                          <BarChart3 className="h-3 w-3 mr-1" />
-                          {getJobAge(job)}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          {getStatusBadge(job.status)}
+                          <Badge variant="outline">
+                            <BarChart3 className="h-3 w-3 mr-1" />
+                            {getJobAge(job)}
+                          </Badge>
+                        </div>
                       </div>
                     </div>
 
-                    {job.details?.error && job.status === 'failed' && (
+                    {failureSummary && job.status === 'failed' && (
                       <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/5 p-3 rounded-lg">
                         <AlertCircle className="h-4 w-4 mt-0.5" />
                         <div className="text-sm">
                           <span className="font-medium text-destructive">Error: </span>
                           <span className="font-mono text-destructive/80">
-                            {job.details.error.length > 100
-                              ? `${job.details.error.substring(0, 100)}...`
-                              : job.details.error}
+                            {failureSummary.length > 100
+                              ? `${failureSummary.substring(0, 100)}...`
+                              : failureSummary}
                           </span>
                         </div>
                       </div>
@@ -474,52 +495,53 @@ export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) =>
                   </div>
                 </CardContent>
               </Card>
-            </ContextMenuTrigger>
+              </ContextMenuTrigger>
 
-            <ContextMenuContent className="w-48">
-              <ContextMenuItem
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleViewDetails(job);
-                }}
-              >
-                <FileText className="mr-2 h-4 w-4" />
-                View Details
-              </ContextMenuItem>
+              <ContextMenuContent className="w-48">
+                <ContextMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleViewDetails(job);
+                  }}
+                >
+                  <FileText className="mr-2 h-4 w-4" />
+                  View Details
+                </ContextMenuItem>
 
-              {canManageJobs && (job.status === 'pending' || job.status === 'running') && (
-                <>
-                  <ContextMenuSeparator />
-                  <ContextMenuItem
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleCancelJob(job.id);
-                    }}
-                    className="text-destructive focus:text-destructive"
-                  >
-                    <XCircle className="mr-2 h-4 w-4" />
-                    Cancel Job
-                  </ContextMenuItem>
-                </>
-              )}
+                {canManageJobs && (job.status === 'pending' || job.status === 'running') && (
+                  <>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCancelJob(job.id);
+                      }}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <XCircle className="mr-2 h-4 w-4" />
+                      Cancel Job
+                    </ContextMenuItem>
+                  </>
+                )}
 
-              {canManageJobs && job.status === 'failed' && (
-                <>
-                  <ContextMenuSeparator />
-                  <ContextMenuItem
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleRetryJob(job);
-                    }}
-                  >
-                    <RotateCcw className="mr-2 h-4 w-4" />
-                    Retry Job
-                  </ContextMenuItem>
-                </>
-              )}
-            </ContextMenuContent>
-          </ContextMenu>
-        ))}
+                {canManageJobs && job.status === 'failed' && (
+                  <>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleRetryJob(job);
+                      }}
+                    >
+                      <RotateCcw className="mr-2 h-4 w-4" />
+                      Retry Job
+                    </ContextMenuItem>
+                  </>
+                )}
+              </ContextMenuContent>
+            </ContextMenu>
+          );
+        })}
       </div>
     );
   };
