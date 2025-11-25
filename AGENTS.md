@@ -367,7 +367,10 @@ Background jobs for long-running operations.
 - `details` (JSONB) - Job-specific parameters
 - `created_by` (UUID, FK) - User who created
 - `created_at`, `started_at`, `completed_at` (TIMESTAMP) - Lifecycle
+- `schedule_at` (TIMESTAMP, nullable) - Scheduled execution time
 - `parent_job_id` (UUID, FK, nullable) - For job hierarchies
+- `component_order` (INTEGER, nullable) - Firmware component update order
+- `auto_select_latest` (BOOLEAN) - Auto-select latest firmware version
 - `credential_set_ids` (UUID[]) - Credentials to use
 - `firmware_source`, `dell_catalog_url` - Firmware-specific
 
@@ -389,6 +392,8 @@ Background jobs for long-running operations.
 - `cluster_safety_check` - Pre-update safety validation
 - `rolling_cluster_update` - Coordinated cluster update
 - `server_group_safety_check` - Group safety validation
+- `prepare_host_for_update` - Prepare ESXi host for update (enter maintenance mode, evacuate VMs)
+- `verify_host_after_update` - Verify ESXi host after update (exit maintenance mode, health checks)
 
 #### `job_tasks` - Individual Tasks Within Jobs
 Sub-tasks for job tracking.
@@ -411,13 +416,19 @@ Planned maintenance windows with approval workflow.
 - `description` (TEXT, nullable) - Details
 - `maintenance_type` (TEXT) - "firmware_update" / "patch" / "hardware"
 - `planned_start`, `planned_end` (TIMESTAMP) - Schedule
-- `status` (TEXT) - "scheduled" / "in_progress" / "completed" / "cancelled"
+- `status` (TEXT) - "planned" / "approved" / "in_progress" / "completed" / "cancelled"
+- `started_at`, `completed_at` (TIMESTAMP, nullable) - Actual execution times
 - `server_ids`, `cluster_ids`, `server_group_ids` (UUID[]) - Targets
 - `job_ids` (UUID[]) - Associated jobs
+- `details` (JSONB, nullable) - Additional configuration and metadata
+- `last_executed_at` (TIMESTAMP, nullable) - Last execution time for recurring windows
 - `requires_approval` (BOOLEAN) - Approval required
-- `approved_by` (UUID, FK, nullable) - Approver
+- `approved_by`, `approved_at` (UUID, FK / TIMESTAMP, nullable) - Approval tracking
 - `auto_execute` (BOOLEAN) - Auto-execute at scheduled time
 - `recurrence_enabled`, `recurrence_type`, `recurrence_pattern` - Recurring windows
+- `notification_sent` (BOOLEAN) - Notification delivery status
+- `notify_before_hours` (INTEGER) - Hours before start to send notification
+- `safety_check_snapshot` (JSONB, nullable) - Pre-execution safety check results
 - `credential_set_ids` (UUID[]) - Credentials to use
 - `created_by` (UUID, FK) - Creator
 
@@ -486,6 +497,189 @@ User role assignments.
 - **admin** - Full access (CRUD on all tables)
 - **operator** - Can create/update servers, jobs, maintenance
 - **viewer** - Read-only access
+
+#### `api_tokens` - API Token Management
+Secure API tokens for programmatic access.
+
+**Key Columns:**
+- `id` (UUID) - Primary key
+- `user_id` (UUID, FK) - Token owner
+- `name` (TEXT) - Token description/label
+- `token_hash` (TEXT) - SHA-256 hash of token
+- `created_at`, `expires_at`, `last_used_at` (TIMESTAMP)
+
+**Important**: Tokens are hashed (SHA-256) for security. Raw tokens only shown at creation.
+
+#### `audit_logs` - User Action Audit Trail
+Comprehensive audit trail for compliance and security.
+
+**Key Columns:**
+- `id` (UUID) - Primary key
+- `user_id` (UUID, FK, nullable) - User who performed action
+- `action` (TEXT) - Action type (e.g., "server.create", "job.delete")
+- `details` (JSONB, nullable) - Action metadata
+- `ip_address` (TEXT, nullable) - Source IP
+- `timestamp` (TIMESTAMP) - When action occurred
+
+#### `bios_configurations` - BIOS Snapshots
+BIOS configuration snapshots and pending changes.
+
+**Key Columns:**
+- `id` (UUID) - Primary key
+- `server_id` (UUID, FK) - Target server
+- `snapshot_type` (TEXT) - "current" / "baseline" / "pending"
+- `attributes` (JSONB) - BIOS attributes
+- `pending_attributes` (JSONB, nullable) - Queued changes
+- `bios_version` (TEXT, nullable) - BIOS version
+- `job_id` (UUID, FK, nullable) - Associated job
+- `captured_at` (TIMESTAMP) - Snapshot timestamp
+- `created_by` (UUID, FK, nullable) - User who created
+
+#### `cluster_safety_checks` - vCenter Cluster Safety Results
+Safety check results for vCenter clusters before maintenance.
+
+**Key Columns:**
+- `id` (UUID) - Primary key
+- `cluster_id` (TEXT) - vCenter cluster name
+- `job_id` (UUID, FK, nullable) - Associated job
+- `safe_to_proceed` (BOOLEAN) - Overall safety status
+- `total_hosts`, `healthy_hosts`, `min_required_hosts` (INTEGER) - Host counts
+- `details` (JSONB, nullable) - Check details (DRS, HA, alarms)
+- `check_timestamp` (TIMESTAMP) - When check was performed
+- `is_scheduled` (BOOLEAN) - Scheduled vs manual check
+- `scheduled_check_id` (UUID, FK, nullable) - Parent scheduled check
+- `previous_status` (TEXT, nullable) - Previous check status
+- `status_changed` (BOOLEAN) - Status change indicator
+
+#### `network_settings` - Network Configuration
+Global network and API throttling settings.
+
+**Key Columns:**
+- `id` (UUID) - Primary key (singleton table)
+- `connection_timeout_seconds`, `read_timeout_seconds`, `operation_timeout_seconds` (INTEGER) - Timeouts
+- `max_retry_attempts`, `retry_delay_seconds` (INTEGER) - Retry policy
+- `retry_backoff_type` (TEXT) - "linear" / "exponential"
+- `max_concurrent_connections`, `max_requests_per_minute` (INTEGER) - Rate limiting
+- `require_prereq_validation` (BOOLEAN) - Validate network prerequisites
+- `monitor_latency` (BOOLEAN) - Track API latency
+- `latency_alert_threshold_ms` (INTEGER) - Alert threshold
+
+#### `notification_logs` - Notification Delivery Tracking
+Log of all notifications sent via Teams, email, etc.
+
+**Key Columns:**
+- `id` (UUID) - Primary key
+- `job_id` (UUID, FK, nullable) - Associated job
+- `notification_type` (TEXT) - "teams" / "email" / "smtp"
+- `status` (TEXT) - "sent" / "failed" / "pending"
+- `severity` (TEXT, nullable) - "normal" / "warning" / "critical"
+- `is_test` (BOOLEAN) - Test notification
+- `delivery_details` (JSONB, nullable) - Delivery metadata
+- `error_message` (TEXT, nullable) - Failure reason
+- `created_at` (TIMESTAMP)
+
+#### `notification_settings` - Notification Configuration
+Teams webhook and SMTP configuration.
+
+**Key Columns:**
+- `id` (UUID) - Primary key (singleton table)
+- `teams_webhook_url` (TEXT, nullable) - Microsoft Teams webhook
+- `teams_mention_users` (TEXT, nullable) - Users to @mention
+- `smtp_host`, `smtp_port`, `smtp_user`, `smtp_password`, `smtp_from_email` - SMTP config
+- `notify_on_job_started`, `notify_on_job_complete`, `notify_on_job_failed` (BOOLEAN) - Job notifications
+- `notify_on_cluster_status_change`, `notify_on_cluster_warning`, `notify_on_unsafe_cluster` (BOOLEAN) - Cluster notifications
+- `mention_on_critical_failures` (BOOLEAN) - Auto-mention on critical failures
+- `critical_job_types` (TEXT[]) - Job types considered critical
+
+#### `openmanage_settings` - OpenManage Integration Config
+Dell OpenManage Enterprise integration settings.
+
+**Key Columns:**
+- `id` (UUID) - Primary key (singleton table)
+- `host` (TEXT) - OpenManage server hostname/IP
+- `port` (INTEGER) - API port (default: 443)
+- `username`, `password` (TEXT) - Authentication
+- `verify_ssl` (BOOLEAN) - SSL certificate verification
+- `sync_enabled` (BOOLEAN) - Auto-sync enabled
+- `last_sync` (TIMESTAMP, nullable) - Last sync timestamp
+
+#### `scheduled_safety_checks` - Scheduled Safety Check Config
+Configuration for automated cluster safety checks.
+
+**Key Columns:**
+- `id` (UUID) - Primary key (singleton table)
+- `enabled` (BOOLEAN) - Scheduled checks enabled
+- `schedule_cron` (TEXT, nullable) - Cron expression (default: "0 */6 * * *")
+- `check_all_clusters` (BOOLEAN) - Check all vs specific clusters
+- `specific_clusters` (TEXT[], nullable) - Clusters to check
+- `min_required_hosts` (INTEGER, nullable) - Minimum healthy hosts
+- `notify_on_unsafe`, `notify_on_warnings`, `notify_on_safe_to_unsafe_change` (BOOLEAN) - Notification triggers
+- `last_run_at` (TIMESTAMP, nullable) - Last execution
+- `last_status` (TEXT, nullable) - Last run result
+
+#### `scp_backups` - SCP Backup Storage
+Server Configuration Profile (SCP) backups.
+
+**Key Columns:**
+- `id` (UUID) - Primary key
+- `server_id` (UUID, FK) - Target server
+- `backup_name` (TEXT) - Backup label
+- `description` (TEXT, nullable) - Backup notes
+- `scp_content` (JSONB, nullable) - SCP XML content (as JSON)
+- `scp_file_path` (TEXT, nullable) - File path (if stored externally)
+- `scp_file_size_bytes` (BIGINT, nullable) - File size
+- `scp_checksum` (TEXT, nullable) - MD5/SHA checksum
+- `components` (TEXT, nullable) - Included components (e.g., "BIOS,iDRAC,RAID")
+- `include_bios`, `include_idrac`, `include_nic`, `include_raid` (BOOLEAN) - Component flags
+- `is_valid` (BOOLEAN) - Validation status
+- `validation_errors` (TEXT, nullable) - Validation error messages
+- `export_job_id`, `import_job_id` (UUID, FK, nullable) - Associated jobs
+- `exported_at`, `last_imported_at` (TIMESTAMP) - Timestamps
+- `created_by` (UUID, FK, nullable) - User who created
+
+#### `server_boot_config_history` - Boot Config Change History
+Historical log of boot configuration changes.
+
+**Key Columns:**
+- `id` (UUID) - Primary key
+- `server_id` (UUID, FK) - Target server
+- `timestamp` (TIMESTAMP) - Change timestamp
+- `boot_mode` (TEXT, nullable) - "Uefi" / "Bios"
+- `boot_order` (JSONB, nullable) - Boot device order
+- `boot_source_override_enabled`, `boot_source_override_target` (TEXT) - Override settings
+- `job_id` (UUID, FK, nullable) - Associated job
+- `changed_by` (UUID, FK, nullable) - User who made change
+
+#### `server_event_logs` - Server Event Logs
+iDRAC event logs (SEL - System Event Log).
+
+**Key Columns:**
+- `id` (UUID) - Primary key
+- `server_id` (UUID, FK) - Source server
+- `timestamp` (TIMESTAMP) - Event timestamp
+- `event_id` (TEXT, nullable) - iDRAC event ID
+- `severity` (TEXT, nullable) - "OK" / "Warning" / "Critical"
+- `category` (TEXT, nullable) - Event category
+- `message` (TEXT, nullable) - Human-readable message
+- `sensor_type`, `sensor_number` (TEXT, nullable) - Sensor details
+- `raw_data` (JSONB, nullable) - Raw Redfish response
+
+#### `server_group_safety_checks` - Server Group Safety Results
+Safety check results for manual server groups.
+
+**Key Columns:**
+- `id` (UUID) - Primary key
+- `server_group_id` (UUID, FK, nullable) - Target group
+- `job_id` (UUID, FK, nullable) - Associated job
+- `safe_to_proceed` (BOOLEAN) - Overall safety status
+- `total_servers`, `healthy_servers`, `min_required_servers` (INTEGER) - Server counts
+- `details` (JSONB, nullable) - Check details
+- `warnings` (TEXT[], nullable) - Warning messages
+- `check_timestamp` (TIMESTAMP) - When check was performed
+- `is_scheduled` (BOOLEAN) - Scheduled vs manual check
+- `scheduled_check_id` (UUID, FK, nullable) - Parent scheduled check
+- `previous_status` (TEXT, nullable) - Previous check status
+- `status_changed` (BOOLEAN) - Status change indicator
 
 ---
 
@@ -892,7 +1086,29 @@ class ConnectivityMixin:
 ```python
 class ScpMixin:
     def execute_scp_export(self, job_id):
-        """Export SCP configuration backup."""
+        """Export SCP configuration backup.
+        
+        Supports two export methods:
+        1. Local Export (iDRAC 5.00.00+): Redfish /Actions/Oem/ExportSystemConfiguration
+        2. HTTP Push Export (older firmware): HTTP POST to push SCP to HTTP server
+        
+        Method selection:
+        - Checks iDRAC firmware version
+        - Falls back to HTTP Push for versions < 5.00.00
+        """
+        
+    def _export_via_http_push(self, server_ip, username, password, job_id, server_id):
+        """Export SCP via HTTP Push method (for older iDRAC firmware).
+        
+        Flow:
+        1. Start local HTTP server to receive SCP
+        2. Trigger iDRAC export with ShareType=HTTP
+        3. iDRAC pushes SCP to HTTP server
+        4. Parse and store SCP content
+        5. Shutdown HTTP server
+        
+        Used when Local export not supported (iDRAC < 5.00.00).
+        """
         
     def execute_scp_import(self, job_id):
         """Import SCP configuration."""
@@ -995,6 +1211,61 @@ sudo systemctl status job-executor
 ```typescript
 // Removes completed/failed jobs older than retention days
 // Preserves active and recent jobs
+```
+
+#### `openmanage-sync/index.ts` - OpenManage Sync
+```typescript
+// Syncs servers from Dell OpenManage Enterprise
+// Creates/updates servers with OpenManage device IDs
+```
+
+#### `analyze-maintenance-windows/index.ts` - Analyze Maintenance Windows
+```typescript
+// Analyzes optimal maintenance windows
+// Considers cluster capacity, workload patterns, safety checks
+```
+
+#### `execute-maintenance-windows/index.ts` - Execute Maintenance Windows
+```typescript
+// Executes scheduled maintenance windows
+// Triggered by scheduler at planned_start time
+// Creates jobs for firmware updates, coordinates execution
+```
+
+#### `get-service-key/index.ts` - Get Service Key
+```typescript
+// Returns Supabase service role key for operations
+// Used by Job Executor to authenticate with Supabase
+```
+
+#### `network-diagnostics/index.ts` - Network Diagnostics
+```typescript
+// Runs network diagnostics (ping, latency, connectivity tests)
+// Returns detailed network health report
+```
+
+#### `send-notification/index.ts` - Send Notifications
+```typescript
+// Sends Teams webhook or SMTP email notifications
+// Supports job status, cluster alerts, maintenance reminders
+```
+
+#### `sync-vcenter-direct/index.ts` - Direct vCenter Sync
+```typescript
+// Direct vCenter sync (alternative to vcenter-sync)
+// Used for on-demand syncs without job queue
+```
+
+#### `test-virtual-media-share/index.ts` - Test Virtual Media Share
+```typescript
+// Tests virtual media share accessibility
+// Validates NFS/CIFS share credentials and connectivity
+```
+
+#### `validate-network-prerequisites/index.ts` - Validate Network Prerequisites
+```typescript
+// Validates network prerequisites before operations
+// Checks connectivity, latency, DNS resolution
 ```
 
 ### Best Practices
