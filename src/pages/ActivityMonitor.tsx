@@ -243,14 +243,22 @@ export default function ActivityMonitor() {
   };
 
   const handleExport = () => {
-    const formatValue = (value: unknown) => {
+    const stringifyField = (value: unknown) => {
       if (value === null || value === undefined) return '';
-      if (typeof value === 'object') return JSON.stringify(value);
-      return String(value);
+      if (typeof value === 'string') return value;
+      try {
+        return JSON.stringify(
+          value,
+          (_key, val) => (typeof val === 'bigint' ? val.toString() : val),
+          2
+        );
+      } catch {
+        return String(value);
+      }
     };
 
     const escapeCsv = (value: unknown) => {
-      const formatted = formatValue(value).replace(/"/g, '""').replace(/\r?\n/g, '\\n');
+      const formatted = stringifyField(value).replace(/"/g, '""').replace(/\r?\n/g, '\\n');
       return `"${formatted}"`;
     };
 
