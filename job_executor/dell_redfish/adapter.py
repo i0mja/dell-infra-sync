@@ -1,46 +1,208 @@
 """
 Dell Redfish Adapter
 
-Wraps Dell's official iDRAC Redfish library functions with our custom
-throttling, logging, and error handling infrastructure.
+Wraps Dell Redfish API calls with custom throttling, logging, and error handling.
 
-All calls to Dell's library go through this adapter to ensure:
+All calls to Dell's Redfish API go through this adapter to ensure:
 - Rate limiting via IdracThrottler
 - Circuit breaker protection
 - Logging to idrac_commands table
 - Consistent error handling
 """
 
-import time
 import logging
-from typing import Any, Callable, Optional
-from datetime import datetime
-
+from typing import Callable, Any, Optional, Dict, Tuple
+import time
+import requests
 from .errors import DellRedfishError, CircuitBreakerOpenError, map_dell_error
 
 
 class DellRedfishAdapter:
     """
-    Adapter that integrates Dell's Redfish library with our infrastructure.
+    Adapter that integrates Dell Redfish API calls with our infrastructure.
     
-    This class wraps Dell library calls with:
+    This class provides a unified request method that wraps all Dell Redfish
+    API calls with:
     - IdracThrottler for rate limiting and circuit breakers
     - Supabase logging for all API calls
     - Enhanced error handling with Dell error code mapping
     """
     
-    def __init__(self, throttler, logger: logging.Logger, log_command_fn: Callable):
+    def __init__(self, throttler, logger: logging.Logger, log_command_fn: Callable, verify_ssl: bool = False):
         """
-        Initialize the adapter.
+        Initialize the adapter with throttler, logger, and command logging function.
         
         Args:
-            throttler: IdracThrottler instance for rate limiting
-            logger: Python logger for console output
-            log_command_fn: Function to log commands to Supabase (idrac_commands table)
+            throttler: IdracThrottler instance for rate limiting and circuit breaking
+            logger: Logger instance for operation logging
+            log_command_fn: Function to log commands to idrac_commands table
+            verify_ssl: Whether to verify SSL certificates (default False for self-signed)
         """
         self.throttler = throttler
         self.logger = logger
         self.log_command = log_command_fn
+        self.verify_ssl = verify_ssl
+    
+    def make_request(
+        self,
+        method: str,
+        ip: str,
+        endpoint: str,
+        username: str,
+        password: str,
+        payload: Optional[Dict] = None,
+        operation_name: str = None,
+        timeout: Tuple[int, int] = (5, 30),
+        job_id: str = None,
+        server_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Unified request method for all Dell Redfish API calls.
+        Integrates throttling, logging, circuit breaking, and error mapping.
+        
+        Args:
+            method: HTTP method (GET, POST, PATCH, DELETE)
+            ip: iDRAC IP address
+            endpoint: Redfish API endpoint (e.g., /redfish/v1/Systems/System.Embedded.1)
+            username: iDRAC username
+            password: iDRAC password
+            payload: Optional JSON payload for POST/PATCH
+            operation_name: Human-readable operation name for logging
+            timeout: Tuple of (connect_timeout, read_timeout)
+            job_id: Optional job ID for logging
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict: Response JSON data
+            
+        Raises:
+            CircuitBreakerOpenError: If circuit breaker is open for this IP
+            DellRedfishError: On API errors with Dell error code mapping
+        """
+        # Check circuit breaker
+        if self.throttler.is_circuit_open(ip):
+            raise CircuitBreakerOpenError(ip)
+        
+        url = f"https://{ip}{endpoint}"
+        operation_name = operation_name or f"{method} {endpoint}"
+        
+        # Get or create session for this IP
+        session = self.throttler.get_session(ip)
+        
+        # Prepare request
+        request_kwargs = {
+            'auth': (username, password),
+            'verify': self.verify_ssl,
+            'timeout': timeout,
+            'headers': {'Content-Type': 'application/json'}
+        }
+        
+        if payload:
+            request_kwargs['json'] = payload
+        
+        # Execute with throttler safety
+        with self.throttler.locks[ip]:
+            self.throttler.wait_for_rate_limit(ip, self.logger)
+            
+            with self.throttler.global_semaphore:
+                start_time = time.time()
+                response = None
+                status_code = None
+                
+                try:
+                    # Make the request
+                    if method.upper() == 'GET':
+                        response = session.get(url, **request_kwargs)
+                    elif method.upper() == 'POST':
+                        response = session.post(url, **request_kwargs)
+                    elif method.upper() == 'PATCH':
+                        response = session.patch(url, **request_kwargs)
+                    elif method.upper() == 'DELETE':
+                        response = session.delete(url, **request_kwargs)
+                    else:
+                        raise ValueError(f"Unsupported HTTP method: {method}")
+                    
+                    response_time_ms = int((time.time() - start_time) * 1000)
+                    status_code = response.status_code
+                    
+                    # Parse response
+                    try:
+                        response_data = response.json() if response.text else {}
+                    except ValueError:
+                        response_data = {'raw_response': response.text}
+                    
+                    # Check for HTTP errors
+                    response.raise_for_status()
+                    
+                    # Record success
+                    self.throttler.record_success(ip)
+                    
+                    # Log to idrac_commands
+                    self._log_operation(
+                        ip=ip,
+                        endpoint=endpoint,
+                        method=method,
+                        operation_name=operation_name,
+                        payload=payload,
+                        response_data=response_data,
+                        response_time_ms=response_time_ms,
+                        status_code=status_code,
+                        success=True,
+                        job_id=job_id,
+                        server_id=server_id,
+                        user_id=user_id
+                    )
+                    
+                    return response_data
+                    
+                except requests.exceptions.RequestException as e:
+                    response_time_ms = int((time.time() - start_time) * 1000)
+                    status_code = getattr(response, 'status_code', None) if response else None
+                    
+                    # Record failure
+                    self.throttler.record_failure(ip, status_code, self.logger)
+                    
+                    # Try to extract Dell error info
+                    error_data = None
+                    if response is not None:
+                        try:
+                            error_data = response.json()
+                        except:
+                            error_data = {'error': str(e)}
+                    
+                    # Log failure
+                    self._log_operation(
+                        ip=ip,
+                        endpoint=endpoint,
+                        method=method,
+                        operation_name=operation_name,
+                        payload=payload,
+                        response_data=error_data,
+                        response_time_ms=response_time_ms,
+                        status_code=status_code,
+                        success=False,
+                        error_message=str(e),
+                        job_id=job_id,
+                        server_id=server_id,
+                        user_id=user_id
+                    )
+                    
+                    # Map Dell error if available
+                    if error_data:
+                        error_info = map_dell_error(error_data)
+                        raise DellRedfishError(
+                            message=error_info['message'],
+                            error_code=error_info['code'],
+                            status_code=status_code
+                        )
+                    
+                    raise DellRedfishError(
+                        message=str(e),
+                        error_code=None,
+                        status_code=status_code
+                    )
     
     def call_with_safety(
         self,
@@ -51,10 +213,10 @@ class DellRedfishAdapter:
         **kwargs
     ) -> Any:
         """
-        Wrap any Dell function with throttling, logging, and error handling.
+        Legacy method: Wrap any Dell function with throttling, logging, and error handling.
         
-        This is the core method that ensures all Dell library calls go through
-        our safety mechanisms.
+        NOTE: This method is deprecated. Use make_request() for all new operations.
+        Kept for backward compatibility with existing code.
         
         Args:
             func: Dell library function to call
@@ -69,7 +231,6 @@ class DellRedfishAdapter:
         Raises:
             CircuitBreakerOpenError: If circuit breaker is open for this IP
             DellRedfishError: If Dell operation fails
-            Exception: Other unexpected errors
         """
         # Check circuit breaker
         if self.throttler.is_circuit_open(ip):
@@ -84,145 +245,96 @@ class DellRedfishAdapter:
             # Acquire global concurrency semaphore
             with self.throttler.global_semaphore:
                 start_time = time.time()
-                response_time_ms = None
-                status_code = None
-                success = False
-                error_message = None
-                response_data = None
                 
                 try:
                     # Call Dell library function
                     self.logger.debug(f"Calling Dell operation: {operation_name} on {ip}")
                     result = func(*args, **kwargs)
                     
-                    # Calculate response time
-                    response_time_ms = int((time.time() - start_time) * 1000)
-                    
-                    # Parse result (Dell functions may return different formats)
-                    if isinstance(result, dict):
-                        # Check for error indicators in response
-                        if "error" in result or "Error" in result:
-                            status_code = result.get("status_code", 400)
-                            error_message = result.get("error", result.get("Error", "Unknown error"))
-                            success = False
-                        else:
-                            status_code = result.get("status_code", 200)
-                            response_data = result
-                            success = True
-                    elif isinstance(result, tuple):
-                        # Some Dell functions return (success, data) tuples
-                        success = result[0] if len(result) > 0 else False
-                        response_data = result[1] if len(result) > 1 else None
-                        status_code = 200 if success else 400
-                    else:
-                        # Assume success if we got a result back
-                        success = True
-                        response_data = result
-                        status_code = 200
-                    
-                    # Record success with throttler
-                    if success:
-                        self.throttler.record_success(ip)
-                    else:
-                        self.throttler.record_failure(ip, status_code, self.logger)
-                    
-                    # Log to Supabase
-                    self._log_operation(
-                        ip=ip,
-                        operation_name=operation_name,
-                        success=success,
-                        status_code=status_code,
-                        response_time_ms=response_time_ms,
-                        response_data=response_data,
-                        error_message=error_message,
-                    )
-                    
-                    if not success:
-                        # Map Dell error code to user-friendly message
-                        error_info = map_dell_error({"error": {"message": error_message}})
-                        raise DellRedfishError(
-                            message=error_info.get("message", error_message),
-                            error_code=error_info.get("code"),
-                            status_code=status_code,
-                        )
+                    # Record success
+                    self.throttler.record_success(ip)
                     
                     return result
                 
-                except CircuitBreakerOpenError:
-                    # Re-raise circuit breaker errors without logging
-                    raise
-                
-                except DellRedfishError:
-                    # Re-raise Dell errors (already logged)
-                    raise
-                
                 except Exception as e:
-                    # Unexpected error
                     response_time_ms = int((time.time() - start_time) * 1000)
                     status_code = getattr(e, "status_code", 500)
-                    error_message = str(e)
                     
-                    # Record failure with throttler
+                    # Record failure
                     self.throttler.record_failure(ip, status_code, self.logger)
                     
-                    # Log to Supabase
-                    self._log_operation(
-                        ip=ip,
-                        operation_name=operation_name,
-                        success=False,
-                        status_code=status_code,
-                        response_time_ms=response_time_ms,
-                        error_message=error_message,
-                    )
+                    self.logger.error(f"Dell operation failed: {operation_name} on {ip}: {str(e)}")
                     
-                    self.logger.error(f"Dell operation failed: {operation_name} on {ip}: {error_message}")
                     raise DellRedfishError(
-                        message=f"Operation failed: {error_message}",
+                        message=f"Operation failed: {str(e)}",
                         status_code=status_code,
                     )
     
     def _log_operation(
         self,
         ip: str,
+        endpoint: str,
+        method: str,
         operation_name: str,
         success: bool,
+        response_time_ms: int,
         status_code: Optional[int] = None,
-        response_time_ms: Optional[int] = None,
-        response_data: Optional[dict] = None,
+        payload: Optional[Dict] = None,
+        response_data: Optional[Dict] = None,
         error_message: Optional[str] = None,
+        job_id: str = None,
+        server_id: str = None,
+        user_id: str = None
     ):
         """
         Log Dell operation to Supabase idrac_commands table.
         
         Args:
             ip: iDRAC IP address
+            endpoint: Redfish API endpoint
+            method: HTTP method
             operation_name: Human-readable operation name
             success: Whether operation succeeded
-            status_code: HTTP-like status code
             response_time_ms: Response time in milliseconds
-            response_data: Response data from Dell function
+            status_code: HTTP status code
+            payload: Request payload
+            response_data: Response data
             error_message: Error message if operation failed
+            job_id: Optional job ID for correlation
+            server_id: Optional server ID for correlation
+            user_id: Optional user ID who initiated the operation
         """
         try:
             # Prepare log entry
             log_entry = {
                 "ip_address": ip,
                 "command_type": operation_name,
-                "endpoint": f"/redfish/v1/Dell/{operation_name}",  # Approximate endpoint
-                "full_url": f"https://{ip}/redfish/v1/Dell/{operation_name}",
+                "endpoint": endpoint,
+                "full_url": f"https://{ip}{endpoint}",
                 "success": success,
                 "status_code": status_code,
                 "response_time_ms": response_time_ms,
-                "timestamp": datetime.utcnow().isoformat(),
-                "source": "dell_library",
+                "source": "dell_redfish",
                 "operation_type": "idrac_api",
             }
+            
+            if payload:
+                log_entry["request_body"] = payload
             
             if response_data:
                 log_entry["response_body"] = response_data
             
             if error_message:
                 log_entry["error_message"] = error_message
+            
+            if job_id:
+                log_entry["job_id"] = job_id
+            
+            if server_id:
+                log_entry["server_id"] = server_id
+            
+            if user_id:
+                log_entry["initiated_by"] = user_id
             
             # Call the logging function (injected from JobExecutor)
             self.log_command(log_entry)
@@ -243,8 +355,8 @@ class DellRedfishAdapter:
         """
         Call a Dell function with automatic retry on transient errors.
         
-        This wraps call_with_safety with retry logic for errors that
-        Dell indicates are retryable (e.g., "operation in progress").
+        NOTE: This method is deprecated for new code. Use make_request() with retry logic instead.
+        Kept for backward compatibility.
         
         Args:
             func: Dell library function to call

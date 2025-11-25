@@ -14,6 +14,7 @@ __version__ = "1.0.0"
 
 from .adapter import DellRedfishAdapter
 from .operations import DellOperations
+from .helpers import DellRedfishHelpers
 from .errors import (
     DellRedfishError,
     CircuitBreakerOpenError,
@@ -24,6 +25,7 @@ from .errors import (
 __all__ = [
     "DellRedfishAdapter",
     "DellOperations",
+    "DellRedfishHelpers",
     "DellRedfishError",
     "CircuitBreakerOpenError",
     "DellErrorCodes",
