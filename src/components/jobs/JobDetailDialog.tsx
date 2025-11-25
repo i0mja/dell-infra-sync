@@ -5,9 +5,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Clock, CheckCircle, XCircle, PlayCircle, Server, AlertCircle, FileCode, ListChecks } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Clock, CheckCircle, XCircle, PlayCircle, Server, AlertCircle, FileCode, ListChecks, Activity } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
+import { ApiCallStream } from "./ApiCallStream";
 
 interface Job {
   id: string;
@@ -255,7 +257,17 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
             </div>
           </DialogHeader>
 
-          <div className="space-y-6">
+          <Tabs defaultValue="details" className="w-full">
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="details">Details</TabsTrigger>
+              <TabsTrigger value="api-calls">
+                <Activity className="h-4 w-4 mr-2" />
+                API Calls
+              </TabsTrigger>
+              <TabsTrigger value="tasks">Tasks</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="details" className="space-y-6 mt-4">
             {/* Job Info */}
             <Card>
               <CardContent className="pt-6">
@@ -513,8 +525,13 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
                 </CardContent>
               </Card>
             )}
+            </TabsContent>
 
-            {/* Tasks List */}
+            <TabsContent value="api-calls" className="mt-4">
+              <ApiCallStream jobId={job.id} />
+            </TabsContent>
+
+            <TabsContent value="tasks" className="mt-4">
             {job.job_type !== 'full_server_update' && (
               <Card>
                 <CardContent className="pt-6">
@@ -566,7 +583,8 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
               </CardContent>
             </Card>
             )}
-          </div>
+            </TabsContent>
+          </Tabs>
         </DialogContent>
       )}
     </Dialog>
