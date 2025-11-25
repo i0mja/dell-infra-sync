@@ -1,6 +1,10 @@
 import hashlib
 import json
 import time
+import socket
+import threading
+import http.server
+import socketserver
 from datetime import datetime
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
@@ -9,6 +13,34 @@ import requests
 
 from job_executor.config import SERVICE_ROLE_KEY, SUPABASE_URL
 from job_executor.utils import _safe_json_parse
+
+
+class SCPReceiverHandler(http.server.BaseHTTPRequestHandler):
+    """HTTP handler for receiving SCP content pushed from iDRAC."""
+    received_content = None
+    content_type = None
+    
+    def do_PUT(self):
+        """Handle PUT request with SCP content."""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            SCPReceiverHandler.content_type = self.headers.get('Content-Type', 'application/octet-stream')
+            SCPReceiverHandler.received_content = self.rfile.read(content_length)
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'OK')
+        except Exception as e:
+            self.send_response(500)
+            self.end_headers()
+    
+    def do_POST(self):
+        """Handle POST request (same as PUT)."""
+        self.do_PUT()
+    
+    def log_message(self, format, *args):
+        """Suppress HTTP server logging."""
+        pass
 
 
 class ScpMixin:
@@ -54,6 +86,14 @@ class ScpMixin:
                     username, password = self.get_credentials_for_server(server)
 
                     self.log(f"  Exporting SCP from {ip}...")
+                    
+                    # Detect iDRAC version and capabilities
+                    idrac_info = self._get_idrac_version(ip, username, password)
+                    supports_local = idrac_info.get('supports_local', True)
+                    firmware_version = idrac_info.get('firmware', 'unknown')
+                    
+                    if not supports_local:
+                        self.log(f"    iDRAC {firmware_version} detected - Local export not supported, using HTTP Push")
 
                     export_url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ExportSystemConfiguration"
 
@@ -136,15 +176,32 @@ class ScpMixin:
                         raise Exception(f"Export failed: {response.status_code} - {response.text}")
 
                     if response.status_code == 202:
-                        scp_content = self._wait_for_scp_export(
-                            ip,
-                            username,
-                            password,
-                            response.headers,
-                            _safe_json_parse(response),
-                            job,
-                            server_id
-                        )
+                        try:
+                            scp_content = self._wait_for_scp_export(
+                                ip,
+                                username,
+                                password,
+                                response.headers,
+                                _safe_json_parse(response),
+                                job,
+                                server_id
+                            )
+                        except Exception as local_error:
+                            # If Local export fails and HTTP Push is available, try it as fallback
+                            if not supports_local or "no content" in str(local_error).lower():
+                                self.log(f"    Local export failed: {local_error}")
+                                self.log(f"    Attempting HTTP Push export as fallback...")
+                                scp_content = self._export_via_http_push(
+                                    ip,
+                                    username,
+                                    password,
+                                    targets,
+                                    details,
+                                    job,
+                                    server_id
+                                )
+                            else:
+                                raise
                     else:
                         export_data = _safe_json_parse(response)
                         scp_content = self._extract_scp_content(export_data) or export_data
@@ -692,6 +749,197 @@ class ScpMixin:
             return stripped
 
         return None
+
+    def _get_idrac_version(self, ip: str, username: str, password: str) -> Dict:
+        """
+        Get iDRAC version and determine export capabilities.
+        
+        Returns dict with:
+        - firmware: Firmware version string
+        - model: iDRAC model (e.g., "iDRAC9")
+        - supports_local: Whether Local SCP export is supported
+        """
+        try:
+            url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1"
+            response = requests.get(url, auth=(username, password), verify=False, timeout=30)
+            
+            if response.status_code != 200:
+                return {'firmware': 'unknown', 'model': 'unknown', 'supports_local': True}
+            
+            data = _safe_json_parse(response)
+            firmware = data.get('FirmwareVersion', '')
+            model = data.get('Model', '')
+            
+            # Determine Local export support based on firmware version
+            # iDRAC9 with firmware 4.x+ supports Local export
+            # iDRAC8 with firmware 2.70+ supports Local export
+            # Older versions require HTTP Push or network share
+            supports_local = self._check_local_support(firmware, model)
+            
+            return {
+                'firmware': firmware,
+                'model': model,
+                'supports_local': supports_local
+            }
+            
+        except Exception as e:
+            self.log(f"    Failed to detect iDRAC version: {e}", "WARN")
+            # Assume newer version with Local support by default
+            return {'firmware': 'unknown', 'model': 'unknown', 'supports_local': True}
+    
+    def _check_local_support(self, firmware: str, model: str) -> bool:
+        """Check if iDRAC version supports Local SCP export."""
+        try:
+            # Extract version numbers
+            version_parts = firmware.split('.')
+            if not version_parts:
+                return True
+            
+            major_version = int(version_parts[0])
+            
+            if 'iDRAC9' in model or 'idrac9' in model.lower():
+                # iDRAC9: Local export supported in 4.x+
+                return major_version >= 4
+            elif 'iDRAC8' in model or 'idrac8' in model.lower():
+                # iDRAC8: Local export supported in 2.70+
+                if major_version > 2:
+                    return True
+                if major_version == 2 and len(version_parts) > 1:
+                    minor_version = int(version_parts[1])
+                    return minor_version >= 70
+                return False
+            else:
+                # For iDRAC7 and older, Local export is not supported
+                return major_version >= 4
+                
+        except Exception:
+            # If we can't parse version, assume it supports Local
+            return True
+    
+    def _find_free_port(self) -> int:
+        """Find a free TCP port for the HTTP server."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(('', 0))
+            s.listen(1)
+            port = s.getsockname()[1]
+        return port
+    
+    def _get_local_ip(self) -> str:
+        """Get the local IP address reachable from the network."""
+        try:
+            # Create a socket to determine which interface to use
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+            return local_ip
+        except Exception:
+            return '0.0.0.0'
+    
+    def _export_via_http_push(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        targets: List[str],
+        details: Dict,
+        job: Dict,
+        server_id: str
+    ) -> Optional[str]:
+        """
+        Export SCP by having iDRAC push content to a temporary HTTP server.
+        
+        This method is used as a fallback for older iDRAC firmware that doesn't
+        support "Local" export mode.
+        """
+        # Find free port and get local IP
+        port = self._find_free_port()
+        local_ip = self._get_local_ip()
+        
+        self.log(f"    Starting HTTP server on {local_ip}:{port} to receive SCP content...")
+        
+        # Reset handler state
+        SCPReceiverHandler.received_content = None
+        SCPReceiverHandler.content_type = None
+        
+        # Start temporary HTTP server
+        server = socketserver.TCPServer((local_ip, port), SCPReceiverHandler)
+        server.timeout = 300  # 5 minute timeout
+        
+        # Run server in background thread (handle one request)
+        server_thread = threading.Thread(target=server.handle_request, daemon=True)
+        server_thread.start()
+        
+        try:
+            # Tell iDRAC to export to our HTTP server
+            export_url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ExportSystemConfiguration"
+            
+            share_parameters = {
+                "Target": ",".join(targets),
+                "ShareType": "HTTP",
+                "IPAddress": local_ip,
+                "PortNumber": port,
+                "FileName": "scp_export.xml"
+            }
+            
+            payload = {
+                "ExportFormat": "XML",
+                "ShareParameters": share_parameters,
+                "ExportUse": details.get('export_use', 'Clone'),
+                "IncludeInExport": details.get('include_in_export', 'Default'),
+            }
+            
+            self.log(f"    Requesting iDRAC to push SCP to http://{local_ip}:{port}/scp_export.xml")
+            
+            start_time = time.time()
+            response = requests.post(
+                export_url,
+                auth=(username, password),
+                json=payload,
+                verify=False,
+                timeout=30
+            )
+            response_time_ms = int((time.time() - start_time) * 1000)
+            
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job['id'],
+                task_id=None,
+                command_type='POST',
+                endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ExportSystemConfiguration',
+                full_url=export_url,
+                request_headers={'Authorization': '[REDACTED]'},
+                request_body={'ShareType': 'HTTP', 'IPAddress': local_ip, 'PortNumber': port},
+                response_body=_safe_json_parse(response),
+                status_code=response.status_code,
+                response_time_ms=response_time_ms,
+                success=response.status_code in [200, 202],
+                operation_type='idrac_api'
+            )
+            
+            if response.status_code not in [200, 202]:
+                raise Exception(f"HTTP Push export request failed: {response.status_code} - {response.text}")
+            
+            # Wait for the server thread to receive content
+            self.log(f"    Waiting for iDRAC to push SCP content...")
+            server_thread.join(timeout=300)
+            
+            if SCPReceiverHandler.received_content:
+                self.log(f"    ✓ Received SCP content via HTTP Push ({len(SCPReceiverHandler.received_content)} bytes)")
+                
+                # Decode and parse content
+                content_bytes = SCPReceiverHandler.received_content
+                content_str = content_bytes.decode('utf-8') if isinstance(content_bytes, bytes) else str(content_bytes)
+                
+                # Parse if it's JSON or return as XML string
+                parsed = self._maybe_parse_content(content_str)
+                return parsed if parsed is not None else content_str
+            else:
+                raise Exception("HTTP server timeout - iDRAC did not push SCP content")
+                
+        finally:
+            server.server_close()
+            self.log(f"    HTTP server stopped")
 
     def execute_scp_import(self, job: Dict):
         """
