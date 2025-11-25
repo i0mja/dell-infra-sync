@@ -1,85 +1,105 @@
 """
-Dell Redfish Operations
+Dell iDRAC Redfish Operations Module
 
-High-level iDRAC operations using Dell's official library functions.
-All operations go through the DellRedfishAdapter for safety and logging.
-
-This module provides a clean interface for common iDRAC tasks:
-- System information retrieval
-- Firmware updates
-- SCP export/import
-- Boot configuration
-- Power control
-- Health monitoring
+Provides high-level operations for Dell iDRAC using the Redfish API.
+All operations go through DellRedfishAdapter for throttling, logging, and error handling.
 """
 
-from typing import Optional, Dict, List, Any
-import logging
-
+from typing import Dict, List, Optional, Any, Tuple
+import time
 from .adapter import DellRedfishAdapter
+from .helpers import DellRedfishHelpers
 from .errors import DellRedfishError
 
 
 class DellOperations:
     """
-    High-level iDRAC operations using Dell's official Redfish library.
+    High-level iDRAC operations using Dell Redfish API patterns.
     
-    This class provides tested, reliable methods for common iDRAC tasks
-    by leveraging Dell's official implementations while maintaining our
-    throttling and logging infrastructure.
+    This class provides reliable methods for common iDRAC tasks following
+    Dell's documented Redfish patterns while maintaining our throttling
+    and logging infrastructure.
     """
     
     def __init__(self, adapter: DellRedfishAdapter):
         """
-        Initialize Dell operations.
+        Initialize operations with adapter.
         
         Args:
-            adapter: DellRedfishAdapter instance for safe API calls
+            adapter: DellRedfishAdapter instance for making API calls
         """
         self.adapter = adapter
-        self.logger = logging.getLogger(__name__)
+        self.helpers = DellRedfishHelpers(adapter)
     
-    # ========================================================================
-    # System Information
-    # ========================================================================
+    # System Information Operations
     
     def get_system_info(
         self,
         ip: str,
         username: str,
         password: str,
+        server_id: str = None,
+        user_id: str = None
     ) -> Dict[str, Any]:
         """
-        Get basic system information from iDRAC.
+        Get comprehensive system information from iDRAC.
         
-        Uses Dell's tested approach for retrieving system details including:
-        - Service tag
-        - Model
-        - BIOS version
-        - iDRAC firmware version
-        - Power state
-        - Health status
+        Dell endpoint: GET /redfish/v1/Systems/System.Embedded.1
         
         Args:
             ip: iDRAC IP address
             username: iDRAC username
             password: iDRAC password
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
             
         Returns:
-            dict with system information
+            dict: System information including model, BIOS version, health status
             
         Raises:
-            DellRedfishError: If operation fails
+            DellRedfishError: On API errors
         """
-        # Placeholder - will be implemented with Dell library functions
-        # For now, return structure that matches what we need
+        system_response = self.adapter.make_request(
+            method='GET',
+            ip=ip,
+            endpoint='/redfish/v1/Systems/System.Embedded.1',
+            username=username,
+            password=password,
+            operation_name='Get System Info',
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        manager_response = self.adapter.make_request(
+            method='GET',
+            ip=ip,
+            endpoint='/redfish/v1/Managers/iDRAC.Embedded.1',
+            username=username,
+            password=password,
+            operation_name='Get Manager Info',
+            server_id=server_id,
+            user_id=user_id
+        )
+        
         return {
-            "service_tag": None,
-            "model": None,
-            "bios_version": None,
-            "idrac_firmware": None,
-            "power_state": None,
-            "health_status": None,
+            'system': {
+                'hostname': system_response.get('HostName'),
+                'model': system_response.get('Model'),
+                'manufacturer': system_response.get('Manufacturer'),
+                'service_tag': system_response.get('SKU'),
+                'serial_number': system_response.get('SerialNumber'),
+                'bios_version': system_response.get('BiosVersion'),
+                'power_state': system_response.get('PowerState'),
+                'health': system_response.get('Status', {}).get('Health'),
+                'cpu_count': system_response.get('ProcessorSummary', {}).get('Count'),
+                'memory_gb': system_response.get('MemorySummary', {}).get('TotalSystemMemoryGiB'),
+            },
+            'manager': {
+                'idrac_firmware': manager_response.get('FirmwareVersion'),
+                'model': manager_response.get('Model'),
+                'mac_address': manager_response.get('NetworkProtocol', {}).get('HostName'),
+            },
+            'redfish_version': system_response.get('RedfishVersion', '1.0.0')
         }
     
     def get_firmware_inventory(
@@ -87,29 +107,71 @@ class DellOperations:
         ip: str,
         username: str,
         password: str,
+        server_id: str = None,
+        user_id: str = None
     ) -> List[Dict[str, Any]]:
         """
         Get firmware inventory from iDRAC.
         
-        Uses Dell's FirmwareInventory endpoint with proper parsing.
+        Dell endpoint: GET /redfish/v1/UpdateService/FirmwareInventory
         
         Args:
             ip: iDRAC IP address
             username: iDRAC username
             password: iDRAC password
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
             
         Returns:
-            List of firmware components with versions
+            list: List of firmware components with versions
             
         Raises:
-            DellRedfishError: If operation fails
+            DellRedfishError: On API errors
         """
-        # Placeholder - will be implemented with Dell library functions
-        return []
+        inventory_response = self.adapter.make_request(
+            method='GET',
+            ip=ip,
+            endpoint='/redfish/v1/UpdateService/FirmwareInventory',
+            username=username,
+            password=password,
+            operation_name='Get Firmware Inventory',
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        firmware_list = []
+        members = inventory_response.get('Members', [])
+        
+        # Fetch details for each firmware component
+        for member in members:
+            member_uri = member.get('@odata.id', '')
+            if member_uri:
+                try:
+                    component = self.adapter.make_request(
+                        method='GET',
+                        ip=ip,
+                        endpoint=member_uri,
+                        username=username,
+                        password=password,
+                        operation_name='Get Firmware Component',
+                        server_id=server_id,
+                        user_id=user_id
+                    )
+                    
+                    firmware_list.append({
+                        'name': component.get('Name'),
+                        'version': component.get('Version'),
+                        'updateable': component.get('Updateable'),
+                        'status': component.get('Status'),
+                        'id': component.get('Id')
+                    })
+                except:
+                    # Skip components that can't be read
+                    continue
+        
+        return firmware_list
     
-    # ========================================================================
-    # Firmware Updates
-    # ========================================================================
+    # Firmware Update Operations
     
     def update_firmware_simple(
         self,
@@ -117,33 +179,77 @@ class DellOperations:
         username: str,
         password: str,
         firmware_uri: str,
-        target: Optional[str] = None,
+        job_id: str = None,
+        server_id: str = None,
+        user_id: str = None
     ) -> Dict[str, Any]:
         """
         Perform firmware update using SimpleUpdate method.
         
-        Uses Dell's DeviceFirmwareSimpleUpdateREDFISH approach with:
-        - Proper task monitoring
-        - Progress tracking
-        - Error handling
+        Dell pattern:
+        - POST /redfish/v1/UpdateService/Actions/UpdateService.SimpleUpdate
+        - Monitor task until completion
         
         Args:
             ip: iDRAC IP address
             username: iDRAC username
             password: iDRAC password
-            firmware_uri: URI to firmware file (HTTP/HTTPS/NFS/CIFS)
-            target: Optional target component (e.g., "BIOS", "iDRAC")
+            firmware_uri: HTTP/HTTPS URI to firmware file (.exe)
+            job_id: Optional job ID for logging
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
             
         Returns:
-            dict with task_id and status
+            dict: Update results including task status
             
         Raises:
-            DellRedfishError: If operation fails
+            DellRedfishError: On API errors
         """
-        # Placeholder - will be implemented with Dell library functions
+        # Initiate SimpleUpdate
+        payload = {
+            'ImageURI': firmware_uri,
+            'TransferProtocol': 'HTTP'
+        }
+        
+        response = self.adapter.make_request(
+            method='POST',
+            ip=ip,
+            endpoint='/redfish/v1/UpdateService/Actions/UpdateService.SimpleUpdate',
+            username=username,
+            password=password,
+            payload=payload,
+            operation_name='Initiate Firmware Update',
+            job_id=job_id,
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        # Get task URI from response
+        task_uri = self.helpers.get_task_uri_from_response(response)
+        if not task_uri:
+            raise DellRedfishError(
+                message="Failed to get task URI from firmware update response",
+                error_code='NO_TASK_URI'
+            )
+        
+        # Monitor task
+        task_result = self.helpers.wait_for_task(
+            ip=ip,
+            username=username,
+            password=password,
+            task_uri=task_uri,
+            timeout=1800,  # 30 minutes
+            operation_name='Firmware Update',
+            job_id=job_id,
+            server_id=server_id,
+            user_id=user_id
+        )
+        
         return {
-            "task_id": None,
-            "status": "pending",
+            'task_uri': task_uri,
+            'task_state': task_result.get('TaskState'),
+            'messages': task_result.get('Messages', []),
+            'percent_complete': task_result.get('PercentComplete', 100)
         }
     
     def monitor_firmware_task(
@@ -151,35 +257,44 @@ class DellOperations:
         ip: str,
         username: str,
         password: str,
-        task_id: str,
+        task_uri: str,
+        timeout: int = 1800,
+        job_id: str = None,
+        server_id: str = None,
+        user_id: str = None
     ) -> Dict[str, Any]:
         """
-        Monitor firmware update task progress.
-        
-        Uses Dell's task monitoring with proper status parsing.
+        Monitor firmware update task until completion.
         
         Args:
             ip: iDRAC IP address
             username: iDRAC username
             password: iDRAC password
-            task_id: Task ID from update_firmware_simple
+            task_uri: Task URI from update initiation
+            timeout: Maximum wait time in seconds
+            job_id: Optional job ID for logging
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
             
         Returns:
-            dict with task status and progress
+            dict: Final task status
             
         Raises:
-            DellRedfishError: If operation fails
+            DellRedfishError: On task failure or timeout
         """
-        # Placeholder - will be implemented with Dell library functions
-        return {
-            "status": "running",
-            "percent_complete": 0,
-            "message": "",
-        }
+        return self.helpers.wait_for_task(
+            ip=ip,
+            username=username,
+            password=password,
+            task_uri=task_uri,
+            timeout=timeout,
+            operation_name='Firmware Task Monitor',
+            job_id=job_id,
+            server_id=server_id,
+            user_id=user_id
+        )
     
-    # ========================================================================
-    # SCP (Server Configuration Profile)
-    # ========================================================================
+    # SCP (Server Configuration Profile) Operations
     
     def export_scp(
         self,
@@ -187,35 +302,97 @@ class DellOperations:
         username: str,
         password: str,
         target: str = "ALL",
-        export_format: str = "JSON",
-        export_use: str = "Default",
+        job_id: str = None,
+        server_id: str = None,
+        user_id: str = None
     ) -> Dict[str, Any]:
         """
         Export Server Configuration Profile (SCP).
         
-        Uses Dell's ExportSystemConfigurationREDFISH with:
-        - Local or network share export
-        - Component filtering (BIOS, iDRAC, NIC, RAID, etc.)
-        - Format selection (JSON, XML)
+        Dell pattern:
+        - POST /redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ExportSystemConfiguration
+        - Local export without network share (iDRAC 9 3.30+)
         
         Args:
             ip: iDRAC IP address
             username: iDRAC username
             password: iDRAC password
-            target: Components to export (ALL, BIOS, iDRAC, NIC, RAID, etc.)
-            export_format: Export format (JSON or XML)
-            export_use: Export use (Default, Clone, Replace)
+            target: Export target (ALL, IDRAC, BIOS, NIC, RAID)
+            job_id: Optional job ID for logging
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
             
         Returns:
-            dict with SCP content and job_id
+            dict: SCP content and metadata
             
         Raises:
-            DellRedfishError: If operation fails
+            DellRedfishError: On API errors
         """
-        # Placeholder - will be implemented with Dell library functions
+        # Check if local export is supported
+        if not self.helpers.check_feature_support(ip, username, password, 'local_scp_export', server_id, user_id):
+            raise DellRedfishError(
+                message="Local SCP export requires iDRAC 9 firmware 3.30 or later",
+                error_code='FEATURE_NOT_SUPPORTED'
+            )
+        
+        # Initiate export
+        payload = {
+            'ExportFormat': 'JSON',
+            'ShareParameters': {
+                'Target': target
+            }
+        }
+        
+        response = self.adapter.make_request(
+            method='POST',
+            ip=ip,
+            endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ExportSystemConfiguration',
+            username=username,
+            password=password,
+            payload=payload,
+            operation_name='Export SCP',
+            job_id=job_id,
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        # Get task URI
+        task_uri = self.helpers.get_task_uri_from_response(response)
+        if not task_uri:
+            raise DellRedfishError(
+                message="Failed to get task URI from SCP export response",
+                error_code='NO_TASK_URI'
+            )
+        
+        # Wait for export to complete
+        task_result = self.helpers.wait_for_task(
+            ip=ip,
+            username=username,
+            password=password,
+            task_uri=task_uri,
+            timeout=300,
+            operation_name='SCP Export',
+            job_id=job_id,
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        # Extract SCP content from task result
+        # Dell returns SCP as base64 in Messages[0].Message or in Oem field
+        messages = task_result.get('Messages', [])
+        scp_content = None
+        
+        if messages and len(messages) > 0:
+            # SCP typically in first message
+            message_text = messages[0].get('Message', '')
+            if message_text:
+                scp_content = message_text
+        
         return {
-            "job_id": None,
-            "scp_content": None,
+            'scp_content': scp_content,
+            'target': target,
+            'task_uri': task_uri,
+            'export_timestamp': time.time()
         }
     
     def import_scp(
@@ -223,72 +400,131 @@ class DellOperations:
         ip: str,
         username: str,
         password: str,
-        scp_content: Dict[str, Any],
+        scp_content: str,
         shutdown_type: str = "Graceful",
-        host_power_state: str = "On",
-        time_to_wait: int = 300,
+        job_id: str = None,
+        server_id: str = None,
+        user_id: str = None
     ) -> Dict[str, Any]:
         """
         Import Server Configuration Profile (SCP).
         
-        Uses Dell's ImportSystemConfigurationREDFISH with:
-        - Power state management
-        - Reboot handling
-        - Job creation and monitoring
+        Dell pattern:
+        - POST /redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ImportSystemConfiguration
+        - Monitor job until completion
         
         Args:
             ip: iDRAC IP address
             username: iDRAC username
             password: iDRAC password
-            scp_content: SCP content as dict (from export_scp)
-            shutdown_type: Shutdown type (Graceful, Forced, NoReboot)
-            host_power_state: Power state after import (On, Off)
-            time_to_wait: Time to wait before shutdown (seconds)
+            scp_content: SCP XML/JSON content
+            shutdown_type: Graceful, Forced, NoReboot
+            job_id: Optional job ID for logging
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
             
         Returns:
-            dict with job_id and status
+            dict: Import job results
             
         Raises:
-            DellRedfishError: If operation fails
+            DellRedfishError: On API errors
         """
-        # Placeholder - will be implemented with Dell library functions
+        # Initiate import
+        payload = {
+            'ImportBuffer': scp_content,
+            'ShareParameters': {
+                'Target': 'ALL'
+            },
+            'ShutdownType': shutdown_type
+        }
+        
+        response = self.adapter.make_request(
+            method='POST',
+            ip=ip,
+            endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ImportSystemConfiguration',
+            username=username,
+            password=password,
+            payload=payload,
+            operation_name='Import SCP',
+            job_id=job_id,
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        # Extract job ID from response
+        job_id_str = response.get('JobId') or response.get('Id')
+        if not job_id_str:
+            raise DellRedfishError(
+                message="Failed to get job ID from SCP import response",
+                error_code='NO_JOB_ID'
+            )
+        
+        # Monitor job
+        job_result = self.helpers.wait_for_job(
+            ip=ip,
+            username=username,
+            password=password,
+            job_id_str=job_id_str,
+            timeout=1800,
+            operation_name='SCP Import',
+            parent_job_id=job_id,
+            server_id=server_id,
+            user_id=user_id
+        )
+        
         return {
-            "job_id": None,
-            "status": "pending",
+            'job_id': job_id_str,
+            'job_state': job_result.get('JobState'),
+            'message': job_result.get('Message'),
+            'percent_complete': job_result.get('PercentComplete', 100)
         }
     
-    # ========================================================================
-    # Boot Configuration
-    # ========================================================================
+    # Boot Configuration Operations
     
     def get_boot_order(
         self,
         ip: str,
         username: str,
         password: str,
+        server_id: str = None,
+        user_id: str = None
     ) -> Dict[str, Any]:
         """
-        Get current boot order configuration.
+        Get current boot configuration.
         
-        Uses Dell's GetBiosBootOrderREDFISH approach.
+        Dell endpoint: GET /redfish/v1/Systems/System.Embedded.1
         
         Args:
             ip: iDRAC IP address
             username: iDRAC username
             password: iDRAC password
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
             
         Returns:
-            dict with boot_order, boot_mode, and boot_source_override
+            dict: Boot configuration (order, mode, override settings)
             
         Raises:
-            DellRedfishError: If operation fails
+            DellRedfishError: On API errors
         """
-        # Placeholder - will be implemented with Dell library functions
+        response = self.adapter.make_request(
+            method='GET',
+            ip=ip,
+            endpoint='/redfish/v1/Systems/System.Embedded.1',
+            username=username,
+            password=password,
+            operation_name='Get Boot Order',
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        boot = response.get('Boot', {})
         return {
-            "boot_order": [],
-            "boot_mode": None,
-            "boot_source_override_enabled": None,
-            "boot_source_override_target": None,
+            'boot_order': boot.get('BootOrder', []),
+            'boot_mode': boot.get('BootSourceOverrideMode'),
+            'boot_source_override_enabled': boot.get('BootSourceOverrideEnabled'),
+            'boot_source_override_target': boot.get('BootSourceOverrideTarget'),
+            'uefi_target': boot.get('UefiTargetBootSourceOverride')
         }
     
     def set_boot_order(
@@ -297,32 +533,50 @@ class DellOperations:
         username: str,
         password: str,
         boot_order: List[str],
+        job_id: str = None,
+        server_id: str = None,
+        user_id: str = None
     ) -> Dict[str, Any]:
         """
-        Set boot order configuration.
+        Set boot device order.
         
-        Uses Dell's ChangeBiosBootOrderREDFISH approach with:
-        - Proper job creation
-        - Reboot scheduling
-        - Status monitoring
+        Dell pattern: PATCH /redfish/v1/Systems/System.Embedded.1
         
         Args:
             ip: iDRAC IP address
             username: iDRAC username
             password: iDRAC password
             boot_order: Ordered list of boot devices
+            job_id: Optional job ID for logging
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
             
         Returns:
-            dict with job_id and status
+            dict: Update status
             
         Raises:
-            DellRedfishError: If operation fails
+            DellRedfishError: On API errors
         """
-        # Placeholder - will be implemented with Dell library functions
-        return {
-            "job_id": None,
-            "status": "pending",
+        payload = {
+            'Boot': {
+                'BootOrder': boot_order
+            }
         }
+        
+        response = self.adapter.make_request(
+            method='PATCH',
+            ip=ip,
+            endpoint='/redfish/v1/Systems/System.Embedded.1',
+            username=username,
+            password=password,
+            payload=payload,
+            operation_name='Set Boot Order',
+            job_id=job_id,
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        return {'status': 'success', 'response': response}
     
     def set_one_time_boot(
         self,
@@ -330,207 +584,358 @@ class DellOperations:
         username: str,
         password: str,
         boot_device: str,
+        job_id: str = None,
+        server_id: str = None,
+        user_id: str = None
     ) -> Dict[str, Any]:
         """
         Set one-time boot device.
         
-        Uses Dell's SetOneTimeBootDeviceREDFISH approach.
+        Dell pattern: PATCH /redfish/v1/Systems/System.Embedded.1
+        
+        Valid boot devices:
+        - Pxe: PXE boot
+        - Cd: Virtual CD/DVD
+        - Hdd: Hard drive
+        - BiosSetup: Enter BIOS setup
+        - None: Normal boot order
         
         Args:
             ip: iDRAC IP address
             username: iDRAC username
             password: iDRAC password
-            boot_device: Boot device (Pxe, Cd, Hdd, BiosSetup, etc.)
+            boot_device: Boot device target
+            job_id: Optional job ID for logging
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
             
         Returns:
-            dict with status
+            dict: Update status
             
         Raises:
-            DellRedfishError: If operation fails
+            DellRedfishError: On API errors
         """
-        # Placeholder - will be implemented with Dell library functions
-        return {
-            "status": "success",
+        payload = {
+            'Boot': {
+                'BootSourceOverrideEnabled': 'Once',
+                'BootSourceOverrideTarget': boot_device
+            }
         }
+        
+        response = self.adapter.make_request(
+            method='PATCH',
+            ip=ip,
+            endpoint='/redfish/v1/Systems/System.Embedded.1',
+            username=username,
+            password=password,
+            payload=payload,
+            operation_name='Set One-Time Boot',
+            job_id=job_id,
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        return {'status': 'success', 'boot_device': boot_device, 'response': response}
     
-    # ========================================================================
-    # Power Control
-    # ========================================================================
+    # Power Control Operations
     
     def graceful_shutdown(
         self,
         ip: str,
         username: str,
         password: str,
+        job_id: str = None,
+        server_id: str = None,
+        user_id: str = None
     ) -> Dict[str, Any]:
         """
-        Perform graceful server shutdown.
+        Perform graceful shutdown.
         
-        Uses Dell's GracefulShutdownREDFISH approach with:
-        - OS-level shutdown request
-        - Status monitoring
-        - Timeout handling
+        Dell pattern: POST /redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset
         
         Args:
             ip: iDRAC IP address
             username: iDRAC username
             password: iDRAC password
+            job_id: Optional job ID for logging
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
             
         Returns:
-            dict with status
+            dict: Operation status
             
         Raises:
-            DellRedfishError: If operation fails
+            DellRedfishError: On API errors
         """
-        # Placeholder - will be implemented with Dell library functions
-        return {
-            "status": "initiated",
-        }
+        return self._reset_system(
+            ip, username, password, 'GracefulShutdown',
+            job_id, server_id, user_id
+        )
     
     def graceful_reboot(
         self,
         ip: str,
         username: str,
         password: str,
+        job_id: str = None,
+        server_id: str = None,
+        user_id: str = None
     ) -> Dict[str, Any]:
         """
-        Perform graceful server reboot.
+        Perform graceful reboot.
         
-        Uses Dell's GracefulRestartREDFISH approach with:
-        - OS-level reboot request
-        - POST state monitoring
-        - Boot completion tracking
+        Dell pattern: POST /redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset
         
         Args:
             ip: iDRAC IP address
             username: iDRAC username
             password: iDRAC password
+            job_id: Optional job ID for logging
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
             
         Returns:
-            dict with status
+            dict: Operation status
             
         Raises:
-            DellRedfishError: If operation fails
+            DellRedfishError: On API errors
         """
-        # Placeholder - will be implemented with Dell library functions
-        return {
-            "status": "initiated",
-        }
+        return self._reset_system(
+            ip, username, password, 'GracefulRestart',
+            job_id, server_id, user_id
+        )
     
     def power_on(
         self,
         ip: str,
         username: str,
         password: str,
+        job_id: str = None,
+        server_id: str = None,
+        user_id: str = None
     ) -> Dict[str, Any]:
         """
-        Power on the server.
+        Power on the system.
         
-        Uses Dell's PowerOnREDFISH approach.
+        Dell pattern: POST /redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset
         
         Args:
             ip: iDRAC IP address
             username: iDRAC username
             password: iDRAC password
+            job_id: Optional job ID for logging
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
             
         Returns:
-            dict with status
+            dict: Operation status
             
         Raises:
-            DellRedfishError: If operation fails
+            DellRedfishError: On API errors
         """
-        # Placeholder - will be implemented with Dell library functions
-        return {
-            "status": "success",
-        }
+        return self._reset_system(
+            ip, username, password, 'On',
+            job_id, server_id, user_id
+        )
     
-    # ========================================================================
-    # Health and Monitoring
-    # ========================================================================
+    def _reset_system(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        reset_type: str,
+        job_id: str = None,
+        server_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Internal method for system reset operations.
+        
+        Valid reset types: On, ForceOff, GracefulRestart, GracefulShutdown, ForceRestart
+        """
+        payload = {'ResetType': reset_type}
+        
+        response = self.adapter.make_request(
+            method='POST',
+            ip=ip,
+            endpoint='/redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset',
+            username=username,
+            password=password,
+            payload=payload,
+            operation_name=f'System Reset ({reset_type})',
+            job_id=job_id,
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        return {'status': 'success', 'reset_type': reset_type, 'response': response}
+    
+    # Health and Monitoring Operations
     
     def get_current_post_state(
         self,
         ip: str,
         username: str,
         password: str,
+        server_id: str = None,
+        user_id: str = None
     ) -> str:
         """
-        Get current server POST state.
+        Get current server POST (Power-On Self-Test) state.
         
-        Uses Dell's GetServerPOSTStateREDFISH approach.
-        Critical for knowing when to perform configuration operations.
+        Dell pattern: GET /redfish/v1/Managers/iDRAC.Embedded.1/Attributes
+        
+        Important for firmware operations - must wait for POST to complete.
         
         Args:
             ip: iDRAC IP address
             username: iDRAC username
             password: iDRAC password
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
             
         Returns:
-            POST state string (e.g., "PowerOn", "PowerOff", "InPOST", "FinishedPOST")
+            str: POST state (InPOST, OutOfPOST, etc.)
             
         Raises:
-            DellRedfishError: If operation fails
+            DellRedfishError: On API errors
         """
-        # Placeholder - will be implemented with Dell library functions
-        return "FinishedPOST"
+        if not self.helpers.check_feature_support(ip, username, password, 'post_state_check', server_id, user_id):
+            return 'UNSUPPORTED'
+        
+        response = self.adapter.make_request(
+            method='GET',
+            ip=ip,
+            endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Attributes',
+            username=username,
+            password=password,
+            operation_name='Get POST State',
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        attributes = response.get('Attributes', {})
+        # Different iDRAC versions use different attribute names
+        post_state = (
+            attributes.get('ServerPwr.1.ServerPwrState') or
+            attributes.get('ServerBoot.1.BootOnce') or
+            'Unknown'
+        )
+        
+        return post_state
     
     def wait_for_post_complete(
         self,
         ip: str,
         username: str,
         password: str,
-        timeout_seconds: int = 300,
+        timeout: int = 300,
+        poll_interval: int = 10,
+        server_id: str = None,
+        user_id: str = None
     ) -> bool:
         """
-        Wait for server POST to complete before operations.
+        Wait for server POST to complete before proceeding with operations.
         
-        Critical before firmware updates or configuration changes.
-        Uses Dell's approach with proper timeout handling.
+        Critical for firmware updates - cannot apply updates while in POST.
         
         Args:
             ip: iDRAC IP address
             username: iDRAC username
             password: iDRAC password
-            timeout_seconds: Maximum time to wait
+            timeout: Maximum wait time in seconds
+            poll_interval: Seconds between checks
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
             
         Returns:
-            True if POST completed, False if timeout
+            bool: True if POST completed, False if timeout
             
         Raises:
-            DellRedfishError: If operation fails
+            DellRedfishError: On API errors
         """
-        # Placeholder - will be implemented with Dell library functions
-        return True
+        start_time = time.time()
+        
+        while (time.time() - start_time) < timeout:
+            post_state = self.get_current_post_state(ip, username, password, server_id, user_id)
+            
+            if post_state in ('OutOfPOST', 'UNSUPPORTED', 'Unknown'):
+                self.adapter.logger.info(f"POST complete for {ip} (state: {post_state})")
+                return True
+            
+            self.adapter.logger.info(f"Waiting for POST to complete on {ip} (current: {post_state})")
+            time.sleep(poll_interval)
+        
+        self.adapter.logger.warning(f"POST wait timeout for {ip}")
+        return False
     
     def get_health_status(
         self,
         ip: str,
         username: str,
         password: str,
+        server_id: str = None,
+        user_id: str = None
     ) -> Dict[str, Any]:
         """
         Get comprehensive health status.
         
-        Uses Dell's health monitoring endpoints for:
-        - Overall health
-        - Component health (CPU, Memory, Storage, PSU, Fan, etc.)
-        - Sensor readings
-        - Event log summary
+        Dell endpoints:
+        - GET /redfish/v1/Systems/System.Embedded.1
+        - GET /redfish/v1/Chassis/System.Embedded.1
         
         Args:
             ip: iDRAC IP address
             username: iDRAC username
             password: iDRAC password
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
             
         Returns:
-            dict with health status for all components
+            dict: Health information (overall, CPU, memory, storage, etc.)
             
         Raises:
-            DellRedfishError: If operation fails
+            DellRedfishError: On API errors
         """
-        # Placeholder - will be implemented with Dell library functions
+        system_response = self.adapter.make_request(
+            method='GET',
+            ip=ip,
+            endpoint='/redfish/v1/Systems/System.Embedded.1',
+            username=username,
+            password=password,
+            operation_name='Get System Health',
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        chassis_response = self.adapter.make_request(
+            method='GET',
+            ip=ip,
+            endpoint='/redfish/v1/Chassis/System.Embedded.1',
+            username=username,
+            password=password,
+            operation_name='Get Chassis Health',
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        # Parse health data
+        system_status = system_response.get('Status', {})
+        processor_summary = system_response.get('ProcessorSummary', {})
+        memory_summary = system_response.get('MemorySummary', {})
+        
         return {
-            "overall_health": "OK",
-            "components": {},
-            "sensors": {},
+            'overall_health': system_status.get('Health'),
+            'health_rollup': system_status.get('HealthRollup'),
+            'power_state': system_response.get('PowerState'),
+            'processor': {
+                'health': processor_summary.get('Status', {}).get('Health'),
+                'count': processor_summary.get('Count')
+            },
+            'memory': {
+                'health': memory_summary.get('Status', {}).get('Health'),
+                'total_gb': memory_summary.get('TotalSystemMemoryGiB')
+            },
+            'chassis_status': chassis_response.get('Status', {}).get('Health'),
+            'chassis_power_state': chassis_response.get('PowerState')
         }
