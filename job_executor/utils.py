@@ -32,4 +32,16 @@ def _safe_json_parse(response: Any):
         return response.json()
     except Exception:
         text = response.text[:500] if hasattr(response, "text") else str(response.content[:500])
+        stripped = text.strip() if isinstance(text, str) else ""
+
+        if stripped.startswith("<SystemConfiguration"):
+            # SCP exports return XML payloads; treat as completed task output
+            return {
+                "TaskState": "Completed",
+                "PercentComplete": 100,
+                "Messages": [{"Message": stripped}],
+                "_raw_response": text,
+                "_parse_error": "Response returned XML instead of JSON"
+            }
+
         return {"_raw_response": text, "_parse_error": "Not valid JSON"}
