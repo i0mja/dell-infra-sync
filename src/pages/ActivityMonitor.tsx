@@ -242,7 +242,7 @@ export default function ActivityMonitor() {
     return (successCount / commands.length) * 100;
   };
 
-  const handleExport = () => {
+  const handleExportCSV = () => {
     const stringifyField = (value: unknown) => {
       if (value === null || value === undefined) return '';
       if (typeof value === 'string') return value;
@@ -301,7 +301,41 @@ export default function ActivityMonitor() {
     a.href = url;
     a.download = `activity-log-${new Date().toISOString()}.csv`;
     a.click();
-    toast.success('Activity log exported');
+    toast.success('Activity log exported as CSV');
+  };
+
+  const handleExportJSON = () => {
+    const exportData = filteredCommands.map(cmd => ({
+      id: cmd.id,
+      timestamp: cmd.timestamp,
+      operation_type: cmd.operation_type,
+      command_type: cmd.command_type,
+      endpoint: cmd.endpoint,
+      full_url: cmd.full_url,
+      status_code: cmd.status_code,
+      success: cmd.success,
+      response_time_ms: cmd.response_time_ms,
+      server: cmd.servers?.hostname || cmd.servers?.ip_address || null,
+      server_id: cmd.server_id,
+      job_id: cmd.job_id,
+      task_id: cmd.task_id,
+      source: cmd.source,
+      initiated_by: cmd.initiated_by,
+      request_headers: cmd.request_headers,
+      request_body: cmd.request_body,
+      response_body: cmd.response_body,
+      error_message: cmd.error_message
+    }));
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { 
+      type: 'application/json' 
+    });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `activity-log-${new Date().toISOString()}.json`;
+    a.click();
+    toast.success('Activity log exported as JSON');
   };
 
   // Filter commands based on search
@@ -326,7 +360,8 @@ export default function ActivityMonitor() {
         failedCount={commands.filter(c => !c.success).length}
         liveStatus={realtimeStatus}
         onRefresh={handleManualRefresh}
-        onExport={handleExport}
+        onExportCSV={handleExportCSV}
+        onExportJSON={handleExportJSON}
       />
 
       <div className="space-y-4 px-4 pt-4 sm:px-6 lg:px-8">

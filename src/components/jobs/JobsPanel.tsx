@@ -492,9 +492,8 @@ export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) =>
                         </p>
                       </div>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
               </ContextMenuTrigger>
 
               <ContextMenuContent className="w-48">
