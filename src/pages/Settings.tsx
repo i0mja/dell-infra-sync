@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTheme } from "next-themes";
-import { Activity, AlertCircle, Bell, Briefcase, CheckCircle2, ChevronDown, ChevronRight, Copy, Database, Disc, FileText, Globe, Info, Loader2, Mail, MessageSquare, Monitor, Moon, Network, Palette, Plus, RefreshCw, Save, Server, Settings as SettingsIcon, Shield, Sun, Terminal, Users, X, XCircle } from "lucide-react";
+import { Activity, AlertCircle, Bell, Briefcase, CheckCircle2, ChevronDown, ChevronRight, CloudCog, Copy, Database, Disc, FileText, Globe, Info, Loader2, Mail, MessageSquare, Monitor, Moon, Network, Palette, Plus, RefreshCw, Save, Server, Settings as SettingsIcon, Shield, ShieldAlert, Sun, Terminal, Users, X, XCircle } from "lucide-react";
 import { ServerGroupsManagement } from "@/components/settings/ServerGroupsManagement";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -2700,10 +2700,18 @@ export default function Settings() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="activity">
+          <TabsContent value="operations-safety">
             <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <ShieldAlert className="h-5 w-5" />
+                  Operations Safety Controls
+                </CardTitle>
+                <CardDescription>
+                  Emergency kill switch and throttling controls for iDRAC operations
+                </CardDescription>
+              </CardHeader>
               <CardContent className="space-y-6">
-                
                 {/* iDRAC Safety Controls - Kill Switch & Throttling */}
                 <div className="space-y-4 border-2 border-destructive/50 rounded-lg p-4 bg-destructive/5">
                   <div className="flex items-center gap-2">
@@ -2747,7 +2755,7 @@ export default function Settings() {
                     <Alert className="border-yellow-500/50 bg-yellow-500/10">
                       <AlertCircle className="h-4 w-4 text-yellow-600" />
                       <AlertDescription className="text-yellow-900 dark:text-yellow-200">
-                        iDRAC operations are currently PAUSED. Click "Save Activity Settings" to apply, then restart Job Executor.
+                        iDRAC operations are currently PAUSED. Click "Save Settings" to apply, then restart Job Executor.
                       </AlertDescription>
                     </Alert>
                   )}
@@ -2799,6 +2807,17 @@ export default function Settings() {
                     </div>
                   </div>
                 </div>
+
+                <Button onClick={handleSaveActivitySettings} disabled={loading}>
+                  {loading ? "Saving..." : "Save Operations Safety Settings"}
+                </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="activity">
+            <Card>
+              <CardContent className="space-y-6">
 
                 {/* iDRAC Log Retention & Cleanup Section */}
                 <div className="space-y-4">
@@ -3010,120 +3029,6 @@ export default function Settings() {
                   )}
                 </div>
 
-                {/* SCP Share Configuration (for older iDRAC firmware) */}
-                <div className="space-y-4 border-t pt-6">
-                  <div className="flex items-center gap-2">
-                    <Disc className="h-5 w-5 text-muted-foreground" />
-                    <h3 className="text-lg font-medium">SCP Export Share Configuration</h3>
-                  </div>
-
-                  <Alert className="border-blue-200 bg-blue-50 dark:bg-blue-950/20">
-                    <Info className="h-4 w-4 text-blue-600" />
-                    <AlertDescription className="text-sm">
-                      <strong>For older iDRAC firmware:</strong> If iDRAC doesn't support Local export method (iDRAC 8 v2.70+, iDRAC 9 v4.x+), 
-                      configure a network share as fallback. The Job Executor will automatically use this when Local export fails.
-                      <br /><br />
-                      <strong>Supported:</strong> Windows SMB/CIFS shares or Linux NFS shares accessible from iDRAC network.
-                    </AlertDescription>
-                  </Alert>
-
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="scp-share-enabled">Enable Network Share Export Fallback</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Automatically use network share when Local export is not supported
-                      </p>
-                    </div>
-                    <Switch
-                      id="scp-share-enabled"
-                      checked={scpShareEnabled}
-                      onCheckedChange={setScpShareEnabled}
-                    />
-                  </div>
-
-                  {scpShareEnabled && (
-                    <div className="space-y-4 pl-4 border-l-2 border-border">
-                      <div className="space-y-2">
-                        <Label htmlFor="scp-share-type">Share Type</Label>
-                        <Select value={scpShareType} onValueChange={(value: 'CIFS' | 'NFS') => setScpShareType(value)}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="CIFS">CIFS / SMB (Windows)</SelectItem>
-                            <SelectItem value="NFS">NFS (Linux/Unix)</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <p className="text-xs text-muted-foreground">
-                          {scpShareType === 'CIFS' 
-                            ? 'Windows file share (SMB/CIFS protocol)' 
-                            : 'Unix/Linux network file system'}
-                        </p>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="scp-share-path">Share Path *</Label>
-                        <Input
-                          id="scp-share-path"
-                          placeholder={scpShareType === 'CIFS' ? '\\\\server\\share\\exports' : '/export/scp_backups'}
-                          value={scpSharePath}
-                          onChange={(e) => setScpSharePath(e.target.value)}
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          {scpShareType === 'CIFS' 
-                            ? 'UNC path to Windows share (e.g., \\\\fileserver\\idrac$\\scp_exports)' 
-                            : 'NFS mount path (e.g., /mnt/nfs_share/scp_exports)'}
-                        </p>
-                      </div>
-
-                      {scpShareType === 'CIFS' && (
-                        <>
-                          <div className="space-y-2">
-                            <Label htmlFor="scp-share-username">Share Username</Label>
-                            <Input
-                              id="scp-share-username"
-                              placeholder="domain\\username or username"
-                              value={scpShareUsername}
-                              onChange={(e) => setScpShareUsername(e.target.value)}
-                            />
-                            <p className="text-xs text-muted-foreground">
-                              Username with write access to the share
-                            </p>
-                          </div>
-
-                          <div className="space-y-2">
-                            <Label htmlFor="scp-share-password">Share Password</Label>
-                            <Input
-                              id="scp-share-password"
-                              type="password"
-                              placeholder="••••••••"
-                              value={scpSharePassword}
-                              onChange={(e) => setScpSharePassword(e.target.value)}
-                            />
-                            <p className="text-xs text-muted-foreground">
-                              Password for share access (encrypted in database). Leave blank to keep existing.
-                            </p>
-                          </div>
-                        </>
-                      )}
-
-                      <Alert>
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertDescription className="text-sm">
-                          <strong>Requirements:</strong>
-                          <ul className="list-disc list-inside mt-2 space-y-1">
-                            <li>Share must be accessible from iDRAC network (test connectivity)</li>
-                            <li>iDRAC must have network route to share server</li>
-                            <li>Share must have write permissions for the specified user</li>
-                            <li>For CIFS: Port 445 must be open between iDRAC and file server</li>
-                            <li>For NFS: NFS ports (2049, 111) must be accessible</li>
-                          </ul>
-                        </AlertDescription>
-                      </Alert>
-                    </div>
-                  )}
-                </div>
-
                 <Button onClick={handleSaveActivitySettings} disabled={loading}>
                   {loading ? "Saving..." : "Save Activity Settings"}
                 </Button>
@@ -3246,178 +3151,6 @@ export default function Settings() {
                   <Button onClick={handleSaveSettings} disabled={loading}>
                     {loading ? "Saving..." : "Save Preferences"}
                   </Button>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Shield className="h-5 w-5" />
-                    Scheduled Cluster Safety Checks
-                  </CardTitle>
-                  <CardDescription>
-                    Automatically monitor cluster health and receive alerts when conditions become unsafe for maintenance
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {/* Enable scheduled checks */}
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label>Enable Scheduled Checks</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Automatically run safety checks on a schedule
-                      </p>
-                    </div>
-                    <Switch
-                      checked={scheduledChecksEnabled}
-                      onCheckedChange={setScheduledChecksEnabled}
-                      disabled={userRole !== 'admin'}
-                    />
-                  </div>
-
-                  {scheduledChecksEnabled && (
-                    <>
-                      {/* Schedule frequency */}
-                      <div className="space-y-2">
-                        <Label>Check Frequency</Label>
-                        <Select 
-                          value={checkFrequency} 
-                          onValueChange={setCheckFrequency}
-                          disabled={userRole !== 'admin'}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="0 */4 * * *">Every 4 hours</SelectItem>
-                            <SelectItem value="0 */6 * * *">Every 6 hours (recommended)</SelectItem>
-                            <SelectItem value="0 */12 * * *">Every 12 hours</SelectItem>
-                            <SelectItem value="0 0 * * *">Daily at midnight</SelectItem>
-                            <SelectItem value="0 6,18 * * *">Twice daily (6 AM, 6 PM)</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <p className="text-xs text-muted-foreground">
-                          More frequent checks provide earlier warnings but use more resources
-                        </p>
-                      </div>
-
-                      {/* Min required hosts */}
-                      <div className="space-y-2">
-                        <Label>Minimum Required Hosts</Label>
-                        <Input
-                          type="number"
-                          min="1"
-                          max="10"
-                          value={minRequiredHosts}
-                          onChange={(e) => setMinRequiredHosts(parseInt(e.target.value))}
-                          disabled={userRole !== 'admin'}
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Minimum healthy hosts required after taking one offline
-                        </p>
-                      </div>
-
-                      {/* Notification preferences */}
-                      <div className="space-y-3 pt-4 border-t">
-                        <Label className="text-base">Alert Preferences</Label>
-                        
-                        <div className="flex items-center justify-between">
-                          <div className="space-y-0.5">
-                            <Label className="font-normal">Alert on Unsafe Conditions</Label>
-                            <p className="text-xs text-muted-foreground">
-                              Send alert when cluster becomes unsafe for maintenance
-                            </p>
-                          </div>
-                          <Switch
-                            checked={notifyOnUnsafeCluster}
-                            onCheckedChange={setNotifyOnUnsafeCluster}
-                            disabled={userRole !== 'admin'}
-                          />
-                        </div>
-
-                        <div className="flex items-center justify-between">
-                          <div className="space-y-0.5">
-                            <Label className="font-normal">Alert on Warnings</Label>
-                            <p className="text-xs text-muted-foreground">
-                              Send alert for warnings (DRS disabled, low capacity)
-                            </p>
-                          </div>
-                          <Switch
-                            checked={notifyOnClusterWarning}
-                            onCheckedChange={setNotifyOnClusterWarning}
-                            disabled={userRole !== 'admin'}
-                          />
-                        </div>
-
-                        <div className="flex items-center justify-between">
-                          <div className="space-y-0.5">
-                            <Label className="font-normal">Alert on Status Changes</Label>
-                            <p className="text-xs text-muted-foreground">
-                              Send alert when cluster status changes (safe ↔ unsafe)
-                            </p>
-                          </div>
-                          <Switch
-                            checked={notifyOnClusterStatusChange}
-                            onCheckedChange={setNotifyOnClusterStatusChange}
-                            disabled={userRole !== 'admin'}
-                          />
-                        </div>
-                      </div>
-
-                      {/* Last check status */}
-                      {lastScheduledCheck?.last_run_at && (
-                        <div className="p-3 bg-muted rounded-lg space-y-1">
-                          <p className="text-sm font-medium">Last Scheduled Check</p>
-                          <p className="text-xs text-muted-foreground">
-                            {new Date(lastScheduledCheck.last_run_at).toLocaleString()}
-                          </p>
-                          {lastScheduledCheck.last_status && (
-                            <Badge variant={lastScheduledCheck.last_status === 'safe' ? 'default' : 'destructive'}>
-                              {lastScheduledCheck.last_status.toUpperCase()}
-                            </Badge>
-                          )}
-                        </div>
-                      )}
-
-                      <div className="flex gap-2">
-                        <Button
-                          onClick={saveScheduledCheckConfig}
-                          disabled={loading || userRole !== 'admin'}
-                          className="flex-1"
-                        >
-                          {loading ? (
-                            <>
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              Saving...
-                            </>
-                          ) : (
-                            <>
-                              <Save className="mr-2 h-4 w-4" />
-                              Save Configuration
-                            </>
-                          )}
-                        </Button>
-                        
-                        <Button
-                          onClick={runScheduledChecksNow}
-                          disabled={runningScheduledCheck || userRole !== 'admin'}
-                          variant="outline"
-                        >
-                          {runningScheduledCheck ? (
-                            <>
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              Running...
-                            </>
-                          ) : (
-                            <>
-                              <RefreshCw className="mr-2 h-4 w-4" />
-                              Run Now
-                            </>
-                          )}
-                        </Button>
-                      </div>
-                    </>
-                  )}
                 </CardContent>
               </Card>
 
@@ -3671,6 +3404,180 @@ export default function Settings() {
             </Card>
           </TabsContent>
 
+          <TabsContent value="cluster-monitoring">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <CloudCog className="h-5 w-5" />
+                  Scheduled Cluster Safety Checks
+                </CardTitle>
+                <CardDescription>
+                  Automatically monitor cluster health and receive alerts when conditions become unsafe for maintenance
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Enable scheduled checks */}
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>Enable Scheduled Checks</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Automatically run safety checks on a schedule
+                    </p>
+                  </div>
+                  <Switch
+                    checked={scheduledChecksEnabled}
+                    onCheckedChange={setScheduledChecksEnabled}
+                    disabled={userRole !== 'admin'}
+                  />
+                </div>
+
+                {scheduledChecksEnabled && (
+                  <>
+                    {/* Schedule frequency */}
+                    <div className="space-y-2">
+                      <Label>Check Frequency</Label>
+                      <Select 
+                        value={checkFrequency} 
+                        onValueChange={setCheckFrequency}
+                        disabled={userRole !== 'admin'}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="0 */4 * * *">Every 4 hours</SelectItem>
+                          <SelectItem value="0 */6 * * *">Every 6 hours (recommended)</SelectItem>
+                          <SelectItem value="0 */12 * * *">Every 12 hours</SelectItem>
+                          <SelectItem value="0 0 * * *">Daily at midnight</SelectItem>
+                          <SelectItem value="0 6,18 * * *">Twice daily (6 AM, 6 PM)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        More frequent checks provide earlier warnings but use more resources
+                      </p>
+                    </div>
+
+                    {/* Min required hosts */}
+                    <div className="space-y-2">
+                      <Label>Minimum Required Hosts</Label>
+                      <Input
+                        type="number"
+                        min="1"
+                        max="10"
+                        value={minRequiredHosts}
+                        onChange={(e) => setMinRequiredHosts(parseInt(e.target.value))}
+                        disabled={userRole !== 'admin'}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Minimum healthy hosts required after taking one offline
+                      </p>
+                    </div>
+
+                    {/* Notification preferences */}
+                    <div className="space-y-3 pt-4 border-t">
+                      <Label className="text-base">Alert Preferences</Label>
+                      
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label className="font-normal">Alert on Unsafe Conditions</Label>
+                          <p className="text-xs text-muted-foreground">
+                            Send alert when cluster becomes unsafe for maintenance
+                          </p>
+                        </div>
+                        <Switch
+                          checked={notifyOnUnsafeCluster}
+                          onCheckedChange={setNotifyOnUnsafeCluster}
+                          disabled={userRole !== 'admin'}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label className="font-normal">Alert on Warnings</Label>
+                          <p className="text-xs text-muted-foreground">
+                            Send alert for warnings (DRS disabled, low capacity)
+                          </p>
+                        </div>
+                        <Switch
+                          checked={notifyOnClusterWarning}
+                          onCheckedChange={setNotifyOnClusterWarning}
+                          disabled={userRole !== 'admin'}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label className="font-normal">Alert on Status Changes</Label>
+                          <p className="text-xs text-muted-foreground">
+                            Send alert when cluster status changes (safe ↔ unsafe)
+                          </p>
+                        </div>
+                        <Switch
+                          checked={notifyOnClusterStatusChange}
+                          onCheckedChange={setNotifyOnClusterStatusChange}
+                          disabled={userRole !== 'admin'}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Last check status */}
+                    {lastScheduledCheck?.last_run_at && (
+                      <div className="p-3 bg-muted rounded-lg space-y-1">
+                        <p className="text-sm font-medium">Last Scheduled Check</p>
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(lastScheduledCheck.last_run_at).toLocaleString()}
+                        </p>
+                        {lastScheduledCheck.last_status && (
+                          <Badge variant={lastScheduledCheck.last_status === 'safe' ? 'default' : 'destructive'}>
+                            {lastScheduledCheck.last_status.toUpperCase()}
+                          </Badge>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={saveScheduledCheckConfig}
+                        disabled={loading || userRole !== 'admin'}
+                        className="flex-1"
+                      >
+                        {loading ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Saving...
+                          </>
+                        ) : (
+                          <>
+                            <Save className="mr-2 h-4 w-4" />
+                            Save Configuration
+                          </>
+                        )}
+                      </Button>
+                      
+                      <Button
+                        onClick={runScheduledChecksNow}
+                        disabled={runningScheduledCheck || userRole !== 'admin'}
+                        variant="outline"
+                      >
+                        {runningScheduledCheck ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Running...
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                            Run Now
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           <TabsContent value="virtual-media">
             <div className="space-y-4">
               <Card>
@@ -3679,10 +3586,10 @@ export default function Settings() {
                     <div>
                       <CardTitle className="flex items-center gap-2">
                         <Disc className="h-5 w-5" />
-                        Virtual Media Defaults
+                        Virtual Media & SCP Backup
                       </CardTitle>
                       <CardDescription>
-                        Define the internal share that powers ISO browsing and mount prefill.
+                        Configure ISO share defaults and SCP export share for backups
                       </CardDescription>
                     </div>
                   </div>
@@ -3820,6 +3727,130 @@ export default function Settings() {
                       </AlertDescription>
                     </Alert>
                   )}
+                </CardContent>
+              </Card>
+
+              {/* SCP Export Share Configuration */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Disc className="h-5 w-5" />
+                    SCP Export Share Configuration
+                  </CardTitle>
+                  <CardDescription>
+                    Configure network share for SCP backups on older iDRAC firmware
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <Alert className="border-blue-200 bg-blue-50 dark:bg-blue-950/20">
+                    <Info className="h-4 w-4 text-blue-600" />
+                    <AlertDescription className="text-sm">
+                      <strong>For older iDRAC firmware:</strong> If iDRAC doesn't support Local export method (iDRAC 8 v2.70+, iDRAC 9 v4.x+), 
+                      configure a network share as fallback. The Job Executor will automatically use this when Local export fails.
+                      <br /><br />
+                      <strong>Supported:</strong> Windows SMB/CIFS shares or Linux NFS shares accessible from iDRAC network.
+                    </AlertDescription>
+                  </Alert>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="scp-share-enabled">Enable Network Share Export Fallback</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Automatically use network share when Local export is not supported
+                      </p>
+                    </div>
+                    <Switch
+                      id="scp-share-enabled"
+                      checked={scpShareEnabled}
+                      onCheckedChange={setScpShareEnabled}
+                    />
+                  </div>
+
+                  {scpShareEnabled && (
+                    <div className="space-y-4 pl-4 border-l-2 border-border">
+                      <div className="space-y-2">
+                        <Label htmlFor="scp-share-type">Share Type</Label>
+                        <Select value={scpShareType} onValueChange={(value: 'CIFS' | 'NFS') => setScpShareType(value)}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="CIFS">CIFS / SMB (Windows)</SelectItem>
+                            <SelectItem value="NFS">NFS (Linux/Unix)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          {scpShareType === 'CIFS' 
+                            ? 'Windows file share (SMB/CIFS protocol)' 
+                            : 'Unix/Linux network file system'}
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="scp-share-path">Share Path *</Label>
+                        <Input
+                          id="scp-share-path"
+                          placeholder={scpShareType === 'CIFS' ? '\\\\server\\share\\exports' : '/export/scp_backups'}
+                          value={scpSharePath}
+                          onChange={(e) => setScpSharePath(e.target.value)}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          {scpShareType === 'CIFS' 
+                            ? 'UNC path to Windows share (e.g., \\\\fileserver\\idrac$\\scp_exports)' 
+                            : 'NFS mount path (e.g., /mnt/nfs_share/scp_exports)'}
+                        </p>
+                      </div>
+
+                      {scpShareType === 'CIFS' && (
+                        <>
+                          <div className="space-y-2">
+                            <Label htmlFor="scp-share-username">Share Username</Label>
+                            <Input
+                              id="scp-share-username"
+                              placeholder="domain\\username or username"
+                              value={scpShareUsername}
+                              onChange={(e) => setScpShareUsername(e.target.value)}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Username with write access to the share
+                            </p>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="scp-share-password">Share Password</Label>
+                            <Input
+                              id="scp-share-password"
+                              type="password"
+                              placeholder="••••••••"
+                              value={scpSharePassword}
+                              onChange={(e) => setScpSharePassword(e.target.value)}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Password for share access (encrypted in database). Leave blank to keep existing.
+                            </p>
+                          </div>
+                        </>
+                      )}
+
+                      <Alert>
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription className="text-sm">
+                          <strong>Requirements:</strong>
+                          <ul className="list-disc list-inside mt-2 space-y-1">
+                            <li>Share must be accessible from iDRAC network (test connectivity)</li>
+                            <li>iDRAC must have network route to share server</li>
+                            <li>Share must have write permissions for the specified user</li>
+                            <li>For CIFS: Port 445 must be open between iDRAC and file server</li>
+                            <li>For NFS: NFS ports (2049, 111) must be accessible</li>
+                          </ul>
+                        </AlertDescription>
+                      </Alert>
+                    </div>
+                  )}
+
+                  <Button onClick={handleSaveActivitySettings} disabled={loading}>
+                    {loading ? "Saving..." : "Save SCP Settings"}
+                  </Button>
                 </CardContent>
               </Card>
             </div>
