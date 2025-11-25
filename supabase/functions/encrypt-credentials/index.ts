@@ -173,9 +173,7 @@ serve(async (req) => {
       case 'activity_settings':
         updateResult = await supabaseAdmin
           .from('activity_settings')
-          .update({ scp_share_password_encrypted: encryptedData })
-          .limit(1)
-          .single();
+          .update({ scp_share_password_encrypted: encryptedData });
         break;
 
       default:
