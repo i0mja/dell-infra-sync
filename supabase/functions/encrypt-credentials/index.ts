@@ -14,7 +14,7 @@ interface EncryptCredentialsRequest {
   openmanage_settings_id?: string;
   username?: string;
   password: string;
-  type: 'credential_set' | 'server' | 'vcenter' | 'openmanage';
+  type: 'credential_set' | 'server' | 'vcenter' | 'openmanage' | 'activity_settings';
 }
 
 serve(async (req) => {
@@ -168,6 +168,14 @@ serve(async (req) => {
           .from('openmanage_settings')
           .update({ password: encryptedData })
           .eq('id', request.openmanage_settings_id);
+        break;
+
+      case 'activity_settings':
+        updateResult = await supabaseAdmin
+          .from('activity_settings')
+          .update({ scp_share_password_encrypted: encryptedData })
+          .limit(1)
+          .single();
         break;
 
       default:
