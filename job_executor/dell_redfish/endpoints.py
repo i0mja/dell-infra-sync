@@ -1,10 +1,10 @@
-"""Canonical Dell iDRAC Redfish endpoints used by the application.
+"""Canonical Dell iDRAC Redfish endpoints.
 
-This list represents every Redfish path the application is permitted to use.
-The paths are sourced from the Dell adapter layer and job executor workflows
-and should be updated whenever new Dell API capabilities are added. Keeping
-this centralized makes it easy to verify the rest of the codebase never drifts
-away from the supported Dell contract.
+This list represents every Redfish path the application is permitted to
+use. The paths are sourced from the Dell adapter layer and job executor
+workflows and should be updated whenever new Dell API capabilities are
+added. Keeping this centralized makes it easy to verify the rest of the
+codebase never drifts away from the supported Dell contract.
 """
 
 CANONICAL_REDFISH_ENDPOINTS = {

@@ -128,10 +128,12 @@ class DellRedfishAdapter:
                     status_code = response.status_code
                     
                     # Parse response
+                    content_type = response.headers.get('Content-Type', '') if response else ''
                     try:
                         response_data = response.json() if response.text else {}
                     except ValueError:
-                        response_data = {'raw_response': response.text}
+                        # Handle non-JSON responses (e.g., XML SCP exports)
+                        response_data = self._handle_non_json_response(response.text, content_type)
                     
                     # Check for HTTP errors
                     response.raise_for_status()
@@ -203,6 +205,39 @@ class DellRedfishAdapter:
                         error_code=None,
                         status_code=status_code
                     )
+
+    def _handle_non_json_response(self, raw_text: str, content_type: str) -> Dict[str, Any]:
+        """
+        Normalize non-JSON responses from iDRAC.
+
+        Some iDRAC task endpoints (e.g., SCP exports) return XML payloads instead of
+        JSON. These should be treated as successful task completions rather than
+        parse errors.
+
+        Args:
+            raw_text: Raw response body
+            content_type: Content-Type header value
+
+        Returns:
+            Dict[str, Any]: Parsed data with best-effort task status metadata
+        """
+        response_data: Dict[str, Any] = {
+            'raw_response': raw_text,
+            'parse_error': 'Not valid JSON',
+            'content_type': content_type
+        }
+
+        stripped = raw_text.strip() if raw_text else ''
+
+        # Treat SCP export XML payloads as completed tasks so polling can succeed
+        if stripped.startswith('<SystemConfiguration'):
+            response_data.update({
+                'TaskState': 'Completed',
+                'PercentComplete': 100,
+                'Messages': [{'Message': stripped}]
+            })
+
+        return response_data
     
     def call_with_safety(
         self,

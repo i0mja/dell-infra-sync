@@ -1,12 +1,19 @@
+"""
+Redfish endpoint audit utility.
+
+This script validates that every Redfish endpoint referenced across the
+codebase is defined in the canonical Dell adapter layer at
+`job_executor/dell_redfish`.
+"""
 from __future__ import annotations
 
 """Audit Redfish endpoint usage across the codebase.
 
-This utility scans all source files for Redfish endpoint strings and verifies
-that each one matches a canonical endpoint defined within the
+This utility scans all source files for Redfish endpoint strings and
+verifies that each one matches a canonical endpoint defined within the
 `job_executor/dell_redfish` adapter layer. The Dell adapter already
-encapsulates every supported API path; other parts of the application should
-not invent new endpoints without updating that canonical source.
+encapsulates every supported API path; other parts of the application
+should not invent new endpoints without updating that canonical source.
 """
 
 import os

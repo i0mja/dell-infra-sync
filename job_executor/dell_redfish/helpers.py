@@ -75,6 +75,8 @@ class DellRedfishHelpers:
                 server_id=server_id,
                 user_id=user_id
             )
+
+            task_response = self._normalize_task_response(task_response)
             
             task_state = task_response.get('TaskState', 'Unknown')
             percent_complete = task_response.get('PercentComplete', 0)
@@ -333,5 +335,30 @@ class DellRedfishHelpers:
         # Check for task in nested structure
         if 'Task' in response and '@odata.id' in response['Task']:
             return response['Task']['@odata.id']
-        
+
         return None
+
+    def _normalize_task_response(self, task_response: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Normalize task responses that may return non-JSON payloads.
+
+        Some iDRAC task endpoints (notably SCP exports) respond with XML payloads
+        instead of JSON. When this happens, treat the raw XML as a successful task
+        completion so polling can terminate and return the exported content.
+        """
+        if task_response.get('TaskState'):
+            return task_response
+
+        raw_text = task_response.get('raw_response') or task_response.get('_raw_response')
+        stripped = raw_text.strip() if isinstance(raw_text, str) else ''
+
+        if stripped.startswith('<SystemConfiguration'):
+            return {
+                **task_response,
+                'TaskState': 'Completed',
+                'PercentComplete': 100,
+                'Messages': task_response.get('Messages')
+                or [{'Message': stripped}]
+            }
+
+        return task_response
