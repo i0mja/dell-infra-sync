@@ -366,6 +366,17 @@ export function ScpBackupDialog({ open, onOpenChange, server }: ScpBackupDialogP
               </AlertDescription>
             </Alert>
 
+            <Alert variant="default" className="border-blue-200 bg-blue-50 dark:bg-blue-950/20">
+              <AlertCircle className="h-4 w-4 text-blue-600" />
+              <AlertDescription className="text-sm">
+                <strong>Export Method:</strong> The system automatically detects your iDRAC firmware version.
+                <br />
+                • <strong>Newer iDRAC (9 v4.x+, 8 v2.70+):</strong> Uses "Local" export (faster)
+                <br />
+                • <strong>Older iDRAC:</strong> Automatically falls back to HTTP Push export
+              </AlertDescription>
+            </Alert>
+
             <div className="space-y-4">
               <div>
                 <Label htmlFor="backup-name">Backup Name *</Label>
