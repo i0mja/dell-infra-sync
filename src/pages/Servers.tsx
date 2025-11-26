@@ -172,7 +172,7 @@ const Servers = () => {
     },
     refetchInterval: 3000, // Poll every 3 seconds to detect job completion
   });
-  
+
   const getServerStatus = (server: any) => {
     if (server.discovery_job_id) {
       return { status: "discovering", label: "Discovering", variant: "secondary" as const };
@@ -182,6 +182,17 @@ const Servers = () => {
     }
     return { status: "minimal", label: "Minimal Info", variant: "outline" as const };
   };
+
+  const totalServers = servers.length;
+  const onlineCount = servers.filter(s => s.connection_status === 'online').length;
+  const offlineCount = servers.filter(s => s.connection_status === 'offline').length;
+  const unknownCount = servers.filter(s => !s.connection_status || s.connection_status === 'unknown').length;
+  const discoveredCount = servers.filter(s => getServerStatus(s).status === 'discovered').length;
+  const discoveringCount = servers.filter(s => getServerStatus(s).status === 'discovering').length;
+  const minimalCount = totalServers - discoveredCount - discoveringCount;
+  const linkedToVCenter = servers.filter(s => s.vcenter_host_id).length;
+  const credentialCoverage = servers.filter(s => s.credential_set_id).length;
+  const poweredOnCount = servers.filter(s => (s.power_state || '').toLowerCase() === 'on').length;
 
   const hasActiveHealthCheck = (serverId: string): boolean => {
     if (!activeHealthCheckJobs || activeHealthCheckJobs.length === 0) return false;
