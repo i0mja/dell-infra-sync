@@ -25,6 +25,7 @@ interface IdracCommand {
   status_code: number | null;
   response_time_ms: number;
   response_body: any;
+  response_headers?: any;
   success: boolean;
   error_message: string | null;
   initiated_by: string | null;
@@ -274,6 +275,7 @@ export default function ActivityMonitor() {
         'Server',
         'Response Time (ms)',
         'Request Headers',
+        'Response Headers',
         'Request Body',
         'Response Body',
         'Error Message'
@@ -289,6 +291,7 @@ export default function ActivityMonitor() {
         escapeCsv(cmd.servers?.hostname || cmd.servers?.ip_address || 'N/A'),
         escapeCsv(cmd.response_time_ms ?? ''),
         escapeCsv(cmd.request_headers),
+        escapeCsv(cmd.response_headers),
         escapeCsv(cmd.request_body),
         escapeCsv(cmd.response_body),
         escapeCsv(cmd.error_message ?? '')
