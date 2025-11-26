@@ -835,45 +835,35 @@ const Servers = () => {
     <TooltipProvider delayDuration={100}>
       <div className="flex h-full flex-col overflow-hidden">
         <div className="border-b bg-card/80 px-6 pb-4 pt-6 shadow-sm">
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-xl font-semibold">
-                  <ShieldCheck className="h-5 w-5 text-primary" />
-                  <span>Servers</span>
-                </div>
-                <p className="max-w-3xl text-sm text-muted-foreground">
-                  Inventory and maintenance workspace for every iDRAC-connected server, without the extra filler.
-                </p>
-                <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                  <div className="flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-primary">
-                    <Activity className="h-3.5 w-3.5" /> Job Executor-first actions
-                  </div>
-                  <div className="flex items-center gap-1 rounded-full bg-muted px-3 py-1">
-                    <CheckCircle2 className="h-3.5 w-3.5" /> Safety checks baked in
-                  </div>
-                  <div className="flex items-center gap-1 rounded-full bg-muted px-3 py-1">
-                    <LayoutGrid className="h-3.5 w-3.5" /> Cluster & group aware
-                  </div>
-                </div>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-xl font-semibold">
+                <ShieldCheck className="h-5 w-5 text-primary" />
+                <span>Servers</span>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" onClick={fetchServers}>
-                  <RefreshCw className="mr-2 h-4 w-4" /> Refresh all
-                </Button>
-                <Button onClick={() => setDialogOpen(true)}>
-                  <Plus className="mr-2 h-4 w-4" /> Add server
-                </Button>
+              <p className="max-w-3xl text-sm text-muted-foreground">
+                Inventory and maintenance workspace for every iDRAC-connected server, without the extra filler.
+              </p>
+              <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                <div className="flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-primary">
+                  <Activity className="h-3.5 w-3.5" /> Job Executor-first actions
+                </div>
+                <div className="flex items-center gap-1 rounded-full bg-muted px-3 py-1">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Safety checks baked in
+                </div>
+                <div className="flex items-center gap-1 rounded-full bg-muted px-3 py-1">
+                  <LayoutGrid className="h-3.5 w-3.5" /> Cluster & group aware
+                </div>
               </div>
             </div>
-            <ServerStatsBar
-              totalServers={servers.length}
-              onlineCount={servers.filter(s => s.connection_status === 'online').length}
-              offlineCount={servers.filter(s => s.connection_status === 'offline').length}
-              unknownCount={servers.filter(s => !s.connection_status || s.connection_status === 'unknown').length}
-              incompleteCount={incompleteServers.length}
-              useJobExecutor={useJobExecutorForIdrac}
-            />
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={fetchServers}>
+                <RefreshCw className="mr-2 h-4 w-4" /> Refresh all
+              </Button>
+              <Button onClick={() => setDialogOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" /> Add server
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -889,7 +879,7 @@ const Servers = () => {
 
           <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[400px_1fr]">
             <div className="flex flex-col gap-4">
-              <Card className="h-fit border-primary/20 bg-primary/5 shadow-sm">
+              <Card className="border-primary/20 bg-primary/5 shadow-sm">
                 <CardHeader className="space-y-1">
                   <CardTitle className="flex items-center gap-2 text-primary">
                     <ShieldCheck className="h-4 w-4" />
@@ -899,17 +889,24 @@ const Servers = () => {
                     Launch the most common flows without scrolling through the table first.
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-2">
+                <CardContent className="grid gap-3 sm:grid-cols-2">
                   {quickActions.map((action) => (
                     <div
                       key={action.label}
-                      className="rounded-lg border bg-background/80 p-3 shadow-xs"
+                      className="flex h-full flex-col justify-between gap-3 rounded-lg border bg-background/80 p-3 shadow-xs"
                     >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-primary">
                           <action.icon className="h-4 w-4" />
-                          <span>{action.label}</span>
                         </div>
+                        <div className="space-y-1">
+                          <div className="text-sm font-semibold text-foreground">{action.label}</div>
+                          <p className="text-xs text-muted-foreground leading-relaxed">
+                            {action.description}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex justify-end">
                         <Button
                           variant="secondary"
                           size="sm"
@@ -920,9 +917,6 @@ const Servers = () => {
                           Launch
                         </Button>
                       </div>
-                      <p className="mt-2 text-sm text-muted-foreground">
-                        {action.description}
-                      </p>
                     </div>
                   ))}
                 </CardContent>
@@ -930,6 +924,28 @@ const Servers = () => {
             </div>
 
             <div className="flex min-w-0 flex-col gap-4">
+              <Card className="border-primary/20 shadow-sm">
+                <CardHeader className="space-y-1">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <LayoutGrid className="h-5 w-5" />
+                    Inventory status
+                  </CardTitle>
+                  <CardDescription>
+                    Real-time visibility into connectivity, health coverage, and discovery completeness.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ServerStatsBar
+                    totalServers={servers.length}
+                    onlineCount={servers.filter(s => s.connection_status === 'online').length}
+                    offlineCount={servers.filter(s => s.connection_status === 'offline').length}
+                    unknownCount={servers.filter(s => !s.connection_status || s.connection_status === 'unknown').length}
+                    incompleteCount={incompleteServers.length}
+                    useJobExecutor={useJobExecutorForIdrac}
+                  />
+                </CardContent>
+              </Card>
+
               <Card className="border-primary/20 shadow-sm">
                 <CardHeader className="space-y-1">
                   <CardTitle className="flex items-center gap-2 text-lg">
