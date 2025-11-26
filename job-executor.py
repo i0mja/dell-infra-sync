@@ -23,6 +23,7 @@ Jobs Supported:
 """
 
 import ssl
+import logging
 import requests
 import sys
 import time
@@ -118,6 +119,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
         self.activity_settings = {}  # Cache settings
         self.last_settings_fetch = 0  # Timestamp for cache invalidation
         self.dell_operations = None  # Will be initialized on first use
+        self._dell_logger = None
 
     def _validate_service_role_key(self):
         """Ensure SERVICE_ROLE_KEY is present before making Supabase requests"""
@@ -209,19 +211,55 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             # Ensure throttler is initialized
             if self.throttler is None:
                 self.initialize_throttler()
-            
+
             # Create adapter with our throttler and Supabase logging
             adapter = DellRedfishAdapter(
                 throttler=self.throttler,
-                supabase_url=DSM_URL,
-                service_role_key=SERVICE_ROLE_KEY
+                logger=self._get_dell_logger(),
+                log_command_fn=self._log_dell_redfish_command,
+                verify_ssl=VERIFY_SSL,
             )
-            
+
             # Create operations instance
             self.dell_operations = DellOperations(adapter)
             self.log("Dell Redfish operations initialized", "INFO")
-        
+
         return self.dell_operations
+
+    def _get_dell_logger(self) -> logging.Logger:
+        """Lazily configure a logger for Dell Redfish operations."""
+        if self._dell_logger is None:
+            logger = logging.getLogger("dell_redfish_adapter")
+            if not logger.handlers:
+                handler = logging.StreamHandler()
+                formatter = logging.Formatter(
+                    fmt="%(asctime)s [%(levelname)s] %(message)s",
+                    datefmt="%Y-%m-%d %H:%M:%S",
+                )
+                handler.setFormatter(formatter)
+                logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+            self._dell_logger = logger
+        return self._dell_logger
+
+    def _log_dell_redfish_command(self, log_entry: Dict):
+        """Adapt DellRedfishAdapter log entries to the standard iDRAC logger."""
+        self.log_idrac_command(
+            server_id=log_entry.get("server_id"),
+            job_id=log_entry.get("job_id"),
+            task_id=None,
+            command_type=log_entry.get("command_type"),
+            endpoint=log_entry.get("endpoint"),
+            full_url=log_entry.get("full_url"),
+            request_headers=None,
+            request_body=log_entry.get("request_body"),
+            status_code=log_entry.get("status_code"),
+            response_time_ms=log_entry.get("response_time_ms", 0),
+            response_body=log_entry.get("response_body"),
+            success=log_entry.get("success", False),
+            error_message=log_entry.get("error_message"),
+            operation_type=log_entry.get("operation_type", "idrac_api"),
+        )
     
     def initialize_throttler(self):
         """Initialize or update the iDRAC throttler with current settings"""
