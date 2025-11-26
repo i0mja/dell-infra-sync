@@ -758,6 +758,20 @@ const Servers = () => {
     vCenterHosts?.map(h => h.cluster).filter(Boolean) || []
   ));
 
+  const groupedData = organizeServersByGroup();
+
+  const handleServerRowClick = (server: Server) => {
+    setSelectedServer((current) => current?.id === server.id ? null : server);
+  };
+
+  const handleGroupRowClick = (groupId: string) => {
+    setSelectedGroup((current) => current === groupId ? null : groupId);
+  };
+
+  const handleServerDetails = (server: Server) => {
+    setSelectedServer(server);
+  };
+
   const handleJobDialogChange = (open: boolean) => {
     setJobDialogOpen(open);
     if (!open) {
@@ -1091,12 +1105,21 @@ const Servers = () => {
                     onGroupFilterChange={setGroupFilter}
                     statusFilter={statusFilter}
                     onStatusFilterChange={setStatusFilter}
-                    serverGroups={serverGroups}
+                    groups={serverGroups}
                     vCenterClusters={uniqueVCenterClusters}
-                    onManageGroups={() => navigate('/settings?tab=server-groups')}
                   />
                   <ServersTable
                     servers={filteredServers}
+                    groupedData={groupedData}
+                    selectedServerId={selectedServer?.id || null}
+                    selectedGroupId={selectedGroup}
+                    onServerClick={handleServerRowClick}
+                    onGroupClick={handleGroupRowClick}
+                    onServerRefresh={handleRefreshInfo}
+                    onServerTest={handleTestConnection}
+                    onServerHealth={handleRunHealthCheck}
+                    onServerPower={handleOpenPowerControls}
+                    onServerDetails={handleServerDetails}
                     loading={loading}
                     refreshing={refreshing}
                     healthCheckServer={healthCheckServer}
