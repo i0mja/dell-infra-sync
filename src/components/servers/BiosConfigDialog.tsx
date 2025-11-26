@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -52,6 +52,7 @@ export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialo
   const [compareConfigId, setCompareConfigId] = useState<string>("");
   const [showOnlyDifferences, setShowOnlyDifferences] = useState(false);
   const [activeWizardCategory, setActiveWizardCategory] = useState<string>("");
+  const autoTabSelectedRef = useRef(false);
   const { toast } = useToast();
 
   useEffect(() => {
