@@ -781,16 +781,16 @@ const Servers = () => {
 
   const quickActions = [
     {
-      label: "Add server",
-      icon: Plus,
-      onClick: () => setDialogOpen(true),
-      description: "Create a new inventory record and kick off discovery when credentials are available.",
+      label: "Discovery scan",
+      icon: RefreshCw,
+      onClick: () => handleDiscoveryQuickAction(),
+      description: "Start a discovery job to populate hardware model, firmware, and health across hosts.",
     },
     {
       label: "Refresh incomplete",
-      icon: RefreshCw,
+      icon: ShieldCheck,
       onClick: () => handleRefreshIncomplete(),
-      description: "Run a discovery scan for servers missing model, firmware, or health data.",
+      description: "Run targeted refresh for servers missing model, firmware, or health data.",
       disabled: incompleteServers.length === 0,
     },
     {
@@ -914,65 +914,61 @@ const Servers = () => {
 
   return (
     <TooltipProvider delayDuration={100}>
-      <div className="flex flex-col h-full overflow-hidden">
-        <div className="px-4 pt-4 space-y-4">
-          <Card className="border-primary/20 bg-gradient-to-r from-primary/5 via-background to-background shadow-sm">
-            <CardHeader className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex h-full flex-col overflow-hidden">
+        <div className="border-b bg-card/80 px-6 pb-4 pt-6 shadow-sm">
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="space-y-2">
-                <CardTitle className="flex items-center gap-2 text-xl">
+                <div className="flex items-center gap-2 text-xl font-semibold">
                   <ShieldCheck className="h-5 w-5 text-primary" />
-                  Servers
-                </CardTitle>
-                <CardDescription className="max-w-3xl text-base">
+                  <span>Servers</span>
+                </div>
+                <p className="max-w-3xl text-sm text-muted-foreground">
                   Inventory, health, and maintenance workspace for every iDRAC-connected server. Launch jobs, review status,
                   and organize hosts by group or cluster from a single view.
-                </CardDescription>
-                <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
+                </p>
+                <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                   <div className="flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-primary">
-                    <Activity className="h-4 w-4" /> Job Executor-first actions
+                    <Activity className="h-3.5 w-3.5" /> Job Executor-first actions
                   </div>
                   <div className="flex items-center gap-1 rounded-full bg-muted px-3 py-1">
-                    <CheckCircle2 className="h-4 w-4" /> Safety checks baked in
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Safety checks baked in
                   </div>
                   <div className="flex items-center gap-1 rounded-full bg-muted px-3 py-1">
-                    <LayoutGrid className="h-4 w-4" /> Cluster & group aware
+                    <LayoutGrid className="h-3.5 w-3.5" /> Cluster & group aware
                   </div>
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button variant="outline" onClick={() => { setDefaultJobType('discovery_scan'); setJobDialogOpen(true); }}>
-                  <LayoutGrid className="mr-2 h-4 w-4" /> Bulk actions
+                <Button variant="outline" onClick={fetchServers}>
+                  <RefreshCw className="mr-2 h-4 w-4" /> Refresh all
                 </Button>
                 <Button onClick={() => setDialogOpen(true)}>
                   <Plus className="mr-2 h-4 w-4" /> Add server
                 </Button>
               </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <ServerStatsBar
-                totalServers={servers.length}
-                onlineCount={servers.filter(s => s.connection_status === 'online').length}
-                offlineCount={servers.filter(s => s.connection_status === 'offline').length}
-                unknownCount={servers.filter(s => !s.connection_status || s.connection_status === 'unknown').length}
-                incompleteCount={incompleteServers.length}
-                onAddServer={() => setDialogOpen(true)}
-                onRefreshAll={fetchServers}
-                onManageGroups={() => navigate('/settings?tab=server-groups')}
-                onDiscovery={() => setJobDialogOpen(true)}
-                useJobExecutor={useJobExecutorForIdrac}
-              />
-              <div className="grid gap-3 md:grid-cols-3">
-                {headerHighlights.map((item) => (
-                  <div key={item.title} className="rounded-lg border bg-background/60 p-3 shadow-sm">
-                    <div className="font-semibold text-foreground">{item.title}</div>
-                    <p className="text-sm text-muted-foreground">{item.description}</p>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+            </div>
+            <ServerStatsBar
+              totalServers={servers.length}
+              onlineCount={servers.filter(s => s.connection_status === 'online').length}
+              offlineCount={servers.filter(s => s.connection_status === 'offline').length}
+              unknownCount={servers.filter(s => !s.connection_status || s.connection_status === 'unknown').length}
+              incompleteCount={incompleteServers.length}
+              useJobExecutor={useJobExecutorForIdrac}
+            />
+          </div>
+        </div>
 
-          {/* Incomplete Servers Banner (conditional) */}
+        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-4">
+          <div className="grid gap-3 md:grid-cols-3">
+            {headerHighlights.map((item) => (
+              <div key={item.title} className="rounded-lg border bg-background/60 p-3 shadow-sm">
+                <div className="font-semibold text-foreground">{item.title}</div>
+                <p className="text-sm text-muted-foreground">{item.description}</p>
+              </div>
+            ))}
+          </div>
+
           {incompleteServers.length > 0 && showIncompleteBanner && (
             <IncompleteServersBanner
               count={incompleteServers.length}
