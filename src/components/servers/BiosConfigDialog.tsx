@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -48,10 +48,11 @@ export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialo
   const [currentConfig, setCurrentConfig] = useState<BiosConfig | null>(null);
   const [editedAttributes, setEditedAttributes] = useState<Record<string, any>>({});
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [baselineConfigId, setBaselineConfigId] = useState<string>("");
   const [compareConfigId, setCompareConfigId] = useState<string>("");
   const [showOnlyDifferences, setShowOnlyDifferences] = useState(false);
+  const [activeWizardCategory, setActiveWizardCategory] = useState<string>("");
+  const autoTabSelectedRef = useRef(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -59,6 +60,13 @@ export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialo
       fetchConfigurations();
     }
   }, [open, server.id]);
+
+  useEffect(() => {
+    if (!open) {
+      autoTabSelectedRef.current = false;
+      setActiveTab('view');
+    }
+  }, [open]);
 
   const fetchConfigurations = async () => {
     try {
@@ -303,10 +311,48 @@ export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialo
 
   const filterAttributes = (attrs: Array<{ name: string; value: any }>) => {
     if (!searchQuery) return attrs;
-    return attrs.filter(attr => 
+    return attrs.filter(attr =>
       attr.name.toLowerCase().includes(searchQuery.toLowerCase())
     );
   };
+
+  const getWizardCategories = () => {
+    if (!currentConfig) return [];
+
+    const categories = Object.entries(currentConfig.attributes).reduce<Record<string, Array<{ name: string; value: any }>>>((acc, [name, value]) => {
+      const category = categorizeAttribute(name);
+      if (!acc[category]) acc[category] = [];
+      acc[category].push({ name, value });
+      return acc;
+    }, {});
+
+    return Object.entries(categories)
+      .map(([name, attributes]) => ({
+        name,
+        attributes: filterAttributes(attributes)
+      }))
+      .filter(category => category.attributes.length > 0);
+  };
+
+  const wizardCategories = useMemo(() => getWizardCategories(), [currentConfig, searchQuery]);
+
+  useEffect(() => {
+    if (wizardCategories.length > 0 && !wizardCategories.find(c => c.name === activeWizardCategory)) {
+      setActiveWizardCategory(wizardCategories[0].name);
+    }
+  }, [activeWizardCategory, wizardCategories]);
+
+  useEffect(() => {
+    if (
+      currentConfig &&
+      Object.keys(currentConfig.attributes || {}).length > 0 &&
+      activeTab === 'view' &&
+      !autoTabSelectedRef.current
+    ) {
+      setActiveTab('edit');
+      autoTabSelectedRef.current = true;
+    }
+  }, [activeTab, currentConfig]);
 
   const getComparisonResults = () => {
     const baseline = configurations.find(c => c.id === baselineConfigId);
@@ -431,94 +477,163 @@ export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialo
           </TabsContent>
 
           <TabsContent value="edit" className="space-y-4">
-            <Alert>
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>
-                Most BIOS changes require a system reboot to take effect. Changes are staged and applied after reboot.
-              </AlertDescription>
-            </Alert>
+            <div className="grid gap-4 md:grid-cols-[240px,1fr]">
+              <Card className="border-sky-500/40 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-sky-100 shadow-lg">
+                <CardContent className="p-4 space-y-3">
+                  <div>
+                    <p className="text-xs font-mono uppercase text-sky-300">BIOS Setup Wizard</p>
+                    <p className="text-[11px] text-sky-200/80">Navigate categories like a BIOS screen and stage changes.</p>
+                  </div>
 
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search settings..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-8"
-                />
-              </div>
-              {Object.keys(editedAttributes).length > 0 && (
-                <Badge variant="secondary" className="py-2">
-                  {Object.keys(editedAttributes).length} changes
-                </Badge>
-              )}
-            </div>
+                  <div className="relative">
+                    <Search className="absolute left-2 top-2.5 h-3.5 w-3.5 text-sky-300" />
+                    <Input
+                      placeholder="Type to filter attributes"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-8 text-xs bg-slate-900/80 border-sky-700 text-sky-100 placeholder:text-sky-300/60"
+                    />
+                  </div>
 
-            {currentConfig && (
-              <ScrollArea className="h-[400px]">
-                <div className="space-y-2">
-                  {Object.entries(currentConfig.attributes)
-                    .filter(([name]) => name.toLowerCase().includes(searchQuery.toLowerCase()))
-                    .map(([name, value]) => (
-                      <Card key={name}>
-                        <CardContent className="p-4">
-                          <div className="flex items-center justify-between gap-4">
-                            <div className="flex-1">
-                              <Label className="font-mono text-sm">{name}</Label>
-                              {editedAttributes[name] !== undefined && (
-                                <div className="mt-1">
-                                  <Badge variant="outline" className="text-xs">
-                                    Changed: {String(value)} → {String(editedAttributes[name])}
-                                  </Badge>
-                                </div>
-                              )}
-                            </div>
-                            <div className="w-48">
-                              {typeof value === 'boolean' ? (
-                                <Switch
-                                  checked={editedAttributes[name] ?? value}
-                                  onCheckedChange={(checked) => handleAttributeChange(name, checked)}
-                                />
-                              ) : (
-                                <Input
-                                  value={editedAttributes[name] ?? value}
-                                  onChange={(e) => handleAttributeChange(name, e.target.value)}
-                                  className="text-sm"
-                                />
-                              )}
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
+                  <div className="space-y-1">
+                    {wizardCategories.map(category => (
+                      <Button
+                        key={category.name}
+                        variant="ghost"
+                        className={`w-full justify-between border text-left font-mono text-[11px] uppercase tracking-tight ${
+                          activeWizardCategory === category.name
+                            ? 'border-sky-400 bg-sky-900/60 text-white'
+                            : 'border-transparent text-sky-200 hover:bg-slate-900'
+                        }`}
+                        onClick={() => setActiveWizardCategory(category.name)}
+                      >
+                        <span>{category.name}</span>
+                        <Badge variant="outline" className="border-sky-500 text-sky-200 bg-slate-900/80">
+                          {category.attributes.length}
+                        </Badge>
+                      </Button>
                     ))}
-                </div>
-              </ScrollArea>
-            )}
+                  </div>
 
-            <div className="flex justify-between pt-4 border-t">
-              <Button
-                variant="outline"
-                onClick={handleResetChanges}
-                disabled={Object.keys(editedAttributes).length === 0}
-              >
-                <RotateCcw className="h-4 w-4 mr-2" />
-                Reset Changes
-              </Button>
-              <div className="flex gap-2">
-                <Button
-                  onClick={() => handleApplyChanges('none')}
-                  disabled={Object.keys(editedAttributes).length === 0 || loading}
-                >
-                  Apply (No Reboot)
-                </Button>
-                <Button
-                  onClick={() => handleApplyChanges('graceful')}
-                  disabled={Object.keys(editedAttributes).length === 0 || loading}
-                >
-                  {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                  Apply & Reboot
-                </Button>
+                  <div className="text-[11px] text-sky-200/80 leading-relaxed border-t border-sky-800 pt-3">
+                    <p className="font-semibold text-sky-100">BIOS Hotkeys</p>
+                    <p>← → Category • ↑ ↓ Move • Enter Edit • F10 Save & Queue</p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <div className="space-y-3">
+                <div className="rounded-lg border border-sky-500/40 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-sky-100 shadow-inner">
+                  <div className="flex items-center justify-between border-b border-sky-800 px-4 py-3">
+                    <div>
+                      <p className="font-mono text-sm text-sky-200">Dell PowerEdge BIOS // Interactive Screen</p>
+                      <p className="text-[11px] text-sky-300/80">Edit values in-line, staged like a real BIOS menu.</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {Object.keys(editedAttributes).length > 0 && (
+                        <Badge variant="secondary" className="bg-sky-800 text-sky-50">
+                          {Object.keys(editedAttributes).length} pending
+                        </Badge>
+                      )}
+                      <Badge variant="outline" className="border-sky-600 text-sky-200 bg-slate-900/70">
+                        {currentConfig?.bios_version ? `BIOS ${currentConfig.bios_version}` : 'Snapshot ready'}
+                      </Badge>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 px-4 py-3">
+                    <Alert className="bg-slate-900/70 text-sky-100 border-sky-700">
+                      <AlertCircle className="h-4 w-4 text-sky-300" />
+                      <AlertDescription className="text-sky-100/90">
+                        Most BIOS changes require a system reboot to take effect. Changes are staged and applied after reboot.
+                      </AlertDescription>
+                    </Alert>
+
+                    <ScrollArea className="h-[420px]">
+                      {wizardCategories.length === 0 && (
+                        <div className="text-sky-200/80 text-sm py-6 text-center">
+                          No BIOS configuration captured yet. Take a snapshot first to unlock the wizard view.
+                        </div>
+                      )}
+
+                      {wizardCategories
+                        .filter(category => category.name === activeWizardCategory)
+                        .map(category => (
+                          <div key={category.name} className="space-y-2">
+                            <div className="flex items-center justify-between border-b border-sky-800 pb-2">
+                              <p className="font-mono text-xs uppercase text-sky-200">{category.name} Settings</p>
+                              <p className="text-[11px] text-sky-300/80">{category.attributes.length} editable fields</p>
+                            </div>
+
+                            {category.attributes.map(({ name, value }) => (
+                              <div
+                                key={name}
+                                className="flex items-center justify-between gap-4 rounded border border-sky-900 bg-slate-900/70 px-3 py-2 hover:border-sky-500/60"
+                              >
+                                <div className="flex-1 space-y-1">
+                                  <p className="font-mono text-xs text-sky-100">{name}</p>
+                                  <div className="flex items-center gap-2 text-[11px] text-sky-300/80">
+                                    <span className="uppercase">Current:</span>
+                                    <Badge variant="outline" className="border-sky-700 bg-slate-950 text-sky-100">
+                                      {String(value)}
+                                    </Badge>
+                                    {editedAttributes[name] !== undefined && (
+                                      <Badge variant="secondary" className="bg-amber-800/60 text-amber-50">
+                                        Pending: {String(editedAttributes[name])}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="w-56">
+                                  {typeof value === 'boolean' ? (
+                                    <div className="flex items-center justify-end gap-2 text-[11px] text-sky-200/80">
+                                      <span>{(editedAttributes[name] ?? value) ? 'Enabled' : 'Disabled'}</span>
+                                      <Switch
+                                        checked={editedAttributes[name] ?? value}
+                                        onCheckedChange={(checked) => handleAttributeChange(name, checked)}
+                                      />
+                                    </div>
+                                  ) : (
+                                    <Input
+                                      value={editedAttributes[name] ?? value}
+                                      onChange={(e) => handleAttributeChange(name, e.target.value)}
+                                      className="h-9 bg-slate-950/80 border-sky-700 text-sky-100 text-sm focus-visible:ring-sky-500"
+                                    />
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                    </ScrollArea>
+                  </div>
+                </div>
+
+                <div className="flex justify-between pt-2">
+                  <Button
+                    variant="outline"
+                    onClick={handleResetChanges}
+                    disabled={Object.keys(editedAttributes).length === 0}
+                  >
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Reset Changes
+                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => handleApplyChanges('none')}
+                      disabled={Object.keys(editedAttributes).length === 0 || loading}
+                    >
+                      Apply (No Reboot)
+                    </Button>
+                    <Button
+                      onClick={() => handleApplyChanges('graceful')}
+                      disabled={Object.keys(editedAttributes).length === 0 || loading}
+                    >
+                      {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                      Apply & Reboot
+                    </Button>
+                  </div>
+                </div>
               </div>
             </div>
           </TabsContent>
