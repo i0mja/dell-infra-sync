@@ -52,6 +52,7 @@ export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialo
   const [compareConfigId, setCompareConfigId] = useState<string>("");
   const [showOnlyDifferences, setShowOnlyDifferences] = useState(false);
   const [activeWizardCategory, setActiveWizardCategory] = useState<string>("");
+  const [customAttributeInputs, setCustomAttributeInputs] = useState<Record<string, string>>({});
   const autoTabSelectedRef = useRef(false);
   const { toast } = useToast();
 
@@ -342,6 +343,117 @@ export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialo
     }
   }, [activeWizardCategory, wizardCategories]);
 
+  const commonOptionSets = [
+    ["Enabled", "Disabled"],
+    ["Enabled", "Disabled", "Auto"],
+    ["On", "Off", "Auto"],
+    ["UEFI", "Legacy"],
+    ["BIOS", "UEFI", "Auto"],
+  ];
+
+  const keywordOptionSets: Array<{ keywords: string[]; options: string[] }> = [
+    { keywords: ["boot"], options: ["UEFI", "Legacy", "Auto"] },
+    { keywords: ["nic", "network", "pxe"], options: ["Enabled", "Disabled", "Auto"] },
+    { keywords: ["virtual", "hyper", "cstate", "turbo"], options: ["Enabled", "Disabled"] },
+    { keywords: ["sata", "raid", "storage"], options: ["AHCI", "RAID", "Auto", "Disabled"] },
+  ];
+
+  const deriveSelectableOptions = (name: string, value: any): string[] => {
+    const options = new Set<string>();
+    const stringValue = String(value ?? "");
+
+    keywordOptionSets.forEach(({ keywords, options: keywordOptions }) => {
+      if (keywords.some(keyword => name.toLowerCase().includes(keyword))) {
+        keywordOptions.forEach(opt => options.add(opt));
+      }
+    });
+
+    commonOptionSets.forEach(set => {
+      if (set.some(opt => opt.toLowerCase() === stringValue.toLowerCase())) {
+        set.forEach(opt => options.add(opt));
+      }
+    });
+
+    if (stringValue) {
+      options.add(stringValue);
+    }
+
+    return Array.from(options);
+  };
+
+  const renderAttributeEditor = (name: string, value: any) => {
+    const selectableOptions = deriveSelectableOptions(name, value);
+    const currentValue = editedAttributes[name] ?? value;
+
+    if (selectableOptions.length === 0 || typeof currentValue === 'number') {
+      return (
+        <Input
+          value={currentValue}
+          onChange={(e) => handleAttributeChange(name, e.target.value)}
+          className="h-9 bg-slate-950/80 border-sky-700 text-sky-100 text-sm focus-visible:ring-sky-500"
+        />
+      );
+    }
+
+    const normalizedOptions = Array.from(new Set(selectableOptions));
+    const stringCurrentValue = String(currentValue ?? "");
+    const isCustomValue = !normalizedOptions.some(
+      opt => opt.toLowerCase() === stringCurrentValue.toLowerCase()
+    );
+    const selectValue = isCustomValue ? "__other__" : stringCurrentValue;
+
+    const currentCustomValue = customAttributeInputs[name] ?? (isCustomValue ? stringCurrentValue : "");
+
+    return (
+      <div className="space-y-2">
+        <Select
+          value={selectValue}
+          onValueChange={(val) => {
+            if (val === "__other__") {
+              setCustomAttributeInputs(prev => ({
+                ...prev,
+                [name]: currentCustomValue || stringCurrentValue,
+              }));
+              handleAttributeChange(name, currentCustomValue || stringCurrentValue);
+            } else {
+              setCustomAttributeInputs(prev => {
+                const updated = { ...prev };
+                delete updated[name];
+                return updated;
+              });
+              handleAttributeChange(name, val);
+            }
+          }}
+        >
+          <SelectTrigger className="bg-slate-950/80 border-sky-700 text-sky-100 text-sm">
+            <SelectValue placeholder="Select option" />
+          </SelectTrigger>
+          <SelectContent>
+            {normalizedOptions.map(option => (
+              <SelectItem key={option} value={option}>
+                {option}
+              </SelectItem>
+            ))}
+            <SelectItem value="__other__">Other (manual)</SelectItem>
+          </SelectContent>
+        </Select>
+
+        {selectValue === "__other__" && (
+          <Input
+            value={currentCustomValue}
+            onChange={(e) => {
+              const newValue = e.target.value;
+              setCustomAttributeInputs(prev => ({ ...prev, [name]: newValue }));
+              handleAttributeChange(name, newValue);
+            }}
+            placeholder="Enter custom value"
+            className="h-9 bg-slate-950/80 border-sky-700 text-sky-100 text-sm focus-visible:ring-sky-500"
+          />
+        )}
+      </div>
+    );
+  };
+
   const getComparisonResults = () => {
     const baseline = configurations.find(c => c.id === baselineConfigId);
     const compare = configurations.find(c => c.id === compareConfigId);
@@ -582,11 +694,7 @@ export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialo
                                       />
                                     </div>
                                   ) : (
-                                    <Input
-                                      value={editedAttributes[name] ?? value}
-                                      onChange={(e) => handleAttributeChange(name, e.target.value)}
-                                      className="h-9 bg-slate-950/80 border-sky-700 text-sky-100 text-sm focus-visible:ring-sky-500"
-                                    />
+                                    renderAttributeEditor(name, value)
                                   )}
                                 </div>
                               </div>
