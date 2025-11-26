@@ -107,6 +107,17 @@ const Servers = () => {
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [healthCheckServer, setHealthCheckServer] = useState<string | null>(null);
   const { toast } = useToast();
+  const totalServers = servers.length;
+  const onlineCount = servers.filter(s => s.connection_status === 'online').length;
+  const offlineCount = servers.filter(s => s.connection_status === 'offline').length;
+  const unknownCount = servers.filter(s => !s.connection_status || s.connection_status === 'unknown').length;
+  const discoveredCount = servers.filter(s => getServerStatus(s).status === 'discovered').length;
+  const discoveringCount = servers.filter(s => getServerStatus(s).status === 'discovering').length;
+  const minimalCount = totalServers - discoveredCount - discoveringCount;
+  const linkedToVCenter = servers.filter(s => s.vcenter_host_id).length;
+  const credentialCoverage = servers.filter(s => s.credential_set_id).length;
+  const poweredOnCount = servers.filter(s => (s.power_state || '').toLowerCase() === 'on').length;
+  
   // Fetch server groups
   const { data: serverGroups } = useQuery({
     queryKey: ['server-groups'],
