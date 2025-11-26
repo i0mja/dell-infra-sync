@@ -2,7 +2,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChevronDown, ChevronRight, CheckCircle, AlertCircle, Activity, Users, Power, RefreshCw, Stethoscope } from "lucide-react";
-import { ReactNode, useState } from "react";
+import { Fragment, ReactNode, useState } from "react";
 import { ConnectionStatusBadge } from "./ConnectionStatusBadge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -59,6 +59,7 @@ interface ServersTableProps {
   isIncomplete: (server: Server) => boolean;
   groupMemberships?: any[];
   vCenterHosts?: any[];
+  renderExpandedRow: (server: Server) => ReactNode;
 }
 
 export function ServersTable({
@@ -80,6 +81,7 @@ export function ServersTable({
   isIncomplete,
   groupMemberships = [],
   vCenterHosts = [],
+  renderExpandedRow,
 }: ServersTableProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
@@ -223,151 +225,14 @@ export function ServersTable({
               servers.map((server) => {
                 const vcLink = getVCenterLink(server.id);
                 const serverGroups = getServerGroups(server.id);
-                return renderServerContextMenu(server, (
-                  <TableRow
-                    className={`cursor-pointer ${selectedServerId === server.id ? 'bg-muted' : ''}`}
-                    onClick={() => onServerClick(server)}
-                  >
-                    <TableCell>
-                      <div className="flex flex-col">
-                        <span className="font-medium">{server.hostname || 'N/A'}</span>
-                        <span className="text-xs text-muted-foreground">{server.ip_address}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        {getStatusBadge(server.connection_status)}
-                        {isIncomplete(server) && (
-                          <AlertCircle className="h-4 w-4 text-orange-500" />
-                        )}
-                        {(refreshing === server.id || hasActiveHealthCheck(server.id)) && (
-                          <Activity className="h-4 w-4 animate-spin text-blue-500" />
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span className={!server.model ? 'text-muted-foreground' : ''}>
-                        {server.model || 'N/A'}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <span className={!server.service_tag ? 'text-muted-foreground' : ''}>
-                        {server.service_tag || 'N/A'}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <span className={!server.idrac_firmware ? 'text-muted-foreground' : ''}>
-                        {server.idrac_firmware || 'N/A'}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      {vcLink.linked ? (
-                        <Badge variant="secondary" className="gap-1">
-                          <CheckCircle className="h-3 w-3" />
-                          {vcLink.cluster || 'Linked'}
-                        </Badge>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">Not Linked</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-1 flex-wrap">
-                        {serverGroups.length > 0 ? (
-                          serverGroups.slice(0, 2).map((group: any) => (
-                            <Badge
-                              key={group.id}
-                              variant="outline"
-                              style={{ borderColor: group.color }}
-                              className="gap-1 text-xs"
-                            >
-                              <Users className="h-3 w-3" />
-                              {group.name}
-                            </Badge>
-                          ))
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
-                        {serverGroups.length > 2 && (
-                          <Badge variant="outline" className="text-xs">
-                            +{serverGroups.length - 2}
-                          </Badge>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ));
-              })
-            )}
-          </TableBody>
-        </Table>
-      </div>
-    );
-  }
-
-  // Grouped view
-  return (
-    <div className="border rounded-lg bg-card overflow-hidden">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Hostname / IP</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Model</TableHead>
-            <TableHead>Service Tag</TableHead>
-            <TableHead>iDRAC</TableHead>
-            <TableHead>vCenter</TableHead>
-            <TableHead>Groups</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {groupedData.length === 0 ? (
-            <TableRow>
-              <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                No servers found
-              </TableCell>
-            </TableRow>
-          ) : (
-            groupedData.map((groupData) => {
-              const groupId = groupData.group?.id || groupData.cluster || 'ungrouped';
-              const isCollapsed = collapsedGroups.has(groupId);
-
-              return (
-                <>
-                  {/* Group Header Row */}
-                  <TableRow
-                    key={`group-${groupId}`}
-                    className={`bg-muted/50 hover:bg-muted cursor-pointer ${selectedGroupId === groupId ? 'bg-muted' : ''}`}
-                    onClick={() => {
-                      toggleGroup(groupId);
-                      onGroupClick(groupId);
-                    }}
-                  >
-                    <TableCell colSpan={7}>
-                      <div className="flex items-center gap-2 font-semibold">
-                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-                          {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                        </Button>
-                        {groupData.group && (
-                          <Users className="h-4 w-4" style={{ color: groupData.group.color }} />
-                        )}
-                        <span>{groupData.name}</span>
-                        <span className="text-sm font-normal text-muted-foreground">
-                          ({groupData.servers.length} servers, {groupData.onlineCount} online, {groupData.linkedCount} linked)
-                        </span>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-
-                  {/* Server Rows */}
-                  {!isCollapsed && groupData.servers.map((server) => {
-                    const vcLink = getVCenterLink(server.id);
-                    const serverGroups = getServerGroups(server.id);
-                    return renderServerContextMenu(server, (
+                return (
+                  <Fragment key={server.id}>
+                    {renderServerContextMenu(server, (
                       <TableRow
                         className={`cursor-pointer ${selectedServerId === server.id ? 'bg-muted' : ''}`}
                         onClick={() => onServerClick(server)}
                       >
-                        <TableCell className="pl-12">
+                        <TableCell>
                           <div className="flex flex-col">
                             <span className="font-medium">{server.hostname || 'N/A'}</span>
                             <span className="text-xs text-muted-foreground">{server.ip_address}</span>
@@ -434,7 +299,166 @@ export function ServersTable({
                           </div>
                         </TableCell>
                       </TableRow>
-                    ));
+                    ))}
+                    {selectedServerId === server.id && (
+                      <TableRow className="bg-muted/40">
+                        <TableCell colSpan={7} className="p-3">
+                          {renderExpandedRow(server)}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </Fragment>
+                );
+              })
+            )}
+          </TableBody>
+        </Table>
+      </div>
+    );
+  }
+
+  // Grouped view
+  return (
+    <div className="border rounded-lg bg-card overflow-hidden">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Hostname / IP</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Model</TableHead>
+            <TableHead>Service Tag</TableHead>
+            <TableHead>iDRAC</TableHead>
+            <TableHead>vCenter</TableHead>
+            <TableHead>Groups</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {groupedData.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                No servers found
+              </TableCell>
+            </TableRow>
+          ) : (
+            groupedData.map((groupData) => {
+              const groupId = groupData.group?.id || groupData.cluster || 'ungrouped';
+              const isCollapsed = collapsedGroups.has(groupId);
+
+              return (
+                <>
+                  {/* Group Header Row */}
+                  <TableRow
+                    key={`group-${groupId}`}
+                    className={`bg-muted/50 hover:bg-muted cursor-pointer ${selectedGroupId === groupId ? 'bg-muted' : ''}`}
+                    onClick={() => {
+                      toggleGroup(groupId);
+                      onGroupClick(groupId);
+                    }}
+                  >
+                    <TableCell colSpan={7}>
+                      <div className="flex items-center gap-2 font-semibold">
+                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
+                          {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                        </Button>
+                        {groupData.group && (
+                          <Users className="h-4 w-4" style={{ color: groupData.group.color }} />
+                        )}
+                        <span>{groupData.name}</span>
+                        <span className="text-sm font-normal text-muted-foreground">
+                          ({groupData.servers.length} servers, {groupData.onlineCount} online, {groupData.linkedCount} linked)
+                        </span>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+
+                  {/* Server Rows */}
+                  {!isCollapsed && groupData.servers.map((server) => {
+                    const vcLink = getVCenterLink(server.id);
+                    const serverGroups = getServerGroups(server.id);
+                    return (
+                      <Fragment key={server.id}>
+                        {renderServerContextMenu(server, (
+                          <TableRow
+                            className={`cursor-pointer ${selectedServerId === server.id ? 'bg-muted' : ''}`}
+                            onClick={() => onServerClick(server)}
+                          >
+                            <TableCell className="pl-12">
+                              <div className="flex flex-col">
+                                <span className="font-medium">{server.hostname || 'N/A'}</span>
+                                <span className="text-xs text-muted-foreground">{server.ip_address}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                {getStatusBadge(server.connection_status)}
+                                {isIncomplete(server) && (
+                                  <AlertCircle className="h-4 w-4 text-orange-500" />
+                                )}
+                                {(refreshing === server.id || hasActiveHealthCheck(server.id)) && (
+                                  <Activity className="h-4 w-4 animate-spin text-blue-500" />
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <span className={!server.model ? 'text-muted-foreground' : ''}>
+                                {server.model || 'N/A'}
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              <span className={!server.service_tag ? 'text-muted-foreground' : ''}>
+                                {server.service_tag || 'N/A'}
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              <span className={!server.idrac_firmware ? 'text-muted-foreground' : ''}>
+                                {server.idrac_firmware || 'N/A'}
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              {vcLink.linked ? (
+                                <Badge variant="secondary" className="gap-1">
+                                  <CheckCircle className="h-3 w-3" />
+                                  {vcLink.cluster || 'Linked'}
+                                </Badge>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">Not Linked</span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-1 flex-wrap">
+                                {serverGroups.length > 0 ? (
+                                  serverGroups.slice(0, 2).map((group: any) => (
+                                    <Badge
+                                      key={group.id}
+                                      variant="outline"
+                                      style={{ borderColor: group.color }}
+                                      className="gap-1 text-xs"
+                                    >
+                                      <Users className="h-3 w-3" />
+                                      {group.name}
+                                    </Badge>
+                                  ))
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">—</span>
+                                )}
+                                {serverGroups.length > 2 && (
+                                  <Badge variant="outline" className="text-xs">
+                                    +{serverGroups.length - 2}
+                                  </Badge>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                        {selectedServerId === server.id && (
+                          <TableRow className="bg-muted/40">
+                            <TableCell colSpan={7} className="p-3">
+                              {renderExpandedRow(server)}
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </Fragment>
+                    );
                   })}
                 </>
               );

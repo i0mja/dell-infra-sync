@@ -22,7 +22,7 @@ import { PreFlightCheckDialog } from "@/components/jobs/PreFlightCheckDialog";
 import { ServerStatsBar } from "@/components/servers/ServerStatsBar";
 import { ServerFilterToolbar } from "@/components/servers/ServerFilterToolbar";
 import { ServersTable } from "@/components/servers/ServersTable";
-import { ServerDetailsSidebar } from "@/components/servers/ServerDetailsSidebar";
+import { ServerDetailsBanner } from "@/components/servers/ServerDetailsBanner";
 import { IncompleteServersBanner } from "@/components/servers/IncompleteServersBanner";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -758,6 +758,35 @@ const Servers = () => {
     }
   };
 
+  const renderServerDetails = (server: Server) => (
+    <ServerDetailsBanner
+      server={server}
+      groupMemberships={groupMemberships}
+      vCenterHosts={vCenterHosts}
+      refreshing={refreshing === server.id}
+      onClose={() => setSelectedServer(null)}
+      onEdit={(s) => { setSelectedServer(s); setEditDialogOpen(true); }}
+      onDelete={(s) => { setSelectedServer(s); setDeleteDialogOpen(true); }}
+      onTestConnection={handleTestConnection}
+      onRefreshInfo={handleRefreshInfo}
+      onHealthCheck={handleRunHealthCheck}
+      onPowerControl={(s) => { setSelectedServer(s); setPowerControlDialogOpen(true); }}
+      onBiosConfig={(s) => { setSelectedServer(s); setBiosConfigDialogOpen(true); }}
+      onBootConfig={(s) => { setSelectedServer(s); setBootConfigDialogOpen(true); }}
+      onVirtualMedia={(s) => { setSelectedServer(s); setVirtualMediaDialogOpen(true); }}
+      onScpBackup={(s) => { setSelectedServer(s); setScpBackupDialogOpen(true); }}
+      onViewAudit={(s) => { setSelectedServer(s); setAuditDialogOpen(true); }}
+      onViewProperties={(s) => { setSelectedServer(s); setPropertiesDialogOpen(true); }}
+      onViewHealth={(s) => { setSelectedServer(s); setHealthDialogOpen(true); }}
+      onViewEventLog={(s) => { setSelectedServer(s); setEventLogDialogOpen(true); }}
+      onLinkVCenter={(s) => { setSelectedServer(s); setLinkDialogOpen(true); }}
+      onAssignCredentials={(s) => { setSelectedServer(s); setAssignCredentialsDialogOpen(true); }}
+      onCreateJob={(s) => { setSelectedServer(s); setJobDialogOpen(true); }}
+      onWorkflow={(s) => { setSelectedServer(s); setWorkflowDialogOpen(true); }}
+      onPreFlight={(s) => { setSelectedServer(s); setPreFlightCheckDialogOpen(true); }}
+    />
+  );
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Top: Compact Stats Bar */}
@@ -786,90 +815,46 @@ const Servers = () => {
         </div>
       )}
 
-      {/* Main: Two Column Layout */}
+      {/* Main: Servers List with Inline Details */}
       <div className="flex-1 overflow-hidden px-4 pb-6 pt-4">
-        <div className="grid h-full gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(360px,1fr)] xl:items-start">
-          {/* Left: Servers Table */}
-          <div className="flex min-w-0 flex-col gap-4">
-            <div className="flex h-full flex-col rounded-xl border bg-card shadow-sm">
-              <div className="border-b p-4">
-                <ServerFilterToolbar
-                  searchTerm={searchTerm}
-                  onSearchChange={setSearchTerm}
-                  groupFilter={groupFilter}
-                  onGroupFilterChange={setGroupFilter}
-                  statusFilter={statusFilter}
-                  onStatusFilterChange={setStatusFilter}
-                  groups={serverGroups || []}
-                  vCenterClusters={uniqueVCenterClusters}
-                />
-              </div>
-
-              <div className="flex-1 overflow-hidden p-2 sm:p-4">
-                <ServersTable
-                  servers={filteredServers}
-                  groupedData={groupFilter !== 'all' || searchTerm ? null : organizeServersByGroup()}
-                  selectedServerId={selectedServer?.id || null}
-                  selectedGroupId={selectedGroup}
-                  onServerClick={(server) => setSelectedServer(server as any)}
-                  onGroupClick={setSelectedGroup}
-                  onServerRefresh={handleContextRefresh}
-                  onServerTest={handleContextTest}
-                  onServerHealth={handleContextHealth}
-                  onServerPower={handleOpenPowerControls}
-                  onServerDetails={(server) => setSelectedServer(server as any)}
-                  loading={loading}
-                  refreshing={refreshing}
-                  healthCheckServer={healthCheckServer}
-                  hasActiveHealthCheck={hasActiveHealthCheck}
-                  isIncomplete={isIncompleteServer}
-                  groupMemberships={groupMemberships}
-                  vCenterHosts={vCenterHosts}
-                />
-              </div>
+        <div className="flex min-w-0 flex-col gap-4">
+          <div className="flex h-full flex-col rounded-xl border bg-card shadow-sm">
+            <div className="border-b p-4">
+              <ServerFilterToolbar
+                searchTerm={searchTerm}
+                onSearchChange={setSearchTerm}
+                groupFilter={groupFilter}
+                onGroupFilterChange={setGroupFilter}
+                statusFilter={statusFilter}
+                onStatusFilterChange={setStatusFilter}
+                groups={serverGroups || []}
+                vCenterClusters={uniqueVCenterClusters}
+              />
             </div>
-          </div>
 
-          {/* Right: Server Details */}
-          <div className="min-h-[320px] rounded-xl border bg-card shadow-sm">
-            <ServerDetailsSidebar
-              selectedServer={selectedServer}
-              selectedGroup={selectedGroup ? organizeServersByGroup().find(g =>
-                g.group?.id === selectedGroup || g.cluster === selectedGroup.replace(' (vCenter)', '')
-              ) || null : null}
-              servers={servers}
-              groupMemberships={groupMemberships}
-              vCenterHosts={vCenterHosts}
-              onClose={() => {
-                setSelectedServer(null);
-                setSelectedGroup(null);
-              }}
-              onEdit={(s: any) => { setSelectedServer(s); setEditDialogOpen(true); }}
-              onDelete={(s: any) => { setSelectedServer(s); setDeleteDialogOpen(true); }}
-              onTestConnection={(s: any) => handleTestConnection(s)}
-              onRefreshInfo={(s: any) => handleRefreshInfo(s)}
-              onHealthCheck={(s: any) => handleRunHealthCheck(s)}
-              onPowerControl={(s: any) => { setSelectedServer(s); setPowerControlDialogOpen(true); }}
-              onBiosConfig={(s: any) => { setSelectedServer(s); setBiosConfigDialogOpen(true); }}
-              onBootConfig={(s: any) => { setSelectedServer(s); setBootConfigDialogOpen(true); }}
-              onVirtualMedia={(s: any) => { setSelectedServer(s); setVirtualMediaDialogOpen(true); }}
-              onScpBackup={(s: any) => { setSelectedServer(s); setScpBackupDialogOpen(true); }}
-              onViewAudit={(s: any) => { setSelectedServer(s); setAuditDialogOpen(true); }}
-              onViewProperties={(s: any) => { setSelectedServer(s); setPropertiesDialogOpen(true); }}
-              onViewHealth={(s: any) => { setSelectedServer(s); setHealthDialogOpen(true); }}
-              onViewEventLog={(s: any) => { setSelectedServer(s); setEventLogDialogOpen(true); }}
-              onLinkVCenter={(s: any) => { setSelectedServer(s); setLinkDialogOpen(true); }}
-              onAssignCredentials={(s: any) => { setSelectedServer(s); setAssignCredentialsDialogOpen(true); }}
-              onCreateJob={(s: any) => { setSelectedServer(s); setJobDialogOpen(true); }}
-              onWorkflow={(s: any) => { setSelectedServer(s); setWorkflowDialogOpen(true); }}
-              onPreFlight={(s: any) => { setSelectedServer(s); setPreFlightCheckDialogOpen(true); }}
-              onAddServer={() => setDialogOpen(true)}
-              onRunDiscovery={handleDiscoveryQuickAction}
-              onImportCsv={handleImportCsv}
-              onManageCredentials={handleManageCredentials}
-              onManageGroups={handleManageGroups}
-              refreshing={refreshing}
-            />
+            <div className="flex-1 overflow-hidden p-2 sm:p-4">
+              <ServersTable
+                servers={filteredServers}
+                groupedData={groupFilter !== 'all' || searchTerm ? null : organizeServersByGroup()}
+                selectedServerId={selectedServer?.id || null}
+                selectedGroupId={selectedGroup}
+                onServerClick={(server) => setSelectedServer(server as any)}
+                onGroupClick={setSelectedGroup}
+                onServerRefresh={handleContextRefresh}
+                onServerTest={handleContextTest}
+                onServerHealth={handleContextHealth}
+                onServerPower={handleOpenPowerControls}
+                onServerDetails={(server) => setSelectedServer(server as any)}
+                loading={loading}
+                refreshing={refreshing}
+                healthCheckServer={healthCheckServer}
+                hasActiveHealthCheck={hasActiveHealthCheck}
+                isIncomplete={isIncompleteServer}
+                groupMemberships={groupMemberships}
+                vCenterHosts={vCenterHosts}
+                renderExpandedRow={renderServerDetails}
+              />
+            </div>
           </div>
         </div>
       </div>
