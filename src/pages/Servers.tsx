@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Info, LayoutGrid, Plus, RefreshCw, ShieldCheck, Wrench } from "lucide-react";
+import { Activity, CheckCircle2, Info, LayoutGrid, Plus, RefreshCw, ShieldCheck, Wrench } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { AddServerDialog } from "@/components/servers/AddServerDialog";
 import { LinkVCenterDialog } from "@/components/servers/LinkVCenterDialog";
@@ -827,6 +827,48 @@ const Servers = () => {
     },
   ];
 
+  const capabilitySections = [
+    {
+      title: "Inventory & grouping",
+      items: [
+        "Add new hosts, assign credential sets, and organize servers into manual groups or vCenter clusters.",
+        "Quickly spot incomplete records and trigger discovery to pull firmware, hardware, and health data.",
+        "Link to vCenter hosts to align inventory with virtualization topology and clusters.",
+      ],
+    },
+    {
+      title: "Health, power, & access",
+      items: [
+        "Run connection tests, health checks, and event log reviews without leaving the page.",
+        "Open power controls, virtual media, and boot configuration directly from the server row.",
+        "Use the inline details panel to review properties, audit history, and lifecycle actions.",
+      ],
+    },
+    {
+      title: "Maintenance workflows",
+      items: [
+        "Launch discovery, health, or firmware jobs in bulk with the job composer.",
+        "Coordinate firmware updates with safety gates using the workflow builder and preflight checks.",
+        "Plan maintenance windows from here and monitor activity in the Maintenance Planner.",
+      ],
+    },
+  ];
+
+  const headerHighlights = [
+    {
+      title: "Track server health",
+      description: "Test connections, view live status, and keep credentials validated via Job Executor jobs.",
+    },
+    {
+      title: "Refresh hardware facts",
+      description: "Run discovery scans to populate model, firmware, and capacity details before maintenance.",
+    },
+    {
+      title: "Execute safely",
+      description: "Use preflight checks, workflows, and power controls to keep uptime protected.",
+    },
+  ];
+
   const renderServerDetails = (server: Server) => (
     <ServerDetailsBanner
       server={server}
@@ -859,53 +901,92 @@ const Servers = () => {
   return (
     <TooltipProvider delayDuration={100}>
       <div className="flex flex-col h-full overflow-hidden">
-        {/* Top: Compact Stats Bar */}
-        <ServerStatsBar
-          totalServers={servers.length}
-          onlineCount={servers.filter(s => s.connection_status === 'online').length}
-          offlineCount={servers.filter(s => s.connection_status === 'offline').length}
-          unknownCount={servers.filter(s => !s.connection_status || s.connection_status === 'unknown').length}
-          incompleteCount={incompleteServers.length}
-          onAddServer={() => setDialogOpen(true)}
-          onRefreshAll={fetchServers}
-          onManageGroups={() => navigate('/settings?tab=server-groups')}
-          onDiscovery={() => setJobDialogOpen(true)}
-          useJobExecutor={useJobExecutorForIdrac}
-        />
+        <div className="px-4 pt-4 space-y-4">
+          <Card className="border-primary/20 bg-gradient-to-r from-primary/5 via-background to-background shadow-sm">
+            <CardHeader className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="space-y-2">
+                <CardTitle className="flex items-center gap-2 text-xl">
+                  <ShieldCheck className="h-5 w-5 text-primary" />
+                  Servers
+                </CardTitle>
+                <CardDescription className="max-w-3xl text-base">
+                  Inventory, health, and maintenance workspace for every iDRAC-connected server. Launch jobs, review status,
+                  and organize hosts by group or cluster from a single view.
+                </CardDescription>
+                <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
+                  <div className="flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-primary">
+                    <Activity className="h-4 w-4" /> Job Executor-first actions
+                  </div>
+                  <div className="flex items-center gap-1 rounded-full bg-muted px-3 py-1">
+                    <CheckCircle2 className="h-4 w-4" /> Safety checks baked in
+                  </div>
+                  <div className="flex items-center gap-1 rounded-full bg-muted px-3 py-1">
+                    <LayoutGrid className="h-4 w-4" /> Cluster & group aware
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => { setDefaultJobType('discovery_scan'); setJobDialogOpen(true); }}>
+                  <LayoutGrid className="mr-2 h-4 w-4" /> Bulk actions
+                </Button>
+                <Button onClick={() => setDialogOpen(true)}>
+                  <Plus className="mr-2 h-4 w-4" /> Add server
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <ServerStatsBar
+                totalServers={servers.length}
+                onlineCount={servers.filter(s => s.connection_status === 'online').length}
+                offlineCount={servers.filter(s => s.connection_status === 'offline').length}
+                unknownCount={servers.filter(s => !s.connection_status || s.connection_status === 'unknown').length}
+                incompleteCount={incompleteServers.length}
+                onAddServer={() => setDialogOpen(true)}
+                onRefreshAll={fetchServers}
+                onManageGroups={() => navigate('/settings?tab=server-groups')}
+                onDiscovery={() => setJobDialogOpen(true)}
+                useJobExecutor={useJobExecutorForIdrac}
+              />
+              <div className="grid gap-3 md:grid-cols-3">
+                {headerHighlights.map((item) => (
+                  <div key={item.title} className="rounded-lg border bg-background/60 p-3 shadow-sm">
+                    <div className="font-semibold text-foreground">{item.title}</div>
+                    <p className="text-sm text-muted-foreground">{item.description}</p>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
 
-        {/* Incomplete Servers Banner (conditional) */}
-        {incompleteServers.length > 0 && showIncompleteBanner && (
-          <div className="px-4 pt-4">
+          {/* Incomplete Servers Banner (conditional) */}
+          {incompleteServers.length > 0 && showIncompleteBanner && (
             <IncompleteServersBanner
               count={incompleteServers.length}
               onRefreshAll={handleRefreshIncomplete}
               onDismiss={() => setShowIncompleteBanner(false)}
               refreshing={bulkRefreshing}
             />
-          </div>
-        )}
+          )}
 
-        {/* Main: Servers List with Inline Details */}
-        <div className="flex-1 overflow-hidden px-4 pb-6 pt-4">
-          <div className="grid h-full min-w-0 gap-4 xl:grid-cols-[380px_1fr]">
+          <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[400px_1fr]">
             <div className="flex flex-col gap-4">
               <Card className="h-fit border-primary/20 bg-primary/5 shadow-sm">
                 <CardHeader className="space-y-1">
                   <CardTitle className="flex items-center gap-2 text-primary">
                     <ShieldCheck className="h-4 w-4" />
-                    Server command center
+                    Actions & shortcuts
                   </CardTitle>
                   <CardDescription>
-                    Consolidated entry points for the most common inventory and maintenance flows.
+                    Launch the most common flows without scrolling through the table first.
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-3">
+                <CardContent className="grid gap-2 sm:grid-cols-2">
                   {quickActions.map((action) => (
                     <Tooltip key={action.label}>
                       <TooltipTrigger asChild>
                         <Button
                           variant="secondary"
-                          className="w-full justify-start gap-2"
+                          className="justify-start gap-2"
                           onClick={action.onClick}
                           disabled={action.disabled}
                         >
@@ -913,7 +994,7 @@ const Servers = () => {
                           <span>{action.label}</span>
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent side="right" className="max-w-xs text-sm">
+                      <TooltipContent side="top" className="max-w-xs text-sm">
                         {action.description}
                       </TooltipContent>
                     </Tooltip>
@@ -921,94 +1002,116 @@ const Servers = () => {
                 </CardContent>
               </Card>
 
-              <Card className="h-fit">
+              <Card className="h-fit border-dashed">
                 <CardHeader className="space-y-1">
-                  <CardTitle className="flex items-center gap-2">
+                  <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                     <Info className="h-4 w-4" />
-                    How this page works
+                    How this page helps
                   </CardTitle>
                   <CardDescription>
-                    A quick tour of what each action does before you click it.
+                    Clear steps that connect inventory, discovery, and maintenance workflows.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {guidanceItems.map((item) => (
-                    <div key={item.title} className="rounded-lg border bg-muted/40 p-3">
-                      <p className="font-medium leading-tight">{item.title}</p>
-                      <p className="text-sm text-muted-foreground">{item.description}</p>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-
-              <Card className="h-fit">
-                <CardHeader className="space-y-1">
-                  <CardTitle className="flex items-center gap-2">
-                    <LayoutGrid className="h-4 w-4" />
-                    Status legend & tips
-                  </CardTitle>
-                  <CardDescription>
-                    Understand each badge and when to use discovery vs. quick checks.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {statusLegend.map((status) => (
-                    <div key={status.title} className="flex items-start gap-2">
-                      <div className="mt-1 h-2.5 w-2.5 rounded-full bg-primary" />
-                      <div>
-                        <p className="font-medium leading-tight">{status.title}</p>
-                        <p className="text-sm text-muted-foreground">{status.detail}</p>
+                  <div className="grid gap-3">
+                    {guidanceItems.map((item) => (
+                      <div key={item.title} className="rounded-lg border bg-muted/50 p-3 text-sm">
+                        <div className="font-medium text-foreground">{item.title}</div>
+                        <p className="text-muted-foreground">{item.description}</p>
                       </div>
-                    </div>
-                  ))}
-                  <div className="rounded-lg border border-dashed bg-muted/30 p-3 text-sm text-muted-foreground">
-                    Tip: Use grouping (left of the table) to keep vCenter clusters and manual groups aligned.
+                    ))}
                   </div>
                 </CardContent>
               </Card>
+
+              <Card className="h-fit border-muted-foreground/20 bg-muted/30">
+                <CardHeader className="space-y-1">
+                  <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                    <LayoutGrid className="h-4 w-4" />
+                    Status reference
+                  </CardTitle>
+                  <CardDescription>
+                    Know what each badge and state means before launching an action.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  {statusLegend.map((status) => (
+                    <div key={status.title} className="flex items-start gap-2 rounded-lg bg-background p-3 shadow-sm">
+                      <div className="mt-1 h-2.5 w-2.5 rounded-full bg-primary" />
+                      <div>
+                        <div className="font-semibold">{status.title}</div>
+                        <p className="text-muted-foreground">{status.detail}</p>
+                      </div>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+
+              <Card className="h-fit border-muted">
+                <CardHeader className="space-y-1">
+                  <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                    <Wrench className="h-4 w-4" />
+                    Capabilities at a glance
+                  </CardTitle>
+                  <CardDescription>
+                    Everything this page covers, organized by the outcome you need.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {capabilitySections.map((section) => (
+                    <div key={section.title} className="space-y-2 rounded-lg bg-muted/50 p-3">
+                      <div className="font-semibold text-foreground">{section.title}</div>
+                      <ul className="list-disc space-y-1 pl-4 text-sm text-muted-foreground">
+                        {section.items.map(item => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
             </div>
 
-            <div className="flex h-full flex-col rounded-xl border bg-card shadow-sm">
-              <div className="border-b p-4">
-                <ServerFilterToolbar
-                  searchTerm={searchTerm}
-                  onSearchChange={setSearchTerm}
-                  groupFilter={groupFilter}
-                  onGroupFilterChange={setGroupFilter}
-                  statusFilter={statusFilter}
-                  onStatusFilterChange={setStatusFilter}
-                  groups={serverGroups || []}
-                  vCenterClusters={uniqueVCenterClusters}
-                />
-              </div>
-
-              <div className="flex-1 overflow-hidden p-2 sm:p-4">
-                <ServersTable
-                  servers={filteredServers}
-                  groupedData={groupFilter !== 'all' || searchTerm ? null : organizeServersByGroup()}
-                  selectedServerId={selectedServer?.id || null}
-                  selectedGroupId={selectedGroup}
-                  onServerClick={(server) => setSelectedServer(server as any)}
-                  onGroupClick={setSelectedGroup}
-                  onServerRefresh={handleContextRefresh}
-                  onServerTest={handleContextTest}
-                  onServerHealth={handleContextHealth}
-                  onServerPower={handleOpenPowerControls}
-                  onServerDetails={(server) => setSelectedServer(server as any)}
-                  loading={loading}
-                  refreshing={refreshing}
-                  healthCheckServer={healthCheckServer}
-                  hasActiveHealthCheck={hasActiveHealthCheck}
-                  isIncomplete={isIncompleteServer}
-                  groupMemberships={groupMemberships}
-                  vCenterHosts={vCenterHosts}
-                  renderExpandedRow={renderServerDetails}
-                />
-              </div>
+            <div className="flex min-w-0 flex-col gap-4">
+              <Card className="border-primary/20 shadow-sm">
+                <CardHeader className="space-y-1">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <LayoutGrid className="h-5 w-5" />
+                    Server inventory
+                  </CardTitle>
+                  <CardDescription>
+                    Filter by group, cluster, or state, then expand a row to launch connection, health, and maintenance actions.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <ServerFilterToolbar
+                    searchTerm={searchTerm}
+                    onSearchChange={setSearchTerm}
+                    groupFilter={groupFilter}
+                    onGroupFilterChange={setGroupFilter}
+                    statusFilter={statusFilter}
+                    onStatusFilterChange={setStatusFilter}
+                    serverGroups={serverGroups}
+                    vCenterClusters={uniqueVCenterClusters}
+                    onManageGroups={() => navigate('/settings?tab=server-groups')}
+                  />
+                  <ServersTable
+                    servers={filteredServers}
+                    loading={loading}
+                    refreshing={refreshing}
+                    healthCheckServer={healthCheckServer}
+                    hasActiveHealthCheck={hasActiveHealthCheck}
+                    isIncomplete={isIncompleteServer}
+                    groupMemberships={groupMemberships}
+                    vCenterHosts={vCenterHosts}
+                    renderExpandedRow={renderServerDetails}
+                  />
+                </CardContent>
+              </Card>
             </div>
           </div>
         </div>
-      
+
       {/* All Dialogs */}
       <AddServerDialog open={dialogOpen} onOpenChange={setDialogOpen} onSuccess={fetchServers} />
       {selectedServer && (
