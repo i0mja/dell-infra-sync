@@ -31,17 +31,20 @@ def _safe_json_parse(response: Any):
     try:
         return response.json()
     except Exception:
-        text = response.text[:500] if hasattr(response, "text") else str(response.content[:500])
-        stripped = text.strip() if isinstance(text, str) else ""
+        # CRITICAL: Get FULL response text for SCP exports - NEVER truncate XML!
+        full_text = response.text if hasattr(response, "text") else str(response.content)
+        stripped = full_text.strip() if isinstance(full_text, str) else ""
 
         if stripped.startswith("<SystemConfiguration"):
-            # SCP exports return XML payloads; treat as completed task output
+            # SCP exports return XML payloads - return FULL content, not truncated
             return {
                 "TaskState": "Completed",
                 "PercentComplete": 100,
                 "Messages": [{"Message": stripped}],
-                "_raw_response": text,
+                "_raw_response": full_text,  # FULL response, not truncated
+                "_scp_xml": True,
                 "_parse_error": "Response returned XML instead of JSON"
             }
 
-        return {"_raw_response": text, "_parse_error": "Not valid JSON"}
+        # For non-SCP responses, truncate for logging purposes only
+        return {"_raw_response": full_text[:2000], "_parse_error": "Not valid JSON"}

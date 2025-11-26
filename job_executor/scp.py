@@ -231,6 +231,11 @@ class ScpMixin:
                         serialized_for_checksum = serialized_for_file
 
                     file_size = len(serialized_for_file.encode('utf-8'))
+                    
+                    # Validate minimum size - real SCP exports are typically 50KB+ minimum
+                    if file_size < 1024:  # Less than 1KB is definitely truncated
+                        raise Exception(f"SCP export appears truncated ({file_size} bytes). Expected at least 1KB for valid export.")
+                    
                     checksum = hashlib.sha256(serialized_for_checksum.encode()).hexdigest()
 
                     backup_data = {
@@ -784,7 +789,8 @@ class ScpMixin:
             # Real SCP XML starts with <SystemConfiguration>
             stripped = content.strip()
             if stripped.startswith('<SystemConfiguration'):
-                return True
+                # CRITICAL: Also check for closing tag to detect truncation
+                return '</SystemConfiguration>' in stripped
             
             # Could also be JSON string - parse and check
             if stripped.startswith('{'):
