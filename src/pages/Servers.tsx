@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Plus, RefreshCw, Wrench } from "lucide-react";
+import { Info, LayoutGrid, Plus, RefreshCw, ShieldCheck, Wrench } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { AddServerDialog } from "@/components/servers/AddServerDialog";
 import { LinkVCenterDialog } from "@/components/servers/LinkVCenterDialog";
@@ -36,6 +36,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface Server {
   id: string;
@@ -758,6 +765,68 @@ const Servers = () => {
     }
   };
 
+  const quickActions = [
+    {
+      label: "Add server",
+      icon: Plus,
+      onClick: () => setDialogOpen(true),
+      description: "Create a new inventory record and kick off discovery when credentials are available.",
+    },
+    {
+      label: "Refresh incomplete",
+      icon: RefreshCw,
+      onClick: () => handleRefreshIncomplete(),
+      description: "Run a discovery scan for servers missing model, firmware, or health data.",
+      disabled: incompleteServers.length === 0,
+    },
+    {
+      label: "Plan maintenance",
+      icon: Wrench,
+      onClick: () => { setDefaultJobType('full_server_update'); setWorkflowDialogOpen(true); },
+      description: "Open workflow builder to schedule firmware and safety checks for selected servers.",
+    },
+    {
+      label: "Bulk actions",
+      icon: LayoutGrid,
+      onClick: () => { setDefaultJobType('discovery_scan'); setJobDialogOpen(true); },
+      description: "Launch job composer for discovery, health, or power operations across many hosts.",
+    },
+  ];
+
+  const guidanceItems = [
+    {
+      title: "Connect & verify",
+      description: "Assign a credential set, then use Test Connection to confirm iDRAC reachability.",
+    },
+    {
+      title: "Deep refresh",
+      description: "Refresh Info triggers a discovery scan that pulls hardware model, firmware, and health.",
+    },
+    {
+      title: "Protect uptime",
+      description: "Use Preflight + Workflow to enforce safety checks before firmware or reboot actions.",
+    },
+    {
+      title: "Link your sources",
+      description: "Tie servers to vCenter hosts and manual groups to unlock cluster-aware grouping.",
+    },
+  ];
+
+  const statusLegend = [
+    {
+      title: "Discovering",
+      detail: "A job is actively gathering inventory from this server.",
+    },
+    {
+      title: "Discovered",
+      detail: "Model, service tag, firmware, and health data are up to date.",
+    },
+    {
+      title: "Minimal Info",
+      detail: "Only IP/hostname is known; run Refresh Info to populate full details.",
+    },
+  ];
+
   const renderServerDetails = (server: Server) => (
     <ServerDetailsBanner
       server={server}
@@ -788,76 +857,157 @@ const Servers = () => {
   );
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Top: Compact Stats Bar */}
-      <ServerStatsBar
-        totalServers={servers.length}
-        onlineCount={servers.filter(s => s.connection_status === 'online').length}
-        offlineCount={servers.filter(s => s.connection_status === 'offline').length}
-        unknownCount={servers.filter(s => !s.connection_status || s.connection_status === 'unknown').length}
-        incompleteCount={incompleteServers.length}
-        onAddServer={() => setDialogOpen(true)}
-        onRefreshAll={fetchServers}
-        onManageGroups={() => navigate('/settings?tab=server-groups')}
-        onDiscovery={() => setJobDialogOpen(true)}
-        useJobExecutor={useJobExecutorForIdrac}
-      />
+    <TooltipProvider delayDuration={100}>
+      <div className="flex flex-col h-full overflow-hidden">
+        {/* Top: Compact Stats Bar */}
+        <ServerStatsBar
+          totalServers={servers.length}
+          onlineCount={servers.filter(s => s.connection_status === 'online').length}
+          offlineCount={servers.filter(s => s.connection_status === 'offline').length}
+          unknownCount={servers.filter(s => !s.connection_status || s.connection_status === 'unknown').length}
+          incompleteCount={incompleteServers.length}
+          onAddServer={() => setDialogOpen(true)}
+          onRefreshAll={fetchServers}
+          onManageGroups={() => navigate('/settings?tab=server-groups')}
+          onDiscovery={() => setJobDialogOpen(true)}
+          useJobExecutor={useJobExecutorForIdrac}
+        />
 
-      {/* Incomplete Servers Banner (conditional) */}
-      {incompleteServers.length > 0 && showIncompleteBanner && (
-        <div className="px-4 pt-4">
-          <IncompleteServersBanner
-            count={incompleteServers.length}
-            onRefreshAll={handleRefreshIncomplete}
-            onDismiss={() => setShowIncompleteBanner(false)}
-            refreshing={bulkRefreshing}
-          />
-        </div>
-      )}
+        {/* Incomplete Servers Banner (conditional) */}
+        {incompleteServers.length > 0 && showIncompleteBanner && (
+          <div className="px-4 pt-4">
+            <IncompleteServersBanner
+              count={incompleteServers.length}
+              onRefreshAll={handleRefreshIncomplete}
+              onDismiss={() => setShowIncompleteBanner(false)}
+              refreshing={bulkRefreshing}
+            />
+          </div>
+        )}
 
-      {/* Main: Servers List with Inline Details */}
-      <div className="flex-1 overflow-hidden px-4 pb-6 pt-4">
-        <div className="flex min-w-0 flex-col gap-4">
-          <div className="flex h-full flex-col rounded-xl border bg-card shadow-sm">
-            <div className="border-b p-4">
-              <ServerFilterToolbar
-                searchTerm={searchTerm}
-                onSearchChange={setSearchTerm}
-                groupFilter={groupFilter}
-                onGroupFilterChange={setGroupFilter}
-                statusFilter={statusFilter}
-                onStatusFilterChange={setStatusFilter}
-                groups={serverGroups || []}
-                vCenterClusters={uniqueVCenterClusters}
-              />
+        {/* Main: Servers List with Inline Details */}
+        <div className="flex-1 overflow-hidden px-4 pb-6 pt-4">
+          <div className="grid h-full min-w-0 gap-4 xl:grid-cols-[380px_1fr]">
+            <div className="flex flex-col gap-4">
+              <Card className="h-fit border-primary/20 bg-primary/5 shadow-sm">
+                <CardHeader className="space-y-1">
+                  <CardTitle className="flex items-center gap-2 text-primary">
+                    <ShieldCheck className="h-4 w-4" />
+                    Server command center
+                  </CardTitle>
+                  <CardDescription>
+                    Consolidated entry points for the most common inventory and maintenance flows.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {quickActions.map((action) => (
+                    <Tooltip key={action.label}>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="secondary"
+                          className="w-full justify-start gap-2"
+                          onClick={action.onClick}
+                          disabled={action.disabled}
+                        >
+                          <action.icon className="h-4 w-4" />
+                          <span>{action.label}</span>
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="right" className="max-w-xs text-sm">
+                        {action.description}
+                      </TooltipContent>
+                    </Tooltip>
+                  ))}
+                </CardContent>
+              </Card>
+
+              <Card className="h-fit">
+                <CardHeader className="space-y-1">
+                  <CardTitle className="flex items-center gap-2">
+                    <Info className="h-4 w-4" />
+                    How this page works
+                  </CardTitle>
+                  <CardDescription>
+                    A quick tour of what each action does before you click it.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {guidanceItems.map((item) => (
+                    <div key={item.title} className="rounded-lg border bg-muted/40 p-3">
+                      <p className="font-medium leading-tight">{item.title}</p>
+                      <p className="text-sm text-muted-foreground">{item.description}</p>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+
+              <Card className="h-fit">
+                <CardHeader className="space-y-1">
+                  <CardTitle className="flex items-center gap-2">
+                    <LayoutGrid className="h-4 w-4" />
+                    Status legend & tips
+                  </CardTitle>
+                  <CardDescription>
+                    Understand each badge and when to use discovery vs. quick checks.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {statusLegend.map((status) => (
+                    <div key={status.title} className="flex items-start gap-2">
+                      <div className="mt-1 h-2.5 w-2.5 rounded-full bg-primary" />
+                      <div>
+                        <p className="font-medium leading-tight">{status.title}</p>
+                        <p className="text-sm text-muted-foreground">{status.detail}</p>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="rounded-lg border border-dashed bg-muted/30 p-3 text-sm text-muted-foreground">
+                    Tip: Use grouping (left of the table) to keep vCenter clusters and manual groups aligned.
+                  </div>
+                </CardContent>
+              </Card>
             </div>
 
-            <div className="flex-1 overflow-hidden p-2 sm:p-4">
-              <ServersTable
-                servers={filteredServers}
-                groupedData={groupFilter !== 'all' || searchTerm ? null : organizeServersByGroup()}
-                selectedServerId={selectedServer?.id || null}
-                selectedGroupId={selectedGroup}
-                onServerClick={(server) => setSelectedServer(server as any)}
-                onGroupClick={setSelectedGroup}
-                onServerRefresh={handleContextRefresh}
-                onServerTest={handleContextTest}
-                onServerHealth={handleContextHealth}
-                onServerPower={handleOpenPowerControls}
-                onServerDetails={(server) => setSelectedServer(server as any)}
-                loading={loading}
-                refreshing={refreshing}
-                healthCheckServer={healthCheckServer}
-                hasActiveHealthCheck={hasActiveHealthCheck}
-                isIncomplete={isIncompleteServer}
-                groupMemberships={groupMemberships}
-                vCenterHosts={vCenterHosts}
-                renderExpandedRow={renderServerDetails}
-              />
+            <div className="flex h-full flex-col rounded-xl border bg-card shadow-sm">
+              <div className="border-b p-4">
+                <ServerFilterToolbar
+                  searchTerm={searchTerm}
+                  onSearchChange={setSearchTerm}
+                  groupFilter={groupFilter}
+                  onGroupFilterChange={setGroupFilter}
+                  statusFilter={statusFilter}
+                  onStatusFilterChange={setStatusFilter}
+                  groups={serverGroups || []}
+                  vCenterClusters={uniqueVCenterClusters}
+                />
+              </div>
+
+              <div className="flex-1 overflow-hidden p-2 sm:p-4">
+                <ServersTable
+                  servers={filteredServers}
+                  groupedData={groupFilter !== 'all' || searchTerm ? null : organizeServersByGroup()}
+                  selectedServerId={selectedServer?.id || null}
+                  selectedGroupId={selectedGroup}
+                  onServerClick={(server) => setSelectedServer(server as any)}
+                  onGroupClick={setSelectedGroup}
+                  onServerRefresh={handleContextRefresh}
+                  onServerTest={handleContextTest}
+                  onServerHealth={handleContextHealth}
+                  onServerPower={handleOpenPowerControls}
+                  onServerDetails={(server) => setSelectedServer(server as any)}
+                  loading={loading}
+                  refreshing={refreshing}
+                  healthCheckServer={healthCheckServer}
+                  hasActiveHealthCheck={hasActiveHealthCheck}
+                  isIncomplete={isIncompleteServer}
+                  groupMemberships={groupMemberships}
+                  vCenterHosts={vCenterHosts}
+                  renderExpandedRow={renderServerDetails}
+                />
+              </div>
             </div>
           </div>
         </div>
-      </div>
       
       {/* All Dialogs */}
       <AddServerDialog open={dialogOpen} onOpenChange={setDialogOpen} onSuccess={fetchServers} />
@@ -962,7 +1112,8 @@ const Servers = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+      </div>
+    </TooltipProvider>
   );
 };
 
