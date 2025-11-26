@@ -1356,6 +1356,143 @@ class DellOperations:
     
     # Catalog-Based Firmware Update
     
+    def get_bios_attributes(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        job_id: str = None,
+        server_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Get current BIOS attributes from iDRAC.
+        
+        Dell pattern: GET /redfish/v1/Systems/System.Embedded.1/Bios
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            job_id: Optional job ID for logging
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict: BIOS attributes with version info
+        """
+        response = self.adapter.make_request(
+            method='GET',
+            ip=ip,
+            endpoint='/redfish/v1/Systems/System.Embedded.1/Bios',
+            username=username,
+            password=password,
+            operation_name='Get BIOS Attributes',
+            job_id=job_id,
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        return {
+            'attributes': response.get('Attributes', {}),
+            'bios_version': response.get('BiosVersion'),
+            'attribute_registry': response.get('AttributeRegistry'),
+            '@odata.id': response.get('@odata.id')
+        }
+    
+    def get_pending_bios_attributes(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        job_id: str = None,
+        server_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Get pending (scheduled) BIOS attributes from iDRAC.
+        
+        Dell pattern: GET /redfish/v1/Systems/System.Embedded.1/Bios/Settings
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            job_id: Optional job ID for logging
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict: Pending BIOS attributes
+        """
+        response = self.adapter.make_request(
+            method='GET',
+            ip=ip,
+            endpoint='/redfish/v1/Systems/System.Embedded.1/Bios/Settings',
+            username=username,
+            password=password,
+            operation_name='Get Pending BIOS Attributes',
+            job_id=job_id,
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        return {
+            'attributes': response.get('Attributes', {}),
+            '@odata.id': response.get('@odata.id')
+        }
+    
+    def set_bios_attributes(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        attributes: Dict[str, Any],
+        job_id: str = None,
+        server_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Set BIOS attributes (changes take effect on next reboot).
+        
+        Dell pattern: PATCH /redfish/v1/Systems/System.Embedded.1/Bios/Settings
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            attributes: Dict of BIOS attribute key-value pairs
+            job_id: Optional job ID for logging
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict: Response with success status
+        """
+        payload = {
+            'Attributes': attributes
+        }
+        
+        response = self.adapter.make_request(
+            method='PATCH',
+            ip=ip,
+            endpoint='/redfish/v1/Systems/System.Embedded.1/Bios/Settings',
+            username=username,
+            password=password,
+            payload=payload,
+            operation_name='Set BIOS Attributes',
+            timeout=(5, 60),  # BIOS operations can take longer
+            job_id=job_id,
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        return {
+            'success': True,
+            'message': 'BIOS attributes updated successfully. Changes will take effect after reboot.',
+            'attributes_count': len(attributes)
+        }
+
     def update_firmware_from_catalog(
         self,
         ip: str,

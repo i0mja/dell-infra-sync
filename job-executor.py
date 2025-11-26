@@ -4456,89 +4456,54 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 raise Exception("Missing server_id in job details")
             
             # Get server info
-            server = self.supabase.table('servers').select('*').eq('id', server_id).execute().data[0]
+            server = self.get_server_by_id(server_id)
+            if not server:
+                raise Exception(f"Server {server_id} not found")
+            
             ip = server['ip_address']
             username, password = self.get_credentials_for_server(server)
             
             self.log(f"  Reading BIOS configuration from {ip}...")
             
-            # Get current BIOS attributes
-            current_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Bios"
-            start_time = time.time()
-            current_resp = requests.get(
-                current_url,
-                auth=HTTPBasicAuth(username, password),
-                verify=False,
-                timeout=30
-            )
-            response_time_ms = int((time.time() - start_time) * 1000)
+            # Get Dell operations instance
+            dell_ops = self._get_dell_operations()
             
-            # Log activity
-            self.log_idrac_command(
-                server_id=server_id,
+            # Get current BIOS attributes using Dell adapter
+            current_data = dell_ops.get_bios_attributes(
+                ip=ip,
+                username=username,
+                password=password,
                 job_id=job['id'],
-                command_type='BIOS_READ',
-                endpoint='/redfish/v1/Systems/System.Embedded.1/Bios',
-                full_url=current_url,
-                request_body=None,
-                request_headers={'Authorization': '[REDACTED]'},
-                status_code=current_resp.status_code,
-                response_body=_safe_json_parse(current_resp) if current_resp.ok else None,
-                response_time_ms=response_time_ms,
-                success=current_resp.ok,
-                error_message=None if current_resp.ok else current_resp.text,
-                source='job_executor',
-                initiated_by=job['created_by']
+                server_id=server_id,
+                user_id=job['created_by']
             )
             
-            if not current_resp.ok:
-                raise Exception(f"Failed to read current BIOS: HTTP {current_resp.status_code}")
-            
-            current_data = _safe_json_parse(current_resp)
-            current_attributes = current_data.get('Attributes', {})
-            bios_version = current_data.get('BiosVersion', 'Unknown')
+            current_attributes = current_data['attributes']
+            bios_version = current_data.get('bios_version', 'Unknown')
             
             self.log(f"  [OK] Retrieved {len(current_attributes)} current BIOS attributes")
             
-            # Get pending BIOS attributes
-            pending_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Bios/Settings"
-            start_time = time.time()
-            pending_resp = requests.get(
-                pending_url,
-                auth=HTTPBasicAuth(username, password),
-                verify=False,
-                timeout=30
-            )
-            response_time_ms = int((time.time() - start_time) * 1000)
-            
-            # Log activity
-            self.log_idrac_command(
-                server_id=server_id,
-                job_id=job['id'],
-                command_type='BIOS_READ_PENDING',
-                endpoint='/redfish/v1/Systems/System.Embedded.1/Bios/Settings',
-                full_url=pending_url,
-                request_body=None,
-                request_headers={'Authorization': '[REDACTED]'},
-                status_code=pending_resp.status_code,
-                response_body=_safe_json_parse(pending_resp) if pending_resp.ok else None,
-                response_time_ms=response_time_ms,
-                success=pending_resp.ok,
-                error_message=None if pending_resp.ok else pending_resp.text,
-                source='job_executor',
-                initiated_by=job['created_by']
-            )
-            
+            # Get pending BIOS attributes using Dell adapter
             pending_attributes = None
-            if pending_resp.ok:
-                pending_data = _safe_json_parse(pending_resp)
-                pending_attributes = pending_data.get('Attributes', {})
+            try:
+                pending_data = dell_ops.get_pending_bios_attributes(
+                    ip=ip,
+                    username=username,
+                    password=password,
+                    job_id=job['id'],
+                    server_id=server_id,
+                    user_id=job['created_by']
+                )
+                pending_attributes = pending_data['attributes']
+                
                 if pending_attributes:
                     self.log(f"  [OK] Retrieved {len(pending_attributes)} pending BIOS attributes")
                 else:
                     self.log(f"  No pending BIOS changes")
+            except Exception as e:
+                self.log(f"  Could not retrieve pending attributes: {e}", "WARN")
             
-            # Save to database
+            # Save to database via REST API
             config_data = {
                 'server_id': server_id,
                 'job_id': job['id'],
@@ -4551,7 +4516,22 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 'captured_at': datetime.now().isoformat()
             }
             
-            self.supabase.table('bios_configurations').insert(config_data).execute()
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            db_response = requests.post(
+                f"{SUPABASE_URL}/rest/v1/bios_configurations",
+                headers=headers,
+                json=config_data,
+                timeout=30
+            )
+            
+            if db_response.status_code not in [200, 201]:
+                raise Exception(f"Failed to save BIOS configuration: {db_response.text}")
+            
             self.log(f"  [OK] BIOS configuration saved to database")
             
             # Update job status
@@ -5094,7 +5074,10 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 raise Exception("No attributes to apply")
             
             # Get server info
-            server = self.supabase.table('servers').select('*').eq('id', server_id).execute().data[0]
+            server = self.get_server_by_id(server_id)
+            if not server:
+                raise Exception(f"Server {server_id} not found")
+            
             ip = server['ip_address']
             username, password = self.get_credentials_for_server(server)
             
@@ -5115,104 +5098,66 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 }
                 self.execute_bios_config_read(snapshot_job)
             
-            # Apply BIOS settings
-            settings_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Bios/Settings"
-            payload = {"Attributes": attributes}
+            # Get Dell operations instance
+            dell_ops = self._get_dell_operations()
             
-            start_time = time.time()
-            settings_resp = requests.patch(
-                settings_url,
-                auth=HTTPBasicAuth(username, password),
-                headers={'Content-Type': 'application/json'},
-                json=payload,
-                verify=False,
-                timeout=60
-            )
-            response_time_ms = int((time.time() - start_time) * 1000)
-            
-            # Log activity
-            self.log_idrac_command(
-                server_id=server_id,
+            # Apply BIOS settings using Dell adapter
+            result = dell_ops.set_bios_attributes(
+                ip=ip,
+                username=username,
+                password=password,
+                attributes=attributes,
                 job_id=job['id'],
-                task_id=None,
-                command_type='BIOS_WRITE',
-                endpoint='/redfish/v1/Systems/System.Embedded.1/Bios/Settings',
-                full_url=settings_url,
-                request_body=payload,
-                request_headers={'Authorization': '[REDACTED]', 'Content-Type': 'application/json'},
-                status_code=settings_resp.status_code,
-                response_body=_safe_json_parse(settings_resp) if settings_resp.ok and settings_resp.text else None,
-                response_time_ms=response_time_ms,
-                success=settings_resp.ok,
-                error_message=None if settings_resp.ok else settings_resp.text,
-                operation_type='idrac_api'
+                server_id=server_id,
+                user_id=job['created_by']
             )
-            
-            if not settings_resp.ok:
-                error_msg = f"Failed to apply BIOS settings: HTTP {settings_resp.status_code}"
-                if settings_resp.text:
-                    try:
-                        error_data = _safe_json_parse(settings_resp)
-                        if 'error' in error_data:
-                            error_msg = f"{error_msg} - {error_data['error'].get('message', error_data['error'])}"
-                    except:
-                        pass
-                raise Exception(error_msg)
             
             self.log(f"  [OK] BIOS settings applied successfully")
             self.log(f"  Note: Changes will take effect after system reboot")
             
             # Handle reboot if requested
             reboot_action = None
+            verification_result = None
+            
             if reboot_type != 'none':
                 self.log(f"  Initiating {reboot_type} reboot...")
-                reboot_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset"
                 
-                reset_type = 'GracefulRestart' if reboot_type == 'graceful' else 'ForceRestart'
-                reboot_payload = {"ResetType": reset_type}
-                
-                start_time = time.time()
-                reboot_resp = requests.post(
-                    reboot_url,
-                    auth=HTTPBasicAuth(username, password),
-                    headers={'Content-Type': 'application/json'},
-                    json=reboot_payload,
-                    verify=False,
-                    timeout=30
-                )
-                response_time_ms = int((time.time() - start_time) * 1000)
-                
-                # Log activity
-                self.log_idrac_command(
-                    server_id=server_id,
-                    job_id=job['id'],
-                    command_type='POWER_CONTROL',
-                    endpoint='/redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset',
-                    full_url=reboot_url,
-                    request_body=reboot_payload,
-                    request_headers={'Authorization': '[REDACTED]', 'Content-Type': 'application/json'},
-                    status_code=reboot_resp.status_code,
-                    response_body=None,
-                    response_time_ms=response_time_ms,
-                    success=reboot_resp.ok,
-                    error_message=None if reboot_resp.ok else reboot_resp.text,
-                    source='job_executor',
-                    initiated_by=job['created_by']
-                )
-                
-                if reboot_resp.ok:
+                try:
+                    # Use Dell operations for power control
+                    if reboot_type == 'graceful':
+                        dell_ops.graceful_reboot(
+                            ip=ip,
+                            username=username,
+                            password=password,
+                            job_id=job['id'],
+                            server_id=server_id,
+                            user_id=job['created_by']
+                        )
+                    else:  # forced
+                        # Force reboot by calling power_on with ForceRestart
+                        dell_ops.adapter.make_request(
+                            method='POST',
+                            ip=ip,
+                            endpoint='/redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset',
+                            username=username,
+                            password=password,
+                            payload={'ResetType': 'ForceRestart'},
+                            operation_name='Force Reboot',
+                            job_id=job['id'],
+                            server_id=server_id,
+                            user_id=job['created_by']
+                        )
+                    
                     self.log(f"  [OK] Reboot initiated successfully")
-                    reboot_action = reset_type
+                    reboot_action = 'GracefulRestart' if reboot_type == 'graceful' else 'ForceRestart'
                     
                     # Wait for system to reboot and verify BIOS settings were applied
                     verification_result = self._verify_bios_settings_after_reboot(
                         ip, username, password, attributes, server_id, job['id']
                     )
-                else:
-                    self.log(f"  [!] Reboot failed but BIOS settings were applied", "WARNING")
+                except Exception as reboot_error:
+                    self.log(f"  [!] Reboot failed but BIOS settings were applied: {reboot_error}", "WARNING")
                     verification_result = None
-            else:
-                verification_result = None
             
             # Update job status
             job_details = {
