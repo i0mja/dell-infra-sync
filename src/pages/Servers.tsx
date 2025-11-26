@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Activity, CheckCircle2, Info, LayoutGrid, Plus, RefreshCw, ShieldCheck, Wrench } from "lucide-react";
+import { Activity, CheckCircle2, LayoutGrid, Plus, RefreshCw, ShieldCheck, Wrench } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { AddServerDialog } from "@/components/servers/AddServerDialog";
 import { LinkVCenterDialog } from "@/components/servers/LinkVCenterDialog";
@@ -37,12 +37,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 interface Server {
   id: string;
@@ -807,82 +802,6 @@ const Servers = () => {
     },
   ];
 
-  const guidanceItems = [
-    {
-      title: "Connect & verify",
-      description: "Assign a credential set, then use Test Connection to confirm iDRAC reachability.",
-    },
-    {
-      title: "Deep refresh",
-      description: "Refresh Info triggers a discovery scan that pulls hardware model, firmware, and health.",
-    },
-    {
-      title: "Protect uptime",
-      description: "Use Preflight + Workflow to enforce safety checks before firmware or reboot actions.",
-    },
-    {
-      title: "Link your sources",
-      description: "Tie servers to vCenter hosts and manual groups to unlock cluster-aware grouping.",
-    },
-  ];
-
-  const statusLegend = [
-    {
-      title: "Discovering",
-      detail: "A job is actively gathering inventory from this server.",
-    },
-    {
-      title: "Discovered",
-      detail: "Model, service tag, firmware, and health data are up to date.",
-    },
-    {
-      title: "Minimal Info",
-      detail: "Only IP/hostname is known; run Refresh Info to populate full details.",
-    },
-  ];
-
-  const capabilitySections = [
-    {
-      title: "Inventory & grouping",
-      items: [
-        "Add new hosts, assign credential sets, and organize servers into manual groups or vCenter clusters.",
-        "Quickly spot incomplete records and trigger discovery to pull firmware, hardware, and health data.",
-        "Link to vCenter hosts to align inventory with virtualization topology and clusters.",
-      ],
-    },
-    {
-      title: "Health, power, & access",
-      items: [
-        "Run connection tests, health checks, and event log reviews without leaving the page.",
-        "Open power controls, virtual media, and boot configuration directly from the server row.",
-        "Use the inline details panel to review properties, audit history, and lifecycle actions.",
-      ],
-    },
-    {
-      title: "Maintenance workflows",
-      items: [
-        "Launch discovery, health, or firmware jobs in bulk with the job composer.",
-        "Coordinate firmware updates with safety gates using the workflow builder and preflight checks.",
-        "Plan maintenance windows from here and monitor activity in the Maintenance Planner.",
-      ],
-    },
-  ];
-
-  const headerHighlights = [
-    {
-      title: "Track server health",
-      description: "Test connections, view live status, and keep credentials validated via Job Executor jobs.",
-    },
-    {
-      title: "Refresh hardware facts",
-      description: "Run discovery scans to populate model, firmware, and capacity details before maintenance.",
-    },
-    {
-      title: "Execute safely",
-      description: "Use preflight checks, workflows, and power controls to keep uptime protected.",
-    },
-  ];
-
   const renderServerDetails = (server: Server) => (
     <ServerDetailsBanner
       server={server}
@@ -924,8 +843,7 @@ const Servers = () => {
                   <span>Servers</span>
                 </div>
                 <p className="max-w-3xl text-sm text-muted-foreground">
-                  Inventory, health, and maintenance workspace for every iDRAC-connected server. Launch jobs, review status,
-                  and organize hosts by group or cluster from a single view.
+                  Inventory and maintenance workspace for every iDRAC-connected server, without the extra filler.
                 </p>
                 <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                   <div className="flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-primary">
@@ -960,15 +878,6 @@ const Servers = () => {
         </div>
 
         <div className="flex-1 space-y-4 overflow-y-auto px-6 py-4">
-          <div className="grid gap-3 md:grid-cols-3">
-            {headerHighlights.map((item) => (
-              <div key={item.title} className="rounded-lg border bg-background/60 p-3 shadow-sm">
-                <div className="font-semibold text-foreground">{item.title}</div>
-                <p className="text-sm text-muted-foreground">{item.description}</p>
-              </div>
-            ))}
-          </div>
-
           {incompleteServers.length > 0 && showIncompleteBanner && (
             <IncompleteServersBanner
               count={incompleteServers.length}
@@ -990,92 +899,30 @@ const Servers = () => {
                     Launch the most common flows without scrolling through the table first.
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="grid gap-2 sm:grid-cols-2">
+                <CardContent className="space-y-2">
                   {quickActions.map((action) => (
-                    <Tooltip key={action.label}>
-                      <TooltipTrigger asChild>
+                    <div
+                      key={action.label}
+                      className="rounded-lg border bg-background/80 p-3 shadow-xs"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                          <action.icon className="h-4 w-4" />
+                          <span>{action.label}</span>
+                        </div>
                         <Button
                           variant="secondary"
-                          className="justify-start gap-2"
+                          size="sm"
+                          className="shrink-0"
                           onClick={action.onClick}
                           disabled={action.disabled}
                         >
-                          <action.icon className="h-4 w-4" />
-                          <span>{action.label}</span>
+                          Launch
                         </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="max-w-xs text-sm">
+                      </div>
+                      <p className="mt-2 text-sm text-muted-foreground">
                         {action.description}
-                      </TooltipContent>
-                    </Tooltip>
-                  ))}
-                </CardContent>
-              </Card>
-
-              <Card className="h-fit border-dashed">
-                <CardHeader className="space-y-1">
-                  <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                    <Info className="h-4 w-4" />
-                    How this page helps
-                  </CardTitle>
-                  <CardDescription>
-                    Clear steps that connect inventory, discovery, and maintenance workflows.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid gap-3">
-                    {guidanceItems.map((item) => (
-                      <div key={item.title} className="rounded-lg border bg-muted/50 p-3 text-sm">
-                        <div className="font-medium text-foreground">{item.title}</div>
-                        <p className="text-muted-foreground">{item.description}</p>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="h-fit border-muted-foreground/20 bg-muted/30">
-                <CardHeader className="space-y-1">
-                  <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                    <LayoutGrid className="h-4 w-4" />
-                    Status reference
-                  </CardTitle>
-                  <CardDescription>
-                    Know what each badge and state means before launching an action.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3 text-sm">
-                  {statusLegend.map((status) => (
-                    <div key={status.title} className="flex items-start gap-2 rounded-lg bg-background p-3 shadow-sm">
-                      <div className="mt-1 h-2.5 w-2.5 rounded-full bg-primary" />
-                      <div>
-                        <div className="font-semibold">{status.title}</div>
-                        <p className="text-muted-foreground">{status.detail}</p>
-                      </div>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-
-              <Card className="h-fit border-muted">
-                <CardHeader className="space-y-1">
-                  <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                    <Wrench className="h-4 w-4" />
-                    Capabilities at a glance
-                  </CardTitle>
-                  <CardDescription>
-                    Everything this page covers, organized by the outcome you need.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {capabilitySections.map((section) => (
-                    <div key={section.title} className="space-y-2 rounded-lg bg-muted/50 p-3">
-                      <div className="font-semibold text-foreground">{section.title}</div>
-                      <ul className="list-disc space-y-1 pl-4 text-sm text-muted-foreground">
-                        {section.items.map(item => (
-                          <li key={item}>{item}</li>
-                        ))}
-                      </ul>
+                      </p>
                     </div>
                   ))}
                 </CardContent>
