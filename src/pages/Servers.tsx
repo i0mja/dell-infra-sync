@@ -111,6 +111,12 @@ const Servers = () => {
   const onlineCount = servers.filter(s => s.connection_status === 'online').length;
   const offlineCount = servers.filter(s => s.connection_status === 'offline').length;
   const unknownCount = servers.filter(s => !s.connection_status || s.connection_status === 'unknown').length;
+  const discoveredCount = servers.filter(s => getServerStatus(s).status === 'discovered').length;
+  const discoveringCount = servers.filter(s => getServerStatus(s).status === 'discovering').length;
+  const minimalCount = totalServers - discoveredCount - discoveringCount;
+  const linkedToVCenter = servers.filter(s => s.vcenter_host_id).length;
+  const credentialCoverage = servers.filter(s => s.credential_set_id).length;
+  const poweredOnCount = servers.filter(s => (s.power_state || '').toLowerCase() === 'on').length;
   
   // Fetch server groups
   const { data: serverGroups } = useQuery({
@@ -837,85 +843,205 @@ const Servers = () => {
 
   return (
     <TooltipProvider delayDuration={100}>
-      <div className="flex h-full flex-col overflow-hidden">
-        <div className="border-b bg-card/80 px-6 pb-6 pt-6 shadow-sm">
-          <div className="flex flex-col gap-4">
-            <div className="grid gap-4 lg:grid-cols-[2fr_1.15fr]">
-              <Card className="border-primary/20 shadow-sm">
-                <CardHeader className="space-y-3">
+      <div className="flex h-full flex-col gap-4 bg-background/60">
+        <div className="grid gap-4 px-6 pt-6 xl:grid-cols-[2fr_1.1fr]">
+          <Card className="relative overflow-hidden border-primary/25 bg-gradient-to-br from-primary/10 via-background to-background shadow-md">
+            <div className="pointer-events-none absolute inset-0 opacity-40" aria-hidden>
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.15),_transparent_45%)]" />
+            </div>
+            <CardHeader className="relative space-y-4">
+              <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.08em] text-primary">
+                <span className="flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-[11px] text-primary">Job Executor default</span>
+                <span className="flex items-center gap-1 rounded-full bg-muted px-3 py-1 text-[11px] text-muted-foreground">Offline-first design</span>
+                <span className="flex items-center gap-1 rounded-full bg-muted px-3 py-1 text-[11px] text-muted-foreground">Cluster & group context</span>
+              </div>
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="space-y-2">
                   <div className="flex items-center gap-2 text-xl font-semibold">
                     <ShieldCheck className="h-5 w-5 text-primary" />
-                    <span>Servers</span>
+                    <span>Server workspace</span>
                   </div>
-                  <p className="text-sm text-muted-foreground">
-                    Inventory and maintenance workspace for every iDRAC-connected server. Coordinate discovery, health, and
-                    lifecycle tasks without hunting through tables first.
+                  <p className="max-w-2xl text-sm text-muted-foreground">
+                    Orchestrate discovery, health, and lifecycle actions across every iDRAC-connected host. Stay in control with rich context before opening any dialogs.
                   </p>
-                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                    <div className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs font-medium text-primary">
-                      <Activity className="h-3.5 w-3.5" /> Job Executor automation
-                    </div>
-                    <div className="flex items-center gap-2 rounded-lg border bg-muted px-3 py-2 text-xs font-medium">
-                      <CheckCircle2 className="h-3.5 w-3.5" /> Guardrails & checks
-                    </div>
-                    <div className="flex items-center gap-2 rounded-lg border bg-muted px-3 py-2 text-xs font-medium">
-                      <LayoutGrid className="h-3.5 w-3.5" /> Cluster & group context
-                    </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button variant="outline" onClick={fetchServers} className="border-primary/40 text-primary hover:bg-primary/10">
+                    <RefreshCw className="mr-2 h-4 w-4" /> Refresh all
+                  </Button>
+                  <Button onClick={() => setDialogOpen(true)}>
+                    <Plus className="mr-2 h-4 w-4" /> Add server
+                  </Button>
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {[{
+                  label: 'Online',
+                  value: onlineCount,
+                  accent: 'text-emerald-400',
+                  border: 'border-emerald-500/30',
+                }, {
+                  label: 'Offline',
+                  value: offlineCount,
+                  accent: 'text-amber-300',
+                  border: 'border-amber-500/30',
+                }, {
+                  label: 'Unknown',
+                  value: unknownCount,
+                  accent: 'text-slate-300',
+                  border: 'border-slate-500/30',
+                }, {
+                  label: 'Discovered',
+                  value: discoveredCount,
+                  accent: 'text-primary',
+                  border: 'border-primary/30',
+                }].map((item) => (
+                  <div
+                    key={item.label}
+                    className={`rounded-xl border bg-background/70 p-3 shadow-sm ${item.border}`}
+                  >
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">{item.label}</p>
+                    <p className={`text-2xl font-semibold ${item.accent}`}>{item.value}</p>
                   </div>
-                </CardHeader>
-              </Card>
+                ))}
+              </div>
+            </CardHeader>
+          </Card>
 
-              <Card className="border-primary/20 shadow-sm">
-                <CardHeader className="space-y-1">
-                  <CardTitle className="flex items-center gap-2 text-lg">
-                    <LayoutGrid className="h-5 w-5" />
-                    Inventory snapshot
-                  </CardTitle>
-                  <CardDescription>Current connectivity and discovery status at a glance.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div className="rounded-lg border bg-background/70 p-3">
-                      <p className="text-muted-foreground">Total</p>
-                      <p className="text-2xl font-semibold">{totalServers}</p>
+          <Card className="border-primary/20 shadow-md">
+            <CardHeader className="space-y-2">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <LayoutGrid className="h-5 w-5" />
+                Operations snapshot
+              </CardTitle>
+              <CardDescription>Connection coverage, discovery state, and cross-system linkage.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                {[{
+                  label: 'Credential coverage',
+                  value: `${credentialCoverage}/${totalServers}`,
+                  helper: 'Servers with credentials',
+                }, {
+                  label: 'Linked to vCenter',
+                  value: `${linkedToVCenter}/${totalServers}`,
+                  helper: 'Clusters & hosts synced',
+                }, {
+                  label: 'Powered on',
+                  value: poweredOnCount,
+                  helper: 'Active chassis',
+                }, {
+                  label: 'Discovery running',
+                  value: discoveringCount,
+                  helper: 'Currently scanning',
+                }].map((item) => (
+                  <div key={item.label} className="rounded-lg border bg-background/70 p-3">
+                    <div className="flex items-center justify-between text-sm font-semibold">
+                      <span>{item.label}</span>
+                      <span className="text-primary">{item.value}</span>
                     </div>
-                    <div className="rounded-lg border bg-background/70 p-3">
-                      <p className="text-muted-foreground">Online</p>
-                      <p className="text-2xl font-semibold text-emerald-600 dark:text-emerald-400">{onlineCount}</p>
-                    </div>
-                    <div className="rounded-lg border bg-background/70 p-3">
-                      <p className="text-muted-foreground">Offline</p>
-                      <p className="text-2xl font-semibold text-amber-600 dark:text-amber-400">{offlineCount}</p>
-                    </div>
-                    <div className="rounded-lg border bg-background/70 p-3">
-                      <p className="text-muted-foreground">Unknown</p>
-                      <p className="text-2xl font-semibold text-slate-600 dark:text-slate-300">{unknownCount}</p>
-                    </div>
+                    <p className="text-xs text-muted-foreground">{item.helper}</p>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button variant="outline" onClick={fetchServers}>
-                      <RefreshCw className="mr-2 h-4 w-4" /> Refresh all
-                    </Button>
-                    <Button onClick={() => setDialogOpen(true)}>
-                      <Plus className="mr-2 h-4 w-4" /> Add server
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+                ))}
+              </div>
+              <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
+                <div className="flex items-center gap-2 font-medium text-foreground">
+                  <Activity className="h-4 w-4 text-primary" /> Job Executor is preferred for private iDRAC networks.
+                </div>
+                <p className="mt-1 text-xs">Discovery and health checks are always scheduled locally to respect air-gapped deployments.</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
 
-            <ServerStatsBar
-              totalServers={totalServers}
-              onlineCount={onlineCount}
-              offlineCount={offlineCount}
-              unknownCount={unknownCount}
-              incompleteCount={incompleteServers.length}
-              useJobExecutor={useJobExecutorForIdrac}
-            />
+        <div className="px-6">
+          <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
+            <Card className="border-primary/20 bg-primary/5 shadow-sm">
+              <CardHeader className="space-y-1">
+                <CardTitle className="flex items-center gap-2 text-primary">
+                  <ShieldCheck className="h-4 w-4" />
+                  Guided actions
+                </CardTitle>
+                <CardDescription>
+                  Jump directly into discovery, maintenance, or bulk orchestration without digging through rows.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-3 sm:grid-cols-2">
+                {quickActions.map((action) => (
+                  <div
+                    key={action.label}
+                    className="group flex h-full flex-col justify-between gap-3 rounded-lg border bg-background/80 p-3 shadow-xs transition hover:border-primary/40"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary/10 text-primary">
+                        <action.icon className="h-4 w-4" />
+                      </div>
+                      <div className="space-y-1">
+                        <div className="text-sm font-semibold text-foreground">{action.label}</div>
+                        <p className="text-xs text-muted-foreground">{action.description}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>Runs via Job Executor</span>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="shrink-0 group-hover:bg-primary group-hover:text-primary-foreground"
+                        onClick={action.onClick}
+                        disabled={action.disabled}
+                      >
+                        Open
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card className="border-primary/20 shadow-sm">
+              <CardHeader className="space-y-1">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <LayoutGrid className="h-5 w-5" />
+                  Connectivity & coverage
+                </CardTitle>
+                <CardDescription>Live view of connection status, discovery completeness, and health readiness.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <ServerStatsBar
+                  totalServers={servers.length}
+                  onlineCount={onlineCount}
+                  offlineCount={offlineCount}
+                  unknownCount={unknownCount}
+                  incompleteCount={incompleteServers.length}
+                  useJobExecutor={useJobExecutorForIdrac}
+                />
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {[{
+                    label: 'Minimal details',
+                    value: minimalCount,
+                    tone: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
+                    helper: 'Needs refresh or credentials',
+                  }, {
+                    label: 'Health checks running',
+                    value: activeHealthCheckJobs?.length || 0,
+                    tone: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30',
+                    helper: 'Real-time status via executor',
+                  }].map((item) => (
+                    <div key={item.label} className={`rounded-lg border p-3 text-sm ${item.tone}`}>
+                      <div className="flex items-center justify-between font-semibold">
+                        <span>{item.label}</span>
+                        <span>{item.value}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">{item.helper}</p>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
 
-        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-4">
+        <div className="flex-1 space-y-4 overflow-y-auto px-6 pb-6">
           {incompleteServers.length > 0 && showIncompleteBanner && (
             <IncompleteServersBanner
               count={incompleteServers.length}
@@ -925,95 +1051,29 @@ const Servers = () => {
             />
           )}
 
-          <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[400px_1fr]">
-            <div className="flex flex-col gap-4">
-              <Card className="border-primary/20 bg-primary/5 shadow-sm">
-                <CardHeader className="space-y-1">
-                  <CardTitle className="flex items-center gap-2 text-primary">
-                    <ShieldCheck className="h-4 w-4" />
-                    Guided actions
-                  </CardTitle>
-                  <CardDescription>
-                    Move straight into the top workflows without digging through rows.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="grid gap-3 sm:grid-cols-2">
-                  {quickActions.map((action) => (
-                    <div
-                      key={action.label}
-                      className="group flex h-full flex-col justify-between gap-3 rounded-lg border bg-background/80 p-3 shadow-xs transition hover:border-primary/40"
-                    >
-                      <div className="flex items-start gap-3">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary/10 text-primary">
-                          <action.icon className="h-4 w-4" />
-                        </div>
-                        <div className="space-y-1">
-                          <div className="text-sm font-semibold text-foreground">{action.label}</div>
-                          <p className="text-xs text-muted-foreground">{action.description}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between text-xs text-muted-foreground">
-                        <span>Runs via Job Executor</span>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          className="shrink-0 group-hover:bg-primary group-hover:text-primary-foreground"
-                          onClick={action.onClick}
-                          disabled={action.disabled}
-                        >
-                          Open
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-            </div>
-
-            <div className="flex min-w-0 flex-col gap-4">
-              <Card className="border-primary/20 shadow-sm">
-                <CardHeader className="space-y-1">
-                  <CardTitle className="flex items-center gap-2 text-lg">
-                    <LayoutGrid className="h-5 w-5" />
-                    Inventory status
-                  </CardTitle>
-                  <CardDescription>
-                    Real-time visibility into connectivity, health coverage, and discovery completeness.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ServerStatsBar
-                    totalServers={servers.length}
-                    onlineCount={servers.filter(s => s.connection_status === 'online').length}
-                    offlineCount={servers.filter(s => s.connection_status === 'offline').length}
-                    unknownCount={servers.filter(s => !s.connection_status || s.connection_status === 'unknown').length}
-                    incompleteCount={incompleteServers.length}
-                    useJobExecutor={useJobExecutorForIdrac}
-                  />
-                </CardContent>
-              </Card>
-
-              <Card className="border-primary/20 shadow-sm">
-                <CardHeader className="space-y-1">
-                  <CardTitle className="flex items-center gap-2 text-lg">
-                    <LayoutGrid className="h-5 w-5" />
-                    Server inventory
-                  </CardTitle>
-                  <CardDescription>
-                    Filter by group, cluster, or state, then expand a row to launch connection, health, and maintenance actions.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <ServerFilterToolbar
-                    searchTerm={searchTerm}
-                    onSearchChange={setSearchTerm}
-                    groupFilter={groupFilter}
-                    onGroupFilterChange={setGroupFilter}
-                    statusFilter={statusFilter}
-                    onStatusFilterChange={setStatusFilter}
-                    groups={serverGroups}
-                    vCenterClusters={uniqueVCenterClusters}
-                  />
+          <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[1.75fr_1.05fr]">
+            <Card className="flex min-w-0 flex-col border-primary/25 shadow-sm">
+              <CardHeader className="space-y-1">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <LayoutGrid className="h-5 w-5" />
+                  Server inventory
+                </CardTitle>
+                <CardDescription>
+                  Filter by group, cluster, or connection state. Expand a row to launch connection, health, or maintenance actions.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
+                <ServerFilterToolbar
+                  searchTerm={searchTerm}
+                  onSearchChange={setSearchTerm}
+                  groupFilter={groupFilter}
+                  onGroupFilterChange={setGroupFilter}
+                  statusFilter={statusFilter}
+                  onStatusFilterChange={setStatusFilter}
+                  groups={serverGroups}
+                  vCenterClusters={uniqueVCenterClusters}
+                />
+                <div className="min-h-0 flex-1">
                   <ServersTable
                     servers={filteredServers}
                     groupedData={groupedData}
@@ -1035,115 +1095,197 @@ const Servers = () => {
                     vCenterHosts={vCenterHosts}
                     renderExpandedRow={renderServerDetails}
                   />
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="flex min-w-0 flex-col gap-4">
+              <Card className="border-primary/20 shadow-sm">
+                <CardHeader className="space-y-1">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <LayoutGrid className="h-5 w-5" />
+                    Connection & discovery controls
+                  </CardTitle>
+                  <CardDescription>Keep credentials current and refresh discovery without leaving this page.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <div className="flex items-center justify-between rounded-lg border bg-background/70 px-3 py-2">
+                    <div>
+                      <p className="font-medium">Run targeted refresh</p>
+                      <p className="text-xs text-muted-foreground">Collect missing model, firmware, and health data.</p>
+                    </div>
+                    <Button size="sm" onClick={handleRefreshIncomplete} disabled={bulkRefreshing || incompleteServers.length === 0}>
+                      <RefreshCw className="mr-2 h-4 w-4" /> Refresh incomplete
+                    </Button>
+                  </div>
+                  <div className="flex items-center justify-between rounded-lg border bg-background/70 px-3 py-2">
+                    <div>
+                      <p className="font-medium">Bulk workflows</p>
+                      <p className="text-xs text-muted-foreground">Compose discovery, health, or maintenance jobs.</p>
+                    </div>
+                    <Button size="sm" variant="outline" onClick={() => { setDefaultJobType('discovery_scan'); setJobDialogOpen(true); }}>
+                      <LayoutGrid className="mr-2 h-4 w-4" /> Open composer
+                    </Button>
+                  </div>
+                  <div className="flex items-center justify-between rounded-lg border bg-background/70 px-3 py-2">
+                    <div>
+                      <p className="font-medium">Manage credentials</p>
+                      <p className="text-xs text-muted-foreground">Assign credential sets before running health or power tasks.</p>
+                    </div>
+                    <Button size="sm" variant="secondary" onClick={() => navigate('/settings?tab=credentials')}>
+                      <CheckCircle2 className="mr-2 h-4 w-4" /> View credentials
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-primary/20 shadow-sm">
+                <CardHeader className="space-y-1">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <LayoutGrid className="h-5 w-5" />
+                    Activity spotlight
+                  </CardTitle>
+                  <CardDescription>Quick links to recent or high-value automation flows.</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-3 text-sm sm:grid-cols-2">
+                  {[{
+                    title: 'Health status',
+                    description: 'Review recent health checks and failures.',
+                    action: () => setHealthDialogOpen(true),
+                  }, {
+                    title: 'Power controls',
+                    description: 'Warm restart, graceful shutdown, or power cycle.',
+                    action: () => selectedServer ? setPowerControlDialogOpen(true) : toast({ title: 'Select a server', description: 'Choose a server row to open power controls.' }),
+                  }, {
+                    title: 'Audit trail',
+                    description: 'See command history and activity logs.',
+                    action: () => selectedServer ? setAuditDialogOpen(true) : toast({ title: 'Select a server', description: 'Choose a server row to open audit details.' }),
+                  }, {
+                    title: 'Server properties',
+                    description: 'View hardware identifiers, networking, and lifecycle info.',
+                    action: () => selectedServer ? setPropertiesDialogOpen(true) : toast({ title: 'Select a server', description: 'Choose a server row to open server properties.' }),
+                  }].map((item) => (
+                    <div key={item.title} className="flex flex-col justify-between rounded-lg border bg-background/70 p-3">
+                      <div className="space-y-1">
+                        <p className="font-semibold">{item.title}</p>
+                        <p className="text-xs text-muted-foreground">{item.description}</p>
+                      </div>
+                      <div className="mt-2 flex justify-end">
+                        <Button size="sm" variant="secondary" onClick={item.action}>
+                          Open
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
                 </CardContent>
               </Card>
             </div>
           </div>
         </div>
 
-      {/* All Dialogs */}
-      <AddServerDialog open={dialogOpen} onOpenChange={setDialogOpen} onSuccess={fetchServers} />
-      {selectedServer && (
-        <>
-          <EditServerDialog 
-            open={editDialogOpen} 
-            onOpenChange={setEditDialogOpen}
-            server={selectedServer}
-            onSuccess={fetchServers}
-          />
-          <LinkVCenterDialog 
-            open={linkDialogOpen} 
-            onOpenChange={setLinkDialogOpen}
-            server={selectedServer}
-            onSuccess={fetchServers}
-          />
-          <AssignCredentialsDialog
-            open={assignCredentialsDialogOpen}
-            onOpenChange={setAssignCredentialsDialogOpen}
-            server={selectedServer}
-            onSuccess={fetchServers}
-          />
-          <PowerControlDialog
-            open={powerControlDialogOpen}
-            onOpenChange={setPowerControlDialogOpen}
-            server={selectedServer}
-          />
-          <ServerHealthDialog
-            open={healthDialogOpen}
-            onOpenChange={setHealthDialogOpen}
-            server={selectedServer}
-          />
-          <EventLogDialog
-            open={eventLogDialogOpen}
-            onOpenChange={setEventLogDialogOpen}
-            server={selectedServer}
-          />
-          <BootConfigDialog
-            open={bootConfigDialogOpen}
-            onOpenChange={setBootConfigDialogOpen}
-            server={selectedServer}
-          />
-          <VirtualMediaDialog
-            open={virtualMediaDialogOpen}
-            onOpenChange={setVirtualMediaDialogOpen}
-            server={selectedServer}
-          />
-          <ScpBackupDialog
-            open={scpBackupDialogOpen}
-            onOpenChange={setScpBackupDialogOpen}
-            server={selectedServer}
-          />
-          <BiosConfigDialog
-            open={biosConfigDialogOpen}
-            onOpenChange={setBiosConfigDialogOpen}
-            server={selectedServer}
-          />
-          <ServerAuditDialog
-            open={auditDialogOpen}
-            onOpenChange={setAuditDialogOpen}
-            server={selectedServer}
-          />
-          <ServerPropertiesDialog
-            open={propertiesDialogOpen}
-            onOpenChange={setPropertiesDialogOpen}
-            server={selectedServer}
-          />
-        </>
-      )}
-      <CreateJobDialog
-        open={jobDialogOpen}
-        onOpenChange={handleJobDialogChange}
-        preSelectedServerId={selectedServer?.id}
-        defaultJobType={defaultJobType}
-        onSuccess={fetchServers}
-      />
-      <WorkflowJobDialog
-        open={workflowDialogOpen}
-        onOpenChange={setWorkflowDialogOpen}
-        preSelectedServerId={selectedServer?.id}
-        onSuccess={fetchServers}
-      />
-      <PreFlightCheckDialog
-        open={preFlightCheckDialogOpen}
-        onOpenChange={setPreFlightCheckDialogOpen}
-        serverId={selectedServer?.id}
-        onProceed={() => {}}
-        jobType="firmware_update"
-      />
-      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove Server</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to remove {selectedServer?.hostname || selectedServer?.ip_address}? This will unlink it from vCenter if linked.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete}>Remove</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        {/* All Dialogs */}
+        <AddServerDialog open={dialogOpen} onOpenChange={setDialogOpen} onSuccess={fetchServers} />
+        {selectedServer && (
+          <>
+            <EditServerDialog
+              open={editDialogOpen}
+              onOpenChange={setEditDialogOpen}
+              server={selectedServer}
+              onSuccess={fetchServers}
+            />
+            <LinkVCenterDialog
+              open={linkDialogOpen}
+              onOpenChange={setLinkDialogOpen}
+              server={selectedServer}
+              onSuccess={fetchServers}
+            />
+            <AssignCredentialsDialog
+              open={assignCredentialsDialogOpen}
+              onOpenChange={setAssignCredentialsDialogOpen}
+              server={selectedServer}
+              onSuccess={fetchServers}
+            />
+            <PowerControlDialog
+              open={powerControlDialogOpen}
+              onOpenChange={setPowerControlDialogOpen}
+              server={selectedServer}
+            />
+            <ServerHealthDialog
+              open={healthDialogOpen}
+              onOpenChange={setHealthDialogOpen}
+              server={selectedServer}
+            />
+            <EventLogDialog
+              open={eventLogDialogOpen}
+              onOpenChange={setEventLogDialogOpen}
+              server={selectedServer}
+            />
+            <BootConfigDialog
+              open={bootConfigDialogOpen}
+              onOpenChange={setBootConfigDialogOpen}
+              server={selectedServer}
+            />
+            <VirtualMediaDialog
+              open={virtualMediaDialogOpen}
+              onOpenChange={setVirtualMediaDialogOpen}
+              server={selectedServer}
+            />
+            <ScpBackupDialog
+              open={scpBackupDialogOpen}
+              onOpenChange={setScpBackupDialogOpen}
+              server={selectedServer}
+            />
+            <BiosConfigDialog
+              open={biosConfigDialogOpen}
+              onOpenChange={setBiosConfigDialogOpen}
+              server={selectedServer}
+            />
+            <ServerAuditDialog
+              open={auditDialogOpen}
+              onOpenChange={setAuditDialogOpen}
+              server={selectedServer}
+            />
+            <ServerPropertiesDialog
+              open={propertiesDialogOpen}
+              onOpenChange={setPropertiesDialogOpen}
+              server={selectedServer}
+            />
+          </>
+        )}
+        <CreateJobDialog
+          open={jobDialogOpen}
+          onOpenChange={handleJobDialogChange}
+          preSelectedServerId={selectedServer?.id}
+          defaultJobType={defaultJobType}
+          onSuccess={fetchServers}
+        />
+        <WorkflowJobDialog
+          open={workflowDialogOpen}
+          onOpenChange={setWorkflowDialogOpen}
+          preSelectedServerId={selectedServer?.id}
+          onSuccess={fetchServers}
+        />
+        <PreFlightCheckDialog
+          open={preFlightCheckDialogOpen}
+          onOpenChange={setPreFlightCheckDialogOpen}
+          serverId={selectedServer?.id}
+          onProceed={() => {}}
+          jobType="firmware_update"
+        />
+        <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Remove Server</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to remove {selectedServer?.hostname || selectedServer?.ip_address}? This will unlink it from vCenter if linked.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={confirmDelete}>Remove</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </TooltipProvider>
   );
