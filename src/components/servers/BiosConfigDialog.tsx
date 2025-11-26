@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -52,7 +52,6 @@ export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialo
   const [compareConfigId, setCompareConfigId] = useState<string>("");
   const [showOnlyDifferences, setShowOnlyDifferences] = useState(false);
   const [activeWizardCategory, setActiveWizardCategory] = useState<string>("");
-  const autoTabSelectedRef = useRef(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -341,18 +340,6 @@ export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialo
       setActiveWizardCategory(wizardCategories[0].name);
     }
   }, [activeWizardCategory, wizardCategories]);
-
-  useEffect(() => {
-    if (
-      currentConfig &&
-      Object.keys(currentConfig.attributes || {}).length > 0 &&
-      activeTab === 'view' &&
-      !autoTabSelectedRef.current
-    ) {
-      setActiveTab('edit');
-      autoTabSelectedRef.current = true;
-    }
-  }, [activeTab, currentConfig]);
 
   const getComparisonResults = () => {
     const baseline = configurations.find(c => c.id === baselineConfigId);
