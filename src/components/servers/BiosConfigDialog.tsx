@@ -60,6 +60,13 @@ export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialo
     }
   }, [open, server.id]);
 
+  useEffect(() => {
+    if (!open) {
+      autoTabSelectedRef.current = false;
+      setActiveTab('view');
+    }
+  }, [open]);
+
   const fetchConfigurations = async () => {
     try {
       setLoading(true);
