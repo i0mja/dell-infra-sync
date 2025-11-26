@@ -927,7 +927,7 @@ const Servers = () => {
 
           <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[400px_1fr]">
             <div className="flex flex-col gap-4">
-              <Card className="h-fit border-primary/20 bg-primary/5 shadow-sm">
+              <Card className="border-primary/20 bg-primary/5 shadow-sm">
                 <CardHeader className="space-y-1">
                   <CardTitle className="flex items-center gap-2 text-primary">
                     <ShieldCheck className="h-4 w-4" />
@@ -971,6 +971,28 @@ const Servers = () => {
             </div>
 
             <div className="flex min-w-0 flex-col gap-4">
+              <Card className="border-primary/20 shadow-sm">
+                <CardHeader className="space-y-1">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <LayoutGrid className="h-5 w-5" />
+                    Inventory status
+                  </CardTitle>
+                  <CardDescription>
+                    Real-time visibility into connectivity, health coverage, and discovery completeness.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ServerStatsBar
+                    totalServers={servers.length}
+                    onlineCount={servers.filter(s => s.connection_status === 'online').length}
+                    offlineCount={servers.filter(s => s.connection_status === 'offline').length}
+                    unknownCount={servers.filter(s => !s.connection_status || s.connection_status === 'unknown').length}
+                    incompleteCount={incompleteServers.length}
+                    useJobExecutor={useJobExecutorForIdrac}
+                  />
+                </CardContent>
+              </Card>
+
               <Card className="border-primary/20 shadow-sm">
                 <CardHeader className="space-y-1">
                   <CardTitle className="flex items-center gap-2 text-lg">
