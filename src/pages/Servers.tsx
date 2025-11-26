@@ -107,6 +107,10 @@ const Servers = () => {
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [healthCheckServer, setHealthCheckServer] = useState<string | null>(null);
   const { toast } = useToast();
+  const totalServers = servers.length;
+  const onlineCount = servers.filter(s => s.connection_status === 'online').length;
+  const offlineCount = servers.filter(s => s.connection_status === 'offline').length;
+  const unknownCount = servers.filter(s => !s.connection_status || s.connection_status === 'unknown').length;
   
   // Fetch server groups
   const { data: serverGroups } = useQuery({
@@ -834,36 +838,80 @@ const Servers = () => {
   return (
     <TooltipProvider delayDuration={100}>
       <div className="flex h-full flex-col overflow-hidden">
-        <div className="border-b bg-card/80 px-6 pb-4 pt-6 shadow-sm">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-xl font-semibold">
-                <ShieldCheck className="h-5 w-5 text-primary" />
-                <span>Servers</span>
-              </div>
-              <p className="max-w-3xl text-sm text-muted-foreground">
-                Inventory and maintenance workspace for every iDRAC-connected server, without the extra filler.
-              </p>
-              <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                <div className="flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-primary">
-                  <Activity className="h-3.5 w-3.5" /> Job Executor-first actions
-                </div>
-                <div className="flex items-center gap-1 rounded-full bg-muted px-3 py-1">
-                  <CheckCircle2 className="h-3.5 w-3.5" /> Safety checks baked in
-                </div>
-                <div className="flex items-center gap-1 rounded-full bg-muted px-3 py-1">
-                  <LayoutGrid className="h-3.5 w-3.5" /> Cluster & group aware
-                </div>
-              </div>
+        <div className="border-b bg-card/80 px-6 pb-6 pt-6 shadow-sm">
+          <div className="flex flex-col gap-4">
+            <div className="grid gap-4 lg:grid-cols-[2fr_1.15fr]">
+              <Card className="border-primary/20 shadow-sm">
+                <CardHeader className="space-y-3">
+                  <div className="flex items-center gap-2 text-xl font-semibold">
+                    <ShieldCheck className="h-5 w-5 text-primary" />
+                    <span>Servers</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Inventory and maintenance workspace for every iDRAC-connected server. Coordinate discovery, health, and
+                    lifecycle tasks without hunting through tables first.
+                  </p>
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs font-medium text-primary">
+                      <Activity className="h-3.5 w-3.5" /> Job Executor automation
+                    </div>
+                    <div className="flex items-center gap-2 rounded-lg border bg-muted px-3 py-2 text-xs font-medium">
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Guardrails & checks
+                    </div>
+                    <div className="flex items-center gap-2 rounded-lg border bg-muted px-3 py-2 text-xs font-medium">
+                      <LayoutGrid className="h-3.5 w-3.5" /> Cluster & group context
+                    </div>
+                  </div>
+                </CardHeader>
+              </Card>
+
+              <Card className="border-primary/20 shadow-sm">
+                <CardHeader className="space-y-1">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <LayoutGrid className="h-5 w-5" />
+                    Inventory snapshot
+                  </CardTitle>
+                  <CardDescription>Current connectivity and discovery status at a glance.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="rounded-lg border bg-background/70 p-3">
+                      <p className="text-muted-foreground">Total</p>
+                      <p className="text-2xl font-semibold">{totalServers}</p>
+                    </div>
+                    <div className="rounded-lg border bg-background/70 p-3">
+                      <p className="text-muted-foreground">Online</p>
+                      <p className="text-2xl font-semibold text-emerald-600 dark:text-emerald-400">{onlineCount}</p>
+                    </div>
+                    <div className="rounded-lg border bg-background/70 p-3">
+                      <p className="text-muted-foreground">Offline</p>
+                      <p className="text-2xl font-semibold text-amber-600 dark:text-amber-400">{offlineCount}</p>
+                    </div>
+                    <div className="rounded-lg border bg-background/70 p-3">
+                      <p className="text-muted-foreground">Unknown</p>
+                      <p className="text-2xl font-semibold text-slate-600 dark:text-slate-300">{unknownCount}</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" onClick={fetchServers}>
+                      <RefreshCw className="mr-2 h-4 w-4" /> Refresh all
+                    </Button>
+                    <Button onClick={() => setDialogOpen(true)}>
+                      <Plus className="mr-2 h-4 w-4" /> Add server
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={fetchServers}>
-                <RefreshCw className="mr-2 h-4 w-4" /> Refresh all
-              </Button>
-              <Button onClick={() => setDialogOpen(true)}>
-                <Plus className="mr-2 h-4 w-4" /> Add server
-              </Button>
-            </div>
+
+            <ServerStatsBar
+              totalServers={totalServers}
+              onlineCount={onlineCount}
+              offlineCount={offlineCount}
+              unknownCount={unknownCount}
+              incompleteCount={incompleteServers.length}
+              useJobExecutor={useJobExecutorForIdrac}
+            />
           </div>
         </div>
 
@@ -883,38 +931,37 @@ const Servers = () => {
                 <CardHeader className="space-y-1">
                   <CardTitle className="flex items-center gap-2 text-primary">
                     <ShieldCheck className="h-4 w-4" />
-                    Actions & shortcuts
+                    Guided actions
                   </CardTitle>
                   <CardDescription>
-                    Launch the most common flows without scrolling through the table first.
+                    Move straight into the top workflows without digging through rows.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="grid gap-3 sm:grid-cols-2">
                   {quickActions.map((action) => (
                     <div
                       key={action.label}
-                      className="flex h-full flex-col justify-between gap-3 rounded-lg border bg-background/80 p-3 shadow-xs"
+                      className="group flex h-full flex-col justify-between gap-3 rounded-lg border bg-background/80 p-3 shadow-xs transition hover:border-primary/40"
                     >
                       <div className="flex items-start gap-3">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-primary">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary/10 text-primary">
                           <action.icon className="h-4 w-4" />
                         </div>
                         <div className="space-y-1">
                           <div className="text-sm font-semibold text-foreground">{action.label}</div>
-                          <p className="text-xs text-muted-foreground leading-relaxed">
-                            {action.description}
-                          </p>
+                          <p className="text-xs text-muted-foreground">{action.description}</p>
                         </div>
                       </div>
-                      <div className="flex justify-end">
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>Runs via Job Executor</span>
                         <Button
                           variant="secondary"
                           size="sm"
-                          className="shrink-0"
+                          className="shrink-0 group-hover:bg-primary group-hover:text-primary-foreground"
                           onClick={action.onClick}
                           disabled={action.disabled}
                         >
-                          Launch
+                          Open
                         </Button>
                       </div>
                     </div>
