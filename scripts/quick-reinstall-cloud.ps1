@@ -13,17 +13,22 @@
     Force re-entry of SERVICE_ROLE_KEY (ignore cached value)
 .PARAMETER SkipBackup
     Skip backing up source files before reinstall (faster but no rollback)
+.PARAMETER GitClone
+    Use git clone from GitHub instead of copying files (fastest option)
 .EXAMPLE
     .\quick-reinstall-cloud.ps1
     .\quick-reinstall-cloud.ps1 -Force
     .\quick-reinstall-cloud.ps1 -NewKey
     .\quick-reinstall-cloud.ps1 -SkipBackup
+    .\quick-reinstall-cloud.ps1 -GitClone
+    .\quick-reinstall-cloud.ps1 -GitClone -Force
 #>
 
 param(
     [switch]$Force,
     [switch]$NewKey,
-    [switch]$SkipBackup
+    [switch]$SkipBackup,
+    [switch]$GitClone
 )
 
 # Set encoding and error handling
@@ -36,6 +41,7 @@ $KeyCachePath = "$env:APPDATA\DellServerManager\service-role-key.txt"
 $SupabaseUrl = "https://ylwkczjqvymshktuuqkx.supabase.co"
 $AnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlsd2tjempxdnltc2hrdHV1cWt4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjIxODQ0OTMsImV4cCI6MjA3Nzc2MDQ5M30.hIkDV2AAos-Z9hvQLfZmiQ7UvGCpGqwG5kzd1VBRx0w"
 $AppDir = "C:\dell-server-manager"
+$GitHubRepo = "https://github.com/i0mja/dell-infra-sync.git"
 
 Write-Host "===============================================" -ForegroundColor Cyan
 Write-Host "  Dell Server Manager - Quick Reinstall (Cloud)" -ForegroundColor Cyan
@@ -176,27 +182,52 @@ function Invoke-Reinstall {
     
     # Clone/restore application
     Write-Host "Setting up application directory..." -ForegroundColor Yellow
-    if (-not (Test-Path $AppDir)) {
-        New-Item -ItemType Directory -Path $AppDir -Force | Out-Null
-    }
     
-    # Try to restore from backup first, then from original source
-    $tempBackup = Get-ChildItem "$env:TEMP\dell-server-manager-backup-*" | Sort-Object Name -Descending | Select-Object -First 1
-    $sourceDir = $PSScriptRoot | Split-Path -Parent
-    
-    if ($tempBackup -and (Test-Path "$($tempBackup.FullName)\package.json")) {
-        Write-Host "  Restoring from backup: $($tempBackup.FullName)..."
-        Copy-Item "$($tempBackup.FullName)\*" $AppDir -Recurse -Force
-        Remove-Item $tempBackup.FullName -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Host "  ✓ Files restored from backup" -ForegroundColor Green
-    }
-    elseif (Test-Path "$sourceDir\package.json") {
-        Write-Host "  Copying files from $sourceDir..."
-        Copy-Item "$sourceDir\*" $AppDir -Recurse -Force -Exclude @('.git', 'node_modules', 'dist', '.vite', 'logs')
-        Write-Host "  ✓ Files copied" -ForegroundColor Green
+    if ($GitClone) {
+        # Fast path: Clone directly from GitHub
+        Write-Host "  Cloning from GitHub: $GitHubRepo" -ForegroundColor Yellow
+        $parentDir = Split-Path $AppDir -Parent
+        Set-Location $parentDir
+        
+        # Remove target dir if exists
+        if (Test-Path $AppDir) {
+            Remove-Item $AppDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        
+        # Clone repo
+        $appDirName = Split-Path $AppDir -Leaf
+        git clone $GitHubRepo $appDirName 2>&1 | Out-Null
+        
+        if ($LASTEXITCODE -ne 0) {
+            throw "git clone failed. Ensure git is installed and GitHub is accessible."
+        }
+        
+        Write-Host "  ✓ Git clone complete" -ForegroundColor Green
     }
     else {
-        throw "Source files not found. Please run this script from the dell-server-manager directory."
+        # Original path: Copy from backup or local source
+        if (-not (Test-Path $AppDir)) {
+            New-Item -ItemType Directory -Path $AppDir -Force | Out-Null
+        }
+        
+        # Try to restore from backup first, then from original source
+        $tempBackup = Get-ChildItem "$env:TEMP\dell-server-manager-backup-*" | Sort-Object Name -Descending | Select-Object -First 1
+        $sourceDir = $PSScriptRoot | Split-Path -Parent
+        
+        if ($tempBackup -and (Test-Path "$($tempBackup.FullName)\package.json")) {
+            Write-Host "  Restoring from backup: $($tempBackup.FullName)..."
+            Copy-Item "$($tempBackup.FullName)\*" $AppDir -Recurse -Force
+            Remove-Item $tempBackup.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "  ✓ Files restored from backup" -ForegroundColor Green
+        }
+        elseif (Test-Path "$sourceDir\package.json") {
+            Write-Host "  Copying files from $sourceDir..."
+            Copy-Item "$sourceDir\*" $AppDir -Recurse -Force -Exclude @('.git', 'node_modules', 'dist', '.vite', 'logs')
+            Write-Host "  ✓ Files copied" -ForegroundColor Green
+        }
+        else {
+            throw "Source files not found. Please run this script from the dell-server-manager directory."
+        }
     }
     
     Set-Location $AppDir
@@ -280,9 +311,14 @@ try {
         }
     }
     
-    # Ask about backup (unless -SkipBackup or -Force)
+    # Ask about backup (unless -SkipBackup, -GitClone, or -Force)
     $doBackup = $false
-    if (-not $SkipBackup -and (Test-Path "$AppDir\package.json")) {
+    if ($GitClone) {
+        # No backup needed when cloning fresh from GitHub
+        Write-Host ""
+        Write-Host "Using git clone - skipping backup" -ForegroundColor Gray
+    }
+    elseif (-not $SkipBackup -and (Test-Path "$AppDir\package.json")) {
         if ($Force) {
             $doBackup = $true  # Force mode still does backup for safety
             Write-Host ""
