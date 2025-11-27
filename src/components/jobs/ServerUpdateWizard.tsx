@@ -1,0 +1,795 @@
+import { useState, useEffect } from "react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
+import { FirmwareSourceSelector } from "@/components/common/FirmwareSourceSelector";
+import { 
+  Info, 
+  Plus, 
+  X, 
+  Loader2, 
+  CheckCircle, 
+  AlertTriangle,
+  Server,
+  Clock,
+  Shield
+} from "lucide-react";
+import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
+
+interface ServerUpdateWizardProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  preSelectedTarget?: {
+    type: 'cluster' | 'group' | 'servers';
+    id?: string;
+    ids?: string[];
+  };
+}
+
+interface FirmwareUpdate {
+  component: string;
+  version: string;
+  image_uri: string;
+  reboot_required: boolean;
+}
+
+interface TargetInfo {
+  name: string;
+  total: number;
+  linked: number;
+  connected: number;
+}
+
+const STEPS = [
+  { id: 1, name: 'Target Selection', icon: Server },
+  { id: 2, name: 'Firmware Selection', icon: Shield },
+  { id: 3, name: 'Configuration', icon: Clock },
+  { id: 4, name: 'Review & Confirm', icon: CheckCircle },
+  { id: 5, name: 'Execution', icon: Loader2 },
+];
+
+export const ServerUpdateWizard = ({
+  open,
+  onOpenChange,
+  preSelectedTarget
+}: ServerUpdateWizardProps) => {
+  const [currentStep, setCurrentStep] = useState(1);
+  const [loading, setLoading] = useState(false);
+  
+  // Step 1: Target Selection
+  const [targetType, setTargetType] = useState<'cluster' | 'group' | 'servers'>(
+    preSelectedTarget?.type || 'cluster'
+  );
+  const [clusters, setClusters] = useState<string[]>([]);
+  const [groups, setGroups] = useState<any[]>([]);
+  const [servers, setServers] = useState<any[]>([]);
+  const [selectedCluster, setSelectedCluster] = useState<string>(preSelectedTarget?.type === 'cluster' && preSelectedTarget?.id ? preSelectedTarget.id : '');
+  const [selectedGroup, setSelectedGroup] = useState<string>(preSelectedTarget?.type === 'group' && preSelectedTarget?.id ? preSelectedTarget.id : '');
+  const [selectedServerIds, setSelectedServerIds] = useState<string[]>(preSelectedTarget?.type === 'servers' && preSelectedTarget?.ids ? preSelectedTarget.ids : []);
+  const [targetInfo, setTargetInfo] = useState<TargetInfo | null>(null);
+  const [safetyCheckLoading, setSafetyCheckLoading] = useState(false);
+  const [safetyCheckPassed, setSafetyCheckPassed] = useState(false);
+  
+  // Step 2: Firmware Selection
+  const [firmwareSource, setFirmwareSource] = useState<'local_repository' | 'dell_online_catalog' | 'manual'>('local_repository');
+  const [componentFilter, setComponentFilter] = useState<string[]>(['all']);
+  const [autoSelectLatest, setAutoSelectLatest] = useState(true);
+  const [firmwareUpdates, setFirmwareUpdates] = useState<FirmwareUpdate[]>([{
+    component: '',
+    version: '',
+    image_uri: '',
+    reboot_required: true
+  }]);
+  
+  // Step 3: Configuration
+  const [backupScp, setBackupScp] = useState(true);
+  const [minHealthyHosts, setMinHealthyHosts] = useState(2);
+  const [maxParallel, setMaxParallel] = useState(1);
+  const [verifyAfterEach, setVerifyAfterEach] = useState(true);
+  const [continueOnFailure, setContinueOnFailure] = useState(false);
+  
+  // Step 4: Review
+  const [confirmed, setConfirmed] = useState(false);
+  
+  // Step 5: Execution
+  const [jobId, setJobId] = useState<string | null>(null);
+
+  const { toast } = useToast();
+  const { user } = useAuth();
+
+  useEffect(() => {
+    if (open) {
+      fetchTargets();
+    }
+  }, [open, targetType]);
+
+  useEffect(() => {
+    if (targetType === 'cluster' && selectedCluster) {
+      fetchClusterInfo();
+    } else if (targetType === 'group' && selectedGroup) {
+      fetchGroupInfo();
+    } else if (targetType === 'servers' && selectedServerIds.length > 0) {
+      fetchServersInfo();
+    }
+  }, [targetType, selectedCluster, selectedGroup, selectedServerIds]);
+
+  const fetchTargets = async () => {
+    if (targetType === 'cluster') {
+      const { data } = await supabase
+        .from("vcenter_hosts")
+        .select("cluster")
+        .not("cluster", "is", null);
+      
+      if (data) {
+        const uniqueClusters = [...new Set(data.map(h => h.cluster).filter(Boolean))];
+        setClusters(uniqueClusters as string[]);
+      }
+    } else if (targetType === 'group') {
+      const { data } = await supabase
+        .from("server_groups")
+        .select("*");
+      
+      if (data) setGroups(data);
+    } else if (targetType === 'servers') {
+      const { data } = await supabase
+        .from("servers")
+        .select("id, ip_address, hostname, model, connection_status");
+      
+      if (data) setServers(data);
+    }
+  };
+
+  const fetchClusterInfo = async () => {
+    const { data: hosts } = await supabase
+      .from("vcenter_hosts")
+      .select("id, server_id, status")
+      .eq("cluster", selectedCluster);
+    
+    if (hosts) {
+      setTargetInfo({
+        name: selectedCluster,
+        total: hosts.length,
+        linked: hosts.filter(h => h.server_id).length,
+        connected: hosts.filter(h => h.status === 'connected').length
+      });
+    }
+  };
+
+  const fetchGroupInfo = async () => {
+    const { data: members } = await supabase
+      .from("server_group_members")
+      .select("server_id, servers(connection_status)")
+      .eq("server_group_id", selectedGroup);
+    
+    if (members) {
+      const group = groups.find(g => g.id === selectedGroup);
+      setTargetInfo({
+        name: group?.name || 'Unknown',
+        total: members.length,
+        linked: members.length,
+        connected: members.filter((m: any) => m.servers?.connection_status === 'connected').length
+      });
+    }
+  };
+
+  const fetchServersInfo = async () => {
+    const { data: serversList } = await supabase
+      .from("servers")
+      .select("*")
+      .in("id", selectedServerIds);
+    
+    if (serversList) {
+      setTargetInfo({
+        name: `${serversList.length} Server${serversList.length > 1 ? 's' : ''}`,
+        total: serversList.length,
+        linked: serversList.length,
+        connected: serversList.filter(s => s.connection_status === 'connected').length
+      });
+    }
+  };
+
+  const runSafetyCheck = async () => {
+    setSafetyCheckLoading(true);
+    try {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      if (targetInfo && targetInfo.connected >= minHealthyHosts) {
+        setSafetyCheckPassed(true);
+        toast({
+          title: "Safety check passed",
+          description: `Target has ${targetInfo.connected} healthy hosts.`,
+        });
+      } else {
+        throw new Error(`Insufficient healthy hosts. Found ${targetInfo?.connected}, need ${minHealthyHosts}`);
+      }
+    } catch (error: any) {
+      toast({
+        title: "Safety check failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setSafetyCheckLoading(false);
+    }
+  };
+
+  const addFirmwareUpdate = () => {
+    setFirmwareUpdates([...firmwareUpdates, {
+      component: '',
+      version: '',
+      image_uri: '',
+      reboot_required: true
+    }]);
+  };
+
+  const removeFirmwareUpdate = (index: number) => {
+    setFirmwareUpdates(firmwareUpdates.filter((_, i) => i !== index));
+  };
+
+  const updateFirmware = (index: number, field: keyof FirmwareUpdate, value: any) => {
+    const updated = [...firmwareUpdates];
+    (updated[index] as any)[field] = value;
+    setFirmwareUpdates(updated);
+  };
+
+  const canProceedToNextStep = () => {
+    switch (currentStep) {
+      case 1:
+        const hasTarget = (targetType === 'cluster' && selectedCluster) ||
+                         (targetType === 'group' && selectedGroup) ||
+                         (targetType === 'servers' && selectedServerIds.length > 0);
+        return hasTarget && targetInfo && safetyCheckPassed;
+      case 2:
+        if (firmwareSource === 'manual') {
+          return firmwareUpdates.length > 0 && 
+                 firmwareUpdates.every(f => f.component && f.version && f.image_uri);
+        }
+        return componentFilter.length > 0;
+      case 3:
+        return true;
+      case 4:
+        return confirmed;
+      default:
+        return true;
+    }
+  };
+
+  const handleNext = () => {
+    if (currentStep < 5) {
+      setCurrentStep(currentStep + 1);
+    }
+  };
+
+  const handleBack = () => {
+    if (currentStep > 1) {
+      setCurrentStep(currentStep - 1);
+    }
+  };
+
+  const handleExecute = async () => {
+    setLoading(true);
+    try {
+      const target_scope = targetType === 'cluster' 
+        ? { cluster_id: selectedCluster }
+        : targetType === 'group'
+          ? { server_group_id: selectedGroup }
+          : { server_ids: selectedServerIds };
+
+      const { data, error } = await supabase
+        .from("jobs")
+        .insert({
+          job_type: 'rolling_cluster_update' as any,
+          created_by: user?.id!,
+          target_scope: target_scope as any,
+          details: {
+            ...(targetType === 'cluster' && { cluster_id: selectedCluster }),
+            ...(targetType === 'group' && { server_group_id: selectedGroup }),
+            ...(targetType === 'servers' && { server_ids: selectedServerIds }),
+            firmware_source: firmwareSource,
+            component_filter: componentFilter,
+            auto_select_latest: autoSelectLatest,
+            ...(firmwareSource === 'manual' && { firmware_updates: firmwareUpdates }),
+            backup_scp: backupScp,
+            min_healthy_hosts: minHealthyHosts,
+            max_parallel: maxParallel,
+            verify_after_each: verifyAfterEach,
+            continue_on_failure: continueOnFailure
+          } as any,
+          status: 'pending'
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      setJobId(data.id);
+      setCurrentStep(5);
+      
+      toast({
+        title: "Rolling update started",
+        description: "The update workflow has been initiated.",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error starting update",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const estimatedTime = () => {
+    if (!targetInfo) return 0;
+    const hostsToUpdate = Math.ceil(targetInfo.linked / maxParallel);
+    const timePerHost = firmwareSource === 'manual' 
+      ? firmwareUpdates.length * 15 
+      : componentFilter.length * 15;
+    return hostsToUpdate * timePerHost;
+  };
+
+  const renderStepContent = () => {
+    switch (currentStep) {
+      case 1:
+        return (
+          <div className="space-y-4">
+            <Tabs value={targetType} onValueChange={(v: any) => setTargetType(v)}>
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="cluster">vCenter Cluster</TabsTrigger>
+                <TabsTrigger value="group">Server Group</TabsTrigger>
+                <TabsTrigger value="servers">Individual Servers</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="cluster" className="space-y-4 mt-4">
+                <div className="space-y-2">
+                  <Label>Select Cluster</Label>
+                  <Select value={selectedCluster} onValueChange={setSelectedCluster}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose a cluster" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {clusters.map(cluster => (
+                        <SelectItem key={cluster} value={cluster}>
+                          {cluster}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="group" className="space-y-4 mt-4">
+                <div className="space-y-2">
+                  <Label>Select Server Group</Label>
+                  <Select value={selectedGroup} onValueChange={setSelectedGroup}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose a group" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {groups.map((group: any) => (
+                        <SelectItem key={group.id} value={group.id}>
+                          {group.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="servers" className="space-y-4 mt-4">
+                <div className="space-y-2">
+                  <Label>Select Servers</Label>
+                  <div className="max-h-64 overflow-y-auto border rounded-lg p-3 space-y-2">
+                    {servers.map((server: any) => (
+                      <div key={server.id} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`server-${server.id}`}
+                          checked={selectedServerIds.includes(server.id)}
+                          onCheckedChange={(checked) => {
+                            setSelectedServerIds(
+                              checked
+                                ? [...selectedServerIds, server.id]
+                                : selectedServerIds.filter(id => id !== server.id)
+                            );
+                          }}
+                        />
+                        <label htmlFor={`server-${server.id}`} className="text-sm cursor-pointer flex-1">
+                          {server.hostname || server.ip_address} ({server.model})
+                        </label>
+                        <Badge variant={server.connection_status === 'connected' ? 'default' : 'secondary'}>
+                          {server.connection_status}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </TabsContent>
+            </Tabs>
+
+            {targetInfo && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Target Information</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span>Total Hosts:</span>
+                    <Badge>{targetInfo.total}</Badge>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span>Linked Servers:</span>
+                    <Badge>{targetInfo.linked}</Badge>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span>Connected:</span>
+                    <Badge variant={targetInfo.connected >= minHealthyHosts ? "default" : "destructive"}>
+                      {targetInfo.connected}
+                    </Badge>
+                  </div>
+                  <Separator className="my-3" />
+                  <Button 
+                    onClick={runSafetyCheck} 
+                    disabled={safetyCheckLoading || safetyCheckPassed}
+                    className="w-full"
+                  >
+                    {safetyCheckLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {safetyCheckPassed ? (
+                      <>
+                        <CheckCircle className="mr-2 h-4 w-4" />
+                        Safety Check Passed
+                      </>
+                    ) : (
+                      'Run Safety Check'
+                    )}
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        );
+
+      case 2:
+        return (
+          <div className="space-y-4">
+            <FirmwareSourceSelector
+              value={firmwareSource}
+              onChange={(value) => setFirmwareSource(value as any)}
+              componentFilter={componentFilter}
+              onComponentFilterChange={setComponentFilter}
+              autoSelectLatest={autoSelectLatest}
+              onAutoSelectLatestChange={setAutoSelectLatest}
+              showManualOption={true}
+              showSkipOption={false}
+            />
+
+            {firmwareSource === 'manual' && (
+              <div className="space-y-4 mt-6">
+                <div className="flex items-center justify-between">
+                  <Label>Manual Firmware Entries</Label>
+                  <Button type="button" variant="outline" size="sm" onClick={addFirmwareUpdate}>
+                    <Plus className="h-4 w-4 mr-1" />
+                    Add Firmware
+                  </Button>
+                </div>
+
+                {firmwareUpdates.map((firmware, index) => (
+                  <Card key={index}>
+                    <CardContent className="pt-6 space-y-3">
+                      <div className="grid grid-cols-[1fr_auto] gap-2">
+                        <Input
+                          placeholder="Component (e.g., BIOS, iDRAC)"
+                          value={firmware.component}
+                          onChange={(e) => updateFirmware(index, 'component', e.target.value)}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => removeFirmwareUpdate(index)}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <Input
+                        placeholder="Version"
+                        value={firmware.version}
+                        onChange={(e) => updateFirmware(index, 'version', e.target.value)}
+                      />
+                      <Input
+                        placeholder="Firmware Image URI (HTTP/HTTPS)"
+                        value={firmware.image_uri}
+                        onChange={(e) => updateFirmware(index, 'image_uri', e.target.value)}
+                      />
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`reboot-${index}`}
+                          checked={firmware.reboot_required}
+                          onCheckedChange={(checked) => updateFirmware(index, 'reboot_required', checked)}
+                        />
+                        <Label htmlFor={`reboot-${index}`} className="font-normal">
+                          Reboot required
+                        </Label>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+
+      case 3:
+        return (
+          <div className="space-y-4">
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="backup"
+                checked={backupScp}
+                onCheckedChange={(checked) => setBackupScp(checked as boolean)}
+              />
+              <Label htmlFor="backup">Create SCP backup for each host before update</Label>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="minHealthy">Minimum Healthy Hosts</Label>
+                <Input
+                  id="minHealthy"
+                  type="number"
+                  min={1}
+                  value={minHealthyHosts}
+                  onChange={(e) => setMinHealthyHosts(parseInt(e.target.value) || 1)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Updates will pause if target drops below this threshold
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="maxParallel">Max Parallel Updates</Label>
+                <Input
+                  id="maxParallel"
+                  type="number"
+                  min={1}
+                  max={5}
+                  value={maxParallel}
+                  onChange={(e) => setMaxParallel(parseInt(e.target.value) || 1)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  How many hosts to update simultaneously
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="verify"
+                checked={verifyAfterEach}
+                onCheckedChange={(checked) => setVerifyAfterEach(checked as boolean)}
+              />
+              <Label htmlFor="verify">Verify each host after update</Label>
+            </div>
+
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Advanced Option</AlertTitle>
+              <AlertDescription>
+                <div className="mt-2 flex items-center space-x-2">
+                  <Checkbox
+                    id="continueOnFail"
+                    checked={continueOnFailure}
+                    onCheckedChange={(checked) => setContinueOnFailure(checked as boolean)}
+                  />
+                  <Label htmlFor="continueOnFail" className="font-normal">
+                    Continue updating other hosts even if one fails
+                  </Label>
+                </div>
+              </AlertDescription>
+            </Alert>
+          </div>
+        );
+
+      case 4:
+        return (
+          <div className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Target</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-sm space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Type:</span>
+                    <span className="font-medium capitalize">{targetType}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Name:</span>
+                    <span className="font-medium">{targetInfo?.name}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Hosts to update:</span>
+                    <span className="font-medium">{targetInfo?.linked}</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Firmware</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>Source:</span>
+                  <Badge variant="outline">{firmwareSource === 'local_repository' ? 'Local Repository' : firmwareSource === 'dell_online_catalog' ? 'Dell Catalog' : 'Manual'}</Badge>
+                </div>
+                {firmwareSource !== 'manual' && (
+                  <div className="flex justify-between text-sm">
+                    <span>Components:</span>
+                    <Badge variant="outline">{componentFilter.includes('all') ? 'All' : componentFilter.join(', ')}</Badge>
+                  </div>
+                )}
+                {firmwareSource === 'manual' && firmwareUpdates.map((fw, index) => (
+                  <div key={index} className="text-sm flex justify-between">
+                    <span>{fw.component}</span>
+                    <Badge variant="outline">{fw.version}</Badge>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Configuration</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm space-y-2">
+                <div className="flex justify-between">
+                  <span>SCP Backups:</span>
+                  <span>{backupScp ? 'Yes' : 'No'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Min Healthy Hosts:</span>
+                  <span>{minHealthyHosts}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Max Parallel:</span>
+                  <span>{maxParallel}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Estimated Time:</span>
+                  <Badge>{estimatedTime()} minutes</Badge>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Alert>
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Warning</AlertTitle>
+              <AlertDescription>
+                <div className="mt-2 flex items-center space-x-2">
+                  <Checkbox
+                    id="confirm"
+                    checked={confirmed}
+                    onCheckedChange={(checked) => setConfirmed(checked as boolean)}
+                  />
+                  <Label htmlFor="confirm" className="font-normal">
+                    I understand this will cause host reboots and potential VM downtime
+                  </Label>
+                </div>
+              </AlertDescription>
+            </Alert>
+          </div>
+        );
+
+      case 5:
+        return (
+          <div className="space-y-4">
+            {jobId && (
+              <WorkflowExecutionViewer 
+                jobId={jobId} 
+                workflowType="rolling_cluster_update" 
+              />
+            )}
+          </div>
+        );
+
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Server Update Wizard</DialogTitle>
+          <DialogDescription>
+            Guided workflow for orchestrating server firmware updates
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* Stepper */}
+        <div className="flex items-center justify-between mb-6">
+          {STEPS.map((step, index) => (
+            <div key={step.id} className="flex items-center">
+              <div className={`flex items-center justify-center w-10 h-10 rounded-full border-2 ${
+                currentStep >= step.id 
+                  ? 'border-primary bg-primary text-primary-foreground' 
+                  : 'border-muted bg-background'
+              }`}>
+                {currentStep > step.id ? (
+                  <CheckCircle className="h-5 w-5" />
+                ) : (
+                  <step.icon className="h-5 w-5" />
+                )}
+              </div>
+              {index < STEPS.length - 1 && (
+                <div className={`w-16 h-0.5 mx-2 ${
+                  currentStep > step.id ? 'bg-primary' : 'bg-muted'
+                }`} />
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="py-4">
+          <h3 className="text-lg font-semibold mb-4">
+            Step {currentStep}: {STEPS[currentStep - 1].name}
+          </h3>
+          {renderStepContent()}
+        </div>
+
+        {/* Navigation */}
+        <div className="flex justify-between pt-4 border-t">
+          <Button
+            variant="outline"
+            onClick={handleBack}
+            disabled={currentStep === 1 || currentStep === 5}
+          >
+            Back
+          </Button>
+
+          <div className="flex gap-2">
+            {currentStep < 4 && (
+              <Button
+                onClick={handleNext}
+                disabled={!canProceedToNextStep()}
+              >
+                Next
+              </Button>
+            )}
+            {currentStep === 4 && (
+              <Button
+                onClick={handleExecute}
+                disabled={!canProceedToNextStep() || loading}
+              >
+                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Start Update
+              </Button>
+            )}
+            {currentStep === 5 && (
+              <Button onClick={() => onOpenChange(false)}>
+                Close
+              </Button>
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+// Export as ClusterUpdateWizard for backward compatibility
+export const ClusterUpdateWizard = ServerUpdateWizard;

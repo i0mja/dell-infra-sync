@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
 import { VCenterSettingsDialog } from "@/components/vcenter/VCenterSettingsDialog";
 import { VCenterConnectivityDialog } from "@/components/vcenter/VCenterConnectivityDialog";
-import { ClusterUpdateWizard } from "@/components/jobs/ClusterUpdateWizard";
+import { ClusterUpdateWizard } from "@/components/jobs/ServerUpdateWizard";
 import { VCenterStatsBar } from "@/components/vcenter/VCenterStatsBar";
 import { HostFilterToolbar } from "@/components/vcenter/HostFilterToolbar";
 import { HostsTable } from "@/components/vcenter/HostsTable";
@@ -540,10 +540,10 @@ const VCenter = () => {
         results={testResults}
       />
 
-      <ClusterUpdateWizard
-        open={clusterWizardOpen}
+      <ClusterUpdateWizard 
+        open={clusterWizardOpen} 
         onOpenChange={setClusterWizardOpen}
-        preSelectedCluster={selectedClusterName}
+        preSelectedTarget={selectedClusterName ? { type: 'cluster', id: selectedClusterName } : undefined}
       />
     </div>
   );

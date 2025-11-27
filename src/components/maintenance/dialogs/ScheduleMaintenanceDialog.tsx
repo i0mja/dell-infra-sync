@@ -12,6 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Loader2, CheckCircle, AlertTriangle } from "lucide-react";
 import { format, addHours } from "date-fns";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { FirmwareSourceSelector } from "@/components/common/FirmwareSourceSelector";
 
 interface ScheduleMaintenanceDialogProps {
   open: boolean;
@@ -53,6 +54,9 @@ export function ScheduleMaintenanceDialog({
       : format(addHours(new Date(), 4), "yyyy-MM-dd'T'HH:mm"),
     maintenance_type: "firmware_update" as "firmware_update" | "host_maintenance" | "cluster_update" | "full_update",
     auto_execute: true,
+    firmware_source: "local_repository" as "local_repository" | "dell_online_catalog" | "skip" | "manual",
+    component_filter: ["all"] as string[],
+    auto_select_latest: true,
   });
 
   useEffect(() => {
@@ -176,6 +180,11 @@ export function ScheduleMaintenanceDialog({
           safety_check_snapshot: validation || null,
           status: 'planned',
           auto_execute: formData.auto_execute,
+          details: {
+            firmware_source: formData.firmware_source,
+            component_filter: formData.component_filter,
+            auto_select_latest: formData.auto_select_latest,
+          },
         });
 
       if (error) throw error;
@@ -209,9 +218,10 @@ export function ScheduleMaintenanceDialog({
         </DialogHeader>
 
         <Tabs defaultValue="basic" className="w-full">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="basic">Basic</TabsTrigger>
             <TabsTrigger value="targets">Targets</TabsTrigger>
+            <TabsTrigger value="firmware">Firmware</TabsTrigger>
             <TabsTrigger value="schedule">Schedule</TabsTrigger>
             <TabsTrigger value="validation">Validation</TabsTrigger>
           </TabsList>
@@ -307,6 +317,19 @@ export function ScheduleMaintenanceDialog({
                 ))}
               </div>
             </div>
+          </TabsContent>
+
+          <TabsContent value="firmware" className="space-y-4 mt-4">
+            <FirmwareSourceSelector
+              value={formData.firmware_source}
+              onChange={(value) => setFormData({ ...formData, firmware_source: value })}
+              componentFilter={formData.component_filter}
+              onComponentFilterChange={(components) => setFormData({ ...formData, component_filter: components })}
+              autoSelectLatest={formData.auto_select_latest}
+              onAutoSelectLatestChange={(value) => setFormData({ ...formData, auto_select_latest: value })}
+              showSkipOption={true}
+              showManualOption={false}
+            />
           </TabsContent>
 
           <TabsContent value="schedule" className="space-y-4 mt-4">
