@@ -33,7 +33,7 @@ interface Job {
 
 
 interface JobDetailDialogProps {
-  job: Job;
+  job: Job | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -55,6 +55,20 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
   const [loading, setLoading] = useState(true);
   const [idracCommands, setIdracCommands] = useState<IdracCommand[]>([]);
   const [idracLoading, setIdracLoading] = useState(false);
+
+  // Early return if no job selected
+  if (!job) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Job Details</DialogTitle>
+          </DialogHeader>
+          <p className="text-muted-foreground">No job selected</p>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   // Check if this is a workflow job type
   const workflowJobTypes = ['prepare_host_for_update', 'verify_host_after_update', 'rolling_cluster_update'];
