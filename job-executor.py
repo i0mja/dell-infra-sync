@@ -921,6 +921,12 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 if event_log_count > 0:
                     base_info['event_log_count'] = event_log_count
                     self.log(f"  ✓ Fetched {event_log_count} event logs", "INFO")
+                
+                # Fetch BIOS attributes for initial snapshot
+                bios_data = self._fetch_bios_attributes(ip, username, password, server_id, job_id)
+                if bios_data:
+                    base_info['bios_attributes'] = bios_data
+                    self.log(f"  ✓ BIOS attributes captured", "INFO")
             
             return base_info
         except Exception as e:
@@ -1159,6 +1165,83 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self.log(f"  Error parsing event logs: {e}", "WARN")
             return 0
 
+    def _fetch_bios_attributes(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None) -> Optional[Dict]:
+        """Fetch BIOS attributes for initial snapshot"""
+        try:
+            url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Bios"
+            response, response_time = self.throttler.request_with_safety(
+                method='GET',
+                url=url,
+                ip=ip,
+                logger=self.log,
+                auth=(username, password),
+                timeout=(2, 15)
+            )
+            
+            response_json = None
+            if response and response.content:
+                try:
+                    response_json = response.json()
+                except json.JSONDecodeError:
+                    pass
+            
+            # Log the request
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                task_id=None,
+                command_type='GET',
+                endpoint='/redfish/v1/Systems/System.Embedded.1/Bios',
+                full_url=url,
+                request_headers={'Authorization': f'Basic {username}:***'},
+                request_body=None,
+                status_code=response.status_code if response else None,
+                response_time_ms=response_time,
+                response_body=response_json,
+                success=(response and response.status_code == 200 and response_json is not None),
+                error_message=None if (response and response.status_code == 200) else f"HTTP {response.status_code}" if response else "Request failed",
+                operation_type='idrac_api'
+            )
+            
+            if response and response.status_code == 200 and response_json:
+                return response_json.get('Attributes', {})
+            
+            return None
+            
+        except Exception as e:
+            self.log(f"  Could not fetch BIOS attributes: {e}", "DEBUG")
+            return None
+    
+    def _create_server_audit_entry(self, server_id: str, job_id: str, action: str, summary: str, details: Dict = None):
+        """Create audit trail entry for server operations"""
+        try:
+            headers = {"apikey": SERVICE_ROLE_KEY, "Authorization": f"Bearer {SERVICE_ROLE_KEY}"}
+            
+            # Get job creator
+            job_url = f"{DSM_URL}/rest/v1/jobs?id=eq.{job_id}&select=created_by"
+            job_response = requests.get(job_url, headers=headers, verify=VERIFY_SSL)
+            created_by = None
+            if job_response.status_code == 200:
+                jobs = _safe_json_parse(job_response)
+                if jobs:
+                    created_by = jobs[0].get('created_by')
+            
+            audit_entry = {
+                'action': action,
+                'details': {
+                    'server_id': server_id,
+                    'summary': summary,
+                    **(details or {})
+                },
+                'user_id': created_by
+            }
+            
+            insert_url = f"{DSM_URL}/rest/v1/audit_logs"
+            requests.post(insert_url, headers=headers, json=audit_entry, verify=VERIFY_SSL)
+            
+        except Exception as e:
+            self.log(f"  Could not create audit entry: {e}", "DEBUG")
+    
     def _create_automatic_scp_backup(self, server_id: str, parent_job_id: str):
         """Create automatic SCP backup job for newly discovered servers"""
         try:
@@ -1492,9 +1575,22 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                         self.log(f"  ✓ Refreshed {ip}: {info.get('model')} - {info.get('hostname')}")
                         refreshed_count += 1
                         
-                        # Create automatic SCP backup for newly discovered servers
-                        if server.get('discovery_job_id') == job['id']:
-                            self._create_automatic_scp_backup(server['id'], job['id'])
+                        # Create audit trail entry for server discovery
+                        self._create_server_audit_entry(
+                            server_id=server['id'],
+                            job_id=job['id'],
+                            action='server_discovery',
+                            summary=f"Server discovered: {info.get('model', 'Unknown')} ({info.get('service_tag', 'N/A')})",
+                            details={
+                                'bios_version': info.get('bios_version'),
+                                'idrac_firmware': info.get('idrac_firmware'),
+                                'health_status': info.get('health_status'),
+                                'event_logs_fetched': info.get('event_log_count', 0)
+                            }
+                        )
+                        
+                        # Create automatic SCP backup for all refreshed servers
+                        self._create_automatic_scp_backup(server['id'], job['id'])
                     else:
                         error_detail = {
                             'ip': ip,
