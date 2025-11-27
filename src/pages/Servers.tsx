@@ -22,6 +22,7 @@ import { LinkVCenterDialog } from "@/components/servers/LinkVCenterDialog";
 import { AssignCredentialsDialog } from "@/components/servers/AssignCredentialsDialog";
 import { CreateJobDialog } from "@/components/jobs/CreateJobDialog";
 import { WorkflowJobDialog } from "@/components/jobs/WorkflowJobDialog";
+import { ServerUpdateWizard } from "@/components/jobs/ServerUpdateWizard";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import type { Server } from "@/hooks/useServers";
 
@@ -55,6 +56,7 @@ export default function Servers() {
   const [assignCredentialsDialogOpen, setAssignCredentialsDialogOpen] = useState(false);
   const [jobDialogOpen, setJobDialogOpen] = useState(false);
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
+  const [updateWizardOpen, setUpdateWizardOpen] = useState(false);
 
   // Hooks
   const {
@@ -247,7 +249,7 @@ export default function Servers() {
               }}
               onWorkflow={(server) => {
                 setSelectedServer(server);
-                setWorkflowDialogOpen(true);
+                setUpdateWizardOpen(true);
               }}
               onLinkVCenter={(server) => {
                 setSelectedServer(server);
@@ -362,6 +364,15 @@ export default function Servers() {
             onOpenChange={setWorkflowDialogOpen}
             onSuccess={refetch}
             preSelectedServerId={selectedServer.id}
+          />
+
+          <ServerUpdateWizard
+            open={updateWizardOpen}
+            onOpenChange={setUpdateWizardOpen}
+            preSelectedTarget={{
+              type: 'servers',
+              ids: [selectedServer.id]
+            }}
           />
         </>
       )}

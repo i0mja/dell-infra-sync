@@ -232,16 +232,14 @@ export const CreateJobDialog = ({
                 <SelectValue placeholder="Select job type" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="firmware_update">Firmware Update (Single Component)</SelectItem>
-                <SelectItem value="full_server_update">Full Server Update (All Components)</SelectItem>
                 <SelectItem value="discovery_scan">IP Discovery Scan</SelectItem>
                 <SelectItem value="boot_configuration">Boot Configuration</SelectItem>
-              <SelectItem value="virtual_media_mount">Virtual Media - Mount</SelectItem>
-              <SelectItem value="virtual_media_unmount">Virtual Media - Unmount</SelectItem>
-              <SelectItem value="scp_export">SCP Export (Backup)</SelectItem>
-              <SelectItem value="scp_import">SCP Import (Restore)</SelectItem>
-              <SelectItem value="bios_config_read">BIOS Config - Read/Snapshot</SelectItem>
-              <SelectItem value="bios_config_write">BIOS Config - Write/Apply</SelectItem>
+                <SelectItem value="virtual_media_mount">Virtual Media - Mount</SelectItem>
+                <SelectItem value="virtual_media_unmount">Virtual Media - Unmount</SelectItem>
+                <SelectItem value="scp_export">SCP Export (Backup)</SelectItem>
+                <SelectItem value="scp_import">SCP Import (Restore)</SelectItem>
+                <SelectItem value="bios_config_read">BIOS Config - Read/Snapshot</SelectItem>
+                <SelectItem value="bios_config_write">BIOS Config - Write/Apply</SelectItem>
               </SelectContent>
             </Select>
           </div>
