@@ -1,12 +1,15 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Settings, Activity, RefreshCw, RefreshCcw, Loader2, Database, Link as LinkIcon } from "lucide-react";
+import { Settings, Activity, RefreshCw, RefreshCcw, Loader2, Database, Link as LinkIcon, HardDrive, AlertTriangle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 interface VCenterStatsBarProps {
   totalHosts: number;
   linkedHosts: number;
   unlinkedHosts: number;
+  totalVms?: number;
+  totalDatastores?: number;
+  activeAlarms?: number;
   lastSync: string | null;
   mode: 'job-executor' | 'cloud';
   syncing: boolean;
@@ -23,6 +26,9 @@ export function VCenterStatsBar({
   totalHosts,
   linkedHosts,
   unlinkedHosts,
+  totalVms = 0,
+  totalDatastores = 0,
+  activeAlarms = 0,
   lastSync,
   mode,
   syncing,
@@ -59,6 +65,34 @@ export function VCenterStatsBar({
             <span className="text-muted-foreground">Unlinked:</span>
             <span className="font-semibold text-warning">{unlinkedHosts}</span>
           </div>
+
+          <div className="hidden h-4 w-px bg-border sm:block" />
+
+          <div className="flex items-center gap-2 text-sm whitespace-nowrap">
+            <Activity className="h-4 w-4 text-muted-foreground" />
+            <span className="text-muted-foreground">VMs:</span>
+            <span className="font-semibold">{totalVms}</span>
+          </div>
+
+          <div className="hidden h-4 w-px bg-border sm:block" />
+
+          <div className="flex items-center gap-2 text-sm whitespace-nowrap">
+            <HardDrive className="h-4 w-4 text-muted-foreground" />
+            <span className="text-muted-foreground">Datastores:</span>
+            <span className="font-semibold">{totalDatastores}</span>
+          </div>
+
+          {activeAlarms > 0 && (
+            <>
+              <div className="hidden h-4 w-px bg-border sm:block" />
+              
+              <div className="flex items-center gap-2 text-sm whitespace-nowrap">
+                <AlertTriangle className="h-4 w-4 text-warning" />
+                <span className="text-muted-foreground">Alarms:</span>
+                <span className="font-semibold text-warning">{activeAlarms}</span>
+              </div>
+            </>
+          )}
 
           <div className="hidden h-4 w-px bg-border sm:block" />
 
