@@ -97,6 +97,14 @@ function Test-ServiceRoleKey {
 function Invoke-Cleanup {
     Write-Host "`n[CLEANUP PHASE]" -ForegroundColor Cyan
     
+    # Backup source files to temp before cleanup (in case script is running from $AppDir)
+    $tempBackup = "$env:TEMP\dell-server-manager-backup-$(Get-Date -Format 'yyyyMMddHHmmss')"
+    if (Test-Path "$AppDir\package.json") {
+        Write-Host "Backing up source files..." -ForegroundColor Yellow
+        Copy-Item $AppDir $tempBackup -Recurse -Force -Exclude @('node_modules', 'dist', '.vite', 'logs') -ErrorAction SilentlyContinue
+        Write-Host "  ✓ Source backed up to temp" -ForegroundColor Green
+    }
+    
     # Navigate to temp directory
     Set-Location $env:TEMP
     
@@ -163,22 +171,47 @@ function Invoke-Reinstall {
         New-Item -ItemType Directory -Path $AppDir -Force | Out-Null
     }
     
-    # Copy files from current directory (assume we're in the repo)
+    # Try to restore from backup first, then from original source
+    $tempBackup = Get-ChildItem "$env:TEMP\dell-server-manager-backup-*" | Sort-Object Name -Descending | Select-Object -First 1
     $sourceDir = $PSScriptRoot | Split-Path -Parent
-    Write-Host "  Copying files from $sourceDir..."
-    Copy-Item "$sourceDir\*" $AppDir -Recurse -Force -Exclude @('.git', 'node_modules', 'dist', '.vite')
-    Write-Host "  ✓ Files copied" -ForegroundColor Green
+    
+    if ($tempBackup -and (Test-Path "$($tempBackup.FullName)\package.json")) {
+        Write-Host "  Restoring from backup: $($tempBackup.FullName)..."
+        Copy-Item "$($tempBackup.FullName)\*" $AppDir -Recurse -Force
+        Remove-Item $tempBackup.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "  ✓ Files restored from backup" -ForegroundColor Green
+    }
+    elseif (Test-Path "$sourceDir\package.json") {
+        Write-Host "  Copying files from $sourceDir..."
+        Copy-Item "$sourceDir\*" $AppDir -Recurse -Force -Exclude @('.git', 'node_modules', 'dist', '.vite', 'logs')
+        Write-Host "  ✓ Files copied" -ForegroundColor Green
+    }
+    else {
+        throw "Source files not found. Please run this script from the dell-server-manager directory."
+    }
     
     Set-Location $AppDir
     
+    # Create logs directory
+    $logsDir = "$AppDir\logs"
+    if (-not (Test-Path $logsDir)) {
+        New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
+    }
+    
     # Install dependencies
     Write-Host "Installing dependencies..." -ForegroundColor Yellow
-    npm install 2>&1 | Out-Null
+    npm install
+    if ($LASTEXITCODE -ne 0) {
+        throw "npm install failed with exit code $LASTEXITCODE"
+    }
     Write-Host "  ✓ npm install complete" -ForegroundColor Green
     
     # Build application
     Write-Host "Building application..." -ForegroundColor Yellow
-    npm run build 2>&1 | Out-Null
+    npm run build
+    if ($LASTEXITCODE -ne 0) {
+        throw "npm run build failed with exit code $LASTEXITCODE"
+    }
     Write-Host "  ✓ Build complete" -ForegroundColor Green
     
     # Create .env file
@@ -210,7 +243,7 @@ VITE_SUPABASE_PUBLISHABLE_KEY=$AnonKey
     nssm set DellServerManagerJobExecutor DisplayName "Dell Server Manager Job Executor" | Out-Null
     nssm set DellServerManagerJobExecutor Description "Job executor for Dell Server Manager" | Out-Null
     nssm set DellServerManagerJobExecutor Start SERVICE_AUTO_START | Out-Null
-    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "DSM_URL=http://127.0.0.1:3000" "SERVICE_ROLE_KEY=$ServiceRoleKey" "SUPABASE_URL=$SupabaseUrl" | Out-Null
+    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "DSM_URL=$SupabaseUrl" "SERVICE_ROLE_KEY=$ServiceRoleKey" "SUPABASE_URL=$SupabaseUrl" | Out-Null
     Write-Host "  ✓ DellServerManagerJobExecutor service installed" -ForegroundColor Green
     
     # Configure firewall
