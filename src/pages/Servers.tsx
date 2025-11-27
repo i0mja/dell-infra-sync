@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useServers } from "@/hooks/useServers";
 import { useServerActions } from "@/hooks/useServerActions";
+import { useAutoLinkVCenter } from "@/hooks/useAutoLinkVCenter";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { ServerStatsBar } from "@/components/servers/ServerStatsBar";
@@ -75,6 +76,8 @@ export default function Servers() {
 
   const { refreshing, testing, handleTestConnection, handleRefreshInfo, handleDeleteServer } =
     useServerActions();
+
+  const { autoLinkSingleServer, autoLinkBulk, isLinking } = useAutoLinkVCenter();
 
   // Detect local mode
   const isLocalMode =
@@ -150,6 +153,18 @@ export default function Servers() {
     setSelectedServer(null);
   };
 
+  const handleAutoLinkVCenter = async (server: Server) => {
+    const result = await autoLinkSingleServer(server.id, server.service_tag);
+    if (result.success) {
+      refetch();
+    }
+  };
+
+  const handleBulkAutoLink = async () => {
+    await autoLinkBulk();
+    refetch();
+  };
+
   // Get selected group data
   const selectedGroupData = selectedGroup
     ? groupedData.find((g) => g.name === selectedGroup) || null
@@ -187,6 +202,8 @@ export default function Servers() {
               onStatusFilterChange={setStatusFilter}
               groups={serverGroups || []}
               vCenterClusters={uniqueVCenterClusters}
+              onBulkAutoLink={handleBulkAutoLink}
+              bulkLinking={isLinking}
             />
           </div>
           
@@ -210,6 +227,7 @@ export default function Servers() {
                 setPowerControlDialogOpen(true);
               }}
               onServerDetails={(server) => setSelectedServer(server as any)}
+              onAutoLinkVCenter={handleAutoLinkVCenter}
               loading={false}
               refreshing={refreshing}
               healthCheckServer={null}
