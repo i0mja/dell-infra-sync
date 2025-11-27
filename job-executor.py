@@ -2374,6 +2374,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
         """Execute vCenter sync - fetch ESXi hosts and auto-link to Dell servers"""
         sync_start = time.time()
         vcenter_host = None
+        source_vcenter_id = None
         try:
             self.log(f"Starting vCenter sync job: {job['id']}")
             self.update_job_status(
@@ -2383,15 +2384,25 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 details={"current_step": "Initializing"}
             )
             
-            # Fetch vCenter settings from database
-            self.log("📋 Fetching vCenter settings...")
+            # Fetch vCenter from new vcenters table
+            self.log("📋 Fetching vCenter configuration...")
             self.update_job_status(
                 job['id'], 
                 'running',
-                details={"current_step": "Fetching vCenter settings"}
+                details={"current_step": "Fetching vCenter configuration"}
             )
+            
+            # Get target vCenter ID from job details or use first sync-enabled vCenter
+            job_details = job.get('details', {})
+            target_vcenter_id = job_details.get('vcenter_id')
+            
+            if target_vcenter_id:
+                vcenter_url = f"{DSM_URL}/rest/v1/vcenters?id=eq.{target_vcenter_id}&select=*"
+            else:
+                vcenter_url = f"{DSM_URL}/rest/v1/vcenters?sync_enabled=eq.true&order=created_at.asc&limit=1"
+            
             response = requests.get(
-                f"{DSM_URL}/rest/v1/vcenter_settings?select=*&limit=1",
+                vcenter_url,
                 headers={
                     'apikey': SERVICE_ROLE_KEY,
                     'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
@@ -2400,15 +2411,16 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             )
             
             if response.status_code != 200:
-                raise Exception(f"Failed to fetch vCenter settings: {response.status_code}")
+                raise Exception(f"Failed to fetch vCenter configuration: {response.status_code}")
             
-            settings_list = _safe_json_parse(response)
-            if not settings_list:
-                raise Exception("vCenter settings not configured")
+            vcenters_list = _safe_json_parse(response)
+            if not vcenters_list:
+                raise Exception("No vCenter connection configured or sync is disabled")
 
-            settings = settings_list[0]
-            vcenter_host = settings.get('host')
-            self.log(f"✓ vCenter host: {settings['host']}")
+            vcenter_config = vcenters_list[0]
+            source_vcenter_id = vcenter_config['id']
+            vcenter_host = vcenter_config.get('host')
+            self.log(f"✓ vCenter: {vcenter_config['name']} ({vcenter_host})")
 
             # Connect to vCenter using database settings
             self.log("🔌 Connecting to vCenter...")
@@ -2417,7 +2429,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 'running',
                 details={"current_step": f"Connecting to {vcenter_host}"}
             )
-            vc = self.connect_vcenter(settings)
+            vc = self.connect_vcenter(vcenter_config)
             if not vc:
                 raise Exception("Failed to connect to vCenter - check credentials and network connectivity")
             
@@ -2431,7 +2443,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 'running',
                 details={"current_step": "Syncing clusters"}
             )
-            clusters_result = self.sync_vcenter_clusters(content)
+            clusters_result = self.sync_vcenter_clusters(content, source_vcenter_id)
             self.log(f"✓ Clusters synced: {clusters_result.get('total', 0)}")
             
             self.log("💾 Syncing datastores...")
@@ -2440,7 +2452,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 'running',
                 details={"current_step": "Syncing datastores"}
             )
-            datastores_result = self.sync_vcenter_datastores(content)
+            datastores_result = self.sync_vcenter_datastores(content, source_vcenter_id)
             self.log(f"✓ Datastores synced: {datastores_result.get('total', 0)}")
             
             self.log("🖥️  Syncing VMs...")
@@ -2449,7 +2461,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 'running',
                 details={"current_step": "Syncing VMs"}
             )
-            vms_result = self.sync_vcenter_vms(content)
+            vms_result = self.sync_vcenter_vms(content, source_vcenter_id)
             self.log(f"✓ VMs synced: {vms_result.get('total', 0)}")
             
             self.log("⚠️  Syncing alarms...")
@@ -2458,7 +2470,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 'running',
                 details={"current_step": "Syncing alarms"}
             )
-            alarms_result = self.sync_vcenter_alarms(content)
+            alarms_result = self.sync_vcenter_alarms(content, source_vcenter_id)
             self.log(f"✓ Alarms synced: {alarms_result.get('total', 0)}")
             
             # Get all ESXi hosts
@@ -2528,6 +2540,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                         'esxi_version': esxi_version,
                         'status': status,
                         'maintenance_mode': in_maintenance,
+                        'source_vcenter_id': source_vcenter_id,
                         'last_sync': datetime.now().isoformat()
                     }
                     
@@ -2671,7 +2684,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 details={'error': str(e)}
             )
 
-    def sync_vcenter_clusters(self, content) -> Dict:
+    def sync_vcenter_clusters(self, content, source_vcenter_id: str) -> Dict:
         """Sync cluster statistics from vCenter"""
         try:
             container = content.viewManager.CreateContainerView(
@@ -2688,6 +2701,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     cluster_data = {
                         'cluster_name': cluster.name,
                         'vcenter_id': str(cluster._moId),
+                        'source_vcenter_id': source_vcenter_id,
                         'total_cpu_mhz': summary.totalCpu if hasattr(summary, 'totalCpu') else None,
                         'used_cpu_mhz': summary.totalCpu - summary.effectiveCpu if hasattr(summary, 'totalCpu') and hasattr(summary, 'effectiveCpu') else None,
                         'total_memory_bytes': summary.totalMemory if hasattr(summary, 'totalMemory') else None,
@@ -2728,7 +2742,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self.log(f"Failed to sync clusters: {e}", "ERROR")
             return {'synced': 0, 'error': str(e)}
 
-    def sync_vcenter_vms(self, content) -> Dict:
+    def sync_vcenter_vms(self, content, source_vcenter_id: str) -> Dict:
         """Sync VM inventory from vCenter"""
         try:
             container = content.viewManager.CreateContainerView(
@@ -2767,6 +2781,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     vm_data = {
                         'name': config.name if config else vm.name,
                         'vcenter_id': str(vm._moId),
+                        'source_vcenter_id': source_vcenter_id,
                         'host_id': host_id,
                         'cluster_name': cluster_name,
                         'power_state': str(runtime.powerState) if runtime else 'unknown',
@@ -2808,7 +2823,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self.log(f"Failed to sync VMs: {e}", "ERROR")
             return {'synced': 0, 'error': str(e)}
 
-    def sync_vcenter_datastores(self, content) -> Dict:
+    def sync_vcenter_datastores(self, content, source_vcenter_id: str) -> Dict:
         """Sync datastore information from vCenter"""
         try:
             container = content.viewManager.CreateContainerView(
@@ -2823,6 +2838,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     datastore_data = {
                         'name': summary.name,
                         'vcenter_id': str(ds._moId),
+                        'source_vcenter_id': source_vcenter_id,
                         'type': summary.type if hasattr(summary, 'type') else None,
                         'capacity_bytes': summary.capacity if hasattr(summary, 'capacity') else None,
                         'free_bytes': summary.freeSpace if hasattr(summary, 'freeSpace') else None,
@@ -2860,7 +2876,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self.log(f"Failed to sync datastores: {e}", "ERROR")
             return {'synced': 0, 'error': str(e)}
 
-    def sync_vcenter_alarms(self, content) -> Dict:
+    def sync_vcenter_alarms(self, content, source_vcenter_id: str) -> Dict:
         """Sync active alarms from vCenter"""
         try:
             alarm_manager = content.alarmManager
@@ -2905,6 +2921,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                                 
                                 alarm_data = {
                                     'alarm_key': alarm_state.key,
+                                    'source_vcenter_id': source_vcenter_id,
                                     'entity_type': entity_type,
                                     'entity_name': entity.name,
                                     'entity_id': str(entity._moId),
