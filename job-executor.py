@@ -409,6 +409,56 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             # Don't let logging failures break job execution
             self.log(f"Logging exception: {e}", "DEBUG")
 
+    def log_vcenter_activity(
+        self,
+        operation: str,
+        endpoint: str,
+        success: bool,
+        response_time_ms: int = 0,
+        error: str = None,
+        details: Dict = None
+    ):
+        """Log vCenter API activity to idrac_commands table with operation_type='vcenter_api'"""
+        try:
+            log_entry = {
+                'server_id': None,  # vCenter operations aren't server-specific
+                'job_id': None,
+                'task_id': None,
+                'command_type': operation,
+                'endpoint': endpoint,
+                'full_url': f"vcenter://{endpoint}",
+                'request_headers': None,
+                'request_body': details,
+                'status_code': 200 if success else 500,
+                'response_time_ms': response_time_ms,
+                'response_body': details if success else None,
+                'success': success,
+                'error_message': error,
+                'initiated_by': None,
+                'source': 'job_executor',
+                'operation_type': 'vcenter_api'
+            }
+            
+            response = requests.post(
+                f"{DSM_URL}/rest/v1/idrac_commands",
+                headers={
+                    "apikey": SERVICE_ROLE_KEY,
+                    "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=minimal"
+                },
+                json=log_entry,
+                verify=VERIFY_SSL,
+                timeout=5
+            )
+            
+            if response.status_code not in [200, 201]:
+                self.log(f"Failed to log vCenter activity: {response.status_code}", "DEBUG")
+                
+        except Exception as e:
+            # Don't let logging failures break job execution
+            self.log(f"vCenter logging exception: {e}", "DEBUG")
+
     def get_encryption_key(self) -> Optional[str]:
         """Fetch the encryption key from activity_settings (cached)"""
         if self.encryption_key:
@@ -2653,7 +2703,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     
                     # Upsert cluster
                     response = requests.post(
-                        f"{DSM_URL}/rest/v1/vcenter_clusters",
+                        f"{DSM_URL}/rest/v1/vcenter_clusters?on_conflict=cluster_name",
                         headers={
                             'apikey': SERVICE_ROLE_KEY,
                             'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
@@ -2733,7 +2783,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     
                     # Upsert VM
                     response = requests.post(
-                        f"{DSM_URL}/rest/v1/vcenter_vms",
+                        f"{DSM_URL}/rest/v1/vcenter_vms?on_conflict=vcenter_id",
                         headers={
                             'apikey': SERVICE_ROLE_KEY,
                             'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
@@ -2785,7 +2835,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     
                     # Upsert datastore
                     response = requests.post(
-                        f"{DSM_URL}/rest/v1/vcenter_datastores",
+                        f"{DSM_URL}/rest/v1/vcenter_datastores?on_conflict=vcenter_id",
                         headers={
                             'apikey': SERVICE_ROLE_KEY,
                             'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
@@ -2867,7 +2917,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                                 
                                 # Insert alarm
                                 response = requests.post(
-                                    f"{DSM_URL}/rest/v1/vcenter_alarms",
+                                    f"{DSM_URL}/rest/v1/vcenter_alarms?on_conflict=alarm_key",
                                     headers={
                                         'apikey': SERVICE_ROLE_KEY,
                                         'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
