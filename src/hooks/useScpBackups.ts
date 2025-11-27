@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Database } from "@/integrations/supabase/types";
@@ -35,6 +35,12 @@ export function useScpBackups(serverId: string, enabled: boolean) {
   const [recentJobs, setRecentJobs] = useState<JobSummary[]>([]);
   const [loadingBackups, setLoadingBackups] = useState(false);
   const [loadingJobs, setLoadingJobs] = useState(false);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Check if there are any active jobs
+  const hasActiveJobs = recentJobs.some(
+    (job) => job.status === "pending" || job.status === "running"
+  );
 
   const fetchBackups = async () => {
     setLoadingBackups(true);
@@ -78,19 +84,36 @@ export function useScpBackups(serverId: string, enabled: boolean) {
     }
   };
 
+  // Initial fetch when dialog opens
   useEffect(() => {
     if (enabled) {
       fetchBackups();
       fetchRecentJobs();
+    }
+  }, [enabled, serverId]);
 
-      const interval = setInterval(() => {
+  // Conditional polling - only when there are active jobs
+  useEffect(() => {
+    if (enabled && hasActiveJobs) {
+      // Start polling
+      intervalRef.current = setInterval(() => {
         fetchRecentJobs(true);
         fetchBackups();
       }, 5000);
-
-      return () => clearInterval(interval);
+    } else {
+      // Stop polling when no active jobs
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
     }
-  }, [enabled, serverId]);
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, [enabled, hasActiveJobs, serverId]);
 
   return {
     backups,
