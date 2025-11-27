@@ -7,7 +7,7 @@ import type { VCenterCluster } from "@/hooks/useVCenterData";
 interface ClustersPanelProps {
   clusters: VCenterCluster[];
   selectedClusterId: string | null;
-  onClusterClick: (cluster: VCenterCluster) => void;
+  onClusterClick: (clusterId: string) => void;
   loading: boolean;
 }
 
@@ -71,7 +71,7 @@ export function ClustersPanel({ clusters, selectedClusterId, onClusterClick, loa
             className={`cursor-pointer transition-colors ${
               selectedClusterId === cluster.id ? "ring-2 ring-primary" : "hover:bg-accent/50"
             }`}
-            onClick={() => onClusterClick(cluster)}
+            onClick={() => onClusterClick(cluster.id)}
           >
             <CardHeader className="pb-3">
               <div className="flex items-start justify-between">
