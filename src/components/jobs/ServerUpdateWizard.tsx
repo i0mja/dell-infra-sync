@@ -51,6 +51,13 @@ interface TargetInfo {
   connected: number;
 }
 
+interface ServerMembership {
+  serverId: string;
+  serverName: string;
+  vcenterCluster?: string;
+  serverGroup?: { id: string; name: string };
+}
+
 const STEPS = [
   { id: 1, name: 'Target Selection', icon: Server },
   { id: 2, name: 'Firmware Selection', icon: Shield },
@@ -80,6 +87,8 @@ export const ServerUpdateWizard = ({
   const [targetInfo, setTargetInfo] = useState<TargetInfo | null>(null);
   const [safetyCheckLoading, setSafetyCheckLoading] = useState(false);
   const [safetyCheckPassed, setSafetyCheckPassed] = useState(false);
+  const [serverMemberships, setServerMemberships] = useState<ServerMembership[]>([]);
+  const [acknowledgedRisk, setAcknowledgedRisk] = useState(false);
   
   // Step 2: Firmware Selection
   const [firmwareSource, setFirmwareSource] = useState<'local_repository' | 'dell_online_catalog' | 'manual'>('local_repository');
@@ -121,6 +130,7 @@ export const ServerUpdateWizard = ({
       fetchGroupInfo();
     } else if (targetType === 'servers' && selectedServerIds.length > 0) {
       fetchServersInfo();
+      fetchServerMemberships();
     }
   }, [targetType, selectedCluster, selectedGroup, selectedServerIds]);
 
@@ -199,19 +209,70 @@ export const ServerUpdateWizard = ({
     }
   };
 
+  const fetchServerMemberships = async () => {
+    const { data } = await supabase
+      .from("servers")
+      .select(`
+        id, hostname, ip_address,
+        vcenter_hosts!vcenter_hosts_server_id_fkey(cluster, name),
+        server_group_members(server_group_id, server_groups(id, name))
+      `)
+      .in("id", selectedServerIds);
+    
+    if (data) {
+      const memberships = data
+        .filter((s: any) => s.vcenter_hosts?.length > 0 || s.server_group_members?.length > 0)
+        .map((s: any) => ({
+          serverId: s.id,
+          serverName: s.hostname || s.ip_address,
+          vcenterCluster: s.vcenter_hosts?.[0]?.cluster,
+          serverGroup: s.server_group_members?.[0]?.server_groups
+        }));
+      setServerMemberships(memberships);
+    }
+  };
+
+  const switchToDetectedTarget = (membership: ServerMembership) => {
+    if (membership.vcenterCluster) {
+      setTargetType('cluster');
+      setSelectedCluster(membership.vcenterCluster);
+      setSelectedServerIds([]);
+    } else if (membership.serverGroup) {
+      setTargetType('group');
+      setSelectedGroup(membership.serverGroup.id);
+      setSelectedServerIds([]);
+    }
+    setSafetyCheckPassed(false);
+    setAcknowledgedRisk(false);
+  };
+
   const runSafetyCheck = async () => {
     setSafetyCheckLoading(true);
     try {
       await new Promise(resolve => setTimeout(resolve, 2000));
       
-      if (targetInfo && targetInfo.connected >= minHealthyHosts) {
-        setSafetyCheckPassed(true);
-        toast({
-          title: "Safety check passed",
-          description: `Target has ${targetInfo.connected} healthy hosts.`,
-        });
+      if (targetType === 'servers') {
+        // For individual servers, just check connectivity
+        if (targetInfo && targetInfo.connected === targetInfo.total) {
+          setSafetyCheckPassed(true);
+          toast({
+            title: "Safety check passed",
+            description: `All ${targetInfo.total} selected server(s) are connected.`,
+          });
+        } else {
+          throw new Error(`${targetInfo?.total - (targetInfo?.connected || 0)} server(s) not connected`);
+        }
       } else {
-        throw new Error(`Insufficient healthy hosts. Found ${targetInfo?.connected}, need ${minHealthyHosts}`);
+        // For clusters/groups, use minHealthyHosts check
+        if (targetInfo && targetInfo.connected >= minHealthyHosts) {
+          setSafetyCheckPassed(true);
+          toast({
+            title: "Safety check passed",
+            description: `Target has ${targetInfo.connected} healthy hosts.`,
+          });
+        } else {
+          throw new Error(`Insufficient healthy hosts. Found ${targetInfo?.connected}, need ${minHealthyHosts}`);
+        }
       }
     } catch (error: any) {
       toast({
@@ -292,20 +353,20 @@ export const ServerUpdateWizard = ({
           job_type: 'rolling_cluster_update' as any,
           created_by: user?.id!,
           target_scope: target_scope as any,
-          details: {
-            ...(targetType === 'cluster' && { cluster_id: selectedCluster }),
-            ...(targetType === 'group' && { server_group_id: selectedGroup }),
-            ...(targetType === 'servers' && { server_ids: selectedServerIds }),
-            firmware_source: firmwareSource,
-            component_filter: componentFilter,
-            auto_select_latest: autoSelectLatest,
-            ...(firmwareSource === 'manual' && { firmware_updates: firmwareUpdates }),
-            backup_scp: backupScp,
-            min_healthy_hosts: minHealthyHosts,
-            max_parallel: maxParallel,
-            verify_after_each: verifyAfterEach,
-            continue_on_failure: continueOnFailure
-          } as any,
+            details: {
+              ...(targetType === 'cluster' && { cluster_id: selectedCluster }),
+              ...(targetType === 'group' && { server_group_id: selectedGroup }),
+              ...(targetType === 'servers' && { server_ids: selectedServerIds }),
+              firmware_source: firmwareSource,
+              component_filter: componentFilter,
+              auto_select_latest: autoSelectLatest,
+              ...(firmwareSource === 'manual' && { firmware_updates: firmwareUpdates }),
+              backup_scp: backupScp,
+              ...(targetType !== 'servers' && { min_healthy_hosts: minHealthyHosts }),
+              max_parallel: maxParallel,
+              verify_after_each: verifyAfterEach,
+              continue_on_failure: continueOnFailure
+            } as any,
           status: 'pending'
         })
         .select()
@@ -403,6 +464,8 @@ export const ServerUpdateWizard = ({
                                 ? [...selectedServerIds, server.id]
                                 : selectedServerIds.filter(id => id !== server.id)
                             );
+                            setAcknowledgedRisk(false);
+                            setSafetyCheckPassed(false);
                           }}
                         />
                         <label htmlFor={`server-${server.id}`} className="text-sm cursor-pointer flex-1">
@@ -415,6 +478,38 @@ export const ServerUpdateWizard = ({
                     ))}
                   </div>
                 </div>
+
+                {serverMemberships.length > 0 && !acknowledgedRisk && (
+                  <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>Server Belongs to {serverMemberships[0].vcenterCluster ? 'Cluster' : 'Group'}</AlertTitle>
+                    <AlertDescription>
+                      <p className="mb-2">
+                        <strong>{serverMemberships[0].serverName}</strong> is part of{' '}
+                        <strong>"{serverMemberships[0].vcenterCluster || serverMemberships[0].serverGroup?.name}"</strong>.
+                      </p>
+                      <p className="text-sm mb-3">
+                        Updating servers individually may affect {serverMemberships[0].vcenterCluster ? 'cluster' : 'group'} availability. 
+                        We recommend updating the entire {serverMemberships[0].vcenterCluster ? 'cluster' : 'group'} for safety.
+                      </p>
+                      <div className="flex gap-2">
+                        <Button 
+                          size="sm" 
+                          onClick={() => switchToDetectedTarget(serverMemberships[0])}
+                        >
+                          Update {serverMemberships[0].vcenterCluster || serverMemberships[0].serverGroup?.name} Instead
+                        </Button>
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          onClick={() => setAcknowledgedRisk(true)}
+                        >
+                          Continue Anyway
+                        </Button>
+                      </div>
+                    </AlertDescription>
+                  </Alert>
+                )}
               </TabsContent>
             </Tabs>
 
@@ -434,7 +529,11 @@ export const ServerUpdateWizard = ({
                   </div>
                   <div className="flex justify-between text-sm">
                     <span>Connected:</span>
-                    <Badge variant={targetInfo.connected >= minHealthyHosts ? "default" : "destructive"}>
+                    <Badge variant={
+                      targetType === 'servers' 
+                        ? (targetInfo.connected === targetInfo.total ? "default" : "destructive")
+                        : (targetInfo.connected >= minHealthyHosts ? "default" : "destructive")
+                    }>
                       {targetInfo.connected}
                     </Badge>
                   </div>
@@ -543,19 +642,21 @@ export const ServerUpdateWizard = ({
             </div>
 
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="minHealthy">Minimum Healthy Hosts</Label>
-                <Input
-                  id="minHealthy"
-                  type="number"
-                  min={1}
-                  value={minHealthyHosts}
-                  onChange={(e) => setMinHealthyHosts(parseInt(e.target.value) || 1)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Updates will pause if target drops below this threshold
-                </p>
-              </div>
+              {targetType !== 'servers' && (
+                <div className="space-y-2">
+                  <Label htmlFor="minHealthy">Minimum Healthy Hosts</Label>
+                  <Input
+                    id="minHealthy"
+                    type="number"
+                    min={1}
+                    value={minHealthyHosts}
+                    onChange={(e) => setMinHealthyHosts(parseInt(e.target.value) || 1)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Updates will pause if target drops below this threshold
+                  </p>
+                </div>
+              )}
 
               <div className="space-y-2">
                 <Label htmlFor="maxParallel">Max Parallel Updates</Label>
