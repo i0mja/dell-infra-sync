@@ -451,7 +451,7 @@ export default function VCenter() {
                 )}
 
                 {/* Tab Content - Scrollable */}
-                <div className="flex-1 overflow-auto p-4">
+                <div className="flex-1 overflow-auto">
                   <TabsContent value="hosts" className="m-0 h-full">
                     <HostsTable
                       clusterGroups={clusterGroups}
