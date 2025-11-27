@@ -3,7 +3,7 @@
 This report compares every Redfish endpoint reference across the codebase
 against the canonical list defined in `job_executor/dell_redfish`.
 
-- Canonical endpoints found: 34
+- Canonical endpoints found: 35
 - Files scanned: 226
 - Files with non-canonical endpoints: 0
 
