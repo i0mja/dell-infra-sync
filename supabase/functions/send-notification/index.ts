@@ -379,6 +379,133 @@ ${body}
   }
 }
 
+function formatJobType(jobType: string): string {
+  const typeMap: Record<string, string> = {
+    'test_credentials': 'Credential Test',
+    'discovery_scan': 'Discovery Scan',
+    'vcenter_sync': 'vCenter Sync',
+    'firmware_update': 'Firmware Update',
+    'boot_configuration': 'Boot Configuration',
+    'power_control': 'Power Control',
+    'scan_local_isos': 'ISO Scan',
+    'register_iso_url': 'ISO Registration',
+    'scp_backup': 'SCP Backup',
+    'scp_restore': 'SCP Restore',
+    'virtual_media_attach': 'Virtual Media Attach',
+    'virtual_media_detach': 'Virtual Media Detach',
+    'bios_update': 'BIOS Update',
+  };
+  return typeMap[jobType] || jobType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function formatJobDetails(jobType: string, details: any, status: string): { summary: string; facts: Array<{name: string; value: string}> } {
+  if (!details) return { summary: '', facts: [] };
+  
+  const facts: Array<{name: string; value: string}> = [];
+  let summary = '';
+  
+  switch (jobType) {
+    case 'test_credentials':
+      if (details.success) {
+        summary = `✓ Connected to ${details.product || 'iDRAC'} v${details.idrac_version || 'unknown'}`;
+        facts.push({ name: 'Product', value: details.product || 'Unknown' });
+        facts.push({ name: 'Version', value: details.idrac_version || 'Unknown' });
+        facts.push({ name: 'Vendor', value: details.vendor || 'Unknown' });
+      } else {
+        summary = `✗ Connection failed: ${details.error || details.message || 'Unknown error'}`;
+      }
+      break;
+      
+    case 'discovery_scan':
+      summary = `Discovered ${details.discovered_count || 0} servers from ${details.scanned_ips || 0} IPs scanned`;
+      facts.push({ name: 'Servers Found', value: (details.discovered_count || 0).toString() });
+      facts.push({ name: 'IPs Scanned', value: (details.scanned_ips || 0).toString() });
+      if (details.auth_failures > 0) {
+        facts.push({ name: 'Auth Failures', value: details.auth_failures.toString() });
+        if (details.auth_failure_ips?.length > 0) {
+          const preview = details.auth_failure_ips.slice(0, 5).join(', ');
+          const more = details.auth_failure_ips.length > 5 ? ` (+${details.auth_failure_ips.length - 5} more)` : '';
+          facts.push({ name: 'Failed IPs (sample)', value: preview + more });
+        }
+      }
+      break;
+      
+    case 'vcenter_sync':
+      const parts = [];
+      if (details.hosts_synced) parts.push(`${details.hosts_synced} hosts`);
+      if (details.hosts_new) parts.push(`${details.hosts_new} new`);
+      if (details.hosts_updated) parts.push(`${details.hosts_updated} updated`);
+      if (details.vms_synced) parts.push(`${details.vms_synced} VMs`);
+      if (details.alarms_synced) parts.push(`${details.alarms_synced} alarms`);
+      summary = parts.length > 0 ? `Synced: ${parts.join(', ')}` : 'Sync completed';
+      
+      if (details.hosts_synced !== undefined) facts.push({ name: 'Hosts', value: details.hosts_synced.toString() });
+      if (details.hosts_new) facts.push({ name: 'New Hosts', value: details.hosts_new.toString() });
+      if (details.hosts_linked) facts.push({ name: 'Linked', value: details.hosts_linked.toString() });
+      if (details.clusters_synced !== undefined) facts.push({ name: 'Clusters', value: details.clusters_synced.toString() });
+      break;
+      
+    case 'boot_configuration':
+    case 'firmware_update':
+    case 'power_control':
+    case 'virtual_media_attach':
+    case 'virtual_media_detach':
+      if (details.success_count !== undefined || details.failed_count !== undefined) {
+        facts.push({ name: 'Succeeded', value: (details.success_count || 0).toString() });
+        facts.push({ name: 'Failed', value: (details.failed_count || 0).toString() });
+      }
+      if (status === 'failed' && details.results?.length) {
+        const firstError = details.results.find((r: any) => !r.success);
+        if (firstError) {
+          summary = `❌ ${firstError.server || 'Server'}: ${(firstError.error || 'Unknown error').substring(0, 100)}`;
+        }
+      } else if (status === 'completed' && details.message) {
+        summary = details.message;
+      }
+      if (details.action) {
+        facts.push({ name: 'Action', value: details.action });
+      }
+      break;
+      
+    case 'scan_local_isos':
+      summary = `Found ${details.found_count || 0} ISO image(s)`;
+      if (details.found_count !== undefined) facts.push({ name: 'Total Found', value: details.found_count.toString() });
+      if (details.new_count) facts.push({ name: 'New', value: details.new_count.toString() });
+      if (details.updated_count) facts.push({ name: 'Updated', value: details.updated_count.toString() });
+      break;
+      
+    case 'register_iso_url':
+      if (details.success) {
+        summary = `✓ Registered ISO: ${details.filename || 'Unknown'}`;
+        if (details.filename) facts.push({ name: 'Filename', value: details.filename });
+        if (details.downloaded) facts.push({ name: 'Downloaded', value: 'Yes' });
+      } else {
+        summary = `✗ Failed: ${details.error || 'Unknown error'}`;
+      }
+      break;
+      
+    case 'scp_backup':
+    case 'scp_restore':
+      if (details.success) {
+        summary = `✓ ${jobType === 'scp_backup' ? 'Backup' : 'Restore'} completed`;
+        if (details.server) facts.push({ name: 'Server', value: details.server });
+        if (details.components) facts.push({ name: 'Components', value: details.components });
+      } else {
+        summary = `✗ Failed: ${details.error || 'Unknown error'}`;
+      }
+      break;
+      
+    default:
+      if (details.message) summary = details.message;
+      if (details.error) summary = `Error: ${details.error.substring(0, 150)}`;
+      if (details.success !== undefined) {
+        facts.push({ name: 'Success', value: details.success ? 'Yes' : 'No' });
+      }
+  }
+  
+  return { summary, facts };
+}
+
 async function sendTeamsNotification(
   webhookUrl: string,
   jobId: string,
@@ -451,31 +578,37 @@ async function sendTeamsNotification(
   const severityBadge = getSeverityBadge(status, isCritical || false);
   const titleText = isCritical ? `${statusEmoji} CRITICAL: JOB ${status.toUpperCase()}` : `${statusEmoji} Job ${status.toUpperCase()}`;
   
+  // Format details nicely based on job type
+  const formatted = formatJobDetails(jobType, details, status);
+  
   // Build message text
   let messageText = '';
   if (isCritical && mentionText) {
     messageText = `⚠️ **CRITICAL FAILURE** - Immediate attention required!\n\n${mentionText}\n\n`;
   }
-  if (details) {
-    messageText += details ? `Details: ${JSON.stringify(details, null, 2)}` : '';
+  if (formatted.summary) {
+    messageText += formatted.summary;
   }
+
+  const readableJobType = formatJobType(jobType);
+  const shortJobId = jobId.substring(0, 8) + '...';
 
   const card = {
     "@type": "MessageCard",
     "@context": "https://schema.org/extensions",
-    "summary": `Job ${status}: ${jobType}`,
+    "summary": `Job ${status}: ${readableJobType}`,
     "themeColor": statusColor,
     "title": titleText,
     ...(isCritical && { "importance": "high" }),
     "sections": [
       {
-        "activityTitle": `${severityBadge} - ${jobType}`,
+        "activityTitle": `${severityBadge} - ${readableJobType}`,
         "facts": [
-          { "name": "Job ID", "value": jobId },
-          { "name": "Status", "value": status },
-          { "name": "Type", "value": jobType },
+          { "name": "Job ID", "value": shortJobId },
+          { "name": "Type", "value": readableJobType },
           { "name": "Severity", "value": isCritical ? "CRITICAL" : (status === 'failed' ? "High" : "Normal") },
-          { "name": "Timestamp", "value": new Date().toISOString() },
+          { "name": "Timestamp", "value": new Date().toLocaleString() },
+          ...formatted.facts
         ],
         "text": messageText || undefined,
       },
