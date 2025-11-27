@@ -4,9 +4,9 @@ import { useSafetyStatus } from "@/hooks/useSafetyStatus";
 import { useActiveJobs } from "@/hooks/useActiveJobs";
 import { useOptimalWindows } from "@/hooks/useOptimalWindows";
 import { CompactStatsBar } from "@/components/maintenance/CompactStatsBar";
-import { MiniCalendar } from "@/components/maintenance/MiniCalendar";
 import { OperationsTable } from "@/components/maintenance/OperationsTable";
-import { DetailsSidebar } from "@/components/maintenance/DetailsSidebar";
+import { OptimalWindowBanner } from "@/components/maintenance/OptimalWindowBanner";
+import { QuickActionsPanel } from "@/components/maintenance/QuickActionsPanel";
 import { ClusterSafetyTrendChart } from "@/components/maintenance/ClusterSafetyTrendChart";
 import { ScheduleMaintenanceDialog } from "@/components/maintenance/dialogs/ScheduleMaintenanceDialog";
 
@@ -63,8 +63,6 @@ interface SchedulePrefill {
 }
 
 export default function MaintenancePlanner() {
-  const [selectedDate, setSelectedDate] = useState(new Date());
-  const [selectedOperation, setSelectedOperation] = useState<Operation | null>(null);
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
   const [schedulePrefill, setSchedulePrefill] = useState<SchedulePrefill>();
   
@@ -179,8 +177,6 @@ export default function MaintenancePlanner() {
     if (operation.type === 'job') {
       setSelectedJob(operation.data);
       setJobDetailDialogOpen(true);
-    } else {
-      setSelectedOperation(operation);
     }
   };
 
@@ -244,12 +240,15 @@ export default function MaintenancePlanner() {
     setScheduleDialogOpen(true);
   };
 
+  const failedJobs = jobs.filter(j => j.status === 'failed').length;
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Compact Stats Bar */}
       <CompactStatsBar
         safeDays={safeDays}
         activeJobs={activeJobs.length}
+        failedJobs={failedJobs}
         nextWindow={nextWindow ? { title: nextWindow.title, start: nextWindow.planned_start } : undefined}
         optimalCount={optimalWindows.length}
         onScheduleMaintenance={() => handleCreateOperation('maintenance')}
@@ -257,41 +256,34 @@ export default function MaintenancePlanner() {
         onUpdateWizard={() => setUpdateWizardOpen(true)}
       />
 
-      {/* Main Content: Two Column Layout */}
-      <div className="flex-1 overflow-hidden px-4 pb-6 pt-4">
-        <div className="grid h-full gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)] xl:items-start">
-          {/* Left Column: Calendar + Operations Table */}
-          <div className="flex min-w-0 flex-col gap-4">
-            <div className="rounded-xl border bg-card shadow-sm">
-              <div className="p-4">
-                <MiniCalendar
-                  date={selectedDate}
-                  onDateChange={setSelectedDate}
-                  dailyStatus={dailyStatus}
-                />
-              </div>
-            </div>
+      {/* Main Content: Single Column Layout */}
+      <div className="flex-1 overflow-auto px-4 pb-6 pt-4">
+        <div className="flex flex-col gap-4 max-w-[1600px] mx-auto">
+          {/* Optimal Window Banner */}
+          {optimalWindows.length > 0 && (
+            <OptimalWindowBanner 
+              window={optimalWindows[0]} 
+              onSchedule={() => handleScheduleOptimal(optimalWindows[0])}
+            />
+          )}
 
-            <div className="flex h-full flex-col rounded-xl border bg-card shadow-sm p-2 sm:p-4">
-              <OperationsTable
-                operations={operations}
-                onRowClick={handleOperationClick}
-                onCancel={handleCancelJob}
-                onRetry={handleRetryJob}
-                onDelete={handleDeleteWindow}
-                canManage={canManage}
-              />
-            </div>
-          </div>
+          {/* Quick Actions Panel */}
+          <QuickActionsPanel 
+            clusters={clusters}
+            onUpdateWizard={() => setUpdateWizardOpen(true)}
+          />
 
-          {/* Right Column: Details Sidebar */}
-          <div className="min-h-[320px] rounded-xl border bg-card shadow-sm">
-            <DetailsSidebar
-              selectedDate={selectedDate}
-              selectedOperation={selectedOperation}
-              dailyStatus={dailyStatus}
-              optimalWindows={optimalWindows}
-              onScheduleOptimal={handleScheduleOptimal}
+          {/* Operations Table - Full Width */}
+          <div className="rounded-xl border bg-card shadow-sm">
+            <OperationsTable
+              operations={operations}
+              clusters={clusters}
+              serverGroups={serverGroups}
+              onRowClick={handleOperationClick}
+              onCancel={handleCancelJob}
+              onRetry={handleRetryJob}
+              onDelete={handleDeleteWindow}
+              canManage={canManage}
             />
           </div>
         </div>
