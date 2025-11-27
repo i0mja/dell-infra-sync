@@ -2401,9 +2401,8 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             for server in discovered:
                 self.insert_discovered_server(server, job['id'])
             
-            # Insert auth-failed servers so they're tracked in inventory
-            for failure in auth_failures:
-                self.insert_auth_failed_server(failure['ip'], job['id'])
+            # Auth failures are tracked in job details but NOT inserted as servers
+            # This keeps the servers list clean - only authenticated iDRACs appear
             
             # Auto-trigger full refresh for newly discovered servers
             if discovered:
