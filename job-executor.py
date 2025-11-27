@@ -646,7 +646,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
         except Exception as e:
             self.log(f"Error updating job status: {e}", "ERROR")
 
-    def update_task_status(self, task_id: str, status: str, log: str = None, **kwargs):
+    def update_task_status(self, task_id: str, status: str, log: str = None, progress: int = None, **kwargs):
         """Update task status in the cloud"""
         try:
             url = f"{DSM_URL}/functions/v1/update-job"
@@ -658,6 +658,9 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     **kwargs
                 }
             }
+            
+            if progress is not None:
+                payload["task"]["progress"] = progress
 
             response = requests.post(url, json=payload, verify=VERIFY_SSL)
             self._handle_supabase_auth_error(response, "updating task status")
@@ -2738,7 +2741,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                         log_msg += "✓ Maintenance mode active\n"
                     log_msg += "→ Downloading and staging firmware...\n0% complete"
                     
-                    self.update_task_status(task['id'], 'running', log=log_msg)
+                    self.update_task_status(task['id'], 'running', log=log_msg, progress=0)
                     
                     if use_catalog:
                         # Map component names to Redfish targets
@@ -2785,7 +2788,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                                 log_msg += "✓ Maintenance mode active\n"
                             log_msg += f"→ Applying firmware update...\n{progress}% complete"
                             
-                            self.update_task_status(task['id'], 'running', log=log_msg)
+                            self.update_task_status(task['id'], 'running', log=log_msg, progress=progress)
                             self.log(f"  Firmware update progress: {progress}%")
                         
                         if task_state == 'Exception' or task_state == 'Killed':
@@ -2805,7 +2808,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                             log_msg += "✓ Maintenance mode active\n"
                         log_msg += "✓ Firmware staged\n→ Rebooting system..."
                         
-                        self.update_task_status(task['id'], 'running', log=log_msg)
+                        self.update_task_status(task['id'], 'running', log=log_msg, progress=95)
                         
                         self.reset_system(ip, session_token)
                         
@@ -2814,7 +2817,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                         time.sleep(SYSTEM_REBOOT_WAIT)
                         
                         log_msg += "\n→ Waiting for system to come back online..."
-                        self.update_task_status(task['id'], 'running', log=log_msg)
+                        self.update_task_status(task['id'], 'running', log=log_msg, progress=98)
                         
                         # Check if system is back online
                         system_online = False

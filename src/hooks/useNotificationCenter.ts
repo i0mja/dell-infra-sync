@@ -70,7 +70,7 @@ export const useNotificationCenter = () => {
     }
   }, [settings.maxRecentItems]);
 
-  // Calculate job progress
+  // Calculate job progress with weighted running task progress
   const calculateJobProgress = useCallback(async (job: Job) => {
     try {
       const { data: tasks, error } = await supabase
@@ -103,7 +103,19 @@ export const useNotificationCenter = () => {
         }
       }
 
-      const progressPercent = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
+      // Calculate weighted progress including running task's progress
+      let progressPercent = 0;
+      if (totalTasks > 0) {
+        // Each completed task contributes (100 / totalTasks)%
+        const completedProgress = (completedTasks / totalTasks) * 100;
+        
+        // Running task contributes its progress * (100 / totalTasks)%
+        const runningProgress = runningTask 
+          ? ((runningTask.progress || 0) / totalTasks)
+          : 0;
+        
+        progressPercent = Math.min(100, Math.round(completedProgress + runningProgress));
+      }
 
       const progress: JobProgress = {
         jobId: job.id,
