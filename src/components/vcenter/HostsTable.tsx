@@ -317,9 +317,9 @@ export function HostsTable({
   }
 
   return (
-    <div className="border rounded-md overflow-hidden flex flex-col h-full">
+    <div className="flex flex-col h-full">
       {/* Toolbar */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b bg-muted/30">
+      <div className="flex items-center gap-2 px-4 py-2 border-b bg-muted/30">
         <Checkbox
           checked={selectedHosts.size === allHosts.length && allHosts.length > 0}
           onCheckedChange={toggleAllHosts}
@@ -344,7 +344,7 @@ export function HostsTable({
               Columns
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-56" align="end">
+          <DropdownMenuContent className="w-56 bg-background" align="end">
             <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuCheckboxItem checked={isColumnVisible("name")} onCheckedChange={() => toggleColumn("name")}>

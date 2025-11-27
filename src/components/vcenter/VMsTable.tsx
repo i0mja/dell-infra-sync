@@ -253,12 +253,13 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
 
   return (
     <div className="flex flex-col h-full">
-      {/* Filters */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b bg-muted/50">
-        <div className="flex-1 relative">
+      {/* Consolidated Toolbar: Filters + Actions */}
+      <div className="flex items-center gap-2 px-4 py-2 border-b bg-muted/30">
+        {/* Filters Section */}
+        <div className="relative w-48">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search VMs, IPs, OS..."
+            placeholder="Search VMs..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="pl-9 h-9"
@@ -266,8 +267,8 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
         </div>
 
         <Select value={clusterFilter} onValueChange={setClusterFilter}>
-          <SelectTrigger className="w-[180px] h-9">
-            <SelectValue placeholder="All Clusters" />
+          <SelectTrigger className="w-[140px] h-9">
+            <SelectValue placeholder="Cluster" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Clusters</SelectItem>
@@ -280,20 +281,20 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
         </Select>
 
         <Select value={powerFilter} onValueChange={setPowerFilter}>
-          <SelectTrigger className="w-[140px] h-9">
-            <SelectValue placeholder="Power State" />
+          <SelectTrigger className="w-[120px] h-9">
+            <SelectValue placeholder="Power" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All States</SelectItem>
-            <SelectItem value="poweredon">Powered On</SelectItem>
-            <SelectItem value="poweredoff">Powered Off</SelectItem>
+            <SelectItem value="poweredon">On</SelectItem>
+            <SelectItem value="poweredoff">Off</SelectItem>
             <SelectItem value="suspended">Suspended</SelectItem>
           </SelectContent>
         </Select>
 
         <Select value={toolsFilter} onValueChange={setToolsFilter}>
-          <SelectTrigger className="w-[150px] h-9">
-            <SelectValue placeholder="Tools Status" />
+          <SelectTrigger className="w-[120px] h-9">
+            <SelectValue placeholder="Tools" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Tools</SelectItem>
@@ -303,10 +304,10 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
             <SelectItem value="toolsnotrunning">Not Running</SelectItem>
           </SelectContent>
         </Select>
-      </div>
 
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b bg-muted/30">
+        <div className="w-px h-6 bg-border mx-1" />
+
+        {/* Actions Section */}
         <Checkbox
           checked={selectedVms.size === filteredVms.length && filteredVms.length > 0}
           onCheckedChange={toggleAllVms}
@@ -324,7 +325,7 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
               Columns
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-56" align="end">
+          <DropdownMenuContent className="w-56 bg-background" align="end">
             <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuCheckboxItem checked={isColumnVisible("name")} onCheckedChange={() => toggleColumn("name")}>
@@ -372,7 +373,7 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
               Views
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-56" align="end">
+          <DropdownMenuContent className="w-56 bg-background" align="end">
             <DropdownMenuLabel>Saved Views</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => setSaveDialogOpen(true)}>
@@ -405,7 +406,7 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
       </div>
 
       {/* Table */}
-      <div className="border rounded-md overflow-hidden flex flex-col flex-1 m-4">
+      <div className="overflow-hidden flex flex-col flex-1">
         {filteredVms.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-4">
             <div className="text-center text-muted-foreground">
