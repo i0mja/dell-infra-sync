@@ -39,8 +39,11 @@ interface Job {
   target_scope: any;
   created_at: string;
   started_at: string | null;
+  completed_at: string | null;
   details?: {
     current_step?: string;
+    error?: string;
+    results?: any;
     [key: string]: any;
   };
 }
@@ -291,24 +294,24 @@ export function OperationsTable({
                 return (
                   <Collapsible key={op.id} open={isExpanded} onOpenChange={() => toggleRow(op.id)} asChild>
                     <>
-                      <TableRow className="cursor-pointer hover:bg-muted/50">
-                        <TableCell onClick={() => toggleRow(op.id)}>
+                      <TableRow className="cursor-pointer hover:bg-muted/50" onClick={() => toggleRow(op.id)}>
+                        <TableCell>
                           {isExpanded ? (
                             <ChevronDown className="h-4 w-4 text-muted-foreground" />
                           ) : (
                             <ChevronRight className="h-4 w-4 text-muted-foreground" />
                           )}
                         </TableCell>
-                        <TableCell onClick={() => onRowClick(op)}>
+                        <TableCell>
                           <div className="flex items-center gap-2">
                             {op.type === 'job' ? <Zap className="h-4 w-4 text-primary" /> : <Calendar className="h-4 w-4 text-purple-500" />}
                             <span className="font-medium">{op.title}</span>
                           </div>
                         </TableCell>
-                        <TableCell className="text-sm text-muted-foreground" onClick={() => onRowClick(op)}>
+                        <TableCell className="text-sm text-muted-foreground">
                           {op.type === 'job' ? 'Job' : 'Window'}
                         </TableCell>
-                        <TableCell className="text-sm" onClick={() => onRowClick(op)}>
+                        <TableCell className="text-sm">
                           <div className="flex items-center gap-1.5">
                             {job?.target_scope?.server_ids?.length > 0 && (
                               <>
@@ -319,7 +322,7 @@ export function OperationsTable({
                             {op.target}
                           </div>
                         </TableCell>
-                        <TableCell className="text-sm text-muted-foreground" onClick={() => onRowClick(op)}>
+                        <TableCell className="text-sm text-muted-foreground">
                           <div className="flex flex-col gap-0.5">
                             <span>{format(op.timestamp, 'MMM dd, HH:mm')}</span>
                             {job?.status === 'running' && job.started_at && (
@@ -327,7 +330,7 @@ export function OperationsTable({
                             )}
                           </div>
                         </TableCell>
-                        <TableCell onClick={() => onRowClick(op)}>
+                        <TableCell>
                           <div className="flex flex-col gap-1.5">
                             <div className="flex items-center gap-2">
                               {getStatusIcon(op.status)}
@@ -404,29 +407,133 @@ export function OperationsTable({
                       <TableRow>
                         <TableCell colSpan={7} className="p-0 border-0">
                           <CollapsibleContent>
-                            <div className="px-12 py-3 bg-muted/20 border-t">
-                              <div className="grid gap-3 text-sm">
-                                {job?.details?.error && (
-                                  <div className="flex gap-2 text-destructive">
-                                    <XCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                                    <div>
-                                      <span className="font-medium">Error: </span>
-                                      {job.details.error}
+                            <div className="px-12 py-4 bg-muted/20 border-t">
+                              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                                {/* Left: Timeline & Target Info */}
+                                <div className="space-y-2">
+                                  <div className="text-xs font-medium text-muted-foreground mb-1">Timeline</div>
+                                  <div className="text-xs space-y-1">
+                                    {job && (
+                                      <>
+                                        <div>Created: {format(new Date(job.created_at), 'MMM dd, HH:mm:ss')}</div>
+                                        {job.started_at && (
+                                          <div>Started: {format(new Date(job.started_at), 'MMM dd, HH:mm:ss')}</div>
+                                        )}
+                                        {job.completed_at && (
+                                          <div>Completed: {format(new Date(job.completed_at), 'MMM dd, HH:mm:ss')}</div>
+                                        )}
+                                        {job.started_at && job.completed_at && (
+                                          <div className="text-muted-foreground pt-1">
+                                            Duration: {formatElapsed(job.started_at)}
+                                          </div>
+                                        )}
+                                      </>
+                                    )}
+                                    {window && (
+                                      <>
+                                        <div>Planned: {format(new Date(window.planned_start), 'MMM dd, HH:mm')}</div>
+                                        <div>End: {format(new Date(window.planned_end), 'MMM dd, HH:mm')}</div>
+                                      </>
+                                    )}
+                                  </div>
+                                  {job?.target_scope?.server_ids && (
+                                    <div className="pt-2">
+                                      <div className="text-xs font-medium text-muted-foreground mb-1">Targets</div>
+                                      <div className="text-xs">
+                                        {job.target_scope.server_ids.length} server{job.target_scope.server_ids.length !== 1 ? 's' : ''}
+                                        {job.target_scope.cluster_name && (
+                                          <span className="text-muted-foreground"> in {job.target_scope.cluster_name}</span>
+                                        )}
+                                      </div>
                                     </div>
-                                  </div>
-                                )}
-                                {job?.details?.current_step && (
-                                  <div className="flex gap-2">
-                                    <Loader2 className="h-4 w-4 mt-0.5 animate-spin flex-shrink-0 text-primary" />
-                                    <span className="text-muted-foreground">{job.details.current_step}</span>
-                                  </div>
-                                )}
-                                {window && (
-                                  <div className="flex gap-4 text-muted-foreground">
-                                    <span>Type: {window.maintenance_type}</span>
-                                    <span>Duration: {format(new Date(window.planned_start), 'HH:mm')} - {format(new Date(window.planned_end), 'HH:mm')}</span>
-                                  </div>
-                                )}
+                                  )}
+                                </div>
+
+                                {/* Middle: Status-specific details */}
+                                <div className="space-y-2 lg:col-span-1">
+                                  <div className="text-xs font-medium text-muted-foreground mb-1">Details</div>
+                                  {job?.details?.error && (
+                                    <div className="flex gap-2 text-destructive text-sm">
+                                      <XCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                                      <div>
+                                        <span className="font-medium">Error: </span>
+                                        {job.details.error}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {job?.details?.current_step && job.status === 'running' && (
+                                    <div className="flex gap-2 text-sm">
+                                      <Loader2 className="h-4 w-4 mt-0.5 animate-spin flex-shrink-0 text-primary" />
+                                      <span className="text-muted-foreground">{job.details.current_step}</span>
+                                    </div>
+                                  )}
+                                  {job?.status === 'completed' && job.details?.results && (
+                                    <div className="text-sm text-muted-foreground">
+                                      {typeof job.details.results === 'string' 
+                                        ? job.details.results 
+                                        : JSON.stringify(job.details.results).substring(0, 200)}
+                                    </div>
+                                  )}
+                                  {job?.status === 'pending' && job.details && (
+                                    <div className="text-sm text-muted-foreground">
+                                      {Object.entries(job.details)
+                                        .filter(([key]) => !['current_step', 'error', 'results'].includes(key))
+                                        .map(([key, value]) => (
+                                          <div key={key}>
+                                            {key}: {typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}
+                                          </div>
+                                        ))}
+                                    </div>
+                                  )}
+                                  {window && (
+                                    <div className="space-y-1 text-sm text-muted-foreground">
+                                      <div>Type: {window.maintenance_type}</div>
+                                      {window.cluster_ids && window.cluster_ids.length > 0 && (
+                                        <div>Clusters: {window.cluster_ids.join(', ')}</div>
+                                      )}
+                                      {window.server_group_ids && window.server_group_ids.length > 0 && (
+                                        <div>Server Groups: {window.server_group_ids.length}</div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Right: Action buttons */}
+                                <div className="flex flex-col gap-2 lg:items-end lg:justify-start">
+                                  <Button 
+                                    size="sm" 
+                                    variant="outline" 
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onRowClick(op);
+                                    }}
+                                  >
+                                    <FileText className="h-4 w-4 mr-1" /> View Full Details
+                                  </Button>
+                                  {job?.status === 'failed' && onRetry && canManage && (
+                                    <Button 
+                                      size="sm"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onRetry(job);
+                                      }}
+                                    >
+                                      <RotateCcw className="h-4 w-4 mr-1" /> Retry Job
+                                    </Button>
+                                  )}
+                                  {job && ['pending', 'running'].includes(job.status) && onCancel && canManage && (
+                                    <Button 
+                                      size="sm" 
+                                      variant="destructive"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onCancel(op.id);
+                                      }}
+                                    >
+                                      <XCircle className="h-4 w-4 mr-1" /> Cancel Job
+                                    </Button>
+                                  )}
+                                 </div>
                               </div>
                             </div>
                           </CollapsibleContent>
