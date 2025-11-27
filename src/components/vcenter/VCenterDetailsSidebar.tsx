@@ -432,38 +432,38 @@ export function VCenterDetailsSidebar({
     );
   }
 
-  // Default/Overview
+  // Default/Empty State
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between p-4 border-b">
-        <h2 className="text-lg font-semibold">vCenter Overview</h2>
-        <Button variant="ghost" size="icon" onClick={onClose}>
-          <X className="h-4 w-4" />
-        </Button>
+        <h2 className="text-lg font-semibold">Details</h2>
       </div>
 
       <ScrollArea className="flex-1">
-        <div className="p-4 space-y-6">
-          <div>
-            <h3 className="text-sm font-medium text-muted-foreground mb-2">Getting Started</h3>
-            <p className="text-sm text-muted-foreground">
-              Select a host, cluster, VM, or datastore to view details and available actions.
-            </p>
+        <div className="flex flex-col items-center justify-center p-8 text-center h-full">
+          <div className="rounded-full bg-muted p-3 mb-4">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="text-muted-foreground"
+            >
+              <rect width="18" height="18" x="3" y="3" rx="2" />
+              <path d="M7 7h10" />
+              <path d="M7 12h10" />
+              <path d="M7 17h10" />
+            </svg>
           </div>
-
-          <Separator />
-
-          <div>
-            <h3 className="text-sm font-medium text-muted-foreground mb-2">Quick Actions</h3>
-            <div className="space-y-2">
-              <Button variant="outline" size="sm" className="w-full">
-                Sync All Hosts
-              </Button>
-              <Button variant="outline" size="sm" className="w-full">
-                View Sync Jobs
-              </Button>
-            </div>
-          </div>
+          <h3 className="text-sm font-medium mb-2">No Selection</h3>
+          <p className="text-sm text-muted-foreground max-w-[240px]">
+            Select a host, VM, cluster, or datastore to view details and available actions.
+          </p>
         </div>
       </ScrollArea>
     </div>

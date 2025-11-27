@@ -379,61 +379,80 @@ export default function VCenter() {
     setSelectedClusterData(null);
   };
 
-  const sidebarOpen = !!(selectedHost || selectedCluster || selectedVm || selectedClusterData || selectedDatastore);
   const selectedClusterGroup = selectedCluster ? clusterGroups.find(c => c.name === selectedCluster) || null : null;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-        <VCenterStatsBar
-          totalHosts={hosts.length}
-          linkedHosts={linkedHosts}
-          unlinkedHosts={unlinkedHosts}
-          totalVms={vms.length}
-          totalDatastores={datastores.length}
-          activeAlarms={alarms.length}
-          lastSync={lastSync}
-          mode={isPrivateNetwork(vcenterHost) ? "job-executor" : "cloud"}
-          syncing={syncing}
-          testing={testing}
-          onSettings={() => setSettingsOpen(true)}
-          onTest={handleTestConnectivity}
-          onSync={handleSyncNow}
-          onRefresh={() => {
-            fetchHosts();
-            refetchVCenterData();
-          }}
-          onClusterUpdate={() => handleClusterUpdate()}
-          hasActiveClusters={uniqueClusters.length > 0}
-        />
+      {/* Top: Stats Bar */}
+      <VCenterStatsBar
+        totalHosts={hosts.length}
+        linkedHosts={linkedHosts}
+        unlinkedHosts={unlinkedHosts}
+        totalVms={vms.length}
+        totalDatastores={datastores.length}
+        activeAlarms={alarms.length}
+        lastSync={lastSync}
+        mode={isPrivateNetwork(vcenterHost) ? "job-executor" : "cloud"}
+        syncing={syncing}
+        testing={testing}
+        onSettings={() => setSettingsOpen(true)}
+        onTest={handleTestConnectivity}
+        onSync={handleSyncNow}
+        onRefresh={() => {
+          fetchHosts();
+          refetchVCenterData();
+        }}
+        onClusterUpdate={() => handleClusterUpdate()}
+        hasActiveClusters={uniqueClusters.length > 0}
+      />
 
-        {alarms.length > 0 && <AlarmsPanel alarms={alarms} />}
+      {alarms.length > 0 && <AlarmsPanel alarms={alarms} />}
 
-        <div className="flex-1 flex overflow-hidden min-h-0">
-          <div className={`transition-all duration-300 flex-1 flex flex-col overflow-hidden ${sidebarOpen ? "" : ""}`}>
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col flex-1 overflow-hidden">
-              <div className="flex-shrink-0 px-4 pt-4 pb-2">
-                <TabsList>
-                  <TabsTrigger value="hosts">Hosts ({hosts.length})</TabsTrigger>
-                  <TabsTrigger value="vms">VMs ({vms.length})</TabsTrigger>
-                  <TabsTrigger value="clusters">Clusters ({clusterData.length})</TabsTrigger>
-                  <TabsTrigger value="datastores">Datastores ({datastores.length})</TabsTrigger>
-                </TabsList>
-              </div>
+      {/* Main: Two Column Layout */}
+      <div className="flex-1 overflow-hidden px-4 pb-6 pt-4">
+        <div className="grid h-full gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(340px,1fr)]">
+          {/* Left: Tabs + Content */}
+          <div className="flex min-w-0 flex-col gap-4">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="flex h-full flex-col">
+              <div className="flex h-full flex-col rounded-xl border bg-card shadow-sm overflow-hidden">
+                {/* Inline Tabs Header */}
+                <div className="border-b px-4 py-3 flex items-center gap-2">
+                  <TabsList className="bg-transparent p-0 gap-1 h-auto">
+                    <TabsTrigger value="hosts" className="data-[state=active]:bg-muted">
+                      Hosts ({hosts.length})
+                    </TabsTrigger>
+                    <TabsTrigger value="vms" className="data-[state=active]:bg-muted">
+                      VMs ({vms.length})
+                    </TabsTrigger>
+                    <TabsTrigger value="clusters" className="data-[state=active]:bg-muted">
+                      Clusters ({clusterData.length})
+                    </TabsTrigger>
+                    <TabsTrigger value="datastores" className="data-[state=active]:bg-muted">
+                      Datastores ({datastores.length})
+                    </TabsTrigger>
+                  </TabsList>
+                </div>
 
-              <div className="flex-1 overflow-hidden relative">
-                <TabsContent value="hosts" className="absolute inset-0 flex flex-col overflow-hidden data-[state=inactive]:hidden">
-                <HostFilterToolbar
-                  searchTerm={searchTerm}
-                  onSearchChange={setSearchTerm}
-                  clusterFilter={clusterFilter}
-                  onClusterFilterChange={setClusterFilter}
-                  statusFilter={statusFilter}
-                  onStatusFilterChange={setStatusFilter}
-                  linkFilter={linkFilter}
-                  onLinkFilterChange={setLinkFilter}
-                  clusters={uniqueClusters}
-                />
-                  <div className="flex-1 p-4 overflow-auto">
+                {/* Filter Toolbar (Hosts Tab Only) */}
+                {activeTab === "hosts" && (
+                  <div className="border-b p-4">
+                    <HostFilterToolbar
+                      searchTerm={searchTerm}
+                      onSearchChange={setSearchTerm}
+                      clusterFilter={clusterFilter}
+                      onClusterFilterChange={setClusterFilter}
+                      statusFilter={statusFilter}
+                      onStatusFilterChange={setStatusFilter}
+                      linkFilter={linkFilter}
+                      onLinkFilterChange={setLinkFilter}
+                      clusters={uniqueClusters}
+                    />
+                  </div>
+                )}
+
+                {/* Tab Content - Scrollable */}
+                <div className="flex-1 overflow-auto p-4">
+                  <TabsContent value="hosts" className="m-0 h-full">
                     <HostsTable
                       clusterGroups={clusterGroups}
                       selectedHostId={selectedHost?.id || null}
@@ -446,59 +465,59 @@ export default function VCenter() {
                       onLinkToServer={handleLinkToServer}
                       loading={loading}
                     />
-                  </div>
-                </TabsContent>
+                  </TabsContent>
 
-                <TabsContent value="vms" className="absolute inset-0 overflow-auto data-[state=inactive]:hidden p-4">
-                  <VMsTable
-                    vms={vms}
-                    selectedVmId={selectedVm?.id || null}
-                    onVmClick={handleVmClick}
-                    loading={vcenterDataLoading}
-                  />
-                </TabsContent>
+                  <TabsContent value="vms" className="m-0 h-full">
+                    <VMsTable
+                      vms={vms}
+                      selectedVmId={selectedVm?.id || null}
+                      onVmClick={handleVmClick}
+                      loading={vcenterDataLoading}
+                    />
+                  </TabsContent>
 
-                <TabsContent value="clusters" className="absolute inset-0 overflow-auto data-[state=inactive]:hidden p-4">
-                  <ClustersPanel
-                    clusters={clusterData}
-                    selectedClusterId={selectedClusterData?.id || null}
-                    onClusterClick={handleClusterDataClick}
-                    loading={vcenterDataLoading}
-                  />
-                </TabsContent>
+                  <TabsContent value="clusters" className="m-0 h-full">
+                    <ClustersPanel
+                      clusters={clusterData}
+                      selectedClusterId={selectedClusterData?.id || null}
+                      onClusterClick={handleClusterDataClick}
+                      loading={vcenterDataLoading}
+                    />
+                  </TabsContent>
 
-                <TabsContent value="datastores" className="absolute inset-0 overflow-auto data-[state=inactive]:hidden p-4">
-                  <DatastoresTable
-                    datastores={datastores}
-                    selectedDatastoreId={selectedDatastore?.id || null}
-                    onDatastoreClick={handleDatastoreClick}
-                    loading={vcenterDataLoading}
-                  />
-                </TabsContent>
+                  <TabsContent value="datastores" className="m-0 h-full">
+                    <DatastoresTable
+                      datastores={datastores}
+                      selectedDatastoreId={selectedDatastore?.id || null}
+                      onDatastoreClick={handleDatastoreClick}
+                      loading={vcenterDataLoading}
+                    />
+                  </TabsContent>
+                </div>
               </div>
             </Tabs>
           </div>
 
-          {sidebarOpen && (
-            <div className="w-[400px] border-l">
-              <VCenterDetailsSidebar
-                selectedHost={selectedHost}
-                selectedCluster={selectedClusterGroup}
-                selectedVm={selectedVm}
-                selectedClusterData={selectedClusterData}
-                selectedDatastore={selectedDatastore}
-                onClusterUpdate={handleClusterUpdate}
-                onClose={() => {
-                  setSelectedHost(null);
-                  setSelectedCluster(null);
-                  setSelectedVm(null);
-                  setSelectedClusterData(null);
-                  setSelectedDatastore(null);
-                }}
-              />
-            </div>
-          )}
+          {/* Right: Details Sidebar (Always Visible) */}
+          <div className="min-h-[320px] rounded-xl border bg-card shadow-sm">
+            <VCenterDetailsSidebar
+              selectedHost={selectedHost}
+              selectedCluster={selectedClusterGroup}
+              selectedVm={selectedVm}
+              selectedClusterData={selectedClusterData}
+              selectedDatastore={selectedDatastore}
+              onClusterUpdate={handleClusterUpdate}
+              onClose={() => {
+                setSelectedHost(null);
+                setSelectedCluster(null);
+                setSelectedVm(null);
+                setSelectedClusterData(null);
+                setSelectedDatastore(null);
+              }}
+            />
+          </div>
         </div>
+      </div>
 
         <VCenterSettingsDialog
           open={settingsOpen}
