@@ -109,11 +109,10 @@ class DellOperations:
         """
         Get KVM launch info for iDRAC9+ using Dell's official GetKVMSession API.
         
-        Official Dell process (4 steps):
+        Official Dell process:
         1. Set virtual console plugin to HTML5
-        2. Export iDRAC SSL certificate
-        3. Get KVM session temp credentials using cert
-        4. Build console URL with temp credentials for SSO
+        2. Get KVM session temp credentials
+        3. Build console URL with temp credentials for SSO
         """
         try:
             # Step 1: Set Virtual Console plugin type to HTML5
@@ -130,35 +129,15 @@ class DellOperations:
                 user_id=user_id
             )
             
-            # Step 2: Export SSL Certificate
-            cert_response = self.adapter.make_request(
-                method='POST',
-                ip=ip,
-                endpoint='/redfish/v1/Dell/Managers/iDRAC.Embedded.1/DelliDRACCardService/Actions/DelliDRACCardService.ExportSSLCertificate',
-                username=username,
-                password=password,
-                payload={"SSLCertType": "Server"},
-                operation_name='Export SSL Certificate',
-                job_id=job_id,
-                server_id=server_id,
-                user_id=user_id
-            )
-            
-            cert_content = cert_response.get('CertificateFile', '')
-            if not cert_content:
-                raise DellRedfishError(
-                    message="Failed to export SSL certificate",
-                    error_code='NO_CERT_CONTENT'
-                )
-            
-            # Step 3: Get KVM Session with temp credentials
+            # Step 2: Get KVM Session with temp credentials
+            # SessionTypeName should be a simple identifier like "HTML5"
             kvm_response = self.adapter.make_request(
                 method='POST',
                 ip=ip,
                 endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DelliDRACCardService/Actions/DelliDRACCardService.GetKVMSession',
                 username=username,
                 password=password,
-                payload={"SessionTypeName": cert_content},
+                payload={"SessionTypeName": "HTML5"},
                 operation_name='Get KVM Session',
                 job_id=job_id,
                 server_id=server_id,
@@ -174,7 +153,7 @@ class DellOperations:
                     error_code='NO_TEMP_CREDS'
                 )
             
-            # Step 4: Build authenticated console URL with SSO
+            # Step 3: Build authenticated console URL with SSO
             console_url = f"https://{ip}/console?username={username}&tempUsername={temp_username}&tempPassword={temp_password}"
             
             return {
@@ -200,14 +179,14 @@ class DellOperations:
         password: str
     ) -> Dict[str, Any]:
         """
-        Fallback KVM launch for iDRAC8 and older versions.
+        Fallback KVM launch when SSO is not available.
         Returns direct console URL - user will need to log in manually.
         """
         return {
             'console_url': f"https://{ip}/console",
             'session_type': 'HTML5',
             'requires_login': True,
-            'message': 'iDRAC8 detected. Please log in with your credentials when the console opens.'
+            'message': 'SSO console launch not available. Please log in manually.'
         }
     
     def get_system_info(
