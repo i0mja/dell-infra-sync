@@ -1400,7 +1400,7 @@ class DellOperations:
             endpoint=f'/redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia/{device_id}/Actions/VirtualMedia.EjectMedia',
             username=username,
             password=password,
-            json_data={},
+            payload={},
             operation_name='Unmount Virtual Media',
             server_id=server_id,
             user_id=user_id

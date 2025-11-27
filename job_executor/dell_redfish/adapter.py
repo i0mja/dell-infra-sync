@@ -99,7 +99,7 @@ class DellRedfishAdapter:
             'headers': {'Content-Type': 'application/json'}
         }
         
-        if payload:
+        if payload is not None:
             request_kwargs['json'] = payload
         
         # Execute with throttler safety
