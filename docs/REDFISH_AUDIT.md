@@ -26,6 +26,7 @@ This document tracks Redfish usage across the project and ensures alignment with
 | Lifecycle logs | `/redfish/v1/Managers/.../LogServices/Lclog/Entries` | `job-executor.py` lifecycle log fetch | `GetLClogREDFISH.py` |
 | SCP export | `/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ExportSystemConfiguration` | `job_executor/scp.py#export_scp` | `ExportSystemConfigurationREDFISH.py` |
 | SCP import | `/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ImportSystemConfiguration` | `job_executor/scp.py#import_scp` | `ImportSystemConfigurationREDFISH.py` |
+| KVM Console | `/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DelliDRACCardService/Actions/DelliDRACCardService.GetKVMLaunchInfo` | `job_executor/dell_redfish/operations.py#get_kvm_launch_info`, `job-executor.py` console launch | `Invoke-IdracRemoteKvmHtmlSessionREDFISH.ps1` |
 
 ### Automated Verification
 
