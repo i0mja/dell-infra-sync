@@ -26,9 +26,12 @@ import {
   ScrollText,
   GitBranch,
   Save,
+  AlertTriangle,
+  CheckCircle2,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import type { Server } from "@/hooks/useServers";
+import { useServerDrives } from "@/hooks/useServerDrives";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useState } from "react";
@@ -90,6 +93,9 @@ export function ServerDetailsSidebar({
 }: ServerDetailsSidebarProps) {
   const [consoleDialogOpen, setConsoleDialogOpen] = useState(false);
   const [consoleJobId, setConsoleJobId] = useState<string | null>(null);
+  
+  // Fetch drives for selected server
+  const { data: drives, isLoading: drivesLoading } = useServerDrives(selectedServer?.id || null);
 
   const handleLaunchConsole = async () => {
     if (!selectedServer) return;
@@ -222,10 +228,25 @@ export function ServerDetailsSidebar({
           <div>
             <h4 className="text-sm font-semibold mb-3">Hardware</h4>
             <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">CPUs:</span>
-                <span className="font-medium">{selectedServer.cpu_count || "N/A"}</span>
-              </div>
+              {selectedServer.cpu_model && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Processor:</span>
+                  <span className="font-medium text-xs text-right max-w-[200px]">
+                    {selectedServer.cpu_model}
+                  </span>
+                </div>
+              )}
+              {selectedServer.cpu_count && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">CPU Sockets:</span>
+                  <span className="font-medium">
+                    {selectedServer.cpu_count}
+                    {selectedServer.cpu_cores_per_socket && 
+                      ` (${selectedServer.cpu_cores_per_socket} cores each)`
+                    }
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Memory:</span>
                 <span className="font-medium">
@@ -238,6 +259,18 @@ export function ServerDetailsSidebar({
                   {selectedServer.power_state || "Unknown"}
                 </span>
               </div>
+              {selectedServer.boot_mode && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Boot Mode:</span>
+                  <span className="font-medium">{selectedServer.boot_mode}</span>
+                </div>
+              )}
+              {selectedServer.secure_boot && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Secure Boot:</span>
+                  <span className="font-medium">{selectedServer.secure_boot}</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -262,8 +295,109 @@ export function ServerDetailsSidebar({
                     : "Never"}
                 </span>
               </div>
+              {selectedServer.virtualization_enabled !== null && (
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground">Virtualization:</span>
+                  <span className="font-medium flex items-center gap-1">
+                    {selectedServer.virtualization_enabled ? (
+                      <>
+                        <CheckCircle2 className="h-3 w-3 text-green-500" />
+                        <span className="text-green-600">Enabled</span>
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground">Disabled</span>
+                    )}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
+
+          {/* Storage Section */}
+          {(selectedServer.total_drives || drives?.length) && (
+            <>
+              <Separator />
+              
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-semibold flex items-center gap-2">
+                    <HardDrive className="h-4 w-4" />
+                    Storage
+                  </h4>
+                  {selectedServer.total_drives && (
+                    <Badge variant="outline" className="text-xs">
+                      {selectedServer.total_drives} {selectedServer.total_drives === 1 ? 'drive' : 'drives'}
+                      {selectedServer.total_storage_tb && 
+                        `, ${selectedServer.total_storage_tb} TB`
+                      }
+                    </Badge>
+                  )}
+                </div>
+
+                {drivesLoading ? (
+                  <div className="flex items-center justify-center py-4 text-muted-foreground text-xs">
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Loading drives...
+                  </div>
+                ) : drives && drives.length > 0 ? (
+                  <div className="space-y-1.5 text-xs">
+                    {drives.map((drive) => (
+                      <div
+                        key={drive.id}
+                        className="flex items-start gap-2 p-2 rounded-md bg-muted/30 hover:bg-muted/50 transition-colors"
+                      >
+                        <div className="flex-shrink-0 mt-0.5">
+                          {drive.health === 'OK' ? (
+                            <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+                          ) : drive.predicted_failure ? (
+                            <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
+                          ) : (
+                            <AlertTriangle className="h-3.5 w-3.5 text-yellow-500" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-medium truncate">
+                              {drive.model || drive.name || 'Unknown Drive'}
+                            </span>
+                            <Badge variant="outline" className="text-[10px] px-1 py-0 h-auto flex-shrink-0">
+                              {drive.media_type || drive.protocol || 'N/A'}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center gap-2 text-muted-foreground mt-0.5">
+                            {drive.capacity_gb && (
+                              <span>{Math.round(drive.capacity_gb)} GB</span>
+                            )}
+                            {drive.slot && (
+                              <span>• Bay {drive.slot}</span>
+                            )}
+                            {drive.manufacturer && (
+                              <span className="truncate">• {drive.manufacturer}</span>
+                            )}
+                          </div>
+                          {drive.predicted_failure && (
+                            <div className="flex items-center gap-1 mt-1 text-red-600">
+                              <AlertTriangle className="h-3 w-3" />
+                              <span className="text-[10px] font-medium">Predicted failure</span>
+                            </div>
+                          )}
+                          {drive.life_remaining_percent !== null && drive.life_remaining_percent < 20 && (
+                            <div className="text-yellow-600 text-[10px] mt-1">
+                              {drive.life_remaining_percent}% life remaining
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-xs text-muted-foreground text-center py-2">
+                    No drive details available
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </CardContent>
 
         <Separator />

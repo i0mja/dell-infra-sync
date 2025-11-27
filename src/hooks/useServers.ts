@@ -31,6 +31,16 @@ export interface Server {
   last_seen: string | null;
   created_at: string;
   notes: string | null;
+  // Enhanced hardware info
+  cpu_model: string | null;
+  cpu_cores_per_socket: number | null;
+  cpu_speed: string | null;
+  boot_mode: string | null;
+  boot_order: string[] | null;
+  secure_boot: string | null;
+  virtualization_enabled: boolean | null;
+  total_drives: number | null;
+  total_storage_tb: number | null;
 }
 
 interface GroupedServers {

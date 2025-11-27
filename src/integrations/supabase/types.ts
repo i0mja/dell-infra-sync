@@ -1305,6 +1305,92 @@ export type Database = {
           },
         ]
       }
+      server_drives: {
+        Row: {
+          capable_speed_gbps: number | null
+          capacity_bytes: number | null
+          capacity_gb: number | null
+          controller: string | null
+          created_at: string | null
+          enclosure: string | null
+          firmware_version: string | null
+          health: string | null
+          id: string
+          last_sync: string | null
+          life_remaining_percent: number | null
+          manufacturer: string | null
+          media_type: string | null
+          model: string | null
+          name: string | null
+          part_number: string | null
+          predicted_failure: boolean | null
+          protocol: string | null
+          rotation_speed_rpm: number | null
+          serial_number: string | null
+          server_id: string
+          slot: string | null
+          status: string | null
+        }
+        Insert: {
+          capable_speed_gbps?: number | null
+          capacity_bytes?: number | null
+          capacity_gb?: number | null
+          controller?: string | null
+          created_at?: string | null
+          enclosure?: string | null
+          firmware_version?: string | null
+          health?: string | null
+          id?: string
+          last_sync?: string | null
+          life_remaining_percent?: number | null
+          manufacturer?: string | null
+          media_type?: string | null
+          model?: string | null
+          name?: string | null
+          part_number?: string | null
+          predicted_failure?: boolean | null
+          protocol?: string | null
+          rotation_speed_rpm?: number | null
+          serial_number?: string | null
+          server_id: string
+          slot?: string | null
+          status?: string | null
+        }
+        Update: {
+          capable_speed_gbps?: number | null
+          capacity_bytes?: number | null
+          capacity_gb?: number | null
+          controller?: string | null
+          created_at?: string | null
+          enclosure?: string | null
+          firmware_version?: string | null
+          health?: string | null
+          id?: string
+          last_sync?: string | null
+          life_remaining_percent?: number | null
+          manufacturer?: string | null
+          media_type?: string | null
+          model?: string | null
+          name?: string | null
+          part_number?: string | null
+          predicted_failure?: boolean | null
+          protocol?: string | null
+          rotation_speed_rpm?: number | null
+          serial_number?: string | null
+          server_id?: string
+          slot?: string | null
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "server_drives_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       server_event_logs: {
         Row: {
           category: string | null
@@ -1588,7 +1674,10 @@ export type Database = {
           boot_source_override_target: string | null
           connection_error: string | null
           connection_status: string | null
+          cpu_cores_per_socket: number | null
           cpu_count: number | null
+          cpu_model: string | null
+          cpu_speed: string | null
           created_at: string
           credential_last_tested: string | null
           credential_set_id: string | null
@@ -1616,10 +1705,14 @@ export type Database = {
           power_state: string | null
           product_name: string | null
           redfish_version: string | null
+          secure_boot: string | null
           service_tag: string | null
           supported_endpoints: Json | null
+          total_drives: number | null
+          total_storage_tb: number | null
           updated_at: string
           vcenter_host_id: string | null
+          virtualization_enabled: boolean | null
         }
         Insert: {
           bios_version?: string | null
@@ -1629,7 +1722,10 @@ export type Database = {
           boot_source_override_target?: string | null
           connection_error?: string | null
           connection_status?: string | null
+          cpu_cores_per_socket?: number | null
           cpu_count?: number | null
+          cpu_model?: string | null
+          cpu_speed?: string | null
           created_at?: string
           credential_last_tested?: string | null
           credential_set_id?: string | null
@@ -1657,10 +1753,14 @@ export type Database = {
           power_state?: string | null
           product_name?: string | null
           redfish_version?: string | null
+          secure_boot?: string | null
           service_tag?: string | null
           supported_endpoints?: Json | null
+          total_drives?: number | null
+          total_storage_tb?: number | null
           updated_at?: string
           vcenter_host_id?: string | null
+          virtualization_enabled?: boolean | null
         }
         Update: {
           bios_version?: string | null
@@ -1670,7 +1770,10 @@ export type Database = {
           boot_source_override_target?: string | null
           connection_error?: string | null
           connection_status?: string | null
+          cpu_cores_per_socket?: number | null
           cpu_count?: number | null
+          cpu_model?: string | null
+          cpu_speed?: string | null
           created_at?: string
           credential_last_tested?: string | null
           credential_set_id?: string | null
@@ -1698,10 +1801,14 @@ export type Database = {
           power_state?: string | null
           product_name?: string | null
           redfish_version?: string | null
+          secure_boot?: string | null
           service_tag?: string | null
           supported_endpoints?: Json | null
+          total_drives?: number | null
+          total_storage_tb?: number | null
           updated_at?: string
           vcenter_host_id?: string | null
+          virtualization_enabled?: boolean | null
         }
         Relationships: [
           {
