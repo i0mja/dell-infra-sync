@@ -30,6 +30,9 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import type { Server } from "@/hooks/useServers";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { useState } from "react";
+import { ConsoleLaunchDialog } from "./ConsoleLaunchDialog";
 
 interface GroupData {
   name: string;
@@ -85,14 +88,45 @@ export function ServerDetailsSidebar({
   onAssignCredentials,
   onCreateJob,
 }: ServerDetailsSidebarProps) {
+  const [consoleDialogOpen, setConsoleDialogOpen] = useState(false);
+  const [consoleJobId, setConsoleJobId] = useState<string | null>(null);
+
   const handleLaunchConsole = async () => {
     if (!selectedServer) return;
     
-    // For offline-first architecture, open iDRAC console directly
-    // User will authenticate via iDRAC's web interface
-    const consoleUrl = `https://${selectedServer.ip_address}/#/serverConsole`;
-    window.open(consoleUrl, '_blank', 'noopener,noreferrer');
-    toast.success('iDRAC console opened in new tab');
+    try {
+      // Get user ID
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        toast.error('Authentication required');
+        return;
+      }
+
+      // Create console_launch job
+      const { data: job, error: jobError } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'console_launch',
+          created_by: user.id,
+          status: 'pending',
+          details: {
+            server_id: selectedServer.id
+          }
+        })
+        .select()
+        .single();
+
+      if (jobError) throw jobError;
+
+      setConsoleJobId(job.id);
+      setConsoleDialogOpen(true);
+      toast.success('Preparing console session...');
+    } catch (error) {
+      console.error('Error launching console:', error);
+      toast.error('Failed to launch console', {
+        description: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
   };
 
   // Server Details View
@@ -110,7 +144,14 @@ export function ServerDetailsSidebar({
     };
 
     return (
-      <Card className="h-full flex flex-col">
+      <>
+        <ConsoleLaunchDialog 
+          open={consoleDialogOpen}
+          onOpenChange={setConsoleDialogOpen}
+          jobId={consoleJobId}
+        />
+        
+        <Card className="h-full flex flex-col">
         <CardHeader className="pb-3">
           <div className="flex items-start justify-between">
             <div className="flex-1 min-w-0">
@@ -438,6 +479,7 @@ export function ServerDetailsSidebar({
           </div>
         </div>
       </Card>
+      </>
     );
   }
 
@@ -506,21 +548,29 @@ export function ServerDetailsSidebar({
 
   // Empty State
   return (
-    <Card className="h-full flex flex-col">
-      <CardHeader>
-        <CardTitle className="text-lg">Server Details</CardTitle>
-        <CardDescription>Select a server or group to view details</CardDescription>
-      </CardHeader>
+    <>
+      <ConsoleLaunchDialog 
+        open={consoleDialogOpen}
+        onOpenChange={setConsoleDialogOpen}
+        jobId={consoleJobId}
+      />
+      
+      <Card className="h-full flex flex-col">
+        <CardHeader>
+          <CardTitle className="text-lg">Server Details</CardTitle>
+          <CardDescription>Select a server or group to view details</CardDescription>
+        </CardHeader>
 
-      <Separator />
+        <Separator />
 
-      <CardContent className="flex-1 overflow-auto pt-4 space-y-4">
-        <div className="text-center text-muted-foreground text-sm py-8">
-          <ServerIcon className="h-12 w-12 mx-auto mb-3 opacity-50" />
-          <p>No server selected</p>
-          <p className="text-xs mt-1">Click on a server row to view details</p>
-        </div>
-      </CardContent>
-    </Card>
+        <CardContent className="flex-1 overflow-auto pt-4 space-y-4">
+          <div className="text-center text-muted-foreground text-sm py-8">
+            <ServerIcon className="h-12 w-12 mx-auto mb-3 opacity-50" />
+            <p>No server selected</p>
+            <p className="text-xs mt-1">Click on a server row to view details</p>
+          </div>
+        </CardContent>
+      </Card>
+    </>
   );
 }

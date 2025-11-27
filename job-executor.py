@@ -6082,6 +6082,8 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self.execute_rolling_cluster_update(job)
         elif job_type == 'iso_upload':
             self.execute_iso_upload(job)
+        elif job_type == 'console_launch':
+            self.execute_console_launch(job)
         else:
             self.log(f"Unknown job type: {job_type}", "ERROR")
             self.update_job_status(
@@ -6096,6 +6098,69 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
     # Connectivity tests implemented in ConnectivityMixin
 
     # Connectivity test job implemented in ConnectivityMixin
+    
+    def execute_console_launch(self, job: Dict):
+        """Get authenticated KVM console URL using Dell's official Redfish endpoint"""
+        try:
+            self.log(f"Starting console_launch job: {job['id']}")
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            details = job.get('details', {})
+            server_id = details.get('server_id')
+            
+            if not server_id:
+                raise Exception("No server_id provided in job details")
+            
+            # Get server and credentials
+            server = self.get_server_by_id(server_id)
+            if not server:
+                raise Exception(f"Server {server_id} not found")
+            
+            username, password = self.get_server_credentials(server_id)
+            if not username or not password:
+                raise Exception("No credentials available for server")
+            
+            ip_address = server['ip_address']
+            
+            # Get KVM launch info using Dell Redfish operations
+            self.log(f"Getting KVM launch info for {ip_address}")
+            dell_ops = self._get_dell_operations()
+            kvm_info = dell_ops.get_kvm_launch_info(
+                ip=ip_address,
+                username=username,
+                password=password,
+                server_id=server_id,
+                job_id=job['id']
+            )
+            
+            console_url = kvm_info.get('console_url')
+            
+            if not console_url:
+                raise Exception("No console URL returned from KVM launch endpoint")
+            
+            self.log(f"[OK] Console URL generated for {ip_address}")
+            
+            # Complete job with console URL
+            self.update_job_status(
+                job['id'],
+                'completed',
+                completed_at=datetime.now().isoformat(),
+                details={
+                    'console_url': console_url,
+                    'server_id': server_id,
+                    'ip_address': ip_address,
+                    'session_type': kvm_info.get('session_type', 'HTML5')
+                }
+            )
+            
+        except Exception as e:
+            self.log(f"Console launch failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e)}
+            )
     
     def execute_iso_upload(self, job: Dict):
         """
