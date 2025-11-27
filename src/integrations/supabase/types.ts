@@ -635,6 +635,7 @@ export type Database = {
           id: string
           job_id: string
           log: string | null
+          progress: number | null
           server_id: string | null
           started_at: string | null
           status: Database["public"]["Enums"]["job_status"]
@@ -646,6 +647,7 @@ export type Database = {
           id?: string
           job_id: string
           log?: string | null
+          progress?: number | null
           server_id?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["job_status"]
@@ -657,6 +659,7 @@ export type Database = {
           id?: string
           job_id?: string
           log?: string | null
+          progress?: number | null
           server_id?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["job_status"]

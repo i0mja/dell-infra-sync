@@ -19,6 +19,7 @@ interface UpdateTaskRequest {
   task_id: string;
   status?: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
   log?: string;
+  progress?: number;
   started_at?: string;
   completed_at?: string;
 }
@@ -120,6 +121,7 @@ serve(async (req) => {
       const updateData: any = {};
       if (task.status) updateData.status = task.status;
       if (task.log) updateData.log = task.log;
+      if (task.progress !== undefined) updateData.progress = task.progress;
       if (task.started_at) updateData.started_at = task.started_at;
       if (task.completed_at) updateData.completed_at = task.completed_at;
 
@@ -130,7 +132,7 @@ serve(async (req) => {
 
       if (taskError) throw taskError;
 
-      console.log(`Task updated: ${task.task_id} - status: ${task.status}`);
+      console.log(`Task updated: ${task.task_id} - status: ${task.status}${task.progress !== undefined ? ` - progress: ${task.progress}%` : ''}`);
     }
 
     return new Response(JSON.stringify({ 
