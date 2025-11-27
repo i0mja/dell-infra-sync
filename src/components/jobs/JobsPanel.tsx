@@ -30,10 +30,12 @@ import {
   Calendar,
   Filter,
   BarChart3,
-  AlertCircle
+  AlertCircle,
+  Zap
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Link } from "react-router-dom";
+import { ServerUpdateWizard } from "./ServerUpdateWizard";
 
 interface Job {
   id: string;
@@ -83,6 +85,7 @@ export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) =>
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [updateWizardOpen, setUpdateWizardOpen] = useState(false);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
   const [subJobCounts, setSubJobCounts] = useState<Record<string, number>>({});
@@ -573,7 +576,11 @@ export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) =>
               Settings
             </Link>
           </Button>
-          <Button onClick={() => setCreateDialogOpen(true)}>
+          <Button variant="default" onClick={() => setUpdateWizardOpen(true)}>
+            <Zap className="mr-2 h-4 w-4" />
+            Firmware Update
+          </Button>
+          <Button variant="outline" onClick={() => setCreateDialogOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
             Create Job
           </Button>
@@ -681,6 +688,11 @@ export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) =>
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         onSuccess={fetchJobs}
+      />
+
+      <ServerUpdateWizard
+        open={updateWizardOpen}
+        onOpenChange={setUpdateWizardOpen}
       />
 
       {selectedJob && (
