@@ -11,15 +11,19 @@
     Skip confirmation prompts
 .PARAMETER NewKey
     Force re-entry of SERVICE_ROLE_KEY (ignore cached value)
+.PARAMETER SkipBackup
+    Skip backing up source files before reinstall (faster but no rollback)
 .EXAMPLE
     .\quick-reinstall-cloud.ps1
     .\quick-reinstall-cloud.ps1 -Force
     .\quick-reinstall-cloud.ps1 -NewKey
+    .\quick-reinstall-cloud.ps1 -SkipBackup
 #>
 
 param(
     [switch]$Force,
-    [switch]$NewKey
+    [switch]$NewKey,
+    [switch]$SkipBackup
 )
 
 # Set encoding and error handling
@@ -95,14 +99,19 @@ function Test-ServiceRoleKey {
 
 # Function: Cleanup existing installation
 function Invoke-Cleanup {
+    param([switch]$DoBackup)
+    
     Write-Host "`n[CLEANUP PHASE]" -ForegroundColor Cyan
     
-    # Backup source files to temp before cleanup (in case script is running from $AppDir)
-    $tempBackup = "$env:TEMP\dell-server-manager-backup-$(Get-Date -Format 'yyyyMMddHHmmss')"
-    if (Test-Path "$AppDir\package.json") {
+    # Conditional backup of source files
+    $script:tempBackupPath = $null
+    if ($DoBackup -and (Test-Path "$AppDir\package.json")) {
+        $script:tempBackupPath = "$env:TEMP\dell-server-manager-backup-$(Get-Date -Format 'yyyyMMddHHmmss')"
         Write-Host "Backing up source files..." -ForegroundColor Yellow
-        Copy-Item $AppDir $tempBackup -Recurse -Force -Exclude @('node_modules', 'dist', '.vite', 'logs') -ErrorAction SilentlyContinue
-        Write-Host "  ✓ Source backed up to temp" -ForegroundColor Green
+        Copy-Item $AppDir $script:tempBackupPath -Recurse -Force -Exclude @('node_modules', 'dist', '.vite', 'logs') -ErrorAction SilentlyContinue
+        Write-Host "  ✓ Source backed up to $script:tempBackupPath" -ForegroundColor Green
+    } elseif (-not $DoBackup) {
+        Write-Host "Skipping backup..." -ForegroundColor Gray
     }
     
     # Navigate to temp directory
@@ -271,6 +280,22 @@ try {
         }
     }
     
+    # Ask about backup (unless -SkipBackup or -Force)
+    $doBackup = $false
+    if (-not $SkipBackup -and (Test-Path "$AppDir\package.json")) {
+        if ($Force) {
+            $doBackup = $true  # Force mode still does backup for safety
+            Write-Host ""
+            Write-Host "Creating backup for safety (use -SkipBackup to skip)..." -ForegroundColor Gray
+        } else {
+            Write-Host ""
+            Write-Host "Do you want to backup source files before reinstalling?" -ForegroundColor Yellow
+            Write-Host "(This preserves your local changes but can take several minutes)" -ForegroundColor Gray
+            $backupChoice = Read-Host "Backup? (y/n)"
+            $doBackup = ($backupChoice -eq "y" -or $backupChoice -eq "yes")
+        }
+    }
+    
     # Handle SERVICE_ROLE_KEY
     $serviceRoleKey = $null
     
@@ -316,7 +341,7 @@ try {
     }
     
     # Execute cleanup
-    Invoke-Cleanup
+    Invoke-Cleanup -DoBackup:$doBackup
     
     # Execute reinstall
     Invoke-Reinstall $serviceRoleKey
