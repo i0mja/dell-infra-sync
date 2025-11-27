@@ -1,7 +1,7 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ChevronDown, ChevronRight, CheckCircle, AlertCircle, Activity, Users, Power, RefreshCw, Stethoscope } from "lucide-react";
+import { ChevronDown, ChevronRight, CheckCircle, AlertCircle, Activity, Users, Power, RefreshCw, Stethoscope, Link2 } from "lucide-react";
 import { Fragment, ReactNode, useState } from "react";
 import { ConnectionStatusBadge } from "./ConnectionStatusBadge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -52,6 +52,7 @@ interface ServersTableProps {
   onServerHealth: (server: Server) => void;
   onServerPower: (server: Server) => void;
   onServerDetails: (server: Server) => void;
+  onAutoLinkVCenter?: (server: Server) => void;
   loading: boolean;
   refreshing: string | null;
   healthCheckServer: string | null;
@@ -74,6 +75,7 @@ export function ServersTable({
   onServerHealth,
   onServerPower,
   onServerDetails,
+  onAutoLinkVCenter,
   loading,
   refreshing,
   healthCheckServer,
@@ -185,6 +187,20 @@ export function ServersTable({
           <Power className="h-4 w-4 mr-2" />
           Power controls
         </ContextMenuItem>
+        {onAutoLinkVCenter && !getVCenterLink(server.id).linked && (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              onClick={(e) => {
+                e.stopPropagation();
+                onAutoLinkVCenter(server);
+              }}
+            >
+              <Link2 className="h-4 w-4 mr-2" />
+              Auto-link vCenter
+            </ContextMenuItem>
+          </>
+        )}
       </ContextMenuContent>
     </ContextMenu>
   );

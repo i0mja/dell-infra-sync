@@ -1,6 +1,8 @@
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Search, MoreHorizontal, Link2, Loader2 } from "lucide-react";
 
 interface ServerFilterToolbarProps {
   searchTerm: string;
@@ -11,6 +13,8 @@ interface ServerFilterToolbarProps {
   onStatusFilterChange: (value: string) => void;
   groups: Array<{ id: string; name: string }>;
   vCenterClusters: string[];
+  onBulkAutoLink?: () => void;
+  bulkLinking?: boolean;
 }
 
 export function ServerFilterToolbar({
@@ -22,6 +26,8 @@ export function ServerFilterToolbar({
   onStatusFilterChange,
   groups = [],
   vCenterClusters = [],
+  onBulkAutoLink,
+  bulkLinking = false,
 }: ServerFilterToolbarProps) {
   return (
     <div className="flex items-center gap-3 px-4 py-3 bg-card border rounded-lg">
@@ -67,6 +73,26 @@ export function ServerFilterToolbar({
           <SelectItem value="incomplete">⚠ Incomplete Data</SelectItem>
         </SelectContent>
       </Select>
+
+      {onBulkAutoLink && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" disabled={bulkLinking}>
+              {bulkLinking ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <MoreHorizontal className="h-4 w-4" />
+              )}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={onBulkAutoLink} disabled={bulkLinking}>
+              <Link2 className="h-4 w-4 mr-2" />
+              Auto-Link All to vCenter
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   );
 }

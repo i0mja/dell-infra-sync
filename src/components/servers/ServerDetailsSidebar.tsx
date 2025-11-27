@@ -556,7 +556,38 @@ export function ServerDetailsSidebar({
                   variant="ghost"
                   size="sm"
                   className="w-full justify-start"
-                  onClick={() => onLinkVCenter(selectedServer)}
+                  onClick={async () => {
+                    // Try auto-link first
+                    if (selectedServer.service_tag) {
+                      const { data: vCenterHost } = await supabase
+                        .from("vcenter_hosts")
+                        .select("id, name, cluster")
+                        .eq("serial_number", selectedServer.service_tag)
+                        .is("server_id", null)
+                        .single();
+
+                      if (vCenterHost) {
+                        // Auto-link found a match
+                        await Promise.all([
+                          supabase
+                            .from("servers")
+                            .update({ vcenter_host_id: vCenterHost.id })
+                            .eq("id", selectedServer.id),
+                          supabase
+                            .from("vcenter_hosts")
+                            .update({ server_id: selectedServer.id })
+                            .eq("id", vCenterHost.id)
+                        ]);
+                        
+                        toast.success("Auto-linked to vCenter", {
+                          description: `Linked to ${vCenterHost.name}${vCenterHost.cluster ? ` (${vCenterHost.cluster})` : ""}`
+                        });
+                        return;
+                      }
+                    }
+                    // No auto-match, open manual dialog
+                    onLinkVCenter(selectedServer);
+                  }}
                 >
                   <Link className="mr-2 h-3 w-3" />
                   Link vCenter
