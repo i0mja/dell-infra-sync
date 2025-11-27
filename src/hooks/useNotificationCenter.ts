@@ -154,16 +154,19 @@ export const useNotificationCenter = () => {
           schema: 'public',
           table: 'jobs',
         },
-        () => {
+        (payload) => {
+          console.log('Job change received:', payload);
           fetchActiveJobs();
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log('Jobs subscription status:', status);
+      });
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [settings.enabled, fetchActiveJobs]);
+  }, [settings.enabled]);
 
   // Subscribe to command changes
   useEffect(() => {
@@ -180,16 +183,19 @@ export const useNotificationCenter = () => {
           schema: 'public',
           table: 'idrac_commands',
         },
-        () => {
+        (payload) => {
+          console.log('Command change received:', payload);
           fetchRecentCommands();
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log('Commands subscription status:', status);
+      });
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [settings.enabled, fetchRecentCommands]);
+  }, [settings.enabled]);
 
   // Poll job progress
   useEffect(() => {
