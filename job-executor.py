@@ -2114,8 +2114,8 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 'supported_endpoints': server.get('supported_endpoints'),
                 'connection_status': 'online',
                 'last_seen': datetime.now().isoformat(),
-                'idrac_username': server.get('username'),
-                'idrac_password_encrypted': server.get('password'),
+                # Link to credential set directly - don't store plaintext passwords
+                'credential_set_id': server.get('credential_set_id'),
                 'credential_test_status': 'valid',
                 'credential_last_tested': datetime.now().isoformat(),
                 'discovered_by_credential_set_id': server.get('credential_set_id'),
