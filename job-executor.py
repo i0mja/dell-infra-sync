@@ -976,6 +976,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 "product_name": system_data.get("Model", None),
                 "redfish_version": redfish_version,
                 "supported_endpoints": None,  # Can be populated from Oem data if needed
+                "power_state": system_data.get("PowerState", None),  # Add power state
                 "username": username,
                 "password": password,
             }
@@ -1034,8 +1035,30 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             'overall_status': 'Unknown',
             'storage_healthy': None,
             'thermal_healthy': None,
-            'power_healthy': None
+            'power_healthy': None,
+            'power_state': None,
+            'temperature_celsius': None,
+            'fan_health': None
         }
+        
+        # First get system info for power state
+        try:
+            system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
+            system_response, system_time = self.throttler.request_with_safety(
+                method='GET',
+                url=system_url,
+                ip=ip,
+                logger=self.log,
+                auth=(username, password),
+                timeout=(2, 15)
+            )
+            
+            if system_response and system_response.status_code == 200:
+                system_json = system_response.json()
+                health['power_state'] = system_json.get('PowerState')
+                self.throttler.record_success(ip)
+        except Exception as e:
+            self.log(f"  Could not fetch power state: {e}", "WARN")
         
         endpoints = [
             ('/redfish/v1/Systems/System.Embedded.1/Storage', 'storage'),
@@ -1082,6 +1105,25 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 
                 if response and response.status_code == 200 and response_json:
                     health[f'{health_type}_healthy'] = self._parse_health_from_response(response_json)
+                    
+                    # Extract additional thermal data
+                    if health_type == 'thermal':
+                        # Get temperature readings
+                        temps = response_json.get('Temperatures', [])
+                        if temps:
+                            avg_temp = sum(t.get('ReadingCelsius', 0) for t in temps if t.get('ReadingCelsius')) / len([t for t in temps if t.get('ReadingCelsius')])
+                            health['temperature_celsius'] = round(avg_temp, 1) if avg_temp else None
+                        
+                        # Get fan health
+                        fans = response_json.get('Fans', [])
+                        if fans:
+                            all_fans_ok = all(
+                                f.get('Status', {}).get('Health') == 'OK' 
+                                for f in fans 
+                                if f.get('Status', {}).get('Health')
+                            )
+                            health['fan_health'] = 'OK' if all_fans_ok else 'Warning'
+                    
                     self.throttler.record_success(ip)
                     
             except Exception as e:
@@ -1847,7 +1889,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                         "manager_mac_address", "redfish_version", "supported_endpoints",
                         "cpu_model", "cpu_cores_per_socket", "cpu_speed",
                         "boot_mode", "boot_order", "secure_boot", "virtualization_enabled",
-                        "total_drives", "total_storage_tb"
+                        "total_drives", "total_storage_tb", "power_state"
                     }
                     
                     # Build filtered update payload (exclude None values and credentials)
@@ -1861,6 +1903,19 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                         'credential_test_status': 'valid',
                         'credential_last_tested': datetime.utcnow().isoformat() + 'Z',
                     })
+                    
+                    # Add health fields from health_status if available
+                    if info.get('health_status'):
+                        health_status = info['health_status']
+                        
+                        # Calculate overall_health
+                        all_healthy = all([
+                            health_status.get('storage_healthy', True) != False,
+                            health_status.get('thermal_healthy', True) != False,
+                            health_status.get('power_healthy', True) != False
+                        ])
+                        update_data['overall_health'] = 'OK' if all_healthy else 'Warning'
+                        update_data['last_health_check'] = datetime.utcnow().isoformat() + 'Z'
                     
                     # Promote credential_set_id if we used discovered_by or ip_range and server doesn't have one
                     if not server.get('credential_set_id') and used_cred_set_id and cred_source in ['discovered_by_credential_set_id', 'ip_range']:
@@ -1879,6 +1934,36 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     if update_response.status_code in [200, 204]:
                         self.log(f"  ✓ Refreshed {ip}: {info.get('model')} - {info.get('hostname')}")
                         refreshed_count += 1
+                        
+                        # Insert health record to server_health table if health data exists
+                        if info.get('health_status'):
+                            health_status = info['health_status']
+                            health_record = {
+                                'server_id': server['id'],
+                                'timestamp': datetime.utcnow().isoformat() + 'Z',
+                                'overall_health': update_data.get('overall_health', 'Unknown'),
+                                'power_state': health_status.get('power_state') or info.get('power_state'),
+                                'storage_health': 'OK' if health_status.get('storage_healthy') else ('Warning' if health_status.get('storage_healthy') == False else None),
+                                'fan_health': health_status.get('fan_health'),
+                                'psu_health': 'OK' if health_status.get('power_healthy') else ('Warning' if health_status.get('power_healthy') == False else None),
+                                'temperature_celsius': health_status.get('temperature_celsius'),
+                                'sensors': {}
+                            }
+                            
+                            try:
+                                health_url = f"{DSM_URL}/rest/v1/server_health"
+                                health_response = requests.post(
+                                    health_url,
+                                    headers=headers,
+                                    json=health_record,
+                                    verify=VERIFY_SSL
+                                )
+                                if health_response.status_code in [200, 201]:
+                                    self.log(f"  ✓ Health record saved to server_health table", "DEBUG")
+                                else:
+                                    self.log(f"  Warning: Could not save health record: {health_response.status_code}", "WARN")
+                            except Exception as health_err:
+                                self.log(f"  Warning: Failed to save health record: {health_err}", "WARN")
                         
                         # Sync drives to server_drives table
                         if info.get('drives'):
