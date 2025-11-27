@@ -1888,6 +1888,7 @@ export type Database = {
           entity_name: string | null
           entity_type: string | null
           id: string
+          source_vcenter_id: string | null
           triggered_at: string | null
           updated_at: string | null
         }
@@ -1902,6 +1903,7 @@ export type Database = {
           entity_name?: string | null
           entity_type?: string | null
           id?: string
+          source_vcenter_id?: string | null
           triggered_at?: string | null
           updated_at?: string | null
         }
@@ -1916,10 +1918,19 @@ export type Database = {
           entity_name?: string | null
           entity_type?: string | null
           id?: string
+          source_vcenter_id?: string | null
           triggered_at?: string | null
           updated_at?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "vcenter_alarms_source_vcenter_id_fkey"
+            columns: ["source_vcenter_id"]
+            isOneToOne: false
+            referencedRelation: "vcenters"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       vcenter_clusters: {
         Row: {
@@ -1932,6 +1943,7 @@ export type Database = {
           id: string
           last_sync: string | null
           overall_status: string | null
+          source_vcenter_id: string | null
           total_cpu_mhz: number | null
           total_memory_bytes: number | null
           total_storage_bytes: number | null
@@ -1952,6 +1964,7 @@ export type Database = {
           id?: string
           last_sync?: string | null
           overall_status?: string | null
+          source_vcenter_id?: string | null
           total_cpu_mhz?: number | null
           total_memory_bytes?: number | null
           total_storage_bytes?: number | null
@@ -1972,6 +1985,7 @@ export type Database = {
           id?: string
           last_sync?: string | null
           overall_status?: string | null
+          source_vcenter_id?: string | null
           total_cpu_mhz?: number | null
           total_memory_bytes?: number | null
           total_storage_bytes?: number | null
@@ -1982,7 +1996,15 @@ export type Database = {
           vcenter_id?: string | null
           vm_count?: number | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "vcenter_clusters_source_vcenter_id_fkey"
+            columns: ["source_vcenter_id"]
+            isOneToOne: false
+            referencedRelation: "vcenters"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       vcenter_datastores: {
         Row: {
@@ -1995,6 +2017,7 @@ export type Database = {
           last_sync: string | null
           maintenance_mode: string | null
           name: string
+          source_vcenter_id: string | null
           type: string | null
           updated_at: string | null
           vcenter_id: string | null
@@ -2010,6 +2033,7 @@ export type Database = {
           last_sync?: string | null
           maintenance_mode?: string | null
           name: string
+          source_vcenter_id?: string | null
           type?: string | null
           updated_at?: string | null
           vcenter_id?: string | null
@@ -2025,12 +2049,21 @@ export type Database = {
           last_sync?: string | null
           maintenance_mode?: string | null
           name?: string
+          source_vcenter_id?: string | null
           type?: string | null
           updated_at?: string | null
           vcenter_id?: string | null
           vm_count?: number | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "vcenter_datastores_source_vcenter_id_fkey"
+            columns: ["source_vcenter_id"]
+            isOneToOne: false
+            referencedRelation: "vcenters"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       vcenter_hosts: {
         Row: {
@@ -2043,6 +2076,7 @@ export type Database = {
           name: string
           serial_number: string | null
           server_id: string | null
+          source_vcenter_id: string | null
           status: string | null
           updated_at: string
           vcenter_id: string | null
@@ -2057,6 +2091,7 @@ export type Database = {
           name: string
           serial_number?: string | null
           server_id?: string | null
+          source_vcenter_id?: string | null
           status?: string | null
           updated_at?: string
           vcenter_id?: string | null
@@ -2071,6 +2106,7 @@ export type Database = {
           name?: string
           serial_number?: string | null
           server_id?: string | null
+          source_vcenter_id?: string | null
           status?: string | null
           updated_at?: string
           vcenter_id?: string | null
@@ -2081,6 +2117,13 @@ export type Database = {
             columns: ["server_id"]
             isOneToOne: false
             referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vcenter_hosts_source_vcenter_id_fkey"
+            columns: ["source_vcenter_id"]
+            isOneToOne: false
+            referencedRelation: "vcenters"
             referencedColumns: ["id"]
           },
         ]
@@ -2140,6 +2183,7 @@ export type Database = {
           notes: string | null
           overall_status: string | null
           power_state: string | null
+          source_vcenter_id: string | null
           tools_status: string | null
           tools_version: string | null
           updated_at: string | null
@@ -2160,6 +2204,7 @@ export type Database = {
           notes?: string | null
           overall_status?: string | null
           power_state?: string | null
+          source_vcenter_id?: string | null
           tools_status?: string | null
           tools_version?: string | null
           updated_at?: string | null
@@ -2180,6 +2225,7 @@ export type Database = {
           notes?: string | null
           overall_status?: string | null
           power_state?: string | null
+          source_vcenter_id?: string | null
           tools_status?: string | null
           tools_version?: string | null
           updated_at?: string | null
@@ -2193,7 +2239,74 @@ export type Database = {
             referencedRelation: "vcenter_hosts"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "vcenter_vms_source_vcenter_id_fkey"
+            columns: ["source_vcenter_id"]
+            isOneToOne: false
+            referencedRelation: "vcenters"
+            referencedColumns: ["id"]
+          },
         ]
+      }
+      vcenters: {
+        Row: {
+          color: string | null
+          created_at: string
+          datacenter_location: string | null
+          host: string
+          id: string
+          is_primary: boolean | null
+          last_sync: string | null
+          last_sync_error: string | null
+          last_sync_status: string | null
+          name: string
+          password_encrypted: string | null
+          port: number
+          sync_enabled: boolean
+          sync_interval_minutes: number | null
+          updated_at: string
+          username: string
+          verify_ssl: boolean
+        }
+        Insert: {
+          color?: string | null
+          created_at?: string
+          datacenter_location?: string | null
+          host: string
+          id?: string
+          is_primary?: boolean | null
+          last_sync?: string | null
+          last_sync_error?: string | null
+          last_sync_status?: string | null
+          name: string
+          password_encrypted?: string | null
+          port?: number
+          sync_enabled?: boolean
+          sync_interval_minutes?: number | null
+          updated_at?: string
+          username: string
+          verify_ssl?: boolean
+        }
+        Update: {
+          color?: string | null
+          created_at?: string
+          datacenter_location?: string | null
+          host?: string
+          id?: string
+          is_primary?: boolean | null
+          last_sync?: string | null
+          last_sync_error?: string | null
+          last_sync_status?: string | null
+          name?: string
+          password_encrypted?: string | null
+          port?: number
+          sync_enabled?: boolean
+          sync_interval_minutes?: number | null
+          updated_at?: string
+          username?: string
+          verify_ssl?: boolean
+        }
+        Relationships: []
       }
       virtual_media_sessions: {
         Row: {
