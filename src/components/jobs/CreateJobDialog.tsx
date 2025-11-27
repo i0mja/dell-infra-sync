@@ -11,15 +11,13 @@ import { useAuth } from "@/hooks/useAuth";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Info } from "lucide-react";
-import { PreFlightCheckDialog } from "./PreFlightCheckDialog";
 
 interface CreateJobDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
-  preSelectedServerId?: string;
   quickScanIp?: string;
-  defaultJobType?: 'firmware_update' | 'discovery_scan' | 'full_server_update' | 'boot_configuration' | '';
+  defaultJobType?: 'discovery_scan' | '';
 }
 
 interface Server {
@@ -40,38 +38,24 @@ export const CreateJobDialog = ({
   open,
   onOpenChange,
   onSuccess,
-  preSelectedServerId,
   quickScanIp,
   defaultJobType = ''
 }: CreateJobDialogProps) => {
   const [loading, setLoading] = useState(false);
-  const [jobType, setJobType] = useState<'firmware_update' | 'discovery_scan' | 'full_server_update' | 'boot_configuration' | ''>("");
-  const [servers, setServers] = useState<Server[]>([]);
-  const [selectedServers, setSelectedServers] = useState<string[]>([]);
+  const [jobType, setJobType] = useState<'discovery_scan' | ''>("");
   const [scanRange, setScanRange] = useState("");
   const [scheduleAt, setScheduleAt] = useState("");
   const [notes, setNotes] = useState("");
-  const [firmwareUri, setFirmwareUri] = useState("");
-  const [component, setComponent] = useState("BIOS");
-  const [firmwareSource, setFirmwareSource] = useState<'manual' | 'dell_online' | 'dell_direct'>('manual');
-  const [dellCatalogUrl, setDellCatalogUrl] = useState('https://downloads.dell.com/catalog/Catalog.xml');
-  const [autoSelectLatest, setAutoSelectLatest] = useState(true);
   const [credentialSets, setCredentialSets] = useState<CredentialSet[]>([]);
   const [selectedCredentialSets, setSelectedCredentialSets] = useState<string[]>([]);
-  const [preFlightOpen, setPreFlightOpen] = useState(false);
-  const [preFlightServerId, setPreFlightServerId] = useState<string | null>(null);
   const { toast } = useToast();
   const { user } = useAuth();
 
   useEffect(() => {
     if (open) {
-      fetchServers();
       fetchCredentialSets();
-      // Pre-select server if provided
-      if (preSelectedServerId) {
-        setSelectedServers([preSelectedServerId]);
-        setJobType('firmware_update');
-      } else if (defaultJobType) {
+      // Set default job type if provided
+      if (defaultJobType) {
         setJobType(defaultJobType);
       }
       // Quick scan mode for discovery
@@ -83,16 +67,7 @@ export const CreateJobDialog = ({
       // Reset type so subsequent opens reflect latest defaults
       setJobType('');
     }
-  }, [open, preSelectedServerId, quickScanIp, defaultJobType]);
-
-  const fetchServers = async () => {
-    const { data } = await supabase
-      .from("servers")
-      .select("id, ip_address, hostname, model")
-      .order("ip_address");
-    
-    setServers(data || []);
-  };
+  }, [open, quickScanIp, defaultJobType]);
 
   const fetchCredentialSets = async () => {
     const { data } = await supabase
@@ -105,25 +80,6 @@ export const CreateJobDialog = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Check if any selected server has vCenter link for firmware updates
-    if (jobType === 'firmware_update' || jobType === 'full_server_update') {
-      const { data: serversData } = await supabase
-        .from('servers')
-        .select('id, vcenter_host_id')
-        .in('id', selectedServers);
-      
-      const vcenterLinkedServers = serversData?.filter(s => s.vcenter_host_id) || [];
-      
-      if (vcenterLinkedServers.length > 0) {
-        // Open pre-flight check for first vCenter-linked server
-        setPreFlightServerId(vcenterLinkedServers[0].id);
-        setPreFlightOpen(true);
-        return; // Don't proceed with job creation yet
-      }
-    }
-    
-    // Continue with job creation
     await createJob();
   };
 
@@ -134,30 +90,7 @@ export const CreateJobDialog = ({
       let target_scope: any = {};
       let details: any = { notes };
 
-      if (jobType === 'firmware_update' || jobType === 'full_server_update' || jobType === 'boot_configuration') {
-        if (selectedServers.length === 0) {
-          throw new Error('Please select at least one server');
-        }
-        target_scope = { server_ids: selectedServers };
-        details.firmware_uri = firmwareUri || undefined;
-        
-        // Only set component for single firmware updates
-        if (jobType === 'firmware_update') {
-          details.component = component;
-          details.version = "latest";
-          details.apply_time = "OnReset";
-        }
-        // Add firmware source information
-        if (jobType === 'firmware_update') {
-          details.firmware_source = firmwareSource === 'dell_online' ? 'dell_online_catalog' : 
-                                     firmwareSource === 'dell_direct' ? 'dell_direct_url' : 
-                                     'manual_repository';
-          if (firmwareSource === 'dell_online') {
-            details.dell_catalog_url = dellCatalogUrl;
-            details.auto_select_latest = autoSelectLatest;
-          }
-        }
-      } else if (jobType === 'discovery_scan') {
+      if (jobType === 'discovery_scan') {
         if (!scanRange) {
           throw new Error('Please enter an IP range to scan');
         }
@@ -168,12 +101,12 @@ export const CreateJobDialog = ({
 
       const { data: result, error } = await supabase.functions.invoke('create-job', {
         body: {
-          job_type: jobType as "firmware_update" | "discovery_scan" | "vcenter_sync" | "full_server_update",
+          job_type: jobType as "discovery_scan",
           created_by: user?.id,
           target_scope,
           details,
           schedule_at: scheduleAt || null,
-          credential_set_ids: jobType === 'discovery_scan' ? selectedCredentialSets : undefined,
+          credential_set_ids: selectedCredentialSets,
         }
       });
 
@@ -187,12 +120,9 @@ export const CreateJobDialog = ({
 
       // Reset form
       setJobType('');
-      setSelectedServers([]);
       setScanRange("");
       setScheduleAt("");
       setNotes("");
-      setFirmwareUri("");
-      setComponent("BIOS");
       setSelectedCredentialSets([]);
       onOpenChange(false);
       onSuccess();
@@ -207,21 +137,13 @@ export const CreateJobDialog = ({
     }
   };
 
-  const toggleServer = (serverId: string) => {
-    setSelectedServers(prev =>
-      prev.includes(serverId)
-        ? prev.filter(id => id !== serverId)
-        : [...prev, serverId]
-    );
-  };
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Create New Job</DialogTitle>
           <DialogDescription>
-            Configure and schedule a new job for firmware updates, server discovery, or vCenter synchronization.
+            Create a discovery scan job to find and inventory Dell servers on your network. For firmware updates and server configuration, use the dedicated dialogs from the Servers page.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -233,167 +155,15 @@ export const CreateJobDialog = ({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="discovery_scan">IP Discovery Scan</SelectItem>
-                <SelectItem value="boot_configuration">Boot Configuration</SelectItem>
-                <SelectItem value="virtual_media_mount">Virtual Media - Mount</SelectItem>
-                <SelectItem value="virtual_media_unmount">Virtual Media - Unmount</SelectItem>
-                <SelectItem value="scp_export">SCP Export (Backup)</SelectItem>
-                <SelectItem value="scp_import">SCP Import (Restore)</SelectItem>
-                <SelectItem value="bios_config_read">BIOS Config - Read/Snapshot</SelectItem>
-                <SelectItem value="bios_config_write">BIOS Config - Write/Apply</SelectItem>
               </SelectContent>
             </Select>
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertDescription>
+                For firmware updates, boot configuration, virtual media, SCP backups, and BIOS settings, use the dedicated dialogs available from the server context menus on the Servers page.
+              </AlertDescription>
+            </Alert>
           </div>
-
-          {(jobType === 'firmware_update' || jobType === 'full_server_update') && (
-            <>
-              <div className="space-y-2">
-                <Label>Target Servers * ({selectedServers.length} selected)</Label>
-                <div className="border rounded-lg p-4 max-h-64 overflow-y-auto space-y-2">
-                  {servers.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No servers available</p>
-                  ) : (
-                    servers.map((server) => (
-                      <div key={server.id} className="flex items-center space-x-2">
-                        <Checkbox
-                          id={server.id}
-                          checked={selectedServers.includes(server.id)}
-                          onCheckedChange={() => toggleServer(server.id)}
-                        />
-                        <label
-                          htmlFor={server.id}
-                          className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                        >
-                          {server.hostname || server.ip_address} ({server.model || 'Unknown model'})
-                        </label>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {jobType === 'firmware_update' && (
-                <>
-                  <div className="space-y-2">
-                    <Label htmlFor="component">Component *</Label>
-                    <Select value={component} onValueChange={setComponent} required>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="BIOS">BIOS</SelectItem>
-                        <SelectItem value="iDRAC">iDRAC</SelectItem>
-                        <SelectItem value="NIC">Network Card</SelectItem>
-                        <SelectItem value="RAID">RAID Controller</SelectItem>
-                        <SelectItem value="PSU">Power Supply</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Firmware Source *</Label>
-                    <Select value={firmwareSource} onValueChange={(value) => setFirmwareSource(value as any)}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="manual">
-                          <div className="space-y-0.5">
-                            <div className="font-medium">Manual Repository</div>
-                            <div className="text-xs text-muted-foreground">Local HTTP server (offline)</div>
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="dell_online">
-                          <div className="space-y-0.5">
-                            <div className="font-medium">Dell Online Catalog</div>
-                            <div className="text-xs text-muted-foreground">downloads.dell.com (internet required)</div>
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="dell_direct">
-                          <div className="space-y-0.5">
-                            <div className="font-medium">Dell Direct URL</div>
-                            <div className="text-xs text-muted-foreground">Specific Dell download link</div>
-                          </div>
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {firmwareSource === 'manual' && (
-                    <div className="space-y-2">
-                      <Label htmlFor="firmware_uri">Firmware URI *</Label>
-                      <Input
-                        id="firmware_uri"
-                        placeholder="http://firmware.example.com/dell/BIOS_R740_2.9.0.exe"
-                        value={firmwareUri}
-                        onChange={(e) => setFirmwareUri(e.target.value)}
-                        required
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Full URL to firmware package (.exe)
-                      </p>
-                    </div>
-                  )}
-
-                  {firmwareSource === 'dell_online' && (
-                    <>
-                      <div className="space-y-2">
-                        <Label htmlFor="dell_catalog_url">Dell Catalog URL</Label>
-                        <Input
-                          id="dell_catalog_url"
-                          value={dellCatalogUrl}
-                          onChange={(e) => setDellCatalogUrl(e.target.value)}
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Default works for most scenarios
-                        </p>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Checkbox
-                          id="auto_latest"
-                          checked={autoSelectLatest}
-                          onCheckedChange={(checked) => setAutoSelectLatest(checked as boolean)}
-                        />
-                        <label htmlFor="auto_latest" className="text-sm cursor-pointer">
-                          Automatically install latest available firmware
-                        </label>
-                      </div>
-                      <Alert>
-                        <Info className="h-4 w-4" />
-                        <AlertDescription>
-                          iDRAC will query Dell's catalog and download the latest firmware. Server must have internet connectivity.
-                        </AlertDescription>
-                      </Alert>
-                    </>
-                  )}
-
-                  {firmwareSource === 'dell_direct' && (
-                    <div className="space-y-2">
-                      <Label htmlFor="firmware_uri">Dell Download URL *</Label>
-                      <Input
-                        id="firmware_uri"
-                        placeholder="https://downloads.dell.com/FOLDER09876543M/1/BIOS_ABC12.exe"
-                        value={firmwareUri}
-                        onChange={(e) => setFirmwareUri(e.target.value)}
-                        required
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Direct URL from Dell support downloads
-                      </p>
-                    </div>
-                  )}
-                </>
-              )}
-
-              {jobType === 'full_server_update' && (
-                <Alert>
-                  <Info className="h-4 w-4" />
-                  <AlertDescription>
-                    Full server update will update all components (BIOS, iDRAC, NIC, RAID) to their latest versions.
-                  </AlertDescription>
-                </Alert>
-              )}
-            </>
-          )}
 
           {jobType === 'discovery_scan' && (
             <>
@@ -499,14 +269,6 @@ export const CreateJobDialog = ({
           </div>
         </form>
       </DialogContent>
-      
-      <PreFlightCheckDialog
-        open={preFlightOpen}
-        onOpenChange={setPreFlightOpen}
-        onProceed={createJob}
-        serverId={preFlightServerId || ''}
-        jobType={jobType as 'firmware_update' | 'full_server_update'}
-      />
     </Dialog>
   );
 };
