@@ -29,9 +29,7 @@ import {
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import type { Server } from "@/hooks/useServers";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { useState } from "react";
 
 interface GroupData {
   name: string;
@@ -87,33 +85,14 @@ export function ServerDetailsSidebar({
   onAssignCredentials,
   onCreateJob,
 }: ServerDetailsSidebarProps) {
-  const [launchingConsole, setLaunchingConsole] = useState(false);
-
   const handleLaunchConsole = async () => {
     if (!selectedServer) return;
     
-    setLaunchingConsole(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('launch-idrac-console', {
-        body: { server_id: selectedServer.id }
-      });
-
-      if (error) throw error;
-
-      if (data?.console_url) {
-        window.open(data.console_url, '_blank', 'noopener,noreferrer');
-        toast.success('Console launched in new tab');
-      } else {
-        throw new Error('No console URL returned');
-      }
-    } catch (error) {
-      console.error('Error launching console:', error);
-      toast.error('Failed to launch console', {
-        description: error instanceof Error ? error.message : 'Check server credentials and connectivity'
-      });
-    } finally {
-      setLaunchingConsole(false);
-    }
+    // For offline-first architecture, open iDRAC console directly
+    // User will authenticate via iDRAC's web interface
+    const consoleUrl = `https://${selectedServer.ip_address}/#/serverConsole`;
+    window.open(consoleUrl, '_blank', 'noopener,noreferrer');
+    toast.success('iDRAC console opened in new tab');
   };
 
   // Server Details View
@@ -292,14 +271,9 @@ export function ServerDetailsSidebar({
               size="sm"
               className="w-full"
               onClick={handleLaunchConsole}
-              disabled={launchingConsole}
             >
-              {launchingConsole ? (
-                <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-              ) : (
-                <Monitor className="mr-2 h-3 w-3" />
-              )}
-              {launchingConsole ? 'Launching...' : 'Launch Console'}
+              <Monitor className="mr-2 h-3 w-3" />
+              Launch Console
             </Button>
           </div>
 
