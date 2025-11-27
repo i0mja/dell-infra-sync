@@ -1763,6 +1763,162 @@ export type Database = {
           },
         ]
       }
+      vcenter_alarms: {
+        Row: {
+          acknowledged: boolean | null
+          alarm_key: string
+          alarm_name: string | null
+          alarm_status: string | null
+          created_at: string | null
+          description: string | null
+          entity_id: string | null
+          entity_name: string | null
+          entity_type: string | null
+          id: string
+          triggered_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          acknowledged?: boolean | null
+          alarm_key: string
+          alarm_name?: string | null
+          alarm_status?: string | null
+          created_at?: string | null
+          description?: string | null
+          entity_id?: string | null
+          entity_name?: string | null
+          entity_type?: string | null
+          id?: string
+          triggered_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          acknowledged?: boolean | null
+          alarm_key?: string
+          alarm_name?: string | null
+          alarm_status?: string | null
+          created_at?: string | null
+          description?: string | null
+          entity_id?: string | null
+          entity_name?: string | null
+          entity_type?: string | null
+          id?: string
+          triggered_at?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      vcenter_clusters: {
+        Row: {
+          cluster_name: string
+          created_at: string | null
+          drs_automation_level: string | null
+          drs_enabled: boolean | null
+          ha_enabled: boolean | null
+          host_count: number | null
+          id: string
+          last_sync: string | null
+          overall_status: string | null
+          total_cpu_mhz: number | null
+          total_memory_bytes: number | null
+          total_storage_bytes: number | null
+          updated_at: string | null
+          used_cpu_mhz: number | null
+          used_memory_bytes: number | null
+          used_storage_bytes: number | null
+          vcenter_id: string | null
+          vm_count: number | null
+        }
+        Insert: {
+          cluster_name: string
+          created_at?: string | null
+          drs_automation_level?: string | null
+          drs_enabled?: boolean | null
+          ha_enabled?: boolean | null
+          host_count?: number | null
+          id?: string
+          last_sync?: string | null
+          overall_status?: string | null
+          total_cpu_mhz?: number | null
+          total_memory_bytes?: number | null
+          total_storage_bytes?: number | null
+          updated_at?: string | null
+          used_cpu_mhz?: number | null
+          used_memory_bytes?: number | null
+          used_storage_bytes?: number | null
+          vcenter_id?: string | null
+          vm_count?: number | null
+        }
+        Update: {
+          cluster_name?: string
+          created_at?: string | null
+          drs_automation_level?: string | null
+          drs_enabled?: boolean | null
+          ha_enabled?: boolean | null
+          host_count?: number | null
+          id?: string
+          last_sync?: string | null
+          overall_status?: string | null
+          total_cpu_mhz?: number | null
+          total_memory_bytes?: number | null
+          total_storage_bytes?: number | null
+          updated_at?: string | null
+          used_cpu_mhz?: number | null
+          used_memory_bytes?: number | null
+          used_storage_bytes?: number | null
+          vcenter_id?: string | null
+          vm_count?: number | null
+        }
+        Relationships: []
+      }
+      vcenter_datastores: {
+        Row: {
+          accessible: boolean | null
+          capacity_bytes: number | null
+          created_at: string | null
+          free_bytes: number | null
+          host_count: number | null
+          id: string
+          last_sync: string | null
+          maintenance_mode: string | null
+          name: string
+          type: string | null
+          updated_at: string | null
+          vcenter_id: string | null
+          vm_count: number | null
+        }
+        Insert: {
+          accessible?: boolean | null
+          capacity_bytes?: number | null
+          created_at?: string | null
+          free_bytes?: number | null
+          host_count?: number | null
+          id?: string
+          last_sync?: string | null
+          maintenance_mode?: string | null
+          name: string
+          type?: string | null
+          updated_at?: string | null
+          vcenter_id?: string | null
+          vm_count?: number | null
+        }
+        Update: {
+          accessible?: boolean | null
+          capacity_bytes?: number | null
+          created_at?: string | null
+          free_bytes?: number | null
+          host_count?: number | null
+          id?: string
+          last_sync?: string | null
+          maintenance_mode?: string | null
+          name?: string
+          type?: string | null
+          updated_at?: string | null
+          vcenter_id?: string | null
+          vm_count?: number | null
+        }
+        Relationships: []
+      }
       vcenter_hosts: {
         Row: {
           cluster: string | null
@@ -1854,6 +2010,77 @@ export type Database = {
           verify_ssl?: boolean
         }
         Relationships: []
+      }
+      vcenter_vms: {
+        Row: {
+          cluster_name: string | null
+          cpu_count: number | null
+          created_at: string | null
+          disk_gb: number | null
+          guest_os: string | null
+          host_id: string | null
+          id: string
+          ip_address: string | null
+          last_sync: string | null
+          memory_mb: number | null
+          name: string
+          notes: string | null
+          overall_status: string | null
+          power_state: string | null
+          tools_status: string | null
+          tools_version: string | null
+          updated_at: string | null
+          vcenter_id: string | null
+        }
+        Insert: {
+          cluster_name?: string | null
+          cpu_count?: number | null
+          created_at?: string | null
+          disk_gb?: number | null
+          guest_os?: string | null
+          host_id?: string | null
+          id?: string
+          ip_address?: string | null
+          last_sync?: string | null
+          memory_mb?: number | null
+          name: string
+          notes?: string | null
+          overall_status?: string | null
+          power_state?: string | null
+          tools_status?: string | null
+          tools_version?: string | null
+          updated_at?: string | null
+          vcenter_id?: string | null
+        }
+        Update: {
+          cluster_name?: string | null
+          cpu_count?: number | null
+          created_at?: string | null
+          disk_gb?: number | null
+          guest_os?: string | null
+          host_id?: string | null
+          id?: string
+          ip_address?: string | null
+          last_sync?: string | null
+          memory_mb?: number | null
+          name?: string
+          notes?: string | null
+          overall_status?: string | null
+          power_state?: string | null
+          tools_status?: string | null
+          tools_version?: string | null
+          updated_at?: string | null
+          vcenter_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vcenter_vms_host_id_fkey"
+            columns: ["host_id"]
+            isOneToOne: false
+            referencedRelation: "vcenter_hosts"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       virtual_media_sessions: {
         Row: {

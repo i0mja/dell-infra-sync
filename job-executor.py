@@ -2143,8 +2143,23 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             if not vc:
                 raise Exception("Failed to connect to vCenter")
             
-            # Get all ESXi hosts
+            # Get vCenter content for all syncs
             content = vc.RetrieveContent()
+            
+            # Sync all vCenter entities
+            self.log("Syncing clusters...")
+            clusters_result = self.sync_vcenter_clusters(content)
+            
+            self.log("Syncing datastores...")
+            datastores_result = self.sync_vcenter_datastores(content)
+            
+            self.log("Syncing VMs...")
+            vms_result = self.sync_vcenter_vms(content)
+            
+            self.log("Syncing alarms...")
+            alarms_result = self.sync_vcenter_alarms(content)
+            
+            # Get all ESXi hosts
             container = content.viewManager.CreateContainerView(
                 content.rootFolder, [vim.HostSystem], True
             )
@@ -2302,10 +2317,14 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 'hosts_new': hosts_new,
                 'hosts_updated': hosts_updated,
                 'hosts_linked': hosts_linked,
+                'clusters_synced': clusters_result.get('synced', 0),
+                'vms_synced': vms_result.get('synced', 0),
+                'datastores_synced': datastores_result.get('synced', 0),
+                'alarms_synced': alarms_result.get('synced', 0),
                 'errors': errors
             }
             
-            self.log(f"vCenter sync completed: {hosts_new} new, {hosts_updated} updated, {hosts_linked} linked")
+            self.log(f"vCenter sync completed: {hosts_new} new, {hosts_updated} updated, {hosts_linked} linked, {clusters_result.get('synced', 0)} clusters, {vms_result.get('synced', 0)} VMs, {datastores_result.get('synced', 0)} datastores")
             
             self.update_job_status(
                 job['id'],
@@ -2337,6 +2356,280 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 completed_at=datetime.now().isoformat(),
                 details={'error': str(e)}
             )
+
+    def sync_vcenter_clusters(self, content) -> Dict:
+        """Sync cluster statistics from vCenter"""
+        try:
+            container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.ClusterComputeResource], True
+            )
+            
+            synced = 0
+            for cluster in container.view:
+                try:
+                    summary = cluster.summary
+                    config = cluster.configuration.dasConfig if hasattr(cluster, 'configuration') else None
+                    drs_config = cluster.configuration.drsConfig if hasattr(cluster, 'configuration') else None
+                    
+                    cluster_data = {
+                        'cluster_name': cluster.name,
+                        'vcenter_id': str(cluster._moId),
+                        'total_cpu_mhz': summary.totalCpu if hasattr(summary, 'totalCpu') else None,
+                        'used_cpu_mhz': summary.totalCpu - summary.effectiveCpu if hasattr(summary, 'totalCpu') and hasattr(summary, 'effectiveCpu') else None,
+                        'total_memory_bytes': summary.totalMemory if hasattr(summary, 'totalMemory') else None,
+                        'used_memory_bytes': summary.totalMemory - summary.effectiveMemory if hasattr(summary, 'totalMemory') and hasattr(summary, 'effectiveMemory') else None,
+                        'host_count': summary.numHosts if hasattr(summary, 'numHosts') else 0,
+                        'vm_count': summary.numVms if hasattr(summary, 'numVms') else 0,
+                        'ha_enabled': config.enabled if config else False,
+                        'drs_enabled': drs_config.enabled if drs_config else False,
+                        'drs_automation_level': str(drs_config.defaultVmBehavior) if drs_config and hasattr(drs_config, 'defaultVmBehavior') else None,
+                        'overall_status': str(summary.overallStatus) if hasattr(summary, 'overallStatus') else 'unknown',
+                        'last_sync': datetime.now().isoformat()
+                    }
+                    
+                    # Upsert cluster
+                    response = requests.post(
+                        f"{DSM_URL}/rest/v1/vcenter_clusters",
+                        headers={
+                            'apikey': SERVICE_ROLE_KEY,
+                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                            'Content-Type': 'application/json',
+                            'Prefer': 'resolution=merge-duplicates'
+                        },
+                        json=cluster_data,
+                        verify=VERIFY_SSL
+                    )
+                    
+                    if response.status_code in [200, 201]:
+                        synced += 1
+                        self.log(f"  Synced cluster: {cluster.name}")
+                    
+                except Exception as e:
+                    self.log(f"  Error syncing cluster {cluster.name}: {e}", "WARNING")
+            
+            container.Destroy()
+            return {'synced': synced}
+            
+        except Exception as e:
+            self.log(f"Failed to sync clusters: {e}", "ERROR")
+            return {'synced': 0, 'error': str(e)}
+
+    def sync_vcenter_vms(self, content) -> Dict:
+        """Sync VM inventory from vCenter"""
+        try:
+            container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.VirtualMachine], True
+            )
+            
+            synced = 0
+            for vm in container.view:
+                try:
+                    config = vm.summary.config if hasattr(vm.summary, 'config') else None
+                    runtime = vm.summary.runtime if hasattr(vm.summary, 'runtime') else None
+                    guest = vm.summary.guest if hasattr(vm.summary, 'guest') else None
+                    storage = vm.summary.storage if hasattr(vm.summary, 'storage') else None
+                    
+                    # Get host_id from vcenter_hosts table
+                    host_id = None
+                    if runtime and runtime.host:
+                        host_response = requests.get(
+                            f"{DSM_URL}/rest/v1/vcenter_hosts?select=id&name=eq.{runtime.host.name}",
+                            headers={
+                                'apikey': SERVICE_ROLE_KEY,
+                                'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                            },
+                            verify=VERIFY_SSL
+                        )
+                        if host_response.status_code == 200:
+                            hosts = _safe_json_parse(host_response)
+                            if hosts:
+                                host_id = hosts[0]['id']
+                    
+                    # Get cluster name
+                    cluster_name = None
+                    if runtime and runtime.host and runtime.host.parent and isinstance(runtime.host.parent, vim.ClusterComputeResource):
+                        cluster_name = runtime.host.parent.name
+                    
+                    vm_data = {
+                        'name': config.name if config else vm.name,
+                        'vcenter_id': str(vm._moId),
+                        'host_id': host_id,
+                        'cluster_name': cluster_name,
+                        'power_state': str(runtime.powerState) if runtime else 'unknown',
+                        'guest_os': config.guestFullName if config and hasattr(config, 'guestFullName') else None,
+                        'cpu_count': config.numCpu if config and hasattr(config, 'numCpu') else None,
+                        'memory_mb': config.memorySizeMB if config and hasattr(config, 'memorySizeMB') else None,
+                        'disk_gb': round(storage.committed / (1024**3), 2) if storage and hasattr(storage, 'committed') else None,
+                        'ip_address': guest.ipAddress if guest and hasattr(guest, 'ipAddress') else None,
+                        'tools_status': str(guest.toolsStatus) if guest and hasattr(guest, 'toolsStatus') else None,
+                        'tools_version': guest.toolsVersion if guest and hasattr(guest, 'toolsVersion') else None,
+                        'overall_status': str(vm.summary.overallStatus) if hasattr(vm.summary, 'overallStatus') else 'unknown',
+                        'last_sync': datetime.now().isoformat()
+                    }
+                    
+                    # Upsert VM
+                    response = requests.post(
+                        f"{DSM_URL}/rest/v1/vcenter_vms",
+                        headers={
+                            'apikey': SERVICE_ROLE_KEY,
+                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                            'Content-Type': 'application/json',
+                            'Prefer': 'resolution=merge-duplicates'
+                        },
+                        json=vm_data,
+                        verify=VERIFY_SSL
+                    )
+                    
+                    if response.status_code in [200, 201]:
+                        synced += 1
+                    
+                except Exception as e:
+                    self.log(f"  Error syncing VM {vm.name}: {e}", "WARNING")
+            
+            container.Destroy()
+            self.log(f"  Synced {synced} VMs")
+            return {'synced': synced}
+            
+        except Exception as e:
+            self.log(f"Failed to sync VMs: {e}", "ERROR")
+            return {'synced': 0, 'error': str(e)}
+
+    def sync_vcenter_datastores(self, content) -> Dict:
+        """Sync datastore information from vCenter"""
+        try:
+            container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.Datastore], True
+            )
+            
+            synced = 0
+            for ds in container.view:
+                try:
+                    summary = ds.summary
+                    
+                    datastore_data = {
+                        'name': summary.name,
+                        'vcenter_id': str(ds._moId),
+                        'type': summary.type if hasattr(summary, 'type') else None,
+                        'capacity_bytes': summary.capacity if hasattr(summary, 'capacity') else None,
+                        'free_bytes': summary.freeSpace if hasattr(summary, 'freeSpace') else None,
+                        'accessible': summary.accessible if hasattr(summary, 'accessible') else True,
+                        'maintenance_mode': summary.maintenanceMode if hasattr(summary, 'maintenanceMode') else None,
+                        'vm_count': len(ds.vm) if hasattr(ds, 'vm') else 0,
+                        'host_count': len(ds.host) if hasattr(ds, 'host') else 0,
+                        'last_sync': datetime.now().isoformat()
+                    }
+                    
+                    # Upsert datastore
+                    response = requests.post(
+                        f"{DSM_URL}/rest/v1/vcenter_datastores",
+                        headers={
+                            'apikey': SERVICE_ROLE_KEY,
+                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                            'Content-Type': 'application/json',
+                            'Prefer': 'resolution=merge-duplicates'
+                        },
+                        json=datastore_data,
+                        verify=VERIFY_SSL
+                    )
+                    
+                    if response.status_code in [200, 201]:
+                        synced += 1
+                    
+                except Exception as e:
+                    self.log(f"  Error syncing datastore {ds.name}: {e}", "WARNING")
+            
+            container.Destroy()
+            self.log(f"  Synced {synced} datastores")
+            return {'synced': synced}
+            
+        except Exception as e:
+            self.log(f"Failed to sync datastores: {e}", "ERROR")
+            return {'synced': 0, 'error': str(e)}
+
+    def sync_vcenter_alarms(self, content) -> Dict:
+        """Sync active alarms from vCenter"""
+        try:
+            alarm_manager = content.alarmManager
+            if not alarm_manager:
+                return {'synced': 0}
+            
+            # Clear old alarms first
+            requests.delete(
+                f"{DSM_URL}/rest/v1/vcenter_alarms",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL
+            )
+            
+            synced = 0
+            
+            # Get triggered alarms from all entities
+            container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.ManagedEntity], True
+            )
+            
+            for entity in container.view:
+                try:
+                    if hasattr(entity, 'triggeredAlarmState'):
+                        for alarm_state in entity.triggeredAlarmState:
+                            try:
+                                alarm = alarm_state.alarm
+                                alarm_info = alarm.info if hasattr(alarm, 'info') else None
+                                
+                                # Determine entity type
+                                entity_type = 'unknown'
+                                if isinstance(entity, vim.HostSystem):
+                                    entity_type = 'host'
+                                elif isinstance(entity, vim.VirtualMachine):
+                                    entity_type = 'vm'
+                                elif isinstance(entity, vim.ClusterComputeResource):
+                                    entity_type = 'cluster'
+                                elif isinstance(entity, vim.Datastore):
+                                    entity_type = 'datastore'
+                                
+                                alarm_data = {
+                                    'alarm_key': alarm_state.key,
+                                    'entity_type': entity_type,
+                                    'entity_name': entity.name,
+                                    'entity_id': str(entity._moId),
+                                    'alarm_name': alarm_info.name if alarm_info else 'Unknown',
+                                    'alarm_status': str(alarm_state.overallStatus),
+                                    'acknowledged': alarm_state.acknowledged,
+                                    'triggered_at': alarm_state.time.isoformat() if hasattr(alarm_state, 'time') else datetime.now().isoformat(),
+                                    'description': alarm_info.description if alarm_info and hasattr(alarm_info, 'description') else None
+                                }
+                                
+                                # Insert alarm
+                                response = requests.post(
+                                    f"{DSM_URL}/rest/v1/vcenter_alarms",
+                                    headers={
+                                        'apikey': SERVICE_ROLE_KEY,
+                                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                        'Content-Type': 'application/json',
+                                        'Prefer': 'resolution=merge-duplicates'
+                                    },
+                                    json=alarm_data,
+                                    verify=VERIFY_SSL
+                                )
+                                
+                                if response.status_code in [200, 201]:
+                                    synced += 1
+                                    
+                            except Exception as e:
+                                self.log(f"  Error processing alarm: {e}", "WARNING")
+                                
+                except Exception as e:
+                    continue
+            
+            container.Destroy()
+            self.log(f"  Synced {synced} active alarms")
+            return {'synced': synced}
+            
+        except Exception as e:
+            self.log(f"Failed to sync alarms: {e}", "ERROR")
+            return {'synced': 0, 'error': str(e)}
 
     def create_idrac_session(self, ip: str, username: str, password: str, log_to_db: bool = False,
                             server_id: str = None, job_id: str = None) -> Optional[str]:
