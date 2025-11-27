@@ -9,7 +9,7 @@ import { OperationsTable } from "@/components/maintenance/OperationsTable";
 import { DetailsSidebar } from "@/components/maintenance/DetailsSidebar";
 import { ClusterSafetyTrendChart } from "@/components/maintenance/ClusterSafetyTrendChart";
 import { ScheduleMaintenanceDialog } from "@/components/maintenance/dialogs/ScheduleMaintenanceDialog";
-import { CreateJobDialog } from "@/components/jobs/CreateJobDialog";
+
 import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
 import { ServerUpdateWizard } from "@/components/jobs/ServerUpdateWizard";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -67,7 +67,7 @@ export default function MaintenancePlanner() {
   const [selectedOperation, setSelectedOperation] = useState<Operation | null>(null);
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
   const [schedulePrefill, setSchedulePrefill] = useState<SchedulePrefill>();
-  const [createJobDialogOpen, setCreateJobDialogOpen] = useState(false);
+  
   const [selectedJob, setSelectedJob] = useState<any>(null);
   const [jobDetailDialogOpen, setJobDetailDialogOpen] = useState(false);
   const [trendChartOpen, setTrendChartOpen] = useState(false);
@@ -231,12 +231,8 @@ export default function MaintenancePlanner() {
   };
 
   const handleCreateOperation = (type: 'job' | 'maintenance') => {
-    if (type === 'job') {
-      setCreateJobDialogOpen(true);
-    } else {
-      setSchedulePrefill(undefined);
-      setScheduleDialogOpen(true);
-    }
+    setSchedulePrefill(undefined);
+    setScheduleDialogOpen(true);
   };
 
   const handleScheduleOptimal = (window: { start: string; end: string; affected_clusters: string[] }) => {
@@ -257,7 +253,7 @@ export default function MaintenancePlanner() {
         nextWindow={nextWindow ? { title: nextWindow.title, start: nextWindow.planned_start } : undefined}
         optimalCount={optimalWindows.length}
         onScheduleMaintenance={() => handleCreateOperation('maintenance')}
-        onCreateJob={() => handleCreateOperation('job')}
+        onCreateJob={() => handleCreateOperation('maintenance')}
         onUpdateWizard={() => setUpdateWizardOpen(true)}
       />
 
@@ -334,12 +330,6 @@ export default function MaintenancePlanner() {
         clusters={clusters}
         serverGroups={serverGroups}
         prefilledData={schedulePrefill}
-        onSuccess={refetchData}
-      />
-
-      <CreateJobDialog
-        open={createJobDialogOpen}
-        onOpenChange={setCreateJobDialogOpen}
         onSuccess={refetchData}
       />
 

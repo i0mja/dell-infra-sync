@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { CreateJobDialog } from "@/components/jobs/CreateJobDialog";
+
 import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
 import {
   ContextMenu,
@@ -22,9 +22,9 @@ import {
   Clock,
   FileText,
   PlayCircle,
-  Plus,
   RefreshCw,
   RotateCcw,
+  Search,
   Settings,
   XCircle,
   Calendar,
@@ -84,7 +84,7 @@ type JobView = keyof typeof viewMetadata;
 export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
-  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  
   const [updateWizardOpen, setUpdateWizardOpen] = useState(false);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
@@ -383,9 +383,15 @@ export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) =>
               {currentView.description}
             </p>
             <div className="flex gap-2">
-              <Button onClick={() => setCreateDialogOpen(true)}>
-                <Plus className="mr-2 h-4 w-4" />
-                Create Job
+              <Button onClick={() => setUpdateWizardOpen(true)}>
+                <Zap className="mr-2 h-4 w-4" />
+                Firmware Update
+              </Button>
+              <Button variant="outline" asChild>
+                <Link to="/servers">
+                  <Search className="mr-2 h-4 w-4" />
+                  Discovery Scan
+                </Link>
               </Button>
               <Button variant="outline" asChild>
                 <Link to="/settings?tab=jobs">
@@ -580,9 +586,11 @@ export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) =>
             <Zap className="mr-2 h-4 w-4" />
             Firmware Update
           </Button>
-          <Button variant="outline" onClick={() => setCreateDialogOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Create Job
+          <Button variant="outline" asChild>
+            <Link to="/servers">
+              <Search className="mr-2 h-4 w-4" />
+              Discovery Scan
+            </Link>
           </Button>
         </div>
       </div>
@@ -683,12 +691,6 @@ export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) =>
           {renderJobsList()}
         </TabsContent>
       </Tabs>
-
-      <CreateJobDialog
-        open={createDialogOpen}
-        onOpenChange={setCreateDialogOpen}
-        onSuccess={fetchJobs}
-      />
 
       <ServerUpdateWizard
         open={updateWizardOpen}

@@ -20,7 +20,7 @@ import { ServerHealthDialog } from "@/components/servers/ServerHealthDialog";
 import { EventLogDialog } from "@/components/servers/EventLogDialog";
 import { LinkVCenterDialog } from "@/components/servers/LinkVCenterDialog";
 import { AssignCredentialsDialog } from "@/components/servers/AssignCredentialsDialog";
-import { CreateJobDialog } from "@/components/jobs/CreateJobDialog";
+import { DiscoveryScanDialog } from "@/components/servers/DiscoveryScanDialog";
 import { WorkflowJobDialog } from "@/components/jobs/WorkflowJobDialog";
 import { ServerUpdateWizard } from "@/components/jobs/ServerUpdateWizard";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -54,7 +54,7 @@ export default function Servers() {
   const [eventLogDialogOpen, setEventLogDialogOpen] = useState(false);
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [assignCredentialsDialogOpen, setAssignCredentialsDialogOpen] = useState(false);
-  const [jobDialogOpen, setJobDialogOpen] = useState(false);
+  const [discoveryScanOpen, setDiscoveryScanOpen] = useState(false);
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
   const [updateWizardOpen, setUpdateWizardOpen] = useState(false);
 
@@ -98,11 +98,7 @@ export default function Servers() {
   };
 
   const handleDiscovery = () => {
-    toast({
-      title: "Discovery scan",
-      description: "Use Create Job dialog to start a discovery scan",
-    });
-    setJobDialogOpen(true);
+    setDiscoveryScanOpen(true);
   };
 
   const confirmDelete = async () => {
@@ -261,7 +257,7 @@ export default function Servers() {
               }}
               onCreateJob={(server) => {
                 setSelectedServer(server);
-                setJobDialogOpen(true);
+                setDiscoveryScanOpen(true);
               }}
             />
           </div>
@@ -352,11 +348,11 @@ export default function Servers() {
             onSuccess={refetch}
           />
 
-          <CreateJobDialog
-            open={jobDialogOpen}
-            onOpenChange={setJobDialogOpen}
-            onSuccess={refetch}
-          />
+      <DiscoveryScanDialog
+        open={discoveryScanOpen}
+        onOpenChange={setDiscoveryScanOpen}
+        onSuccess={refetch}
+      />
 
           <WorkflowJobDialog
             open={workflowDialogOpen}
