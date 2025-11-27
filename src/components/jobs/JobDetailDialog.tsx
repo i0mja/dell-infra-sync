@@ -56,23 +56,9 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
   const [idracCommands, setIdracCommands] = useState<IdracCommand[]>([]);
   const [idracLoading, setIdracLoading] = useState(false);
 
-  // Early return if no job selected
-  if (!job) {
-    return (
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Job Details</DialogTitle>
-          </DialogHeader>
-          <p className="text-muted-foreground">No job selected</p>
-        </DialogContent>
-      </Dialog>
-    );
-  }
-
-  // Check if this is a workflow job type
+  // Check if this is a workflow job type (safe even when job is null)
   const workflowJobTypes = ['prepare_host_for_update', 'verify_host_after_update', 'rolling_cluster_update'];
-  const isWorkflowJob = workflowJobTypes.includes(job.job_type);
+  const isWorkflowJob = job ? workflowJobTypes.includes(job.job_type) : false;
 
   useEffect(() => {
     if (!open || !job || isWorkflowJob) return;
@@ -113,6 +99,19 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
     };
   }, [open, job, isWorkflowJob]);
 
+  // Early return if no job selected (after all hooks)
+  if (!job) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Job Details</DialogTitle>
+          </DialogHeader>
+          <p className="text-muted-foreground">No job selected</p>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   const fetchSubJobs = async () => {
     if (!job) return;
