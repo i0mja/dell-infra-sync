@@ -15,6 +15,8 @@ interface ConsoleLaunchDialogProps {
 interface JobDetails {
   console_url?: string;
   error?: string;
+  requires_login?: boolean;
+  message?: string;
 }
 
 export function ConsoleLaunchDialog({ open, onOpenChange, jobId }: ConsoleLaunchDialogProps) {
@@ -50,6 +52,10 @@ export function ConsoleLaunchDialog({ open, onOpenChange, jobId }: ConsoleLaunch
         if (url) {
           setConsoleUrl(url);
           setStatus('ready');
+          // Store message for iDRAC8 fallback
+          if (details.message) {
+            setError(details.message);
+          }
           clearInterval(pollInterval);
         } else {
           setStatus('error');
@@ -107,6 +113,14 @@ export function ConsoleLaunchDialog({ open, onOpenChange, jobId }: ConsoleLaunch
                 </AlertDescription>
               </Alert>
 
+              {error && (
+                <Alert className="bg-blue-50 border-blue-200 dark:bg-blue-950 dark:border-blue-800">
+                  <AlertDescription className="text-blue-800 dark:text-blue-200">
+                    {error}
+                  </AlertDescription>
+                </Alert>
+              )}
+
               <Button 
                 onClick={handleOpenConsole}
                 className="w-full"
@@ -117,7 +131,7 @@ export function ConsoleLaunchDialog({ open, onOpenChange, jobId }: ConsoleLaunch
               </Button>
 
               <p className="text-xs text-muted-foreground text-center">
-                The console will open with automatic authentication
+                {error ? 'Console will open - login with your iDRAC credentials' : 'The console will open with automatic authentication'}
               </p>
             </>
           )}

@@ -43,12 +43,10 @@ class DellOperations:
         user_id: str = None
     ) -> Dict[str, Any]:
         """
-        Get KVM console launch information using Dell's official Redfish endpoint.
+        Get KVM console launch information with iDRAC version detection.
         
-        Dell endpoint: POST /redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DelliDRACCardService/Actions/DelliDRACCardService.GetKVMLaunchInfo
-        
-        This returns a session key and URL for launching the HTML5 virtual console
-        with SSO (single sign-on) authentication.
+        - iDRAC9+ (firmware 3.x+): Uses GetKVMLaunchInfo endpoint with SSO
+        - iDRAC8 (firmware 2.x): Fallback to direct console URL with manual login
         
         Args:
             ip: iDRAC IP address
@@ -59,12 +57,60 @@ class DellOperations:
             user_id: Optional user ID for logging
             
         Returns:
-            dict: Contains console_url and session_type
+            dict: Contains console_url, session_type, and optionally requires_login
             
         Raises:
             DellRedfishError: On API errors
         """
-        # Call Dell's KVM launch endpoint
+        # Check iDRAC version
+        try:
+            manager_info = self.adapter.make_request(
+                method='GET',
+                ip=ip,
+                endpoint='/redfish/v1/Managers/iDRAC.Embedded.1',
+                username=username,
+                password=password,
+                operation_name='Get Manager Info',
+                job_id=job_id,
+                server_id=server_id,
+                user_id=user_id
+            )
+            
+            firmware = manager_info.get('FirmwareVersion', '')
+            
+            # iDRAC9+ firmware starts with 3.x, 4.x, 5.x, 6.x, 7.x
+            # iDRAC8 firmware starts with 2.x
+            is_idrac9_plus = firmware and firmware[0].isdigit() and int(firmware[0]) >= 3
+            
+            if is_idrac9_plus:
+                # Use GetKVMLaunchInfo for iDRAC9+ with SSO
+                return self._get_kvm_idrac9(ip, username, password, server_id, job_id, user_id)
+            else:
+                # Fallback for iDRAC8 and older
+                return self._get_kvm_fallback(ip, username, password)
+                
+        except Exception as e:
+            # If version check fails, try iDRAC9 method first
+            try:
+                return self._get_kvm_idrac9(ip, username, password, server_id, job_id, user_id)
+            except:
+                # Final fallback
+                return self._get_kvm_fallback(ip, username, password)
+    
+    def _get_kvm_idrac9(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        server_id: str = None,
+        job_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Get KVM launch info for iDRAC9+ using GetKVMLaunchInfo endpoint.
+        
+        Dell endpoint: POST /redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DelliDRACCardService/Actions/DelliDRACCardService.GetKVMLaunchInfo
+        """
         response = self.adapter.make_request(
             method='POST',
             ip=ip,
@@ -82,13 +128,30 @@ class DellOperations:
         session_key = response.get('SessionKey', '')
         
         # Construct authenticated console URL with session key
-        # Dell iDRAC HTML5 console URL format with SSO token
         console_url = f"https://{ip}/console?sessionKey={session_key}"
         
         return {
             'console_url': console_url,
             'session_type': 'HTML5',
-            'session_key': session_key
+            'session_key': session_key,
+            'requires_login': False
+        }
+    
+    def _get_kvm_fallback(
+        self,
+        ip: str,
+        username: str,
+        password: str
+    ) -> Dict[str, Any]:
+        """
+        Fallback KVM launch for iDRAC8 and older versions.
+        Returns direct console URL - user will need to log in manually.
+        """
+        return {
+            'console_url': f"https://{ip}/console",
+            'session_type': 'HTML5',
+            'requires_login': True,
+            'message': 'iDRAC8 detected. Please log in with your credentials when the console opens.'
         }
     
     def get_system_info(
