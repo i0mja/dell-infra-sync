@@ -68,7 +68,7 @@ export function useServers(
     queryFn: async () => {
       const { data, error } = await supabase
         .from("server_group_members")
-        .select("*");
+        .select("*, server_groups(*)");
       if (error) throw error;
       return data;
     },
