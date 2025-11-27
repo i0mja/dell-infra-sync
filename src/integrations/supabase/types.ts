@@ -1015,6 +1015,8 @@ export type Database = {
           scp_content: Json | null
           scp_file_path: string | null
           scp_file_size_bytes: number | null
+          scp_format: string | null
+          scp_raw_content: string | null
           server_id: string
           validation_errors: string | null
         }
@@ -1039,6 +1041,8 @@ export type Database = {
           scp_content?: Json | null
           scp_file_path?: string | null
           scp_file_size_bytes?: number | null
+          scp_format?: string | null
+          scp_raw_content?: string | null
           server_id: string
           validation_errors?: string | null
         }
@@ -1063,6 +1067,8 @@ export type Database = {
           scp_content?: Json | null
           scp_file_path?: string | null
           scp_file_size_bytes?: number | null
+          scp_format?: string | null
+          scp_raw_content?: string | null
           server_id?: string
           validation_errors?: string | null
         }

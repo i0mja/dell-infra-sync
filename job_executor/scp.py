@@ -1302,8 +1302,22 @@ class ScpMixin:
                     if backup.get('include_raid', True):
                         targets.append('RAID')
 
+                    # Get format and raw content from backup
+                    scp_format = backup.get('scp_format', 'JSON')
+                    scp_raw_content = backup.get('scp_raw_content')
+                    
+                    # Use raw content if available (preserves original format),
+                    # otherwise fallback to JSON serialization of parsed content
+                    if scp_raw_content:
+                        import_buffer = scp_raw_content
+                    else:
+                        # Fallback for legacy backups without raw content
+                        import_buffer = json.dumps(scp_content)
+                        scp_format = 'JSON'
+
                     payload = {
-                        "ImportBuffer": json.dumps(scp_content),
+                        "ImportBuffer": import_buffer,
+                        "ImportFormat": scp_format,  # Required by Dell Redfish API
                         "ShareParameters": {
                             "Target": ",".join(targets)
                         },
