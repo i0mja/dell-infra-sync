@@ -356,7 +356,6 @@ export default function Servers() {
             open={jobDialogOpen}
             onOpenChange={setJobDialogOpen}
             onSuccess={refetch}
-            preSelectedServerId={selectedServer.id}
           />
 
           <WorkflowJobDialog
