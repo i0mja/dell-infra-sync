@@ -180,7 +180,7 @@ export default function Servers() {
           </div>
 
           {/* Right: Details Sidebar */}
-          <div className="min-h-[320px] rounded-xl border bg-card shadow-sm">
+          <div className="min-h-[320px] xl:sticky xl:top-4 xl:self-start xl:max-h-[calc(100vh-8rem)] rounded-xl border bg-card shadow-sm overflow-hidden">
             <ServerDetailsSidebar
               selectedServer={selectedServer}
               selectedGroup={
