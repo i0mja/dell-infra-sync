@@ -2063,7 +2063,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
     def insert_discovered_server(self, server: Dict, job_id: str):
         """Insert discovered server into database with credential info"""
         try:
-            headers = {"apikey": API_KEY, "Authorization": f"Bearer {API_KEY}"}
+            headers = {"apikey": SERVICE_ROLE_KEY, "Authorization": f"Bearer {SERVICE_ROLE_KEY}"}
             
             # Check if server already exists by IP
             check_url = f"{DSM_URL}/rest/v1/servers"
@@ -2141,7 +2141,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
     def insert_auth_failed_server(self, ip: str, job_id: str):
         """Insert server that was discovered but authentication failed"""
         try:
-            headers = {"apikey": API_KEY, "Authorization": f"Bearer {API_KEY}"}
+            headers = {"apikey": SERVICE_ROLE_KEY, "Authorization": f"Bearer {SERVICE_ROLE_KEY}"}
             
             # Check if server already exists
             check_url = f"{DSM_URL}/rest/v1/servers"
