@@ -3,13 +3,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { VCenterStatsBar } from "@/components/vcenter/VCenterStatsBar";
-import { HostFilterToolbar } from "@/components/vcenter/HostFilterToolbar";
 import { HostsTable } from "@/components/vcenter/HostsTable";
 import { VMsTable } from "@/components/vcenter/VMsTable";
 import { ClustersPanel } from "@/components/vcenter/ClustersPanel";
 import { DatastoresTable } from "@/components/vcenter/DatastoresTable";
 import { AlarmsPanel } from "@/components/vcenter/AlarmsPanel";
-import { VCenterDetailsSidebar } from "@/components/vcenter/VCenterDetailsSidebar";
 import { VCenterSettingsDialog } from "@/components/vcenter/VCenterSettingsDialog";
 import { VCenterConnectivityDialog } from "@/components/vcenter/VCenterConnectivityDialog";
 import { ClusterUpdateWizard } from "@/components/jobs/ClusterUpdateWizard";
@@ -37,13 +35,15 @@ interface ClusterGroup {
 
 export default function VCenter() {
   const [hosts, setHosts] = useState<VCenterHost[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [hostsLoading, setHostsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [clusterFilter, setClusterFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [linkFilter, setLinkFilter] = useState("all");
-  const [selectedHost, setSelectedHost] = useState<VCenterHost | null>(null);
-  const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
+  const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
+  const [selectedVmId, setSelectedVmId] = useState<string | null>(null);
+  const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
+  const [selectedDatastoreId, setSelectedDatastoreId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [testDialogOpen, setTestDialogOpen] = useState(false);
   const [clusterUpdateOpen, setClusterUpdateOpen] = useState(false);
@@ -56,12 +56,7 @@ export default function VCenter() {
   const navigate = useNavigate();
   const { toast } = useToast();
   
-  // Fetch VM, cluster, datastore, and alarm data
-  const { vms, clusters: clusterData, datastores, alarms, loading: vcenterDataLoading, refetch: refetchVCenterData } = useVCenterData();
-  
-  const [selectedVm, setSelectedVm] = useState<any>(null);
-  const [selectedClusterData, setSelectedClusterData] = useState<any>(null);
-  const [selectedDatastore, setSelectedDatastore] = useState<any>(null);
+  const { vms, clusters, datastores, alarms, loading: vmsLoading, refetch: refetchVCenterData } = useVCenterData();
 
   const isPrivateNetwork = (host: string | null): boolean => {
     if (!host) return false;
@@ -76,7 +71,7 @@ export default function VCenter() {
 
   const fetchHosts = async () => {
     try {
-      setLoading(true);
+      setHostsLoading(true);
       const { data, error } = await supabase
         .from("vcenter_hosts")
         .select("*")
@@ -92,7 +87,7 @@ export default function VCenter() {
         variant: "destructive",
       });
     } finally {
-      setLoading(false);
+      setHostsLoading(false);
     }
   };
 
@@ -132,7 +127,6 @@ export default function VCenter() {
     };
   }, []);
 
-  // Filter hosts
   const filteredHosts = hosts.filter((host) => {
     const matchesSearch =
       !searchTerm ||
@@ -157,7 +151,6 @@ export default function VCenter() {
     return matchesSearch && matchesCluster && matchesStatus && matchesLink;
   });
 
-  // Group hosts by cluster
   const clusterGroups: ClusterGroup[] = filteredHosts.reduce(
     (acc: ClusterGroup[], host) => {
       const clusterName = host.cluster || "Unclustered";
@@ -241,9 +234,7 @@ export default function VCenter() {
         return;
       }
 
-      // Check if vCenter host is private
       if (isPrivateNetwork(vcenterHost)) {
-        // Use Job Executor for private network
         const { data, error } = await supabase.from("jobs").insert({
           job_type: "vcenter_sync",
           status: "pending",
@@ -263,7 +254,6 @@ export default function VCenter() {
           ),
         });
       } else {
-        // Use direct cloud sync for public/accessible networks
         const { error } = await supabase.functions.invoke("sync-vcenter-direct", {
           body: { syncType: "full" },
         });
@@ -295,22 +285,22 @@ export default function VCenter() {
   };
 
   const handleHostClick = (host: VCenterHost) => {
-    setSelectedHost(host);
-    setSelectedCluster(null);
-    setSelectedVm(null);
-    setSelectedClusterData(null);
-    setSelectedDatastore(null);
+    setSelectedHostId(selectedHostId === host.id ? null : host.id);
   };
 
-  const handleClusterClick = (clusterName: string) => {
-    setSelectedCluster(clusterName);
-    setSelectedHost(null);
-    setSelectedVm(null);
-    setSelectedClusterData(null);
-    setSelectedDatastore(null);
+  const handleVmClick = (vmId: string) => {
+    setSelectedVmId(selectedVmId === vmId ? null : vmId);
   };
 
-  const handleHostSync = async (host: VCenterHost) => {
+  const handleClusterDataClick = (clusterId: string) => {
+    setSelectedClusterId(selectedClusterId === clusterId ? null : clusterId);
+  };
+
+  const handleDatastoreClick = (datastoreId: string) => {
+    setSelectedDatastoreId(selectedDatastoreId === datastoreId ? null : datastoreId);
+  };
+
+  const handleHostSync = async (hostId: string) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       
@@ -326,15 +316,15 @@ export default function VCenter() {
         job_type: "vcenter_sync",
         status: "pending",
         created_by: user.id,
-        target_scope: { vcenter_host_ids: [host.id] },
-        details: { sync_type: "single_host", host_id: host.id },
+        target_scope: { vcenter_host_ids: [hostId] },
+        details: { sync_type: "single_host", host_id: hostId },
       });
 
       if (error) throw error;
 
       toast({
         title: "Host sync started",
-        description: `Syncing ${host.name}`,
+        description: "Syncing host data",
       });
     } catch (error: any) {
       toast({
@@ -345,45 +335,16 @@ export default function VCenter() {
     }
   };
 
-  const handleViewLinkedServer = (host: VCenterHost) => {
-    if (host.server_id) {
-      navigate(`/servers?id=${host.server_id}`);
-    }
+  const handleViewLinkedServer = (serverId: string) => {
+    navigate(`/servers?id=${serverId}`);
   };
 
-  const handleLinkToServer = (host: VCenterHost) => {
-    navigate(`/servers?link_vcenter=${host.id}`);
+  const handleLinkToServer = (hostId: string) => {
+    navigate(`/servers?link_vcenter=${hostId}`);
   };
-
-  const handleVmClick = (vm: any) => {
-    setSelectedVm(vm);
-    setSelectedHost(null);
-    setSelectedCluster(null);
-    setSelectedClusterData(null);
-    setSelectedDatastore(null);
-  };
-
-  const handleClusterDataClick = (cluster: any) => {
-    setSelectedClusterData(cluster);
-    setSelectedHost(null);
-    setSelectedCluster(null);
-    setSelectedVm(null);
-    setSelectedDatastore(null);
-  };
-
-  const handleDatastoreClick = (datastore: any) => {
-    setSelectedDatastore(datastore);
-    setSelectedHost(null);
-    setSelectedCluster(null);
-    setSelectedVm(null);
-    setSelectedClusterData(null);
-  };
-
-  const selectedClusterGroup = selectedCluster ? clusterGroups.find(c => c.name === selectedCluster) || null : null;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Top: Stats Bar */}
       <VCenterStatsBar
         totalHosts={hosts.length}
         linkedHosts={linkedHosts}
@@ -408,140 +369,66 @@ export default function VCenter() {
 
       {alarms.length > 0 && <AlarmsPanel alarms={alarms} />}
 
-      {/* Main: Two Column Layout */}
-      <div className="flex-1 overflow-hidden px-4 pb-6 pt-4">
-        <div className="grid h-full gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(340px,1fr)]">
-          {/* Left: Tabs + Content */}
-          <div className="flex min-w-0 flex-col gap-4">
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="flex h-full flex-col">
-              <div className="flex h-full flex-col rounded-xl border bg-card shadow-sm overflow-hidden">
-                {/* Inline Tabs Header */}
-                <div className="border-b px-4 py-3 flex items-center gap-2">
-                  <TabsList className="bg-transparent p-0 gap-1 h-auto">
-                    <TabsTrigger value="hosts" className="data-[state=active]:bg-muted">
-                      Hosts ({hosts.length})
-                    </TabsTrigger>
-                    <TabsTrigger value="vms" className="data-[state=active]:bg-muted">
-                      VMs ({vms.length})
-                    </TabsTrigger>
-                    <TabsTrigger value="clusters" className="data-[state=active]:bg-muted">
-                      Clusters ({clusterData.length})
-                    </TabsTrigger>
-                    <TabsTrigger value="datastores" className="data-[state=active]:bg-muted">
-                      Datastores ({datastores.length})
-                    </TabsTrigger>
-                  </TabsList>
-                </div>
+      <div className="flex-1 overflow-hidden">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
+          <TabsList className="mx-4 mt-4">
+            <TabsTrigger value="hosts">Hosts ({hosts.length})</TabsTrigger>
+            <TabsTrigger value="vms">VMs ({vms.length})</TabsTrigger>
+            <TabsTrigger value="clusters">Clusters ({clusters.length})</TabsTrigger>
+            <TabsTrigger value="datastores">Datastores ({datastores.length})</TabsTrigger>
+          </TabsList>
 
-                {/* Filter Toolbar (Hosts Tab Only) */}
-                {activeTab === "hosts" && (
-                  <div className="border-b p-4">
-                    <HostFilterToolbar
-                      searchTerm={searchTerm}
-                      onSearchChange={setSearchTerm}
-                      clusterFilter={clusterFilter}
-                      onClusterFilterChange={setClusterFilter}
-                      statusFilter={statusFilter}
-                      onStatusFilterChange={setStatusFilter}
-                      linkFilter={linkFilter}
-                      onLinkFilterChange={setLinkFilter}
-                      clusters={uniqueClusters}
-                    />
-                  </div>
-                )}
-
-                {/* Tab Content - Scrollable */}
-                <div className="flex-1 overflow-auto">
-                  <TabsContent value="hosts" className="m-0 h-full">
-                    <HostsTable
-                      clusterGroups={clusterGroups}
-                      selectedHostId={selectedHost?.id || null}
-                      selectedCluster={selectedCluster}
-                      onHostClick={handleHostClick}
-                      onClusterClick={handleClusterClick}
-                      onHostSync={handleHostSync}
-                      onClusterUpdate={handleClusterUpdate}
-                      onViewLinkedServer={handleViewLinkedServer}
-                      onLinkToServer={handleLinkToServer}
-                      loading={loading}
-                    />
-                  </TabsContent>
-
-                  <TabsContent value="vms" className="m-0 h-full">
-                    <VMsTable
-                      vms={vms}
-                      selectedVmId={selectedVm?.id || null}
-                      onVmClick={handleVmClick}
-                      loading={vcenterDataLoading}
-                    />
-                  </TabsContent>
-
-                  <TabsContent value="clusters" className="m-0 h-full">
-                    <ClustersPanel
-                      clusters={clusterData}
-                      selectedClusterId={selectedClusterData?.id || null}
-                      onClusterClick={handleClusterDataClick}
-                      loading={vcenterDataLoading}
-                    />
-                  </TabsContent>
-
-                  <TabsContent value="datastores" className="m-0 h-full">
-                    <DatastoresTable
-                      datastores={datastores}
-                      selectedDatastoreId={selectedDatastore?.id || null}
-                      onDatastoreClick={handleDatastoreClick}
-                      loading={vcenterDataLoading}
-                    />
-                  </TabsContent>
-                </div>
-              </div>
-            </Tabs>
-          </div>
-
-          {/* Right: Details Sidebar (Always Visible) */}
-          <div className="min-h-[320px] rounded-xl border bg-card shadow-sm">
-            <VCenterDetailsSidebar
-              selectedHost={selectedHost}
-              selectedCluster={selectedClusterGroup}
-              selectedVm={selectedVm}
-              selectedClusterData={selectedClusterData}
-              selectedDatastore={selectedDatastore}
+          <TabsContent value="hosts" className="flex-1 mt-0">
+            <HostsTable
+              clusterGroups={clusterGroups}
+              selectedHostId={selectedHostId}
+              selectedCluster={null}
+              onHostClick={handleHostClick}
+              onClusterClick={() => {}}
+              onHostSync={(host) => handleHostSync(host.id)}
               onClusterUpdate={handleClusterUpdate}
-              onClose={() => {
-                setSelectedHost(null);
-                setSelectedCluster(null);
-                setSelectedVm(null);
-                setSelectedClusterData(null);
-                setSelectedDatastore(null);
-              }}
+              onViewLinkedServer={(host) => handleViewLinkedServer(host.server_id!)}
+              onLinkToServer={(host) => handleLinkToServer(host.id)}
+              loading={hostsLoading}
             />
-          </div>
-        </div>
+          </TabsContent>
+
+          <TabsContent value="vms" className="flex-1 mt-0">
+            <VMsTable
+              vms={vms}
+              selectedVmId={selectedVmId}
+              onVmClick={(vm) => handleVmClick(vm.id)}
+              loading={vmsLoading}
+            />
+          </TabsContent>
+
+          <TabsContent value="clusters" className="flex-1 mt-0">
+            <ClustersPanel
+              clusters={clusters}
+              selectedClusterId={selectedClusterId}
+              onClusterClick={handleClusterDataClick}
+              loading={vmsLoading}
+            />
+          </TabsContent>
+
+          <TabsContent value="datastores" className="flex-1 mt-0">
+            <DatastoresTable
+              datastores={datastores}
+              selectedDatastoreId={selectedDatastoreId}
+              onDatastoreClick={(ds) => handleDatastoreClick(ds.id)}
+              loading={vmsLoading}
+            />
+          </TabsContent>
+        </Tabs>
       </div>
 
-        <VCenterSettingsDialog
-          open={settingsOpen}
-          onOpenChange={setSettingsOpen}
-          onSaved={() => {
-            fetchVCenterSettings();
-            fetchHosts();
-          }}
-        />
-
-        <VCenterConnectivityDialog
-          open={testDialogOpen}
-          onOpenChange={setTestDialogOpen}
-          results={null}
-        />
-
-        {clusterUpdateOpen && (
-          <ClusterUpdateWizard
-            open={clusterUpdateOpen}
-            onOpenChange={setClusterUpdateOpen}
-            preSelectedCluster={selectedClusterForUpdate}
-          />
-        )}
-      </div>
+      <VCenterSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <VCenterConnectivityDialog open={testDialogOpen} onOpenChange={setTestDialogOpen} results={null} />
+      <ClusterUpdateWizard
+        open={clusterUpdateOpen}
+        onOpenChange={setClusterUpdateOpen}
+        preSelectedCluster={selectedClusterForUpdate}
+      />
+    </div>
   );
 }
-
