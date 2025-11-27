@@ -1,9 +1,11 @@
 import { Button } from "@/components/ui/button";
-import { Calendar, Plus, CheckCircle2, Activity, Clock3, Lightbulb, Play } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Calendar, Plus, CheckCircle2, Activity, Clock3, Lightbulb, Play, AlertCircle } from "lucide-react";
 
 interface CompactStatsBarProps {
   safeDays: number;
   activeJobs: number;
+  failedJobs: number;
   nextWindow?: { title: string; start: string };
   optimalCount: number;
   onScheduleMaintenance: () => void;
@@ -14,6 +16,7 @@ interface CompactStatsBarProps {
 export function CompactStatsBar({
   safeDays,
   activeJobs,
+  failedJobs,
   nextWindow,
   optimalCount,
   onScheduleMaintenance,
@@ -39,6 +42,18 @@ export function CompactStatsBar({
           </div>
 
           <div className="hidden h-4 w-px bg-border sm:block" />
+
+          {failedJobs > 0 && (
+            <>
+              <div className="flex items-center gap-2 whitespace-nowrap">
+                <AlertCircle className="h-4 w-4 text-destructive" />
+                <span className="text-muted-foreground">Action Required:</span>
+                <Badge variant="destructive" className="font-semibold">{failedJobs}</Badge>
+              </div>
+              <div className="hidden h-4 w-px bg-border sm:block" />
+            </>
+          )}
+
 
           <div className="flex items-center gap-2 whitespace-nowrap">
             <Clock3 className="h-4 w-4 text-warning" />

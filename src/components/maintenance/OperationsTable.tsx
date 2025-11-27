@@ -3,6 +3,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { 
   CheckCircle, 
   XCircle, 
@@ -15,7 +16,11 @@ import {
   FileText,
   RotateCcw,
   Trash2,
-  Loader2
+  Loader2,
+  ChevronDown,
+  ChevronRight,
+  Server,
+  HardDrive
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -98,6 +103,8 @@ interface Operation {
 
 interface OperationsTableProps {
   operations: Operation[];
+  clusters: string[];
+  serverGroups: Array<{ id: string; name: string }>;
   onRowClick: (operation: Operation) => void;
   onCancel?: (jobId: string) => void;
   onRetry?: (job: Job) => void;
@@ -106,7 +113,9 @@ interface OperationsTableProps {
 }
 
 export function OperationsTable({ 
-  operations, 
+  operations,
+  clusters,
+  serverGroups,
   onRowClick, 
   onCancel,
   onRetry,
@@ -115,6 +124,9 @@ export function OperationsTable({
 }: OperationsTableProps) {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [clusterFilter, setClusterFilter] = useState<string>('all');
+  const [dateRange, setDateRange] = useState<string>('all');
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -136,8 +148,19 @@ export function OperationsTable({
     return <Badge variant={variants[status] || "outline"}>{status.toUpperCase()}</Badge>;
   };
 
+  const toggleRow = (id: string) => {
+    const newExpanded = new Set(expandedRows);
+    if (newExpanded.has(id)) {
+      newExpanded.delete(id);
+    } else {
+      newExpanded.add(id);
+    }
+    setExpandedRows(newExpanded);
+  };
+
   const filteredOps = operations.filter(op => {
     if (statusFilter !== 'all' && op.status !== statusFilter) return false;
+    
     if (typeFilter === 'maintenance') {
       return op.type === 'maintenance';
     }
@@ -149,18 +172,52 @@ export function OperationsTable({
       const job = op.data as Job;
       if (job.job_type !== typeFilter) return false;
     }
+
+    if (clusterFilter !== 'all') {
+      if (op.type === 'maintenance') {
+        const window = op.data as MaintenanceWindow;
+        if (!window.cluster_ids?.includes(clusterFilter)) return false;
+      } else {
+        const job = op.data as Job;
+        if (job.target_scope?.cluster_name !== clusterFilter) return false;
+      }
+    }
+
+    if (dateRange !== 'all') {
+      const now = new Date();
+      const opDate = op.timestamp;
+      const hoursDiff = (now.getTime() - opDate.getTime()) / (1000 * 60 * 60);
+      
+      if (dateRange === 'today' && hoursDiff > 24) return false;
+      if (dateRange === 'week' && hoursDiff > 168) return false;
+      if (dateRange === 'month' && hoursDiff > 720) return false;
+    }
+
     return true;
   });
 
   return (
     <div className="flex flex-col flex-1 border rounded-lg bg-background overflow-hidden">
       <div className="border-b px-4 py-3 bg-muted/30">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h3 className="font-semibold">Operations & Maintenance</h3>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Filter className="h-4 w-4 text-muted-foreground" />
+            
+            <Select value={dateRange} onValueChange={setDateRange}>
+              <SelectTrigger className="w-[110px] h-8">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Time</SelectItem>
+                <SelectItem value="today">Today</SelectItem>
+                <SelectItem value="week">This Week</SelectItem>
+                <SelectItem value="month">This Month</SelectItem>
+              </SelectContent>
+            </Select>
+
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[130px] h-8">
+              <SelectTrigger className="w-[120px] h-8">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -171,21 +228,36 @@ export function OperationsTable({
                 <SelectItem value="failed">Failed</SelectItem>
               </SelectContent>
             </Select>
-              <Select value={typeFilter} onValueChange={setTypeFilter}>
-                <SelectTrigger className="w-[150px] h-8">
-                  <SelectValue />
+
+            <Select value={typeFilter} onValueChange={setTypeFilter}>
+              <SelectTrigger className="w-[140px] h-8">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Types</SelectItem>
+                <SelectItem value="job">All Jobs</SelectItem>
+                <SelectItem value="maintenance">Maintenance</SelectItem>
+                <SelectItem value="firmware_update">Firmware Update</SelectItem>
+                <SelectItem value="discovery_scan">Discovery</SelectItem>
+                <SelectItem value="vcenter_sync">vCenter Sync</SelectItem>
+                <SelectItem value="full_server_update">Full Update</SelectItem>
+                <SelectItem value="cluster_safety_check">Safety Check</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {clusters.length > 0 && (
+              <Select value={clusterFilter} onValueChange={setClusterFilter}>
+                <SelectTrigger className="w-[140px] h-8">
+                  <SelectValue placeholder="All Clusters" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Types</SelectItem>
-                  <SelectItem value="job">All Jobs</SelectItem>
-                  <SelectItem value="maintenance">Maintenance</SelectItem>
-                  <SelectItem value="firmware_update">Firmware Update</SelectItem>
-                  <SelectItem value="discovery_scan">Discovery</SelectItem>
-                  <SelectItem value="vcenter_sync">vCenter Sync</SelectItem>
-                  <SelectItem value="full_server_update">Full Server Update</SelectItem>
-                  <SelectItem value="cluster_safety_check">Safety Check</SelectItem>
+                  <SelectItem value="all">All Clusters</SelectItem>
+                  {clusters.map(cluster => (
+                    <SelectItem key={cluster} value={cluster}>{cluster}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
+            )}
           </div>
         </div>
       </div>
@@ -211,110 +283,159 @@ export function OperationsTable({
                 </TableCell>
               </TableRow>
             ) : (
-              filteredOps.map((op) => (
-                <TableRow 
-                  key={op.id} 
-                  className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => onRowClick(op)}
-                >
-                  <TableCell>
-                    <div className={`w-1 h-8 rounded ${op.type === 'job' ? 'bg-blue-500' : 'bg-purple-500'}`} />
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      {op.type === 'job' ? <Zap className="h-4 w-4 text-blue-500" /> : <Calendar className="h-4 w-4 text-purple-500" />}
-                      <span className="font-medium">{op.title}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {op.type === 'job' ? 'Job' : 'Window'}
-                  </TableCell>
-                  <TableCell className="text-sm">{op.target}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    <div className="flex flex-col gap-0.5">
-                      <span>{format(op.timestamp, 'MMM dd, HH:mm')}</span>
-                      {op.type === 'job' && (op.data as Job).status === 'running' && (op.data as Job).started_at && (
-                        <span className="text-xs text-muted-foreground">
-                          ({formatElapsed((op.data as Job).started_at)} elapsed)
-                        </span>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-col gap-1.5">
-                      <div className="flex items-center gap-2">
-                        {getStatusIcon(op.status)}
-                        {getStatusBadge(op.status)}
-                      </div>
-                      {op.type === 'job' && (op.data as Job).status === 'running' && (
-                        <JobProgressIndicator job={op.data as Job} />
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    {canManage && (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={(e) => {
-                            e.stopPropagation();
-                            onRowClick(op);
-                          }}>
-                            <FileText className="mr-2 h-4 w-4" />
-                            View Details
-                          </DropdownMenuItem>
-                          {op.type === 'job' && ['pending', 'running'].includes((op.data as Job).status) && onCancel && (
-                            <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem 
-                                onClick={(e) => {
+              filteredOps.map((op) => {
+                const isExpanded = expandedRows.has(op.id);
+                const job = op.type === 'job' ? op.data as Job : null;
+                const window = op.type === 'maintenance' ? op.data as MaintenanceWindow : null;
+
+                return (
+                  <Collapsible key={op.id} open={isExpanded} onOpenChange={() => toggleRow(op.id)} asChild>
+                    <>
+                      <TableRow className="cursor-pointer hover:bg-muted/50">
+                        <TableCell onClick={() => toggleRow(op.id)}>
+                          {isExpanded ? (
+                            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                          )}
+                        </TableCell>
+                        <TableCell onClick={() => onRowClick(op)}>
+                          <div className="flex items-center gap-2">
+                            {op.type === 'job' ? <Zap className="h-4 w-4 text-primary" /> : <Calendar className="h-4 w-4 text-purple-500" />}
+                            <span className="font-medium">{op.title}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground" onClick={() => onRowClick(op)}>
+                          {op.type === 'job' ? 'Job' : 'Window'}
+                        </TableCell>
+                        <TableCell className="text-sm" onClick={() => onRowClick(op)}>
+                          <div className="flex items-center gap-1.5">
+                            {job?.target_scope?.server_ids?.length > 0 && (
+                              <>
+                                <Server className="h-3 w-3 text-muted-foreground" />
+                                <span>{job.target_scope.server_ids.length}</span>
+                              </>
+                            )}
+                            {op.target}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground" onClick={() => onRowClick(op)}>
+                          <div className="flex flex-col gap-0.5">
+                            <span>{format(op.timestamp, 'MMM dd, HH:mm')}</span>
+                            {job?.status === 'running' && job.started_at && (
+                              <span className="text-xs">({formatElapsed(job.started_at)} elapsed)</span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell onClick={() => onRowClick(op)}>
+                          <div className="flex flex-col gap-1.5">
+                            <div className="flex items-center gap-2">
+                              {getStatusIcon(op.status)}
+                              {getStatusBadge(op.status)}
+                            </div>
+                            {job?.status === 'running' && <JobProgressIndicator job={job} />}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {canManage && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={(e) => {
                                   e.stopPropagation();
-                                  onCancel(op.id);
-                                }}
-                                className="text-destructive"
-                              >
-                                <XCircle className="mr-2 h-4 w-4" />
-                                Cancel
-                              </DropdownMenuItem>
-                            </>
+                                  onRowClick(op);
+                                }}>
+                                  <FileText className="mr-2 h-4 w-4" />
+                                  View Details
+                                </DropdownMenuItem>
+                                {job && ['pending', 'running'].includes(job.status) && onCancel && (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem 
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onCancel(op.id);
+                                      }}
+                                      className="text-destructive"
+                                    >
+                                      <XCircle className="mr-2 h-4 w-4" />
+                                      Cancel
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
+                                {job?.status === 'failed' && onRetry && (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem onClick={(e) => {
+                                      e.stopPropagation();
+                                      onRetry(job);
+                                    }}>
+                                      <RotateCcw className="mr-2 h-4 w-4" />
+                                      Retry
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
+                                {window && onDelete && (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem 
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onDelete(op.id);
+                                      }}
+                                      className="text-destructive"
+                                    >
+                                      <Trash2 className="mr-2 h-4 w-4" />
+                                      Delete
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           )}
-                          {op.type === 'job' && (op.data as Job).status === 'failed' && onRetry && (
-                            <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem onClick={(e) => {
-                                e.stopPropagation();
-                                onRetry(op.data as Job);
-                              }}>
-                                <RotateCcw className="mr-2 h-4 w-4" />
-                                Retry
-                              </DropdownMenuItem>
-                            </>
-                          )}
-                          {op.type === 'maintenance' && onDelete && (
-                            <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onDelete(op.id);
-                                }}
-                                className="text-destructive"
-                              >
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                Delete
-                              </DropdownMenuItem>
-                            </>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))
+                        </TableCell>
+                      </TableRow>
+                      
+                      {/* Expandable Details Row */}
+                      <TableRow>
+                        <TableCell colSpan={7} className="p-0 border-0">
+                          <CollapsibleContent>
+                            <div className="px-12 py-3 bg-muted/20 border-t">
+                              <div className="grid gap-3 text-sm">
+                                {job?.details?.error && (
+                                  <div className="flex gap-2 text-destructive">
+                                    <XCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                      <span className="font-medium">Error: </span>
+                                      {job.details.error}
+                                    </div>
+                                  </div>
+                                )}
+                                {job?.details?.current_step && (
+                                  <div className="flex gap-2">
+                                    <Loader2 className="h-4 w-4 mt-0.5 animate-spin flex-shrink-0 text-primary" />
+                                    <span className="text-muted-foreground">{job.details.current_step}</span>
+                                  </div>
+                                )}
+                                {window && (
+                                  <div className="flex gap-4 text-muted-foreground">
+                                    <span>Type: {window.maintenance_type}</span>
+                                    <span>Duration: {format(new Date(window.planned_start), 'HH:mm')} - {format(new Date(window.planned_end), 'HH:mm')}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </CollapsibleContent>
+                        </TableCell>
+                      </TableRow>
+                    </>
+                  </Collapsible>
+                );
+              })
             )}
           </TableBody>
         </Table>
