@@ -2401,11 +2401,23 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             )
             return None
 
+    def check_vcenter_connection(self, content) -> bool:
+        """Verify vCenter connection is still valid"""
+        try:
+            # Simple test - get current session
+            session = content.sessionManager.currentSession
+            return session is not None
+        except Exception as e:
+            self.log(f"vCenter connection lost: {e}", "ERROR")
+            return False
+
     def execute_vcenter_sync(self, job: Dict):
         """Execute vCenter sync - fetch ESXi hosts and auto-link to Dell servers"""
         sync_start = time.time()
         vcenter_host = None
         source_vcenter_id = None
+        sync_errors = []  # Track errors from all operations
+        
         try:
             self.log(f"Starting vCenter sync job: {job['id']}")
             self.update_job_status(
@@ -2467,15 +2479,19 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             # Get vCenter content for all syncs
             content = vc.RetrieveContent()
             
-            # Sync all vCenter entities with progress updates
+            # Sync all vCenter entities with progress updates and connection checks
             self.log("📊 Syncing clusters...")
             self.update_job_status(
                 job['id'], 
                 'running',
                 details={"current_step": "Syncing clusters"}
             )
+            if not self.check_vcenter_connection(content):
+                raise Exception("vCenter connection lost before cluster sync")
             clusters_result = self.sync_vcenter_clusters(content, source_vcenter_id)
-            self.log(f"✓ Clusters synced: {clusters_result.get('total', 0)}")
+            self.log(f"✓ Clusters synced: {clusters_result.get('synced', 0)}")
+            if clusters_result.get('error'):
+                sync_errors.append(f"Clusters: {clusters_result.get('error')}")
             
             self.log("💾 Syncing datastores...")
             self.update_job_status(
@@ -2483,8 +2499,12 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 'running',
                 details={"current_step": "Syncing datastores"}
             )
+            if not self.check_vcenter_connection(content):
+                raise Exception("vCenter connection lost before datastore sync")
             datastores_result = self.sync_vcenter_datastores(content, source_vcenter_id)
-            self.log(f"✓ Datastores synced: {datastores_result.get('total', 0)}")
+            self.log(f"✓ Datastores synced: {datastores_result.get('synced', 0)}")
+            if datastores_result.get('error'):
+                sync_errors.append(f"Datastores: {datastores_result.get('error')}")
             
             self.log("🖥️  Syncing VMs...")
             self.update_job_status(
@@ -2492,8 +2512,14 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 'running',
                 details={"current_step": "Syncing VMs"}
             )
-            vms_result = self.sync_vcenter_vms(content, source_vcenter_id)
-            self.log(f"✓ VMs synced: {vms_result.get('total', 0)}")
+            if not self.check_vcenter_connection(content):
+                raise Exception("vCenter connection lost before VM sync")
+            vms_result = self.sync_vcenter_vms(content, source_vcenter_id, job['id'])
+            self.log(f"✓ VMs synced: {vms_result.get('synced', 0)}")
+            if vms_result.get('error'):
+                sync_errors.append(f"VMs: {vms_result.get('error')}")
+            if vms_result.get('os_distribution'):
+                self.log(f"VM OS distribution: {vms_result.get('os_distribution')}")
             
             self.log("⚠️  Syncing alarms...")
             self.update_job_status(
@@ -2501,8 +2527,12 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 'running',
                 details={"current_step": "Syncing alarms"}
             )
+            if not self.check_vcenter_connection(content):
+                raise Exception("vCenter connection lost before alarm sync")
             alarms_result = self.sync_vcenter_alarms(content, source_vcenter_id)
-            self.log(f"✓ Alarms synced: {alarms_result.get('total', 0)}")
+            self.log(f"✓ Alarms synced: {alarms_result.get('synced', 0)}")
+            if alarms_result.get('error'):
+                sync_errors.append(f"Alarms: {alarms_result.get('error')}")
             
             # Get all ESXi hosts
             self.log("🖧  Discovering ESXi hosts...")
@@ -2679,10 +2709,16 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 'vms_synced': vms_result.get('synced', 0),
                 'datastores_synced': datastores_result.get('synced', 0),
                 'alarms_synced': alarms_result.get('synced', 0),
+                'vm_os_distribution': vms_result.get('os_distribution', {}),
+                'sync_errors': sync_errors,
                 'errors': errors
             }
             
-            self.log(f"vCenter sync completed: {hosts_new} new, {hosts_updated} updated, {hosts_linked} linked, {clusters_result.get('synced', 0)} clusters, {vms_result.get('synced', 0)} VMs, {datastores_result.get('synced', 0)} datastores")
+            # Log summary with sync errors if any
+            summary = f"vCenter sync completed: {hosts_new} new, {hosts_updated} updated, {hosts_linked} linked, {clusters_result.get('synced', 0)} clusters, {vms_result.get('synced', 0)} VMs, {datastores_result.get('synced', 0)} datastores"
+            if sync_errors:
+                summary += f" (⚠️  {len(sync_errors)} operation errors)"
+            self.log(summary)
             
             self.update_job_status(
                 job['id'],
@@ -2718,9 +2754,13 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
     def sync_vcenter_clusters(self, content, source_vcenter_id: str) -> Dict:
         """Sync cluster statistics from vCenter"""
         try:
+            self.log("Creating cluster container view...")
             container = content.viewManager.CreateContainerView(
                 content.rootFolder, [vim.ClusterComputeResource], True
             )
+            
+            total_clusters = len(container.view)
+            self.log(f"Found {total_clusters} clusters in vCenter")
             
             synced = 0
             for cluster in container.view:
@@ -2767,26 +2807,55 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     self.log(f"  Error syncing cluster {cluster.name}: {e}", "WARNING")
             
             container.Destroy()
-            return {'synced': synced}
+            self.log(f"  Synced {synced}/{total_clusters} clusters")
+            return {'synced': synced, 'total': total_clusters}
             
         except Exception as e:
             self.log(f"Failed to sync clusters: {e}", "ERROR")
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
             return {'synced': 0, 'error': str(e)}
 
-    def sync_vcenter_vms(self, content, source_vcenter_id: str) -> Dict:
-        """Sync VM inventory from vCenter"""
+    def sync_vcenter_vms(self, content, source_vcenter_id: str, job_id: str = None) -> Dict:
+        """Sync VM inventory from vCenter with batch processing and OS distribution tracking"""
         try:
+            self.log("Creating VM container view...")
             container = content.viewManager.CreateContainerView(
                 content.rootFolder, [vim.VirtualMachine], True
             )
             
+            total_vms = len(container.view)
+            self.log(f"Found {total_vms} VMs in vCenter")
+            
             synced = 0
-            for vm in container.view:
+            batch = []
+            batch_size = 50
+            os_counts = {}
+            
+            for i, vm in enumerate(container.view):
+                if i % 100 == 0:
+                    self.log(f"  Processing VM {i+1}/{total_vms}...")
+                    
+                    # Update job progress if job_id provided
+                    if job_id:
+                        self.update_job_status(
+                            job_id,
+                            'running',
+                            details={
+                                "current_step": f"Syncing VMs ({i}/{total_vms})",
+                                "vms_processed": i,
+                                "vms_total": total_vms
+                            }
+                        )
                 try:
                     config = vm.summary.config if hasattr(vm.summary, 'config') else None
                     runtime = vm.summary.runtime if hasattr(vm.summary, 'runtime') else None
                     guest = vm.summary.guest if hasattr(vm.summary, 'guest') else None
                     storage = vm.summary.storage if hasattr(vm.summary, 'storage') else None
+                    
+                    # Track OS distribution
+                    guest_os = config.guestFullName if config and hasattr(config, 'guestFullName') else 'unknown'
+                    os_counts[guest_os] = os_counts.get(guest_os, 0) + 1
                     
                     # Get host_id from vcenter_hosts table
                     host_id = None
@@ -2816,7 +2885,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                         'host_id': host_id,
                         'cluster_name': cluster_name,
                         'power_state': str(runtime.powerState) if runtime else 'unknown',
-                        'guest_os': config.guestFullName if config and hasattr(config, 'guestFullName') else None,
+                        'guest_os': guest_os,
                         'cpu_count': config.numCpu if config and hasattr(config, 'numCpu') else None,
                         'memory_mb': config.memorySizeMB if config and hasattr(config, 'memorySizeMB') else None,
                         'disk_gb': round(storage.committed / (1024**3), 2) if storage and hasattr(storage, 'committed') else None,
@@ -2827,39 +2896,95 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                         'last_sync': datetime.now().isoformat()
                     }
                     
-                    # Upsert VM
-                    response = requests.post(
-                        f"{DSM_URL}/rest/v1/vcenter_vms?on_conflict=vcenter_id",
-                        headers={
-                            'apikey': SERVICE_ROLE_KEY,
-                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
-                            'Content-Type': 'application/json',
-                            'Prefer': 'resolution=merge-duplicates'
-                        },
-                        json=vm_data,
-                        verify=VERIFY_SSL
-                    )
+                    # Add to batch
+                    batch.append(vm_data)
                     
-                    if response.status_code in [200, 201]:
-                        synced += 1
+                    # Process batch when it reaches batch_size
+                    if len(batch) >= batch_size:
+                        success_count = self._upsert_vm_batch(batch)
+                        synced += success_count
+                        batch = []
                     
                 except Exception as e:
-                    self.log(f"  Error syncing VM {vm.name}: {e}", "WARNING")
+                    self.log(f"  Error preparing VM {vm.name}: {e}", "WARNING")
+            
+            # Process remaining VMs in batch
+            if batch:
+                success_count = self._upsert_vm_batch(batch)
+                synced += success_count
             
             container.Destroy()
-            self.log(f"  Synced {synced} VMs")
-            return {'synced': synced}
+            self.log(f"  Synced {synced}/{total_vms} VMs")
+            self.log(f"  VM OS distribution: {dict(sorted(os_counts.items(), key=lambda x: x[1], reverse=True)[:10])}")
+            
+            return {
+                'synced': synced,
+                'total': total_vms,
+                'os_distribution': os_counts
+            }
             
         except Exception as e:
             self.log(f"Failed to sync VMs: {e}", "ERROR")
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
             return {'synced': 0, 'error': str(e)}
+    
+    def _upsert_vm_batch(self, batch: List[Dict]) -> int:
+        """Upsert a batch of VM records"""
+        try:
+            # Use bulk upsert with on_conflict
+            response = requests.post(
+                f"{DSM_URL}/rest/v1/vcenter_vms",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'resolution=merge-duplicates,return=minimal'
+                },
+                json=batch,
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+            
+            if response.status_code in [200, 201, 204]:
+                return len(batch)
+            else:
+                self.log(f"  Batch upsert failed: HTTP {response.status_code}", "WARNING")
+                # Fall back to individual inserts
+                success_count = 0
+                for vm_data in batch:
+                    try:
+                        resp = requests.post(
+                            f"{DSM_URL}/rest/v1/vcenter_vms?on_conflict=vcenter_id",
+                            headers={
+                                'apikey': SERVICE_ROLE_KEY,
+                                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                'Content-Type': 'application/json',
+                                'Prefer': 'resolution=merge-duplicates'
+                            },
+                            json=vm_data,
+                            verify=VERIFY_SSL
+                        )
+                        if resp.status_code in [200, 201]:
+                            success_count += 1
+                    except:
+                        pass
+                return success_count
+                
+        except Exception as e:
+            self.log(f"  Error in batch upsert: {e}", "WARNING")
+            return 0
 
     def sync_vcenter_datastores(self, content, source_vcenter_id: str) -> Dict:
         """Sync datastore information from vCenter"""
         try:
+            self.log("Creating datastore container view...")
             container = content.viewManager.CreateContainerView(
                 content.rootFolder, [vim.Datastore], True
             )
+            
+            total_datastores = len(container.view)
+            self.log(f"Found {total_datastores} datastores in vCenter")
             
             synced = 0
             for ds in container.view:
@@ -2900,18 +3025,22 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     self.log(f"  Error syncing datastore {ds.name}: {e}", "WARNING")
             
             container.Destroy()
-            self.log(f"  Synced {synced} datastores")
-            return {'synced': synced}
+            self.log(f"  Synced {synced}/{total_datastores} datastores")
+            return {'synced': synced, 'total': total_datastores}
             
         except Exception as e:
             self.log(f"Failed to sync datastores: {e}", "ERROR")
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
             return {'synced': 0, 'error': str(e)}
 
     def sync_vcenter_alarms(self, content, source_vcenter_id: str) -> Dict:
         """Sync active alarms from vCenter"""
         try:
+            self.log("Fetching alarm manager...")
             alarm_manager = content.alarmManager
             if not alarm_manager:
+                self.log("  No alarm manager available")
                 return {'synced': 0}
             
             # Clear old alarms first
@@ -2927,9 +3056,13 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             synced = 0
             
             # Get triggered alarms from all entities
+            self.log("Creating entity container view for alarms...")
             container = content.viewManager.CreateContainerView(
                 content.rootFolder, [vim.ManagedEntity], True
             )
+            
+            total_entities = len(container.view)
+            self.log(f"Checking {total_entities} entities for alarms...")
             
             for entity in container.view:
                 try:
@@ -2991,6 +3124,8 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             
         except Exception as e:
             self.log(f"Failed to sync alarms: {e}", "ERROR")
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
             return {'synced': 0, 'error': str(e)}
 
     def create_idrac_session(self, ip: str, username: str, password: str, log_to_db: bool = False,
