@@ -1,0 +1,185 @@
+import { useEffect, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
+
+export interface VCenter {
+  id: string;
+  name: string;
+  datacenter_location: string | null;
+  host: string;
+  username: string;
+  password_encrypted: string | null;
+  port: number;
+  verify_ssl: boolean;
+  sync_enabled: boolean;
+  sync_interval_minutes: number | null;
+  last_sync: string | null;
+  last_sync_status: string | null;
+  last_sync_error: string | null;
+  is_primary: boolean | null;
+  color: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VCenterFormData {
+  name: string;
+  datacenter_location?: string;
+  host: string;
+  username: string;
+  password: string;
+  port: number;
+  verify_ssl: boolean;
+  sync_enabled: boolean;
+  color?: string;
+  is_primary?: boolean;
+}
+
+export function useVCenters() {
+  const { toast } = useToast();
+  const [vcenters, setVcenters] = useState<VCenter[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchVCenters = async () => {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from("vcenters")
+        .select("*")
+        .order("name");
+
+      if (error) throw error;
+      setVcenters(data || []);
+    } catch (error: any) {
+      console.error("Error fetching vCenters:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load vCenter connections",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addVCenter = async (data: VCenterFormData) => {
+    try {
+      const { error } = await supabase.from("vcenters").insert([
+        {
+          name: data.name,
+          datacenter_location: data.datacenter_location || null,
+          host: data.host,
+          username: data.username,
+          password_encrypted: data.password, // Will be encrypted by trigger
+          port: data.port,
+          verify_ssl: data.verify_ssl,
+          sync_enabled: data.sync_enabled,
+          color: data.color || "#6366f1",
+          is_primary: data.is_primary || false,
+        },
+      ]);
+
+      if (error) throw error;
+
+      toast({
+        title: "vCenter added",
+        description: `${data.name} has been added successfully`,
+      });
+
+      await fetchVCenters();
+      return true;
+    } catch (error: any) {
+      console.error("Error adding vCenter:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to add vCenter connection",
+        variant: "destructive",
+      });
+      return false;
+    }
+  };
+
+  const updateVCenter = async (id: string, data: Partial<VCenterFormData>) => {
+    try {
+      const updateData: any = { ...data };
+      
+      // Only include password if provided
+      if (data.password) {
+        updateData.password_encrypted = data.password;
+        delete updateData.password;
+      }
+
+      const { error } = await supabase
+        .from("vcenters")
+        .update(updateData)
+        .eq("id", id);
+
+      if (error) throw error;
+
+      toast({
+        title: "vCenter updated",
+        description: "vCenter connection has been updated successfully",
+      });
+
+      await fetchVCenters();
+      return true;
+    } catch (error: any) {
+      console.error("Error updating vCenter:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update vCenter connection",
+        variant: "destructive",
+      });
+      return false;
+    }
+  };
+
+  const deleteVCenter = async (id: string) => {
+    try {
+      const { error } = await supabase.from("vcenters").delete().eq("id", id);
+
+      if (error) throw error;
+
+      toast({
+        title: "vCenter deleted",
+        description: "vCenter connection has been deleted successfully",
+      });
+
+      await fetchVCenters();
+      return true;
+    } catch (error: any) {
+      console.error("Error deleting vCenter:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete vCenter connection",
+        variant: "destructive",
+      });
+      return false;
+    }
+  };
+
+  useEffect(() => {
+    fetchVCenters();
+
+    // Subscribe to realtime changes
+    const channel = supabase
+      .channel("vcenters_changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "vcenters" }, () => {
+        fetchVCenters();
+      })
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, []);
+
+  return {
+    vcenters,
+    loading,
+    addVCenter,
+    updateVCenter,
+    deleteVCenter,
+    refetch: fetchVCenters,
+  };
+}

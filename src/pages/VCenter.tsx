@@ -7,11 +7,12 @@ import { HostsTable } from "@/components/vcenter/HostsTable";
 import { VMsTable } from "@/components/vcenter/VMsTable";
 import { ClustersPanel } from "@/components/vcenter/ClustersPanel";
 import { DatastoresTable } from "@/components/vcenter/DatastoresTable";
-import { VCenterSettingsDialog } from "@/components/vcenter/VCenterSettingsDialog";
+import { VCenterManagementDialog } from "@/components/vcenter/VCenterManagementDialog";
 import { VCenterConnectivityDialog } from "@/components/vcenter/VCenterConnectivityDialog";
 import { ClusterUpdateWizard } from "@/components/jobs/ClusterUpdateWizard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useVCenterData } from "@/hooks/useVCenterData";
+import { useVCenters } from "@/hooks/useVCenters";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Search, Download, Eye, Columns3 } from "lucide-react";
@@ -45,6 +46,7 @@ export default function VCenter() {
   const [selectedVmId, setSelectedVmId] = useState<string | null>(null);
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
   const [selectedDatastoreId, setSelectedDatastoreId] = useState<string | null>(null);
+  const [selectedVCenterId, setSelectedVCenterId] = useState<string | null>("all");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [testDialogOpen, setTestDialogOpen] = useState(false);
   const [clusterUpdateOpen, setClusterUpdateOpen] = useState(false);
@@ -57,7 +59,10 @@ export default function VCenter() {
   const navigate = useNavigate();
   const { toast } = useToast();
   
-  const { vms, clusters, datastores, alarms, loading: vmsLoading, refetch: refetchVCenterData } = useVCenterData();
+  const { vcenters } = useVCenters();
+  const { vms, clusters, datastores, alarms, loading: vmsLoading, refetch: refetchVCenterData } = useVCenterData(
+    selectedVCenterId === "all" ? null : selectedVCenterId
+  );
 
   const isPrivateNetwork = (host: string | null): boolean => {
     if (!host) return false;
@@ -73,9 +78,16 @@ export default function VCenter() {
   const fetchHosts = async () => {
     try {
       setHostsLoading(true);
-      const { data, error } = await supabase
+      let query = supabase
         .from("vcenter_hosts")
-        .select("*")
+        .select("*");
+
+      // Filter by selectedVCenterId if not "all"
+      if (selectedVCenterId && selectedVCenterId !== "all") {
+        query = query.eq("source_vcenter_id", selectedVCenterId);
+      }
+
+      const { data, error } = await query
         .order("cluster", { ascending: true })
         .order("name", { ascending: true });
 
@@ -126,7 +138,7 @@ export default function VCenter() {
     return () => {
       channel.unsubscribe();
     };
-  }, []);
+  }, [selectedVCenterId]);
 
   const filteredHosts = hosts.filter((host) => {
     const matchesSearch =
@@ -366,6 +378,9 @@ export default function VCenter() {
         }}
         onClusterUpdate={() => handleClusterUpdate()}
         hasActiveClusters={uniqueClusters.length > 0}
+        vcenters={vcenters.map(vc => ({ id: vc.id, name: vc.name, color: vc.color }))}
+        selectedVCenterId={selectedVCenterId}
+        onVCenterChange={setSelectedVCenterId}
       />
 
       <div className="flex-1 overflow-hidden">
@@ -444,7 +459,14 @@ export default function VCenter() {
         </Tabs>
       </div>
 
-      <VCenterSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <VCenterManagementDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        onVCenterAdded={() => {
+          fetchHosts();
+          refetchVCenterData();
+        }}
+      />
       <VCenterConnectivityDialog open={testDialogOpen} onOpenChange={setTestDialogOpen} results={null} />
       <ClusterUpdateWizard
         open={clusterUpdateOpen}

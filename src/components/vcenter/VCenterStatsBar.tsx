@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Settings, Activity, RefreshCw, RefreshCcw, Loader2, Database, Link as LinkIcon, HardDrive, AlertTriangle, ChevronDown, XCircle, AlertCircle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
@@ -24,6 +25,9 @@ interface VCenterStatsBarProps {
   onRefresh: () => void;
   onClusterUpdate: () => void;
   hasActiveClusters: boolean;
+  vcenters?: Array<{ id: string; name: string; color: string | null }>;
+  selectedVCenterId?: string | null;
+  onVCenterChange?: (vcenterId: string | null) => void;
 }
 
 export function VCenterStatsBar({
@@ -43,6 +47,9 @@ export function VCenterStatsBar({
   onRefresh,
   onClusterUpdate,
   hasActiveClusters,
+  vcenters = [],
+  selectedVCenterId,
+  onVCenterChange,
 }: VCenterStatsBarProps) {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   
@@ -80,6 +87,32 @@ export function VCenterStatsBar({
     <div className="border-b bg-card">
       <div className="flex flex-col gap-3 px-4 py-3 sm:px-6 lg:px-8 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 flex-wrap items-center gap-3 sm:gap-6">
+          {/* vCenter Selector */}
+          {vcenters.length > 0 && onVCenterChange && (
+            <>
+              <Select value={selectedVCenterId || "all"} onValueChange={onVCenterChange}>
+                <SelectTrigger className="w-[200px] h-9">
+                  <SelectValue placeholder="Select vCenter" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All vCenters</SelectItem>
+                  {vcenters.map((vc) => (
+                    <SelectItem key={vc.id} value={vc.id}>
+                      <div className="flex items-center gap-2">
+                        <div
+                          className="w-2 h-2 rounded-full"
+                          style={{ backgroundColor: vc.color || "#6366f1" }}
+                        />
+                        {vc.name}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <div className="hidden h-4 w-px bg-border sm:block" />
+            </>
+          )}
           <div className="flex items-center gap-2 text-sm whitespace-nowrap">
             <Database className="h-4 w-4 text-muted-foreground" />
             <span className="text-muted-foreground">Hosts:</span>
