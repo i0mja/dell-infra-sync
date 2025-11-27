@@ -579,6 +579,8 @@ export type Database = {
           local_path: string | null
           mount_count: number | null
           served_url: string | null
+          source_type: string | null
+          source_url: string | null
           tags: string[] | null
           updated_at: string | null
           upload_progress: number | null
@@ -596,6 +598,8 @@ export type Database = {
           local_path?: string | null
           mount_count?: number | null
           served_url?: string | null
+          source_type?: string | null
+          source_url?: string | null
           tags?: string[] | null
           updated_at?: string | null
           upload_progress?: number | null
@@ -613,6 +617,8 @@ export type Database = {
           local_path?: string | null
           mount_count?: number | null
           served_url?: string | null
+          source_type?: string | null
+          source_url?: string | null
           tags?: string[] | null
           updated_at?: string | null
           upload_progress?: number | null
@@ -2444,6 +2450,8 @@ export type Database = {
         | "console_launch"
         | "firmware_upload"
         | "catalog_sync"
+        | "scan_local_isos"
+        | "register_iso_url"
       operation_type: "idrac_api" | "vcenter_api" | "openmanage_api"
     }
     CompositeTypes: {
@@ -2601,6 +2609,8 @@ export const Constants = {
         "console_launch",
         "firmware_upload",
         "catalog_sync",
+        "scan_local_isos",
+        "register_iso_url",
       ],
       operation_type: ["idrac_api", "vcenter_api", "openmanage_api"],
     },
