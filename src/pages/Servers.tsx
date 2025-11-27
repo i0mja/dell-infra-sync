@@ -6,8 +6,9 @@ import { useServerActions } from "@/hooks/useServerActions";
 import { ServerStatsBar } from "@/components/servers/ServerStatsBar";
 import { ServerFilterToolbar } from "@/components/servers/ServerFilterToolbar";
 import { ServersTable } from "@/components/servers/ServersTable";
-import { ServerDetailsSidebar } from "@/components/servers/ServerDetailsSidebar";
+import { ServerDetailDialog } from "@/components/servers/ServerDetailDialog";
 import { AddServerDialog } from "@/components/servers/AddServerDialog";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { EditServerDialog } from "@/components/servers/EditServerDialog";
 import { PowerControlDialog } from "@/components/servers/PowerControlDialog";
 import { BiosConfigDialog } from "@/components/servers/BiosConfigDialog";
@@ -129,140 +130,96 @@ export default function Servers() {
         onDiscovery={handleDiscovery}
       />
 
-      {/* Main: Two Column Layout */}
+      {/* Main: Full-Width Table */}
       <div className="flex-1 overflow-hidden px-4 pb-6 pt-4">
-        <div className="grid h-full gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(340px,1fr)]">
-          {/* Left: Filter + Table */}
-          <div className="flex min-w-0 flex-col gap-4">
-            <div className="flex h-full flex-col rounded-xl border bg-card shadow-sm">
-              <div className="border-b p-4">
-                <ServerFilterToolbar
-                  searchTerm={searchTerm}
-                  onSearchChange={setSearchTerm}
-                  groupFilter={groupFilter}
-                  onGroupFilterChange={setGroupFilter}
-                  statusFilter={statusFilter}
-                  onStatusFilterChange={setStatusFilter}
-                  groups={serverGroups || []}
-                  vCenterClusters={uniqueVCenterClusters}
-                />
-              </div>
-              <div className="flex-1 overflow-hidden p-2 sm:p-4">
-                <ServersTable
-                  servers={filteredServers}
-                  groupedData={groupedData}
-                  selectedServerId={selectedServer?.id || null}
-                  selectedGroupId={selectedGroup}
-                  onServerClick={handleServerRowClick}
-                  onGroupClick={handleGroupRowClick}
-                  onServerRefresh={handleRefreshInfo}
-                  onServerTest={handleTestConnection}
-                  onServerHealth={(server) => {
-                    setSelectedServer(server as any);
-                    setHealthDialogOpen(true);
-                  }}
-                  onServerPower={(server) => {
-                    setSelectedServer(server as any);
-                    setPowerControlDialogOpen(true);
-                  }}
-                  onServerDetails={(server) => setSelectedServer(server as any)}
-                  loading={false}
-                  refreshing={refreshing}
-                  healthCheckServer={null}
-                  hasActiveHealthCheck={() => false}
-                  isIncomplete={() => false}
-                  groupMemberships={groupMemberships || []}
-                  vCenterHosts={vCenterHosts || []}
-                  renderExpandedRow={() => null}
-                />
-              </div>
-            </div>
+        <div className="flex h-full flex-col rounded-xl border bg-card shadow-sm">
+          {/* Filter toolbar header */}
+          <div className="border-b p-4">
+            <ServerFilterToolbar
+              searchTerm={searchTerm}
+              onSearchChange={setSearchTerm}
+              groupFilter={groupFilter}
+              onGroupFilterChange={setGroupFilter}
+              statusFilter={statusFilter}
+              onStatusFilterChange={setStatusFilter}
+              groups={serverGroups || []}
+              vCenterClusters={uniqueVCenterClusters}
+            />
           </div>
-
-          {/* Right: Details Sidebar */}
-          <div className="min-h-[320px] xl:sticky xl:top-4 xl:self-start xl:max-h-[calc(100vh-8rem)] rounded-xl border bg-card shadow-sm overflow-hidden">
-            <ServerDetailsSidebar
-              selectedServer={selectedServer}
-              selectedGroup={
-                selectedGroupData
-                  ? {
-                      name: selectedGroupData.name,
-                      servers: selectedGroupData.servers,
-                    }
-                  : null
-              }
-              refreshing={refreshing === selectedServer?.id}
-              testing={testing === selectedServer?.id}
-              onClose={() => {
-                setSelectedServer(null);
-                setSelectedGroup(null);
-              }}
-              onEdit={(server) => {
-                setSelectedServer(server);
-                setEditDialogOpen(true);
-              }}
-              onDelete={(server) => {
-                setSelectedServer(server);
-                setDeleteDialogOpen(true);
-              }}
-              onTestConnection={handleTestConnection}
-              onRefreshInfo={handleRefreshInfo}
-              onPowerControl={(server) => {
-                setSelectedServer(server);
-                setPowerControlDialogOpen(true);
-              }}
-              onBiosConfig={(server) => {
-                setSelectedServer(server);
-                setBiosConfigDialogOpen(true);
-              }}
-              onBootConfig={(server) => {
-                setSelectedServer(server);
-                setBootConfigDialogOpen(true);
-              }}
-              onVirtualMedia={(server) => {
-                setSelectedServer(server);
-                setVirtualMediaDialogOpen(true);
-              }}
-              onScpBackup={(server) => {
-                setSelectedServer(server);
-                setScpBackupDialogOpen(true);
-              }}
-              onViewEventLog={(server) => {
-                setSelectedServer(server);
-                setEventLogDialogOpen(true);
-              }}
-              onViewHealth={(server) => {
-                setSelectedServer(server);
+          
+          {/* Full-width table */}
+          <div className="flex-1 overflow-hidden p-2 sm:p-4">
+            <ServersTable
+              servers={filteredServers}
+              groupedData={groupedData}
+              selectedServerId={selectedServer?.id || null}
+              selectedGroupId={selectedGroup}
+              onServerClick={handleServerRowClick}
+              onGroupClick={handleGroupRowClick}
+              onServerRefresh={handleRefreshInfo}
+              onServerTest={handleTestConnection}
+              onServerHealth={(server) => {
+                setSelectedServer(server as any);
                 setHealthDialogOpen(true);
               }}
-              onViewAudit={(server) => {
-                setSelectedServer(server);
-                setAuditDialogOpen(true);
+              onServerPower={(server) => {
+                setSelectedServer(server as any);
+                setPowerControlDialogOpen(true);
               }}
-              onViewProperties={(server) => {
-                setSelectedServer(server);
-                setPropertiesDialogOpen(true);
-              }}
-              onWorkflow={(server) => {
-                setSelectedServer(server);
-                setUpdateWizardOpen(true);
-              }}
-              onLinkVCenter={(server) => {
-                setSelectedServer(server);
-                setLinkDialogOpen(true);
-              }}
-              onAssignCredentials={(server) => {
-                setSelectedServer(server);
-                setAssignCredentialsDialogOpen(true);
-              }}
-              onCreateJob={(server) => {
-                setSelectedServer(server);
-                setDiscoveryScanOpen(true);
-              }}
+              onServerDetails={(server) => setSelectedServer(server as any)}
+              loading={false}
+              refreshing={refreshing}
+              healthCheckServer={null}
+              hasActiveHealthCheck={() => false}
+              isIncomplete={() => false}
+              groupMemberships={groupMemberships || []}
+              vCenterHosts={vCenterHosts || []}
+              renderExpandedRow={() => null}
             />
           </div>
         </div>
       </div>
+
+      {/* Server Detail Dialog/Sheet */}
+      <ServerDetailDialog
+        open={!!selectedServer}
+        onOpenChange={(open) => {
+          if (!open) setSelectedServer(null);
+        }}
+        server={selectedServer}
+        onRefresh={() => {
+          if (selectedServer) {
+            handleRefreshInfo(selectedServer);
+          }
+        }}
+        onPowerControl={() => {
+          setPowerControlDialogOpen(true);
+        }}
+        onBiosConfig={() => {
+          setBiosConfigDialogOpen(true);
+        }}
+        onBootConfig={() => {
+          setBootConfigDialogOpen(true);
+        }}
+        onScpBackup={() => {
+          setScpBackupDialogOpen(true);
+        }}
+        onVirtualMedia={() => {
+          setVirtualMediaDialogOpen(true);
+        }}
+        onEventLog={() => {
+          setEventLogDialogOpen(true);
+        }}
+        onHealthCheck={() => {
+          setHealthDialogOpen(true);
+        }}
+        onLinkVCenter={() => {
+          setLinkDialogOpen(true);
+        }}
+        onAudit={() => {
+          setAuditDialogOpen(true);
+        }}
+      />
 
       {/* Dialogs */}
       <AddServerDialog
