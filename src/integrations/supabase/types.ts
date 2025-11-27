@@ -2021,6 +2021,7 @@ export type Database = {
         | "rolling_cluster_update"
         | "server_group_safety_check"
         | "iso_upload"
+        | "console_launch"
       operation_type: "idrac_api" | "vcenter_api" | "openmanage_api"
     }
     CompositeTypes: {
@@ -2175,6 +2176,7 @@ export const Constants = {
         "rolling_cluster_update",
         "server_group_safety_check",
         "iso_upload",
+        "console_launch",
       ],
       operation_type: ["idrac_api", "vcenter_api", "openmanage_api"],
     },

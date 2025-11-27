@@ -33,6 +33,64 @@ class DellOperations:
     
     # System Information Operations
     
+    def get_kvm_launch_info(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        server_id: str = None,
+        job_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Get KVM console launch information using Dell's official Redfish endpoint.
+        
+        Dell endpoint: POST /redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DelliDRACCardService/Actions/DelliDRACCardService.GetKVMLaunchInfo
+        
+        This returns a session key and URL for launching the HTML5 virtual console
+        with SSO (single sign-on) authentication.
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            server_id: Optional server ID for logging
+            job_id: Optional job ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict: Contains console_url and session_type
+            
+        Raises:
+            DellRedfishError: On API errors
+        """
+        # Call Dell's KVM launch endpoint
+        response = self.adapter.make_request(
+            method='POST',
+            ip=ip,
+            endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DelliDRACCardService/Actions/DelliDRACCardService.GetKVMLaunchInfo',
+            username=username,
+            password=password,
+            payload={},
+            operation_name='Get KVM Launch Info',
+            job_id=job_id,
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        # Extract session key from response
+        session_key = response.get('SessionKey', '')
+        
+        # Construct authenticated console URL with session key
+        # Dell iDRAC HTML5 console URL format with SSO token
+        console_url = f"https://{ip}/console?sessionKey={session_key}"
+        
+        return {
+            'console_url': console_url,
+            'session_type': 'HTML5',
+            'session_key': session_key
+        }
+    
     def get_system_info(
         self,
         ip: str,

@@ -16,6 +16,7 @@ CANONICAL_REDFISH_ENDPOINTS = {
     "/redfish/v1/Managers/iDRAC.Embedded.1",
     "/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ExportSystemConfiguration",
     "/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ImportSystemConfiguration",
+    "/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DelliDRACCardService/Actions/DelliDRACCardService.GetKVMLaunchInfo",
     "/redfish/v1/Managers/iDRAC.Embedded.1/Attributes",
     "/redfish/v1/Managers/iDRAC.Embedded.1/Jobs/JID_xxx",
     "/redfish/v1/Managers/iDRAC.Embedded.1/Jobs/{job_id}",
