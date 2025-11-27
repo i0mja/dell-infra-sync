@@ -6138,9 +6138,13 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             if not console_url:
                 raise Exception("No console URL returned from KVM launch endpoint")
             
-            self.log(f"[OK] Console URL generated for {ip_address}")
+            # Log appropriate message based on iDRAC version
+            if kvm_info.get('requires_login'):
+                self.log(f"[OK] Console URL generated for {ip_address} (iDRAC8 - manual login required)")
+            else:
+                self.log(f"[OK] Console URL generated for {ip_address} (iDRAC9+ - SSO enabled)")
             
-            # Complete job with console URL
+            # Complete job with console URL and all metadata
             self.update_job_status(
                 job['id'],
                 'completed',
@@ -6149,7 +6153,9 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     'console_url': console_url,
                     'server_id': server_id,
                     'ip_address': ip_address,
-                    'session_type': kvm_info.get('session_type', 'HTML5')
+                    'session_type': kvm_info.get('session_type', 'HTML5'),
+                    'requires_login': kvm_info.get('requires_login', False),
+                    'message': kvm_info.get('message')
                 }
             )
             
