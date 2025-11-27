@@ -37,6 +37,7 @@ export const DiscoveryScanDialog = ({
   const [notes, setNotes] = useState("");
   const [credentialSets, setCredentialSets] = useState<CredentialSet[]>([]);
   const [selectedCredentialSets, setSelectedCredentialSets] = useState<string[]>([]);
+  const [parsedIpCount, setParsedIpCount] = useState(0);
   const { toast } = useToast();
   const { user } = useAuth();
 
@@ -65,6 +66,33 @@ export const DiscoveryScanDialog = ({
     setCredentialSets(data || []);
   };
 
+  const parseIpInput = (input: string): { ips: string[], count: number } => {
+    if (!input.trim()) return { ips: [], count: 0 };
+
+    // Split by newlines and commas, then clean up
+    const entries = input
+      .split(/[\n,]+/)
+      .map(entry => entry.trim())
+      .filter(entry => entry.length > 0);
+
+    // Basic IP validation (IPv4)
+    const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
+    const cidrRegex = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
+    const rangeRegex = /^(\d{1,3}\.){3}\d{1,3}-(\d{1,3}\.){3}\d{1,3}$/;
+
+    const validEntries = entries.filter(entry => 
+      ipRegex.test(entry) || cidrRegex.test(entry) || rangeRegex.test(entry)
+    );
+
+    return { ips: validEntries, count: validEntries.length };
+  };
+
+  const handleIpInputChange = (value: string) => {
+    setScanRange(value);
+    const { count } = parseIpInput(value);
+    setParsedIpCount(count);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -74,11 +102,13 @@ export const DiscoveryScanDialog = ({
         throw new Error('Please enter an IP range to scan');
       }
 
+      const { ips } = parseIpInput(scanRange);
+      
       const { data: result, error } = await supabase.functions.invoke('create-job', {
         body: {
           job_type: "discovery_scan",
           created_by: user?.id,
-          target_scope: { ip_range: scanRange },
+          target_scope: ips.length === 1 ? { ip_range: ips[0] } : { ip_list: ips },
           details: {
             notes,
             scan_type: 'redfish',
@@ -135,18 +165,26 @@ export const DiscoveryScanDialog = ({
           
           <div className="space-y-2">
             <Label htmlFor="scan-range">
-              {quickScanIp ? "Server IP Address *" : "IP Range to Scan *"}
+              {quickScanIp ? "Server IP Address *" : "IP Addresses or Range *"}
             </Label>
-            <Input
+            <Textarea
               id="scan-range"
               value={scanRange}
-              onChange={(e) => setScanRange(e.target.value)}
-              placeholder={quickScanIp ? "192.168.1.100" : "e.g., 192.168.1.1-192.168.1.254 or 10.0.0.0/24"}
+              onChange={(e) => handleIpInputChange(e.target.value)}
+              placeholder={quickScanIp ? "192.168.1.100" : "192.168.1.10\n192.168.1.25\n192.168.1.50\n\nOr: 192.168.1.0/24\nOr: 192.168.1.1-192.168.1.254"}
               required
+              rows={quickScanIp ? 1 : 6}
+              className="font-mono text-sm"
             />
+            {!quickScanIp && parsedIpCount > 0 && (
+              <p className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1">
+                <Info className="h-3 w-3" />
+                {parsedIpCount} {parsedIpCount === 1 ? 'IP/range' : 'IPs/ranges'} detected
+              </p>
+            )}
             {!quickScanIp && (
-              <p className="text-sm text-muted-foreground">
-                Enter a range (192.168.1.1-192.168.1.254) or CIDR notation (10.0.0.0/24)
+              <p className="text-xs text-muted-foreground">
+                Paste from Excel (one IP per line), comma-separated, or use CIDR (10.0.0.0/24) / range notation (192.168.1.1-192.168.1.254)
               </p>
             )}
           </div>
