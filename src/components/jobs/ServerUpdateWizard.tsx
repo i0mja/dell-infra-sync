@@ -188,7 +188,7 @@ export const ServerUpdateWizard = ({
         name: group?.name || 'Unknown',
         total: members.length,
         linked: members.length,
-        connected: members.filter((m: any) => m.servers?.connection_status === 'connected').length
+        connected: members.filter((m: any) => m.servers?.connection_status === 'online').length
       });
     }
   };
@@ -204,7 +204,7 @@ export const ServerUpdateWizard = ({
         name: `${serversList.length} Server${serversList.length > 1 ? 's' : ''}`,
         total: serversList.length,
         linked: serversList.length,
-        connected: serversList.filter(s => s.connection_status === 'connected').length
+        connected: serversList.filter(s => s.connection_status === 'online').length
       });
     }
   };
