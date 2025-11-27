@@ -7,7 +7,6 @@ import { useAutoLinkVCenter } from "@/hooks/useAutoLinkVCenter";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { ServerStatsBar } from "@/components/servers/ServerStatsBar";
-import { ServerFilterToolbar } from "@/components/servers/ServerFilterToolbar";
 import { ServersTable } from "@/components/servers/ServersTable";
 import { ServerDetailDialog } from "@/components/servers/ServerDetailDialog";
 import { AddServerDialog } from "@/components/servers/AddServerDialog";
@@ -36,7 +35,7 @@ export default function Servers() {
   const { toast } = useToast();
   const { user } = useAuth();
 
-  // Search and filter state
+  // Filter state (managed by table)
   const [searchTerm, setSearchTerm] = useState("");
   const [groupFilter, setGroupFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -217,63 +216,52 @@ export default function Servers() {
       />
 
       {/* Main: Full-Width Table */}
-      <div className="flex-1 overflow-hidden px-4 pb-6 pt-4">
-        <div className="flex h-full flex-col rounded-xl border bg-card shadow-sm">
-          {/* Filter toolbar header */}
-          <div className="border-b p-4">
-            <ServerFilterToolbar
-              searchTerm={searchTerm}
-              onSearchChange={setSearchTerm}
-              groupFilter={groupFilter}
-              onGroupFilterChange={setGroupFilter}
-              statusFilter={statusFilter}
-              onStatusFilterChange={setStatusFilter}
-              groups={serverGroups || []}
-              vCenterClusters={uniqueVCenterClusters}
-              onBulkAutoLink={handleBulkAutoLink}
-              bulkLinking={isLinking}
-            />
-          </div>
-          
-          {/* Full-width table */}
-          <div className="flex-1 overflow-hidden p-2 sm:p-4">
-            <ServersTable
-              servers={filteredServers}
-              groupedData={groupedData ? groupedData.map(g => ({
-                id: g.group?.id || g.cluster || 'ungrouped',
-                name: g.name,
-                servers: g.servers,
-                onlineCount: g.onlineCount,
-                linkedCount: g.linkedCount,
-              })) : null}
-              selectedServerId={selectedServer?.id || null}
-              selectedGroupId={selectedGroup}
-              onServerClick={handleServerRowClick}
-              onGroupClick={handleGroupRowClick}
-              onServerRefresh={handleRefreshInfo}
-              onServerTest={handleTestConnection}
-              onServerHealth={(server) => {
-                setSelectedServer(server as any);
-                setHealthDialogOpen(true);
-              }}
-              onServerPower={(server) => {
-                setSelectedServer(server as any);
-                setPowerControlDialogOpen(true);
-              }}
-              onServerDetails={(server) => setSelectedServer(server as any)}
-              onAutoLinkVCenter={handleAutoLinkVCenter}
-              onConsoleLaunch={handleLaunchConsole}
-              loading={false}
-              refreshing={refreshing}
-              healthCheckServer={null}
-              hasActiveHealthCheck={() => false}
-              isIncomplete={() => false}
-              groupMemberships={groupMemberships || []}
-              vCenterHosts={vCenterHosts || []}
-              renderExpandedRow={() => null}
-            />
-          </div>
-        </div>
+      <div className="flex-1 overflow-hidden">
+        <ServersTable
+          servers={filteredServers}
+          groupedData={groupedData ? groupedData.map(g => ({
+            id: g.group?.id || g.cluster || 'ungrouped',
+            name: g.name,
+            servers: g.servers,
+            onlineCount: g.onlineCount,
+            linkedCount: g.linkedCount,
+          })) : null}
+          selectedServerId={selectedServer?.id || null}
+          selectedGroupId={selectedGroup}
+          onServerClick={handleServerRowClick}
+          onGroupClick={handleGroupRowClick}
+          onServerRefresh={handleRefreshInfo}
+          onServerTest={handleTestConnection}
+          onServerHealth={(server) => {
+            setSelectedServer(server as any);
+            setHealthDialogOpen(true);
+          }}
+          onServerPower={(server) => {
+            setSelectedServer(server as any);
+            setPowerControlDialogOpen(true);
+          }}
+          onServerDetails={(server) => setSelectedServer(server as any)}
+          onAutoLinkVCenter={handleAutoLinkVCenter}
+          onConsoleLaunch={handleLaunchConsole}
+          loading={false}
+          refreshing={refreshing}
+          healthCheckServer={null}
+          hasActiveHealthCheck={() => false}
+          isIncomplete={() => false}
+          groupMemberships={groupMemberships || []}
+          vCenterHosts={vCenterHosts || []}
+          renderExpandedRow={() => null}
+          searchTerm={searchTerm}
+          onSearchChange={setSearchTerm}
+          groupFilter={groupFilter}
+          onGroupFilterChange={setGroupFilter}
+          statusFilter={statusFilter}
+          onStatusFilterChange={setStatusFilter}
+          groups={serverGroups || []}
+          vCenterClusters={uniqueVCenterClusters}
+          onBulkAutoLink={handleBulkAutoLink}
+          bulkLinking={isLinking}
+        />
       </div>
 
       {/* Server Detail Dialog/Sheet */}

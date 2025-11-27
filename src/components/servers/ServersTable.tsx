@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -51,6 +52,9 @@ import {
   Link2,
   Monitor,
   Eye,
+  Search,
+  MoreHorizontal,
+  Loader2,
 } from "lucide-react";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
@@ -87,6 +91,16 @@ interface ServersTableProps {
   groupMemberships: any[];
   vCenterHosts: any[];
   renderExpandedRow: (server: Server) => React.ReactNode;
+  searchTerm: string;
+  onSearchChange: (value: string) => void;
+  groupFilter: string;
+  onGroupFilterChange: (value: string) => void;
+  statusFilter: string;
+  onStatusFilterChange: (value: string) => void;
+  groups: Array<{ id: string; name: string }>;
+  vCenterClusters: string[];
+  onBulkAutoLink?: () => void;
+  bulkLinking?: boolean;
 }
 
 export function ServersTable({
@@ -108,6 +122,16 @@ export function ServersTable({
   groupMemberships = [],
   vCenterHosts = [],
   renderExpandedRow,
+  searchTerm,
+  onSearchChange,
+  groupFilter,
+  onGroupFilterChange,
+  statusFilter,
+  onStatusFilterChange,
+  groups = [],
+  vCenterClusters = [],
+  onBulkAutoLink,
+  bulkLinking = false,
 }: ServersTableProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [sortField, setSortField] = useState<string | null>(null);
@@ -331,9 +355,10 @@ export function ServersTable({
   }
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b bg-muted/30">
+    <div className="flex flex-col h-full border rounded-lg shadow-sm">
+      {/* Unified Toolbar */}
+      <div className="flex items-center gap-2 px-4 py-2 border-b flex-wrap">
+        {/* Left: Selection */}
         <Checkbox
           checked={selectedServers.size === allServers.length && allServers.length > 0}
           onCheckedChange={toggleAllServers}
@@ -342,20 +367,65 @@ export function ServersTable({
           {selectedServers.size > 0 ? `${selectedServers.size} selected` : "Select all"}
         </span>
 
+        {/* Search - compact */}
+        <div className="relative w-64">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            placeholder="Search..."
+            value={searchTerm}
+            onChange={(e) => onSearchChange(e.target.value)}
+            className="pl-8 h-8 text-sm"
+          />
+        </div>
+
+        {/* Filters - compact selects */}
+        <Select value={groupFilter} onValueChange={onGroupFilterChange}>
+          <SelectTrigger className="w-[140px] h-8 text-sm">
+            <SelectValue placeholder="All Groups" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Groups</SelectItem>
+            <SelectItem value="ungrouped">Ungrouped</SelectItem>
+            {groups.map((group: any) => (
+              <SelectItem key={group.id} value={group.id}>
+                {group.name}
+              </SelectItem>
+            ))}
+            {vCenterClusters.map((cluster: string) => (
+              <SelectItem key={`cluster-${cluster}`} value={`cluster:${cluster}`}>
+                🖥 {cluster}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={statusFilter} onValueChange={onStatusFilterChange}>
+          <SelectTrigger className="w-[120px] h-8 text-sm">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Status</SelectItem>
+            <SelectItem value="online">Online</SelectItem>
+            <SelectItem value="offline">Offline</SelectItem>
+            <SelectItem value="unknown">Unknown</SelectItem>
+            <SelectItem value="incomplete">Incomplete</SelectItem>
+          </SelectContent>
+        </Select>
+
         <div className="flex-1" />
 
+        {/* Right: Actions */}
         {selectedServers.size > 0 && (
-          <Button variant="outline" size="sm" onClick={handleRefreshSelected}>
-            <RefreshCw className="mr-1 h-4 w-4" />
-            Refresh Selected
+          <Button variant="ghost" size="sm" className="h-8" onClick={handleRefreshSelected}>
+            <RefreshCw className="h-3.5 w-3.5 mr-1" />
+            Refresh
           </Button>
         )}
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm">
-              <Columns3 className="mr-1 h-4 w-4" />
-              Columns
+            <Button variant="ghost" size="sm" className="h-8">
+              <Columns3 className="h-3.5 w-3.5" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-56 bg-background" align="end">
@@ -409,16 +479,14 @@ export function ServersTable({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <Button variant="outline" size="sm" onClick={handleExportCSV}>
-          <Download className="mr-1 h-4 w-4" />
-          Export
+        <Button variant="ghost" size="sm" className="h-8" onClick={handleExportCSV}>
+          <Download className="h-3.5 w-3.5" />
         </Button>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm">
-              <Save className="mr-1 h-4 w-4" />
-              Views
+            <Button variant="ghost" size="sm" className="h-8">
+              <Save className="h-3.5 w-3.5" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-56" align="end">
@@ -456,11 +524,9 @@ export function ServersTable({
       {/* Table */}
       <div className="overflow-auto flex-1">
         <Table>
-          <TableHeader className="sticky top-0 bg-muted z-10">
+          <TableHeader className="sticky top-0 bg-background z-10">
             <TableRow>
-              <TableHead className="w-12">
-                <Checkbox checked={selectedServers.size === allServers.length} onCheckedChange={toggleAllServers} />
-              </TableHead>
+              <TableHead className="w-12"></TableHead>
               {isColumnVisible("hostname") && (
                 <TableHead className="w-[200px] cursor-pointer" onClick={() => handleSort("hostname")}>
                   <div className="flex items-center">
@@ -517,28 +583,28 @@ export function ServersTable({
                         className={`cursor-pointer hover:bg-accent ${selectedServerId === server.id ? "bg-accent" : ""}`}
                         onClick={() => onServerClick(server)}
                       >
-                        <TableCell onClick={(e) => e.stopPropagation()}>
+                        <TableCell onClick={(e) => e.stopPropagation()} className="py-2 px-3">
                           <Checkbox
                             checked={selectedServers.has(server.id)}
                             onCheckedChange={() => toggleServerSelection(server.id)}
                           />
                         </TableCell>
                         {isColumnVisible("hostname") && (
-                          <TableCell className="font-medium">{server.hostname || "—"}</TableCell>
+                          <TableCell className="font-medium py-2 px-3">{server.hostname || "—"}</TableCell>
                         )}
                         {isColumnVisible("ip") && (
-                          <TableCell className="font-mono text-sm">{server.ip_address}</TableCell>
+                          <TableCell className="font-mono text-sm py-2 px-3">{server.ip_address}</TableCell>
                         )}
-                        {isColumnVisible("status") && <TableCell>{getStatusBadge(server)}</TableCell>}
-                        {isColumnVisible("model") && <TableCell className="text-sm">{server.model || "—"}</TableCell>}
+                        {isColumnVisible("status") && <TableCell className="py-2 px-3">{getStatusBadge(server)}</TableCell>}
+                        {isColumnVisible("model") && <TableCell className="text-sm py-2 px-3">{server.model || "—"}</TableCell>}
                         {isColumnVisible("service_tag") && (
-                          <TableCell className="font-mono text-xs">{server.service_tag || "—"}</TableCell>
+                          <TableCell className="font-mono text-xs py-2 px-3">{server.service_tag || "—"}</TableCell>
                         )}
                         {isColumnVisible("idrac_firmware") && (
-                          <TableCell className="text-sm">{server.idrac_firmware || "—"}</TableCell>
+                          <TableCell className="text-sm py-2 px-3">{server.idrac_firmware || "—"}</TableCell>
                         )}
                         {isColumnVisible("vcenter") && (
-                          <TableCell>
+                          <TableCell className="py-2 px-3">
                             {server.vcenter_host_id ? (
                               <Badge variant="default" className="text-xs">
                                 Linked
@@ -551,7 +617,7 @@ export function ServersTable({
                           </TableCell>
                         )}
                         {isColumnVisible("groups") && (
-                          <TableCell className="text-sm text-muted-foreground">
+                          <TableCell className="text-sm text-muted-foreground py-2 px-3">
                             {getServerGroups(server.id)
                               .slice(0, 2)
                               .map((g: any) => g.name)
@@ -630,7 +696,7 @@ export function ServersTable({
                           onGroupClick(group.id);
                         }}
                       >
-                        <TableCell colSpan={10} className="py-2">
+                        <TableCell colSpan={10} className="py-2 px-3">
                           <div className="flex items-center gap-2">
                             {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                             <span className="font-semibold">{group.name}</span>
@@ -651,30 +717,30 @@ export function ServersTable({
                                 className={`cursor-pointer hover:bg-accent ${selectedServerId === server.id ? "bg-accent" : ""}`}
                                 onClick={() => onServerClick(server)}
                               >
-                                <TableCell onClick={(e) => e.stopPropagation()}>
+                                <TableCell onClick={(e) => e.stopPropagation()} className="py-2 px-3">
                                   <Checkbox
                                     checked={selectedServers.has(server.id)}
                                     onCheckedChange={() => toggleServerSelection(server.id)}
                                   />
                                 </TableCell>
                                 {isColumnVisible("hostname") && (
-                                  <TableCell className="font-medium">{server.hostname || "—"}</TableCell>
+                                  <TableCell className="font-medium py-2 px-3">{server.hostname || "—"}</TableCell>
                                 )}
                                 {isColumnVisible("ip") && (
-                                  <TableCell className="font-mono text-sm">{server.ip_address}</TableCell>
+                                  <TableCell className="font-mono text-sm py-2 px-3">{server.ip_address}</TableCell>
                                 )}
-                                {isColumnVisible("status") && <TableCell>{getStatusBadge(server)}</TableCell>}
+                                {isColumnVisible("status") && <TableCell className="py-2 px-3">{getStatusBadge(server)}</TableCell>}
                                 {isColumnVisible("model") && (
-                                  <TableCell className="text-sm">{server.model || "—"}</TableCell>
+                                  <TableCell className="text-sm py-2 px-3">{server.model || "—"}</TableCell>
                                 )}
                                 {isColumnVisible("service_tag") && (
-                                  <TableCell className="font-mono text-xs">{server.service_tag || "—"}</TableCell>
+                                  <TableCell className="font-mono text-xs py-2 px-3">{server.service_tag || "—"}</TableCell>
                                 )}
                                 {isColumnVisible("idrac_firmware") && (
-                                  <TableCell className="text-sm">{server.idrac_firmware || "—"}</TableCell>
+                                  <TableCell className="text-sm py-2 px-3">{server.idrac_firmware || "—"}</TableCell>
                                 )}
                                 {isColumnVisible("vcenter") && (
-                                  <TableCell>
+                                  <TableCell className="py-2 px-3">
                                     {server.vcenter_host_id ? (
                                       <Badge variant="default" className="text-xs">
                                         Linked
@@ -687,7 +753,7 @@ export function ServersTable({
                                   </TableCell>
                                 )}
                                 {isColumnVisible("groups") && (
-                                  <TableCell className="text-sm text-muted-foreground">{group.name}</TableCell>
+                                  <TableCell className="text-sm text-muted-foreground py-2 px-3">{group.name}</TableCell>
                                 )}
                               </TableRow>
                             </ContextMenuTrigger>
