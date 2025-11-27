@@ -951,6 +951,25 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 if bios_data:
                     base_info['bios_attributes'] = bios_data
                     self.log(f"  ✓ BIOS attributes captured", "INFO")
+                    
+                    # Extract key BIOS fields for server record
+                    base_info['cpu_model'] = bios_data.get('Proc1Brand')
+                    base_info['cpu_cores_per_socket'] = bios_data.get('Proc1NumCores')
+                    base_info['cpu_speed'] = bios_data.get('ProcCoreSpeed')
+                    base_info['boot_mode'] = bios_data.get('BootMode')
+                    boot_order_str = bios_data.get('SetBootOrderEn', '')
+                    base_info['boot_order'] = boot_order_str.split(',') if boot_order_str else None
+                    base_info['secure_boot'] = bios_data.get('SecureBoot')
+                    base_info['virtualization_enabled'] = bios_data.get('ProcVirtualization') == 'Enabled'
+                
+                # Fetch storage drives via Dell Redfish API
+                drives = self._fetch_storage_drives(ip, username, password, server_id, job_id)
+                if drives:
+                    base_info['drives'] = drives
+                    base_info['total_drives'] = len(drives)
+                    total_bytes = sum(d.get('capacity_bytes', 0) for d in drives)
+                    base_info['total_storage_tb'] = round(total_bytes / (1024**4), 2) if total_bytes else None
+                    self.log(f"  ✓ Discovered {len(drives)} drives ({base_info['total_storage_tb']} TB)", "INFO")
             
             return base_info
         except Exception as e:
@@ -1235,6 +1254,155 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
         except Exception as e:
             self.log(f"  Could not fetch BIOS attributes: {e}", "DEBUG")
             return None
+    
+    def _fetch_storage_drives(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None) -> List[Dict]:
+        """
+        Fetch drive inventory using Dell Redfish Storage API.
+        
+        Dell Redfish Pattern:
+        1. GET /redfish/v1/Systems/System.Embedded.1/Storage → list controllers
+        2. For each controller, GET Drives collection
+        3. For each drive, extract: Manufacturer, Model, SerialNumber, MediaType, 
+           CapacityBytes, Protocol, Status, PhysicalLocation
+        """
+        drives = []
+        
+        try:
+            # Get storage controllers
+            storage_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Storage"
+            storage_response, storage_time = self.throttler.request_with_safety(
+                method='GET',
+                url=storage_url,
+                ip=ip,
+                logger=self.log,
+                auth=(username, password),
+                timeout=(2, 15)
+            )
+            
+            if not storage_response or storage_response.status_code != 200:
+                return drives
+            
+            storage_data = storage_response.json()
+            controllers = storage_data.get('Members', [])
+            
+            for controller_ref in controllers:
+                try:
+                    controller_url = f"https://{ip}{controller_ref['@odata.id']}"
+                    ctrl_resp, ctrl_time = self.throttler.request_with_safety(
+                        method='GET',
+                        url=controller_url,
+                        ip=ip,
+                        logger=self.log,
+                        auth=(username, password),
+                        timeout=(2, 15)
+                    )
+                    
+                    if not ctrl_resp or ctrl_resp.status_code != 200:
+                        continue
+                        
+                    ctrl_data = ctrl_resp.json()
+                    controller_name = ctrl_data.get('Id', 'Unknown')
+                    
+                    # Get drives collection
+                    drives_refs = ctrl_data.get('Drives', [])
+                    for drive_ref in drives_refs:
+                        try:
+                            drive_url = f"https://{ip}{drive_ref['@odata.id']}"
+                            drive_resp, drive_time = self.throttler.request_with_safety(
+                                method='GET',
+                                url=drive_url,
+                                ip=ip,
+                                logger=self.log,
+                                auth=(username, password),
+                                timeout=(2, 15)
+                            )
+                            
+                            if not drive_resp or drive_resp.status_code != 200:
+                                continue
+                                
+                            drive_data = drive_resp.json()
+                            
+                            # Extract drive info per Dell Redfish schema
+                            capacity_bytes = drive_data.get('CapacityBytes', 0)
+                            physical_location = drive_data.get('PhysicalLocation', {}).get('PartLocation', {})
+                            
+                            drives.append({
+                                'name': drive_data.get('Id') or drive_data.get('Name'),
+                                'manufacturer': drive_data.get('Manufacturer'),
+                                'model': drive_data.get('Model'),
+                                'serial_number': drive_data.get('SerialNumber'),
+                                'part_number': drive_data.get('PartNumber'),
+                                'media_type': drive_data.get('MediaType'),  # HDD, SSD
+                                'protocol': drive_data.get('Protocol'),      # SATA, SAS, NVMe
+                                'capacity_bytes': capacity_bytes,
+                                'capacity_gb': round(capacity_bytes / (1024**3), 2) if capacity_bytes else None,
+                                'slot': str(physical_location.get('LocationOrdinalValue')) if physical_location.get('LocationOrdinalValue') is not None else None,
+                                'enclosure': physical_location.get('ServiceLabel'),
+                                'controller': controller_name,
+                                'health': drive_data.get('Status', {}).get('Health'),
+                                'status': drive_data.get('Status', {}).get('State'),
+                                'predicted_failure': drive_data.get('PredictedMediaLifeLeftPercent', 100) < 10 if drive_data.get('PredictedMediaLifeLeftPercent') else False,
+                                'life_remaining_percent': drive_data.get('PredictedMediaLifeLeftPercent'),
+                                'firmware_version': drive_data.get('Revision'),
+                                'rotation_speed_rpm': drive_data.get('RotationSpeedRPM'),
+                                'capable_speed_gbps': drive_data.get('CapableSpeedGbs'),
+                            })
+                        except Exception as e:
+                            self.log(f"  Error fetching drive {drive_ref.get('@odata.id', 'unknown')}: {e}", "DEBUG")
+                            continue
+                except Exception as e:
+                    self.log(f"  Error fetching controller {controller_ref.get('@odata.id', 'unknown')}: {e}", "DEBUG")
+                    continue
+            
+            return drives
+            
+        except Exception as e:
+            self.log(f"  Could not fetch storage drives: {e}", "DEBUG")
+            return []
+    
+    def _sync_server_drives(self, server_id: str, drives: List[Dict]):
+        """Sync drive inventory to server_drives table"""
+        try:
+            headers = {"apikey": SERVICE_ROLE_KEY, "Authorization": f"Bearer {SERVICE_ROLE_KEY}"}
+            
+            for drive in drives:
+                if not drive.get('serial_number'):
+                    continue  # Skip drives without serial numbers
+                
+                drive_data = {
+                    'server_id': server_id,
+                    'name': drive.get('name'),
+                    'manufacturer': drive.get('manufacturer'),
+                    'model': drive.get('model'),
+                    'serial_number': drive.get('serial_number'),
+                    'part_number': drive.get('part_number'),
+                    'media_type': drive.get('media_type'),
+                    'protocol': drive.get('protocol'),
+                    'capacity_bytes': drive.get('capacity_bytes'),
+                    'capacity_gb': drive.get('capacity_gb'),
+                    'slot': drive.get('slot'),
+                    'enclosure': drive.get('enclosure'),
+                    'controller': drive.get('controller'),
+                    'health': drive.get('health'),
+                    'status': drive.get('status'),
+                    'predicted_failure': drive.get('predicted_failure'),
+                    'life_remaining_percent': drive.get('life_remaining_percent'),
+                    'firmware_version': drive.get('firmware_version'),
+                    'rotation_speed_rpm': drive.get('rotation_speed_rpm'),
+                    'capable_speed_gbps': drive.get('capable_speed_gbps'),
+                    'last_sync': datetime.utcnow().isoformat() + 'Z',
+                }
+                
+                # Upsert drive (update if exists, insert if new)
+                upsert_url = f"{DSM_URL}/rest/v1/server_drives"
+                upsert_params = {
+                    "on_conflict": "server_id,serial_number",
+                    "resolution": "merge-duplicates"
+                }
+                requests.post(upsert_url, headers=headers, json=drive_data, params=upsert_params, verify=VERIFY_SSL)
+                
+        except Exception as e:
+            self.log(f"  Error syncing drives for server {server_id}: {e}", "WARN")
     
     def _create_server_audit_entry(self, server_id: str, job_id: str, action: str, summary: str, details: Dict = None):
         """Create audit trail entry for server operations"""
@@ -1608,7 +1776,10 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     allowed_fields = {
                         "manufacturer", "model", "product_name", "service_tag", "hostname",
                         "bios_version", "cpu_count", "memory_gb", "idrac_firmware",
-                        "manager_mac_address", "redfish_version", "supported_endpoints"
+                        "manager_mac_address", "redfish_version", "supported_endpoints",
+                        "cpu_model", "cpu_cores_per_socket", "cpu_speed",
+                        "boot_mode", "boot_order", "secure_boot", "virtualization_enabled",
+                        "total_drives", "total_storage_tb"
                     }
                     
                     # Build filtered update payload (exclude None values and credentials)
@@ -1640,6 +1811,10 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     if update_response.status_code in [200, 204]:
                         self.log(f"  ✓ Refreshed {ip}: {info.get('model')} - {info.get('hostname')}")
                         refreshed_count += 1
+                        
+                        # Sync drives to server_drives table
+                        if info.get('drives'):
+                            self._sync_server_drives(server['id'], info['drives'])
                         
                         # Try auto-linking to vCenter if service_tag was updated
                         if info.get('service_tag'):
@@ -1866,6 +2041,15 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 'credential_last_tested': datetime.now().isoformat(),
                 'discovered_by_credential_set_id': server.get('credential_set_id'),
                 'discovery_job_id': job_id,
+                'cpu_model': server.get('cpu_model'),
+                'cpu_cores_per_socket': server.get('cpu_cores_per_socket'),
+                'cpu_speed': server.get('cpu_speed'),
+                'boot_mode': server.get('boot_mode'),
+                'boot_order': server.get('boot_order'),
+                'secure_boot': server.get('secure_boot'),
+                'virtualization_enabled': server.get('virtualization_enabled'),
+                'total_drives': server.get('total_drives'),
+                'total_storage_tb': server.get('total_storage_tb'),
             }
             
             if existing.status_code == 200 and _safe_json_parse(existing):
@@ -1874,6 +2058,10 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}"
                 requests.patch(update_url, headers=headers, json=server_data, verify=VERIFY_SSL)
                 self.log(f"Updated existing server: {server['ip']}")
+                
+                # Sync drives to server_drives table
+                if server.get('drives'):
+                    self._sync_server_drives(server_id, server['drives'])
                 
                 # Try auto-linking to vCenter
                 if server.get('service_tag'):
@@ -1886,11 +2074,17 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 self.log(f"Inserted new server: {server['ip']}")
                 
                 # Try auto-linking to vCenter for new server
-                if response.status_code in [200, 201] and server.get('service_tag'):
+                if response.status_code in [200, 201]:
                     new_server = _safe_json_parse(response)
                     if new_server:
                         server_id = new_server[0]['id'] if isinstance(new_server, list) else new_server['id']
-                        self.auto_link_vcenter(server_id, server.get('service_tag'))
+                        
+                        # Sync drives for new server
+                        if server.get('drives'):
+                            self._sync_server_drives(server_id, server['drives'])
+                        
+                        if server.get('service_tag'):
+                            self.auto_link_vcenter(server_id, server.get('service_tag'))
         except Exception as e:
             self.log(f"Error inserting server {server['ip']}: {e}", "ERROR")
 
