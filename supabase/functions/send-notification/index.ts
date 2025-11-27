@@ -41,9 +41,12 @@ Deno.serve(async (req) => {
     );
 
     const payload: any = await req.json();
-    const { jobId, jobType, status, details, isTest, testMessage, notification_type } = payload;
+    const { jobId, jobType, status, details, isTest, is_test, testMessage, notification_type } = payload;
+    
+    // Handle both camelCase and snake_case for test notifications
+    const isTestNotification = isTest || is_test || false;
 
-    console.log('Processing notification:', { jobId, jobType, status, isTest, notification_type });
+    console.log('Processing notification:', { jobId, jobType, status, isTestNotification, notification_type });
 
     // Get notification settings
     const { data: settings, error: settingsError } = await supabaseClient
@@ -179,7 +182,7 @@ Deno.serve(async (req) => {
     }
 
     // Check if we should notify for this event (skip for test notifications)
-    if (!isTest) {
+    if (!isTestNotification) {
       const shouldNotify = 
         (status === 'completed' && settings.notify_on_job_complete) ||
         (status === 'failed' && settings.notify_on_job_failed) ||
@@ -197,7 +200,7 @@ Deno.serve(async (req) => {
     // Determine if this is a critical failure
     const isCritical = status === 'failed' && 
                        settings.critical_job_types?.includes(jobType || '') &&
-                       !isTest;
+                       !isTestNotification;
 
     const severity = isCritical ? 'critical' : 
                      status === 'failed' ? 'high' : 
@@ -224,7 +227,7 @@ Deno.serve(async (req) => {
           job_id: jobId || null,
           status: 'success',
           delivery_details: emailResult,
-          is_test: isTest || false,
+          is_test: isTestNotification,
           severity
         });
       } catch (emailError: any) {
@@ -238,7 +241,7 @@ Deno.serve(async (req) => {
           status: 'failed',
           error_message: emailError.message,
           delivery_details: { error: emailError.message },
-          is_test: isTest || false,
+          is_test: isTestNotification,
           severity
         });
       }
@@ -254,7 +257,7 @@ Deno.serve(async (req) => {
           jobType || 'test', 
           status || 'test', 
           details,
-          isTest,
+          isTestNotification,
           testMessage,
           isCritical,
           settings.teams_mention_users,
@@ -268,7 +271,7 @@ Deno.serve(async (req) => {
           job_id: jobId || null,
           status: 'success',
           delivery_details: teamsResult,
-          is_test: isTest || false,
+          is_test: isTestNotification,
           severity
         });
       } catch (teamsError: any) {
@@ -282,7 +285,7 @@ Deno.serve(async (req) => {
           status: 'failed',
           error_message: teamsError.message,
           delivery_details: { error: teamsError.message },
-          is_test: isTest || false,
+          is_test: isTestNotification,
           severity
         });
       }
