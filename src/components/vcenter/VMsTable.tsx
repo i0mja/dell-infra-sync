@@ -50,6 +50,7 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
   const [clusterFilter, setClusterFilter] = useState("all");
   const [powerFilter, setPowerFilter] = useState("all");
   const [toolsFilter, setToolsFilter] = useState("all");
+  const [osFilter, setOsFilter] = useState("all");
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [selectedVms, setSelectedVms] = useState<Set<string>>(new Set());
@@ -82,8 +83,21 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
     const matchesCluster = clusterFilter === "all" || vm.cluster_name === clusterFilter;
     const matchesPower = powerFilter === "all" || vm.power_state?.toLowerCase() === powerFilter;
     const matchesTools = toolsFilter === "all" || vm.tools_status?.toLowerCase() === toolsFilter;
+    
+    const matchesOs = osFilter === "all" || (() => {
+      const os = vm.guest_os?.toLowerCase() || '';
+      switch(osFilter) {
+        case 'windows': return os.includes('windows');
+        case 'rhel': return os.includes('centos') || os.includes('rhel') || os.includes('red hat');
+        case 'ubuntu': return os.includes('ubuntu');
+        case 'debian': return os.includes('debian');
+        case 'linux': return os.includes('linux') && !os.includes('windows');
+        case 'other': return !os.includes('windows') && !os.includes('centos') && !os.includes('rhel') && !os.includes('red hat') && !os.includes('ubuntu') && !os.includes('debian') && !os.includes('linux');
+        default: return true;
+      }
+    })();
 
-    return matchesSearch && matchesCluster && matchesPower && matchesTools;
+    return matchesSearch && matchesCluster && matchesPower && matchesTools && matchesOs;
   });
 
   // Apply sorting
@@ -163,7 +177,7 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
     }
     saveView(
       viewName,
-      { cluster: clusterFilter, power: powerFilter, tools: toolsFilter },
+      { cluster: clusterFilter, power: powerFilter, tools: toolsFilter, os: osFilter },
       sortField || undefined,
       sortDirection,
       visibleColumns
@@ -302,6 +316,21 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
             <SelectItem value="toolsold">Old</SelectItem>
             <SelectItem value="toolsnotinstalled">Not Installed</SelectItem>
             <SelectItem value="toolsnotrunning">Not Running</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select value={osFilter} onValueChange={setOsFilter}>
+          <SelectTrigger className="w-[130px] h-9">
+            <SelectValue placeholder="OS" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All OS</SelectItem>
+            <SelectItem value="windows">Windows</SelectItem>
+            <SelectItem value="rhel">RHEL/CentOS</SelectItem>
+            <SelectItem value="ubuntu">Ubuntu</SelectItem>
+            <SelectItem value="debian">Debian</SelectItem>
+            <SelectItem value="linux">Linux (Other)</SelectItem>
+            <SelectItem value="other">Other</SelectItem>
           </SelectContent>
         </Select>
 
