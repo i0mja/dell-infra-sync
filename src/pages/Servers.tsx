@@ -271,6 +271,12 @@ export default function Servers() {
         onSuccess={refetch}
       />
 
+      <DiscoveryScanDialog
+        open={discoveryScanOpen}
+        onOpenChange={setDiscoveryScanOpen}
+        onSuccess={refetch}
+      />
+
       {selectedServer && (
         <>
           <EditServerDialog
@@ -347,12 +353,6 @@ export default function Servers() {
             server={selectedServer}
             onSuccess={refetch}
           />
-
-      <DiscoveryScanDialog
-        open={discoveryScanOpen}
-        onOpenChange={setDiscoveryScanOpen}
-        onSuccess={refetch}
-      />
 
           <WorkflowJobDialog
             open={workflowDialogOpen}
