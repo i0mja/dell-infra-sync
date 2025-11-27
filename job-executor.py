@@ -1565,6 +1565,8 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 # Record success for circuit breaker
                 self.throttler.record_success(ip)
                 return {
+                    "success": True,
+                    "idrac_detected": True,
                     "manufacturer": data.get("Manufacturer", "Unknown"),
                     "model": data.get("Model", "Unknown"),
                     "service_tag": data.get("SKU", None),
@@ -1574,9 +1576,20 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     "password": password,
                 }
             elif response and response.status_code in [401, 403]:
-                # Authentication failure - record and possibly open circuit
+                # Authentication failure BUT iDRAC exists - this is key!
                 self.throttler.record_failure(ip, response.status_code, self.log)
-            return None
+                return {
+                    "success": False,
+                    "idrac_detected": True,  # iDRAC is present, just auth failed
+                    "auth_failed": True
+                }
+            else:
+                # Other HTTP error - not a confirmed iDRAC
+                return {
+                    "success": False,
+                    "idrac_detected": False,
+                    "auth_failed": False
+                }
         except Exception as e:
             # Record failure for circuit breaker
             self.throttler.record_failure(ip, None, self.log)
@@ -1598,7 +1611,12 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 operation_type='idrac_api'
             )
             self.log(f"Error testing iDRAC {ip}: {e}", "DEBUG")
-            return None
+            # Connection error - no iDRAC detected
+            return {
+                "success": False,
+                "idrac_detected": False,
+                "auth_failed": False
+            }
 
     def resolve_credentials_for_server(self, server: Dict) -> tuple:
         """
@@ -2013,6 +2031,9 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 unique_credentials.append(cred)
                 seen_ids.add(cred['id'])
         
+        # Track if any response indicated an iDRAC exists (401/403 response)
+        idrac_detected = False
+        
         # Step 3: Try each credential set in order
         for cred_set in sorted(unique_credentials, key=lambda x: x.get('priority', 999)):
             try:
@@ -2041,15 +2062,22 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 )
                 
                 if result:
-                    return {
-                        'success': True,
-                        'ip': ip,
-                        'credential_set_id': cred_set.get('id'),
-                        'credential_set_name': cred_set['name'],
-                        'matched_by': matched_by,
-                        'auth_failed': False,
-                        **result
-                    }
+                    # Track if iDRAC was detected by ANY credential attempt
+                    if result.get('idrac_detected'):
+                        idrac_detected = True
+                    
+                    # If successful, return immediately
+                    if result.get('success'):
+                        return {
+                            'success': True,
+                            'ip': ip,
+                            'idrac_detected': True,
+                            'credential_set_id': cred_set.get('id'),
+                            'credential_set_name': cred_set['name'],
+                            'matched_by': matched_by,
+                            'auth_failed': False,
+                            **result
+                        }
             except Exception as e:
                 continue  # Try next credential set
         
@@ -2057,7 +2085,8 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
         return {
             'success': False,
             'ip': ip,
-            'auth_failed': True
+            'idrac_detected': idrac_detected,  # Only True if we got 401/403
+            'auth_failed': idrac_detected  # Only mark auth_failed if iDRAC exists
         }
 
     def insert_discovered_server(self, server: Dict, job_id: str):
@@ -2266,11 +2295,13 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                         if result['success']:
                             self.log(f"✓ Found iDRAC at {ip}: {result['model']} (using {result['credential_set_name']})")
                             discovered.append(result)
-                        elif result['auth_failed']:
+                        elif result.get('idrac_detected') and result.get('auth_failed'):
+                            # Only add to auth_failures if we CONFIRMED an iDRAC exists (got 401/403)
                             auth_failures.append({
                                 'ip': ip,
-                                'reason': 'Authentication failed with all credential sets'
+                                'reason': 'iDRAC detected but authentication failed'
                             })
+                        # else: No iDRAC at this IP - don't add to anything
                     except concurrent.futures.TimeoutError:
                         timeout_count += 1
                         # If >30% of requests timeout, warn about overload
