@@ -8,10 +8,11 @@ import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { Disc, Loader2 } from "lucide-react";
+import { Disc, Loader2, HardDrive } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useIsoImages } from "@/hooks/useIsoImages";
 
 interface VirtualMediaDialogProps {
   open: boolean;
@@ -47,8 +48,10 @@ export const VirtualMediaDialog = ({ open, onOpenChange, server }: VirtualMediaD
   const [shareFiles, setShareFiles] = useState<string[]>([]);
   const [shareBaseUrl, setShareBaseUrl] = useState<string | null>(null);
   const [browseError, setBrowseError] = useState<string | null>(null);
+  const [showLibraryModal, setShowLibraryModal] = useState(false);
   const { toast } = useToast();
   const { user } = useAuth();
+  const { isoImages } = useIsoImages();
 
   const buildShareUrl = (settings: any) => {
     if (!settings?.host) return "";
@@ -417,6 +420,14 @@ export const VirtualMediaDialog = ({ open, onOpenChange, server }: VirtualMediaD
                     )}
                     Browse share
                   </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowLibraryModal(true)}
+                  >
+                    <HardDrive className="mr-2 h-4 w-4" />
+                    ISO Library
+                  </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   HTTP/HTTPS/NFS/CIFS URL accessible from the iDRAC network
@@ -525,6 +536,46 @@ export const VirtualMediaDialog = ({ open, onOpenChange, server }: VirtualMediaD
               )}
             </ScrollArea>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showLibraryModal} onOpenChange={setShowLibraryModal}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Select ISO from Library</DialogTitle>
+            <DialogDescription>Choose an uploaded ISO to mount</DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[60vh]">
+            <div className="space-y-2">
+              {isoImages.filter(iso => iso.upload_status === 'ready').map((iso) => (
+                <div
+                  key={iso.id}
+                  className="p-3 border rounded-lg cursor-pointer hover:bg-accent transition-colors"
+                  onClick={() => {
+                    setImageUrl(iso.served_url || '');
+                    setImageName(iso.filename);
+                    setShowLibraryModal(false);
+                    toast({ title: "ISO Selected", description: iso.filename });
+                  }}
+                >
+                  <div className="flex items-center gap-3">
+                    <Disc className="h-5 w-5 text-primary" />
+                    <div className="flex-1">
+                      <p className="font-medium">{iso.filename}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {(iso.file_size_bytes / (1024*1024*1024)).toFixed(2)} GB
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {isoImages.filter(iso => iso.upload_status === 'ready').length === 0 && (
+                <p className="text-center text-muted-foreground py-8">
+                  No ISOs available. Upload ISOs in Settings → Virtual Media.
+                </p>
+              )}
+            </div>
+          </ScrollArea>
         </DialogContent>
       </Dialog>
     </>

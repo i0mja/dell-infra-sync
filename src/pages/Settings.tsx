@@ -19,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { DiagnosticsDialog } from "@/components/settings/DiagnosticsDialog";
 import { JobExecutorDiagnostics } from "@/components/settings/JobExecutorDiagnostics";
+import { IsoImageLibrary } from "@/components/settings/IsoImageLibrary";
 import { useSearchParams } from "react-router-dom";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -3729,6 +3730,9 @@ export default function Settings() {
                   )}
                 </CardContent>
               </Card>
+
+              {/* ISO Image Library */}
+              <IsoImageLibrary />
 
               {/* SCP Export Share Configuration */}
               <Card>

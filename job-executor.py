@@ -88,12 +88,16 @@ from job_executor.config import (
     VCENTER_PASSWORD,
     VCENTER_USER,
     VERIFY_SSL,
+    ISO_DIRECTORY,
+    ISO_SERVER_PORT,
+    ISO_SERVER_ENABLED,
 )
 from job_executor.connectivity import ConnectivityMixin
 from job_executor.scp import ScpMixin
 from job_executor.utils import UNICODE_FALLBACKS, _normalize_unicode, _safe_json_parse, _safe_to_stdout
 from job_executor.dell_redfish.adapter import DellRedfishAdapter
 from job_executor.dell_redfish.operations import DellOperations
+from job_executor.iso_server import ISOServer
 
 # Best-effort: prefer UTF-8 output if available, but never crash if not
 try:
@@ -120,6 +124,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
         self.last_settings_fetch = 0  # Timestamp for cache invalidation
         self.dell_operations = None  # Will be initialized on first use
         self._dell_logger = None
+        self.iso_server = None  # ISO HTTP server
 
     def _validate_service_role_key(self):
         """Ensure SERVICE_ROLE_KEY is present before making Supabase requests"""
@@ -6075,6 +6080,8 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self.execute_verify_host_after_update(job)
         elif job_type == 'rolling_cluster_update':
             self.execute_rolling_cluster_update(job)
+        elif job_type == 'iso_upload':
+            self.execute_iso_upload(job)
         else:
             self.log(f"Unknown job type: {job_type}", "ERROR")
             self.update_job_status(
@@ -6089,6 +6096,133 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
     # Connectivity tests implemented in ConnectivityMixin
 
     # Connectivity test job implemented in ConnectivityMixin
+    
+    def execute_iso_upload(self, job: Dict):
+        """
+        Handle ISO upload from browser - save to local directory and serve via HTTP
+        
+        Expected job details:
+        {
+            "iso_image_id": "uuid",
+            "filename": "ubuntu-22.04.iso",
+            "file_size": 3221225472,
+            "iso_data": "base64_encoded_iso_content"
+        }
+        """
+        try:
+            self.log(f"Starting ISO upload: {job['id']}")
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            details = job.get('details', {})
+            iso_image_id = details.get('iso_image_id')
+            filename = details.get('filename')
+            iso_data = details.get('iso_data')
+            
+            if not iso_image_id or not filename or not iso_data:
+                raise Exception("Missing required fields: iso_image_id, filename, or iso_data")
+            
+            self.log(f"Saving ISO: {filename}")
+            
+            # Ensure ISO directory exists
+            Path(ISO_DIRECTORY).mkdir(parents=True, exist_ok=True)
+            
+            # Decode and save ISO
+            import base64
+            iso_path = os.path.join(ISO_DIRECTORY, filename)
+            with open(iso_path, 'wb') as f:
+                f.write(base64.b64decode(iso_data))
+            
+            file_size = os.path.getsize(iso_path)
+            self.log(f"ISO saved: {file_size / (1024*1024):.2f} MB")
+            
+            # Calculate checksum
+            import hashlib
+            sha256 = hashlib.sha256()
+            with open(iso_path, 'rb') as f:
+                for chunk in iter(lambda: f.read(4096), b""):
+                    sha256.update(chunk)
+            checksum = sha256.hexdigest()
+            
+            # Get served URL from ISO server
+            if self.iso_server:
+                iso_url = self.iso_server.get_iso_url(filename)
+            else:
+                local_ip = self.get_local_ip()
+                iso_url = f"http://{local_ip}:{ISO_SERVER_PORT}/{filename}"
+            
+            # Update iso_images record
+            update_response = requests.patch(
+                f"{DSM_URL}/rest/v1/iso_images?id=eq.{iso_image_id}",
+                json={
+                    'upload_status': 'ready',
+                    'upload_progress': 100,
+                    'local_path': iso_path,
+                    'served_url': iso_url,
+                    'checksum': checksum,
+                    'file_size_bytes': file_size,
+                },
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                },
+                verify=VERIFY_SSL
+            )
+            
+            if update_response.status_code not in [200, 204]:
+                raise Exception(f"Failed to update ISO image record: {update_response.status_code}")
+            
+            self.log(f"✓ ISO upload complete: {iso_url}")
+            
+            self.update_job_status(
+                job['id'],
+                'completed',
+                completed_at=datetime.now().isoformat(),
+                details={
+                    'filename': filename,
+                    'size_bytes': file_size,
+                    'served_url': iso_url,
+                    'checksum': checksum,
+                }
+            )
+            
+        except Exception as e:
+            self.log(f"ISO upload failed: {e}", "ERROR")
+            
+            # Update ISO image status to error
+            if details.get('iso_image_id'):
+                try:
+                    requests.patch(
+                        f"{DSM_URL}/rest/v1/iso_images?id=eq.{details['iso_image_id']}",
+                        json={'upload_status': 'error'},
+                        headers={
+                            'apikey': SERVICE_ROLE_KEY,
+                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                            'Content-Type': 'application/json',
+                        },
+                        verify=VERIFY_SSL
+                    )
+                except:
+                    pass
+            
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e)}
+            )
+    
+    def get_local_ip(self) -> str:
+        """Get the local IP address of this machine"""
+        try:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+            return local_ip
+        except Exception:
+            return "127.0.0.1"
 
     def execute_cluster_safety_check(self, job: Dict):
         """
@@ -6642,6 +6776,18 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self.log(f"Warning: Could not initialize throttler: {e}", "WARN")
         
         self.log("Job executor started. Polling for jobs...")
+        
+        # Start ISO server if enabled
+        if ISO_SERVER_ENABLED:
+            try:
+                self.iso_server = ISOServer(ISO_DIRECTORY, ISO_SERVER_PORT)
+                self.iso_server.start()
+                self.log("="*70)
+                self.log(f"ISO SERVER STARTED: http://{self.get_local_ip()}:{ISO_SERVER_PORT}")
+                self.log(f"ISO Directory: {ISO_DIRECTORY}")
+                self.log("="*70)
+            except Exception as e:
+                self.log(f"Warning: Could not start ISO server: {e}", "WARN")
         
         try:
             while self.running:
