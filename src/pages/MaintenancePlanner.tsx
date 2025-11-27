@@ -11,6 +11,7 @@ import { ClusterSafetyTrendChart } from "@/components/maintenance/ClusterSafetyT
 import { ScheduleMaintenanceDialog } from "@/components/maintenance/dialogs/ScheduleMaintenanceDialog";
 import { CreateJobDialog } from "@/components/jobs/CreateJobDialog";
 import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
+import { ServerUpdateWizard } from "@/components/jobs/ServerUpdateWizard";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -70,6 +71,7 @@ export default function MaintenancePlanner() {
   const [selectedJob, setSelectedJob] = useState<any>(null);
   const [jobDetailDialogOpen, setJobDetailDialogOpen] = useState(false);
   const [trendChartOpen, setTrendChartOpen] = useState(false);
+  const [updateWizardOpen, setUpdateWizardOpen] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
   const { toast } = useToast();
   const { userRole } = useAuth();
@@ -256,6 +258,7 @@ export default function MaintenancePlanner() {
         optimalCount={optimalWindows.length}
         onScheduleMaintenance={() => handleCreateOperation('maintenance')}
         onCreateJob={() => handleCreateOperation('job')}
+        onUpdateWizard={() => setUpdateWizardOpen(true)}
       />
 
       {/* Main Content: Two Column Layout */}
@@ -347,6 +350,11 @@ export default function MaintenancePlanner() {
           job={selectedJob}
         />
       )}
+
+      <ServerUpdateWizard 
+        open={updateWizardOpen}
+        onOpenChange={setUpdateWizardOpen}
+      />
     </div>
   );
 }

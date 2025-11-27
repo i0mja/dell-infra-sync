@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { Calendar, Plus, CheckCircle2, Activity, Clock3, Lightbulb } from "lucide-react";
+import { Calendar, Plus, CheckCircle2, Activity, Clock3, Lightbulb, Play } from "lucide-react";
 
 interface CompactStatsBarProps {
   safeDays: number;
@@ -8,6 +8,7 @@ interface CompactStatsBarProps {
   optimalCount: number;
   onScheduleMaintenance: () => void;
   onCreateJob: () => void;
+  onUpdateWizard: () => void;
 }
 
 export function CompactStatsBar({
@@ -16,7 +17,8 @@ export function CompactStatsBar({
   nextWindow,
   optimalCount,
   onScheduleMaintenance,
-  onCreateJob
+  onCreateJob,
+  onUpdateWizard
 }: CompactStatsBarProps) {
   return (
     <div className="border-b bg-card">
@@ -58,9 +60,13 @@ export function CompactStatsBar({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-          <Button size="sm" onClick={onScheduleMaintenance}>
+          <Button size="sm" onClick={onUpdateWizard}>
+            <Play className="mr-2 h-4 w-4" />
+            Run Update Wizard
+          </Button>
+          <Button size="sm" variant="outline" onClick={onScheduleMaintenance}>
             <Calendar className="mr-2 h-4 w-4" />
-            Schedule maintenance
+            Schedule
           </Button>
           <Button size="sm" variant="outline" onClick={onCreateJob}>
             <Plus className="mr-2 h-4 w-4" />
