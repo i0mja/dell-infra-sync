@@ -388,6 +388,89 @@ export type Database = {
         }
         Relationships: []
       }
+      firmware_packages: {
+        Row: {
+          applicable_models: string[] | null
+          checksum: string | null
+          component_type: string
+          created_at: string | null
+          created_by: string | null
+          criticality: string | null
+          dell_package_version: string | null
+          dell_version: string
+          description: string | null
+          file_size_bytes: number
+          filename: string
+          id: string
+          last_used_at: string | null
+          local_path: string | null
+          reboot_required: boolean | null
+          release_date: string | null
+          served_url: string | null
+          tags: string[] | null
+          updated_at: string | null
+          upload_progress: number | null
+          upload_status: string
+          use_count: number | null
+        }
+        Insert: {
+          applicable_models?: string[] | null
+          checksum?: string | null
+          component_type: string
+          created_at?: string | null
+          created_by?: string | null
+          criticality?: string | null
+          dell_package_version?: string | null
+          dell_version: string
+          description?: string | null
+          file_size_bytes: number
+          filename: string
+          id?: string
+          last_used_at?: string | null
+          local_path?: string | null
+          reboot_required?: boolean | null
+          release_date?: string | null
+          served_url?: string | null
+          tags?: string[] | null
+          updated_at?: string | null
+          upload_progress?: number | null
+          upload_status?: string
+          use_count?: number | null
+        }
+        Update: {
+          applicable_models?: string[] | null
+          checksum?: string | null
+          component_type?: string
+          created_at?: string | null
+          created_by?: string | null
+          criticality?: string | null
+          dell_package_version?: string | null
+          dell_version?: string
+          description?: string | null
+          file_size_bytes?: number
+          filename?: string
+          id?: string
+          last_used_at?: string | null
+          local_path?: string | null
+          reboot_required?: boolean | null
+          release_date?: string | null
+          served_url?: string | null
+          tags?: string[] | null
+          updated_at?: string | null
+          upload_progress?: number | null
+          upload_status?: string
+          use_count?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "firmware_packages_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       idrac_commands: {
         Row: {
           command_type: string
@@ -2022,6 +2105,8 @@ export type Database = {
         | "server_group_safety_check"
         | "iso_upload"
         | "console_launch"
+        | "firmware_upload"
+        | "catalog_sync"
       operation_type: "idrac_api" | "vcenter_api" | "openmanage_api"
     }
     CompositeTypes: {
@@ -2177,6 +2262,8 @@ export const Constants = {
         "server_group_safety_check",
         "iso_upload",
         "console_launch",
+        "firmware_upload",
+        "catalog_sync",
       ],
       operation_type: ["idrac_api", "vcenter_api", "openmanage_api"],
     },
