@@ -67,7 +67,7 @@ export interface VCenterAlarm {
   created_at: string;
 }
 
-export function useVCenterData() {
+export function useVCenterData(selectedVCenterId?: string | null) {
   const [vms, setVms] = useState<VCenterVM[]>([]);
   const [clusters, setClusters] = useState<VCenterCluster[]>([]);
   const [datastores, setDatastores] = useState<VCenterDatastore[]>([]);
@@ -78,11 +78,25 @@ export function useVCenterData() {
     try {
       setLoading(true);
       
+      // Build queries with optional vCenter filtering
+      let vmsQuery = supabase.from("vcenter_vms").select("*");
+      let clustersQuery = supabase.from("vcenter_clusters").select("*");
+      let datastoresQuery = supabase.from("vcenter_datastores").select("*");
+      let alarmsQuery = supabase.from("vcenter_alarms").select("*");
+
+      // Apply filter if a specific vCenter is selected
+      if (selectedVCenterId && selectedVCenterId !== "all") {
+        vmsQuery = vmsQuery.eq("source_vcenter_id", selectedVCenterId);
+        clustersQuery = clustersQuery.eq("source_vcenter_id", selectedVCenterId);
+        datastoresQuery = datastoresQuery.eq("source_vcenter_id", selectedVCenterId);
+        alarmsQuery = alarmsQuery.eq("source_vcenter_id", selectedVCenterId);
+      }
+
       const [vmsResult, clustersResult, datastoresResult, alarmsResult] = await Promise.all([
-        supabase.from("vcenter_vms").select("*").order("name"),
-        supabase.from("vcenter_clusters").select("*").order("cluster_name"),
-        supabase.from("vcenter_datastores").select("*").order("name"),
-        supabase.from("vcenter_alarms").select("*").order("triggered_at", { ascending: false }),
+        vmsQuery.order("name"),
+        clustersQuery.order("cluster_name"),
+        datastoresQuery.order("name"),
+        alarmsQuery.order("triggered_at", { ascending: false }),
       ]);
 
       if (vmsResult.error) throw vmsResult.error;
@@ -131,7 +145,7 @@ export function useVCenterData() {
       datastoresChannel.unsubscribe();
       alarmsChannel.unsubscribe();
     };
-  }, []);
+  }, [selectedVCenterId]);
 
   return {
     vms,
