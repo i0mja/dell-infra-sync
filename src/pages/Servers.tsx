@@ -13,7 +13,7 @@ import { PowerControlDialog } from "@/components/servers/PowerControlDialog";
 import { BiosConfigDialog } from "@/components/servers/BiosConfigDialog";
 import { BootConfigDialog } from "@/components/servers/BootConfigDialog";
 import { VirtualMediaDialog } from "@/components/servers/VirtualMediaDialog";
-import { ScpBackupDialog } from "@/components/servers/ScpBackupDialog";
+import { ScpBackupDialog } from "@/components/servers/scp/ScpBackupDialog";
 import { ServerAuditDialog } from "@/components/servers/ServerAuditDialog";
 import { ServerPropertiesDialog } from "@/components/servers/ServerPropertiesDialog";
 import { ServerHealthDialog } from "@/components/servers/ServerHealthDialog";
