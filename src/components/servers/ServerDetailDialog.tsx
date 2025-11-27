@@ -25,6 +25,7 @@ import {
   ShieldCheck,
   Activity,
   Link as LinkIcon,
+  Monitor,
 } from "lucide-react";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -43,6 +44,7 @@ interface ServerDetailDialogProps {
   onHealthCheck?: () => void;
   onLinkVCenter?: () => void;
   onAudit?: () => void;
+  onConsoleLaunch?: () => void;
 }
 
 export function ServerDetailDialog({
@@ -59,6 +61,7 @@ export function ServerDetailDialog({
   onHealthCheck,
   onLinkVCenter,
   onAudit,
+  onConsoleLaunch,
 }: ServerDetailDialogProps) {
   const isDesktop = useMediaQuery("(min-width: 1280px)");
 
@@ -288,6 +291,12 @@ export function ServerDetailDialog({
         <ScrollArea className="h-full">
           <div className="p-6 space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {onConsoleLaunch && (
+                <Button onClick={onConsoleLaunch} variant="default" className="w-full justify-start">
+                  <Monitor className="mr-2 h-4 w-4" />
+                  Launch Console
+                </Button>
+              )}
               {onRefresh && (
                 <Button onClick={onRefresh} variant="outline" className="w-full justify-start">
                   <RefreshCw className="mr-2 h-4 w-4" />

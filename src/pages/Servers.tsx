@@ -28,6 +28,7 @@ import { DiscoveryScanDialog } from "@/components/servers/DiscoveryScanDialog";
 import { WorkflowJobDialog } from "@/components/jobs/WorkflowJobDialog";
 import { ServerUpdateWizard } from "@/components/jobs/ServerUpdateWizard";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { ConsoleLaunchDialog } from "@/components/servers/ConsoleLaunchDialog";
 import type { Server } from "@/hooks/useServers";
 
 export default function Servers() {
@@ -62,6 +63,8 @@ export default function Servers() {
   const [discoveryScanOpen, setDiscoveryScanOpen] = useState(false);
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
   const [updateWizardOpen, setUpdateWizardOpen] = useState(false);
+  const [consoleLaunchDialogOpen, setConsoleLaunchDialogOpen] = useState(false);
+  const [consoleJobId, setConsoleJobId] = useState<string | null>(null);
 
   // Hooks
   const {
@@ -165,6 +168,31 @@ export default function Servers() {
     refetch();
   };
 
+  const handleLaunchConsole = async (server: Server) => {
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase.functions.invoke("create-job", {
+        body: {
+          job_type: "launch_console",
+          created_by: user.id,
+          target_scope: { server_ids: [server.id] },
+        },
+      });
+
+      if (error) throw error;
+
+      setConsoleJobId(data.id);
+      setConsoleLaunchDialogOpen(true);
+    } catch (error: any) {
+      toast({
+        title: "Failed to Launch Console",
+        description: error.message || "An error occurred",
+        variant: "destructive",
+      });
+    }
+  };
+
   // Get selected group data
   const selectedGroupData = selectedGroup
     ? groupedData.find((g) => g.name === selectedGroup) || null
@@ -211,7 +239,13 @@ export default function Servers() {
           <div className="flex-1 overflow-hidden p-2 sm:p-4">
             <ServersTable
               servers={filteredServers}
-              groupedData={groupedData}
+              groupedData={groupedData ? groupedData.map(g => ({
+                id: g.group?.id || g.cluster || 'ungrouped',
+                name: g.name,
+                servers: g.servers,
+                onlineCount: g.onlineCount,
+                linkedCount: g.linkedCount,
+              })) : null}
               selectedServerId={selectedServer?.id || null}
               selectedGroupId={selectedGroup}
               onServerClick={handleServerRowClick}
@@ -228,6 +262,7 @@ export default function Servers() {
               }}
               onServerDetails={(server) => setSelectedServer(server as any)}
               onAutoLinkVCenter={handleAutoLinkVCenter}
+              onConsoleLaunch={handleLaunchConsole}
               loading={false}
               refreshing={refreshing}
               healthCheckServer={null}
@@ -279,6 +314,11 @@ export default function Servers() {
         }}
         onAudit={() => {
           setAuditDialogOpen(true);
+        }}
+        onConsoleLaunch={() => {
+          if (selectedServer) {
+            handleLaunchConsole(selectedServer);
+          }
         }}
       />
 
@@ -377,6 +417,12 @@ export default function Servers() {
             onOpenChange={setWorkflowDialogOpen}
             onSuccess={refetch}
             preSelectedServerId={selectedServer.id}
+          />
+
+          <ConsoleLaunchDialog
+            open={consoleLaunchDialogOpen}
+            onOpenChange={setConsoleLaunchDialogOpen}
+            jobId={consoleJobId}
           />
 
           <ServerUpdateWizard
