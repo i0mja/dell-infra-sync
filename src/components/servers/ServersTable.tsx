@@ -119,9 +119,12 @@ export function ServersTable({
   };
 
   const getServerGroups = (serverId: string) => {
-    return groupMemberships
-      ?.filter(m => m.server_id === serverId)
-      .map(m => m.server_groups as any) || [];
+    return (
+      groupMemberships
+        ?.filter((membership) => membership?.server_id === serverId && membership?.server_groups)
+        .map((membership) => membership.server_groups as any)
+        .filter(Boolean) || []
+    );
   };
 
   const renderServerContextMenu = (server: Server, row: ReactNode) => (
