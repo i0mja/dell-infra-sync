@@ -486,7 +486,7 @@ export default function Settings() {
     setTestingTeams(true);
     try {
       const { data: result, error } = await supabase.functions.invoke('send-notification', {
-        body: { event_type: 'test', is_test: true }
+        body: { isTest: true, testMessage: 'Test notification from Dell Server Manager' }
       });
       
       if (error) throw error;
