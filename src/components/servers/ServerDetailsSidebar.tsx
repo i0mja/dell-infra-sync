@@ -157,7 +157,7 @@ export function ServerDetailsSidebar({
           jobId={consoleJobId}
         />
         
-        <Card className="h-full flex flex-col">
+        <Card className="h-full flex flex-col max-h-full">
         <CardHeader className="pb-3">
           <div className="flex items-start justify-between">
             <div className="flex-1 min-w-0">
@@ -198,7 +198,7 @@ export function ServerDetailsSidebar({
 
         <Separator />
 
-        <CardContent className="flex-1 overflow-auto pt-4 space-y-4">
+        <CardContent className="flex-1 overflow-y-auto min-h-0 pt-4 space-y-4">
           <div>
             <h4 className="text-sm font-semibold mb-3">System Information</h4>
             <div className="space-y-2 text-sm">
