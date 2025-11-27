@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Grid3x3, List, Upload, Search, HardDrive } from "lucide-react";
 import { useIsoImages } from "@/hooks/useIsoImages";
 import { IsoImageCard } from "./IsoImageCard";
-import { IsoUploadDialog } from "./IsoUploadDialog";
+import { IsoRegisterDialog } from "./IsoRegisterDialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
 interface IsoImageLibraryProps {
@@ -17,7 +17,7 @@ export const IsoImageLibrary = ({ onSelectIso }: IsoImageLibraryProps) => {
   const { isoImages, isLoading, deleteIso, totalStorageGB } = useIsoImages();
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchQuery, setSearchQuery] = useState("");
-  const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [showRegisterDialog, setShowRegisterDialog] = useState(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
   // Filter ISOs by search and tags
@@ -54,9 +54,9 @@ export const IsoImageLibrary = ({ onSelectIso }: IsoImageLibraryProps) => {
                 Manage ISO images for virtual media mounting
               </CardDescription>
             </div>
-            <Button onClick={() => setShowUploadDialog(true)}>
+            <Button onClick={() => setShowRegisterDialog(true)}>
               <Upload className="h-4 w-4 mr-2" />
-              Upload ISO
+              Register ISO
             </Button>
           </div>
         </CardHeader>
@@ -162,9 +162,9 @@ export const IsoImageLibrary = ({ onSelectIso }: IsoImageLibraryProps) => {
         </CardContent>
       </Card>
 
-      <IsoUploadDialog
-        open={showUploadDialog}
-        onOpenChange={setShowUploadDialog}
+      <IsoRegisterDialog
+        open={showRegisterDialog}
+        onOpenChange={setShowRegisterDialog}
       />
     </>
   );

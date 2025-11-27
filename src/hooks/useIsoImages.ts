@@ -92,46 +92,66 @@ export const useIsoImages = () => {
     },
   });
 
-  // Start ISO upload job
-  const startUploadMutation = useMutation({
-    mutationFn: async ({ filename, fileSize, description, tags, isoData }: {
-      filename: string;
-      fileSize: number;
-      description: string;
-      tags: string[];
-      isoData: string; // base64 encoded
-    }) => {
+  // Scan local ISO directory
+  const scanLocalIsosMutation = useMutation({
+    mutationFn: async () => {
       if (!user) throw new Error("Not authenticated");
 
-      // Create ISO image record
-      const { data: isoRecord, error: isoError } = await supabase
-        .from('iso_images')
+      // Create scan job
+      const { data: jobData, error: jobError } = await supabase
+        .from('jobs')
         .insert({
-          filename,
-          file_size_bytes: fileSize,
-          upload_status: 'uploading',
-          upload_progress: 0,
-          description,
-          tags,
+          job_type: 'scan_local_isos',
+          status: 'pending',
           created_by: user.id,
+          details: {},
         })
         .select()
         .single();
 
-      if (isoError) throw isoError;
+      if (jobError) throw jobError;
+      
+      toast({
+        title: "ISO Scan Started",
+        description: "Scanning Job Executor for ISO files...",
+      });
 
-      // Create upload job
+      return jobData.id;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['iso_images'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Scan Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Register ISO from URL
+  const registerIsoUrlMutation = useMutation({
+    mutationFn: async ({ isoUrl, description, tags, downloadLocal }: {
+      isoUrl: string;
+      description?: string;
+      tags?: string[];
+      downloadLocal?: boolean;
+    }) => {
+      if (!user) throw new Error("Not authenticated");
+
+      // Create register job
       const { data: jobData, error: jobError } = await supabase
         .from('jobs')
         .insert({
-          job_type: 'iso_upload',
+          job_type: 'register_iso_url',
           status: 'pending',
           created_by: user.id,
           details: {
-            iso_image_id: isoRecord.id,
-            filename,
-            file_size: fileSize,
-            iso_data: isoData,
+            iso_url: isoUrl,
+            description,
+            tags: tags || [],
+            download_local: downloadLocal || false,
           },
         })
         .select()
@@ -139,14 +159,21 @@ export const useIsoImages = () => {
 
       if (jobError) throw jobError;
 
-      return { isoImageId: isoRecord.id, jobId: jobData.id };
+      toast({
+        title: "ISO Registration Started",
+        description: downloadLocal 
+          ? "Downloading and registering ISO..."
+          : "Registering ISO from URL...",
+      });
+
+      return jobData.id;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['iso_images'] });
     },
     onError: (error: any) => {
       toast({
-        title: "Upload Failed",
+        title: "Registration Failed",
         description: error.message,
         variant: "destructive",
       });
@@ -163,7 +190,8 @@ export const useIsoImages = () => {
     error,
     deleteIso: deleteIsoMutation.mutate,
     updateIso: updateIsoMutation.mutate,
-    startUpload: startUploadMutation.mutateAsync,
+    scanLocalIsos: scanLocalIsosMutation.mutateAsync,
+    registerIsoUrl: registerIsoUrlMutation.mutateAsync,
     totalStorageGB,
   };
 };
