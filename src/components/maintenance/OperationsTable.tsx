@@ -14,7 +14,8 @@ import {
   MoreHorizontal,
   FileText,
   RotateCcw,
-  Trash2
+  Trash2,
+  Loader2
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -24,6 +25,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { format } from "date-fns";
+import { useJobProgress, formatElapsed } from "@/hooks/useJobProgress";
 
 interface Job {
   id: string;
@@ -32,6 +34,45 @@ interface Job {
   target_scope: any;
   created_at: string;
   started_at: string | null;
+  details?: {
+    current_step?: string;
+    [key: string]: any;
+  };
+}
+
+function JobProgressIndicator({ job }: { job: Job }) {
+  const { data: progress } = useJobProgress(
+    job.id, 
+    job.status === 'running' || job.status === 'pending'
+  );
+  
+  if (!progress && job.status === 'running') {
+    return (
+      <div className="flex items-center gap-2">
+        <Loader2 className="h-3 w-3 animate-spin text-primary" />
+        <span className="text-xs text-muted-foreground">Processing...</span>
+      </div>
+    );
+  }
+  
+  if (!progress) return null;
+  
+  return (
+    <div className="flex items-center gap-2">
+      <Loader2 className="h-3 w-3 animate-spin text-primary" />
+      <span className="text-xs text-muted-foreground">
+        {progress.currentStep && progress.currentStep !== 'undefined' ? (
+          <span className="max-w-[200px] truncate inline-block align-bottom">
+            {progress.currentStep}
+          </span>
+        ) : progress.totalTasks > 0 ? (
+          `${progress.completedTasks}/${progress.totalTasks} tasks`
+        ) : (
+          'Processing...'
+        )}
+      </span>
+    </div>
+  );
 }
 
 interface MaintenanceWindow {
@@ -190,12 +231,24 @@ export function OperationsTable({
                   </TableCell>
                   <TableCell className="text-sm">{op.target}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {format(op.timestamp, 'MMM dd, HH:mm')}
+                    <div className="flex flex-col gap-0.5">
+                      <span>{format(op.timestamp, 'MMM dd, HH:mm')}</span>
+                      {op.type === 'job' && (op.data as Job).status === 'running' && (op.data as Job).started_at && (
+                        <span className="text-xs text-muted-foreground">
+                          ({formatElapsed((op.data as Job).started_at)} elapsed)
+                        </span>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-2">
-                      {getStatusIcon(op.status)}
-                      {getStatusBadge(op.status)}
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex items-center gap-2">
+                        {getStatusIcon(op.status)}
+                        {getStatusBadge(op.status)}
+                      </div>
+                      {op.type === 'job' && (op.data as Job).status === 'running' && (
+                        <JobProgressIndicator job={op.data as Job} />
+                      )}
                     </div>
                   </TableCell>
                   <TableCell>

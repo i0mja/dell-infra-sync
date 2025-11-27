@@ -2270,6 +2270,15 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
         user = settings.get('username') if settings else VCENTER_USER
         pwd = settings.get('password') if settings else VCENTER_PASSWORD
         verify_ssl = settings.get('verify_ssl', VERIFY_SSL) if settings else VERIFY_SSL
+        
+        # Log connection attempt BEFORE trying to connect
+        self.log(f"Attempting to connect to vCenter at {host}...")
+        self.log_vcenter_activity(
+            operation="connect_vcenter_attempt",
+            endpoint=host,
+            success=True,
+            details={"verify_ssl": verify_ssl, "status": "attempting"}
+        )
             
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         if not verify_ssl:
@@ -2277,14 +2286,23 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             context.verify_mode = ssl.CERT_NONE
         
         try:
-            self.vcenter_conn = SmartConnect(
-                host=host,
-                user=user,
-                pwd=pwd,
-                sslContext=context
-            )
+            # Add timeout to prevent indefinite hanging
+            import socket
+            old_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(30)  # 30 second timeout
+            
+            try:
+                self.vcenter_conn = SmartConnect(
+                    host=host,
+                    user=user,
+                    pwd=pwd,
+                    sslContext=context
+                )
+            finally:
+                socket.setdefaulttimeout(old_timeout)  # Reset timeout
+            
             atexit.register(Disconnect, self.vcenter_conn)
-            self.log(f"Connected to vCenter at {host}")
+            self.log(f"✓ Connected to vCenter at {host}")
             self.log_vcenter_activity(
                 operation="connect_vcenter",
                 endpoint=host,
@@ -2293,7 +2311,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             )
             return self.vcenter_conn
         except Exception as e:
-            self.log(f"Failed to connect to vCenter: {e}", "ERROR")
+            self.log(f"✗ Failed to connect to vCenter: {e}", "ERROR")
             self.log_vcenter_activity(
                 operation="connect_vcenter",
                 endpoint=host,
@@ -2308,10 +2326,20 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
         vcenter_host = None
         try:
             self.log(f"Starting vCenter sync job: {job['id']}")
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(
+                job['id'], 
+                'running', 
+                started_at=datetime.now().isoformat(),
+                details={"current_step": "Initializing"}
+            )
             
             # Fetch vCenter settings from database
-            self.log("Fetching vCenter settings...")
+            self.log("📋 Fetching vCenter settings...")
+            self.update_job_status(
+                job['id'], 
+                'running',
+                details={"current_step": "Fetching vCenter settings"}
+            )
             response = requests.get(
                 f"{DSM_URL}/rest/v1/vcenter_settings?select=*&limit=1",
                 headers={
@@ -2330,30 +2358,66 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
 
             settings = settings_list[0]
             vcenter_host = settings.get('host')
-            self.log(f"vCenter host: {settings['host']}")
+            self.log(f"✓ vCenter host: {settings['host']}")
 
             # Connect to vCenter using database settings
+            self.log("🔌 Connecting to vCenter...")
+            self.update_job_status(
+                job['id'], 
+                'running',
+                details={"current_step": f"Connecting to {vcenter_host}"}
+            )
             vc = self.connect_vcenter(settings)
             if not vc:
-                raise Exception("Failed to connect to vCenter")
+                raise Exception("Failed to connect to vCenter - check credentials and network connectivity")
             
             # Get vCenter content for all syncs
             content = vc.RetrieveContent()
             
-            # Sync all vCenter entities
-            self.log("Syncing clusters...")
+            # Sync all vCenter entities with progress updates
+            self.log("📊 Syncing clusters...")
+            self.update_job_status(
+                job['id'], 
+                'running',
+                details={"current_step": "Syncing clusters"}
+            )
             clusters_result = self.sync_vcenter_clusters(content)
+            self.log(f"✓ Clusters synced: {clusters_result.get('total', 0)}")
             
-            self.log("Syncing datastores...")
+            self.log("💾 Syncing datastores...")
+            self.update_job_status(
+                job['id'], 
+                'running',
+                details={"current_step": "Syncing datastores"}
+            )
             datastores_result = self.sync_vcenter_datastores(content)
+            self.log(f"✓ Datastores synced: {datastores_result.get('total', 0)}")
             
-            self.log("Syncing VMs...")
+            self.log("🖥️  Syncing VMs...")
+            self.update_job_status(
+                job['id'], 
+                'running',
+                details={"current_step": "Syncing VMs"}
+            )
             vms_result = self.sync_vcenter_vms(content)
+            self.log(f"✓ VMs synced: {vms_result.get('total', 0)}")
             
-            self.log("Syncing alarms...")
+            self.log("⚠️  Syncing alarms...")
+            self.update_job_status(
+                job['id'], 
+                'running',
+                details={"current_step": "Syncing alarms"}
+            )
             alarms_result = self.sync_vcenter_alarms(content)
+            self.log(f"✓ Alarms synced: {alarms_result.get('total', 0)}")
             
             # Get all ESXi hosts
+            self.log("🖧  Discovering ESXi hosts...")
+            self.update_job_status(
+                job['id'], 
+                'running',
+                details={"current_step": "Discovering ESXi hosts"}
+            )
             container = content.viewManager.CreateContainerView(
                 content.rootFolder, [vim.HostSystem], True
             )
@@ -2363,8 +2427,14 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             hosts_updated = 0
             hosts_linked = 0
             errors = []
+            total_hosts = len(container.view)
             
-            self.log(f"Found {len(container.view)} ESXi hosts")
+            self.log(f"✓ Found {total_hosts} ESXi hosts")
+            self.update_job_status(
+                job['id'], 
+                'running',
+                details={"current_step": f"Syncing {total_hosts} ESXi hosts", "hosts_total": total_hosts}
+            )
             
             for host in container.view:
                 try:
