@@ -2320,6 +2320,32 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             for failure in auth_failures:
                 self.insert_auth_failed_server(failure['ip'], job['id'])
             
+            # Auto-trigger full refresh for newly discovered servers
+            if discovered:
+                self.log(f"Auto-triggering full refresh for {len(discovered)} discovered servers...")
+                try:
+                    # Get server IDs of newly discovered servers
+                    discovered_ips = [s['ip'] for s in discovered]
+                    servers_url = f"{DSM_URL}/rest/v1/servers"
+                    params = {
+                        "ip_address": f"in.({','.join(discovered_ips)})",
+                        "select": "id"
+                    }
+                    response = requests.get(servers_url, headers=self.headers, params=params, verify=VERIFY_SSL)
+                    
+                    if response.status_code == 200:
+                        server_records = response.json()
+                        server_ids = [s['id'] for s in server_records]
+                        
+                        if server_ids:
+                            # Call refresh_existing_servers to get full server info
+                            self.refresh_existing_servers(job, server_ids)
+                            self.log(f"✓ Auto-refresh completed for {len(server_ids)} servers")
+                    else:
+                        self.log(f"Failed to fetch discovered server IDs: {response.status_code}", "WARN")
+                except Exception as e:
+                    self.log(f"Auto-refresh failed: {e}", "WARN")
+            
             self.update_job_status(
                 job['id'],
                 'completed',
@@ -2328,7 +2354,8 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     "discovered_count": len(discovered),
                     "auth_failures": len(auth_failures),
                     "scanned_ips": len(ips_to_scan),
-                    "auth_failure_ips": [f['ip'] for f in auth_failures]
+                    "auth_failure_ips": [f['ip'] for f in auth_failures],
+                    "auto_refresh_triggered": len(discovered) > 0
                 }
             )
             

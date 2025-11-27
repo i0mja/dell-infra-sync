@@ -13,6 +13,8 @@ interface ServerStatsBarProps {
   onAddServer: () => void;
   onRefreshAll: () => void;
   onDiscovery: () => void;
+  onBulkRefresh?: () => void;
+  bulkRefreshing?: boolean;
 }
 
 export function ServerStatsBar({
@@ -26,6 +28,8 @@ export function ServerStatsBar({
   onAddServer,
   onRefreshAll,
   onDiscovery,
+  onBulkRefresh,
+  bulkRefreshing = false,
 }: ServerStatsBarProps) {
   return (
     <div className="border-b bg-card">
@@ -87,6 +91,18 @@ export function ServerStatsBar({
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh All
           </Button>
+
+          {onBulkRefresh && (
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={onBulkRefresh}
+              disabled={bulkRefreshing || totalServers === 0}
+            >
+              <Activity className="mr-2 h-4 w-4" />
+              {bulkRefreshing ? "Refreshing..." : "Refresh from iDRAC"}
+            </Button>
+          )}
 
           <Button variant="outline" size="sm" onClick={onDiscovery}>
             <Activity className="mr-2 h-4 w-4" />
