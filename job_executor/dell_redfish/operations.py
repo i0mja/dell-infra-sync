@@ -450,6 +450,263 @@ class DellOperations:
             user_id=user_id
         )
     
+    def update_firmware_multipart(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        dup_file_path: str,
+        install_option: str = "NextReboot",
+        job_id: str = None,
+        server_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Upload and install firmware using multipart/form-data (Dell official method).
+        
+        This method uploads DUP files directly to iDRAC without requiring an HTTP file server,
+        making it ideal for air-gapped environments.
+        
+        Uses Dell's official pattern from DeviceFirmwareMultipartUploadREDFISH.py:
+        - POST /redfish/v1/UpdateService/MultipartUpload
+        - Direct binary upload of .exe DUP file
+        - Supports immediate or staged installation
+        
+        Requirements:
+        - iDRAC8 firmware 2.x or newer
+        - Valid Dell Update Package (.exe file)
+        - Local file system access to DUP file
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            dup_file_path: Local path to Dell Update Package (.exe)
+            install_option: "Now" for immediate, "NextReboot" for staged
+            job_id: Optional job ID for logging
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict: Upload results with task_uri and status
+            
+        Raises:
+            DellRedfishError: On upload or API errors
+            FileNotFoundError: If DUP file doesn't exist
+        """
+        import os
+        
+        # Validate DUP file exists
+        if not os.path.exists(dup_file_path):
+            raise FileNotFoundError(f"DUP file not found: {dup_file_path}")
+        
+        # TODO: Import and use Dell's official multipart upload function
+        # from .lib.DeviceFirmwareMultipartUploadREDFISH import multipart_upload_firmware
+        # 
+        # For now, implement basic multipart upload pattern
+        
+        try:
+            import requests
+            from requests.auth import HTTPBasicAuth
+            
+            url = f'https://{ip}/redfish/v1/UpdateService/MultipartUpload'
+            
+            with open(dup_file_path, 'rb') as dup_file:
+                files = {
+                    'UpdateFile': (
+                        os.path.basename(dup_file_path),
+                        dup_file,
+                        'application/octet-stream'
+                    )
+                }
+                
+                data = {
+                    '@Redfish.OperationApplyTime': install_option,
+                    'Targets': []  # Empty = apply to all applicable components
+                }
+                
+                # Make request through adapter for logging
+                response = requests.post(
+                    url,
+                    files=files,
+                    data=data,
+                    auth=HTTPBasicAuth(username, password),
+                    verify=False,
+                    timeout=300  # 5 min timeout for upload
+                )
+                
+                # Log the operation
+                self.adapter.log_command(
+                    ip=ip,
+                    endpoint='/redfish/v1/UpdateService/MultipartUpload',
+                    method='POST',
+                    success=response.status_code == 202,
+                    status_code=response.status_code,
+                    response_time_ms=int(response.elapsed.total_seconds() * 1000),
+                    operation_name='Multipart Firmware Upload',
+                    job_id=job_id,
+                    server_id=server_id,
+                    user_id=user_id,
+                    request_body={'firmware_file': os.path.basename(dup_file_path), 'install_option': install_option},
+                    response_body=response.json() if response.status_code == 202 else {'error': response.text}
+                )
+                
+                if response.status_code == 202:
+                    task_uri = response.headers.get('Location', '')
+                    
+                    # Monitor task if immediate install
+                    if install_option == "Now" and task_uri:
+                        task_result = self.helpers.wait_for_task(
+                            ip=ip,
+                            username=username,
+                            password=password,
+                            task_uri=task_uri,
+                            timeout=1800,  # 30 minutes
+                            operation_name='Multipart Firmware Install',
+                            job_id=job_id,
+                            server_id=server_id,
+                            user_id=user_id
+                        )
+                        
+                        return {
+                            'success': True,
+                            'method': 'multipart_upload',
+                            'task_uri': task_uri,
+                            'install_option': install_option,
+                            'task_state': task_result.get('TaskState'),
+                            'messages': task_result.get('Messages', [])
+                        }
+                    
+                    return {
+                        'success': True,
+                        'method': 'multipart_upload',
+                        'task_uri': task_uri,
+                        'install_option': install_option,
+                        'status': 'staged' if install_option == "NextReboot" else 'installing'
+                    }
+                else:
+                    raise DellRedfishError(
+                        message=f"Multipart upload failed: {response.text}",
+                        error_code='MULTIPART_UPLOAD_FAILED',
+                        status_code=response.status_code
+                    )
+                    
+        except Exception as e:
+            if isinstance(e, DellRedfishError):
+                raise
+            raise DellRedfishError(
+                message=f"Multipart firmware upload error: {str(e)}",
+                error_code='MULTIPART_UPLOAD_ERROR'
+            )
+    
+    def get_firmware_inventory(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        job_id: str = None,
+        server_id: str = None,
+        user_id: str = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get comprehensive firmware inventory from iDRAC.
+        
+        Uses Dell's official pattern from GetFirmwareInventoryREDFISH.py to retrieve
+        all installed firmware versions for comparison with catalog.
+        
+        Dell pattern:
+        - GET /redfish/v1/UpdateService/FirmwareInventory
+        - Iterate through each component for detailed info
+        - Returns Name, Version, Updateable, ComponentType
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            job_id: Optional job ID for logging
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            list: Firmware components with version and updateable status
+            
+        Example return:
+            [
+                {
+                    'Name': 'Integrated Dell Remote Access Controller',
+                    'Version': '7.00.00.174',
+                    'Updateable': True,
+                    'ComponentType': 'FRMW'
+                },
+                {
+                    'Name': 'BIOS',
+                    'Version': '2.23.0',
+                    'Updateable': True,
+                    'ComponentType': 'BIOS'
+                }
+            ]
+            
+        Raises:
+            DellRedfishError: On API errors
+        """
+        # Get firmware inventory collection
+        response = self.adapter.make_request(
+            method='GET',
+            ip=ip,
+            endpoint='/redfish/v1/UpdateService/FirmwareInventory',
+            username=username,
+            password=password,
+            operation_name='Get Firmware Inventory',
+            job_id=job_id,
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        members = response.get('Members', [])
+        inventory = []
+        
+        # Get detailed info for each component
+        for member in members:
+            member_uri = member.get('@odata.id', '')
+            if not member_uri:
+                continue
+            
+            try:
+                component = self.adapter.make_request(
+                    method='GET',
+                    ip=ip,
+                    endpoint=member_uri,
+                    username=username,
+                    password=password,
+                    operation_name='Get Firmware Component',
+                    job_id=job_id,
+                    server_id=server_id,
+                    user_id=user_id
+                )
+                
+                # Extract Dell-specific component type
+                component_type = None
+                oem = component.get('Oem', {})
+                if 'Dell' in oem:
+                    dell_sw = oem['Dell'].get('DellSoftwareInventory', {})
+                    component_type = dell_sw.get('ComponentType')
+                
+                inventory.append({
+                    'Name': component.get('Name'),
+                    'Id': component.get('Id'),
+                    'Version': component.get('Version'),
+                    'Updateable': component.get('Updateable', False),
+                    'ComponentType': component_type,
+                    'Status': component.get('Status', {}).get('State', 'Unknown')
+                })
+                
+            except Exception as e:
+                # Log but don't fail entire inventory for one component
+                print(f"Warning: Could not get info for {member_uri}: {e}")
+                continue
+        
+        return inventory
+    
     # SCP (Server Configuration Profile) Operations
     
     def export_scp(

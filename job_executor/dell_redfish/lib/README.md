@@ -8,26 +8,62 @@ This directory contains vendored files from Dell's official iDRAC-Redfish-Script
 - **License**: Apache License 2.0
 - **Directory**: Redfish Python/
 
-## Files to Vendor
+## Phase 1: Priority Files (IMPLEMENTED)
 
-Based on our needs, we should vendor these key files from Dell's repository:
+### 1. Multipart Firmware Upload
+**File**: `DeviceFirmwareMultipartUploadREDFISH.py`
+**Download**: https://github.com/dell/iDRAC-Redfish-Scripting/blob/master/Redfish%20Python/DeviceFirmwareMultipartUploadREDFISH.py
+**Purpose**: Upload DUP files directly to iDRAC without HTTP server (air-gapped support)
 
-### Core Support Files
-- **DeviceFirmwareSimpleUpdateREDFISH.py** - Firmware update implementation
-- **ExportSystemConfigurationREDFISH.py** - SCP export
-- **ImportSystemConfigurationREDFISH.py** - SCP import
+**Integration Status**: 
+- ✅ Stub created with usage pattern
+- ✅ Wrapper added to `operations.py::update_firmware_multipart()`
+- ⚠️ **ACTION REQUIRED**: Replace stub with Dell's actual implementation
+
+### 2. Firmware Inventory & Catalog Comparison
+**File**: `GetFirmwareInventoryREDFISH.py`
+**Download**: https://github.com/dell/iDRAC-Redfish-Scripting/blob/master/Redfish%20Python/GetFirmwareInventoryREDFISH.py
+**Purpose**: Retrieve installed firmware and compare with Dell catalog
+
+**Integration Status**:
+- ✅ Stub created with usage pattern
+- ✅ Wrapper added to `operations.py::get_firmware_inventory()`
+- ⚠️ **ACTION REQUIRED**: Replace stub with Dell's actual implementation
+
+## How to Complete Vendoring
+
+1. **Download Dell Scripts**:
+   ```bash
+   cd job_executor/dell_redfish/lib/
+   curl -O https://raw.githubusercontent.com/dell/iDRAC-Redfish-Scripting/master/Redfish%20Python/DeviceFirmwareMultipartUploadREDFISH.py
+   curl -O https://raw.githubusercontent.com/dell/iDRAC-Redfish-Scripting/master/Redfish%20Python/GetFirmwareInventoryREDFISH.py
+   ```
+
+2. **Extract Reusable Functions**:
+   - Review Dell's scripts for main functions
+   - Preserve Dell's error handling logic
+   - Keep Dell's copyright headers
+
+3. **Test Integration**:
+   ```python
+   from job_executor.dell_redfish import DellOperations
+   
+   ops = DellOperations(adapter)
+   result = ops.update_firmware_multipart(
+       ip='10.0.0.1',
+       username='root',
+       password='calvin',
+       dup_file_path='/path/to/firmware.exe',
+       install_option='NextReboot'
+   )
+   ```
+
+## Future Files to Vendor (Phase 2+)
+
+- **ExportSystemConfigurationREDFISH.py** - Enhanced SCP export
+- **ImportSystemConfigurationREDFISH.py** - Enhanced SCP import  
 - **ChangeBiosBootOrderREDFISH.py** - Boot configuration
-- **SetOneTimeBootDeviceREDFISH.py** - One-time boot
 - **GetSystemInventoryREDFISH.py** - System information
-- **PowerControlREDFISH.py** - Power management
-- **GetServerPOSTStateREDFISH.py** - POST state monitoring
-
-### How to Vendor
-
-1. Download relevant scripts from Dell's repository
-2. Place them in this directory
-3. Update our `operations.py` to import and use these Dell functions
-4. Wrap all calls through the `DellRedfishAdapter` for safety
 
 ## Integration Approach
 
