@@ -627,6 +627,26 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self.log(f"Error fetching jobs: {e}", "ERROR")
             return []
 
+    def get_job_tasks(self, job_id: str) -> List[Dict]:
+        """Fetch tasks for a job"""
+        try:
+            url = f"{DSM_URL}/rest/v1/job_tasks"
+            headers = {
+                "apikey": SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SERVICE_ROLE_KEY}"
+            }
+            params = {"job_id": f"eq.{job_id}", "select": "*"}
+            response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
+            
+            if response.status_code == 200:
+                return _safe_json_parse(response) or []
+            else:
+                self.log(f"Error fetching job tasks: {response.status_code}", "ERROR")
+                return []
+        except Exception as e:
+            self.log(f"Error fetching job tasks: {e}", "ERROR")
+            return []
+
     def update_job_status(self, job_id: str, status: str, **kwargs):
         """Update job status in the cloud"""
         try:
@@ -1507,12 +1527,32 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             servers = _safe_json_parse(servers_response)
             self.log(f"Found {len(servers)} server(s) to refresh")
             
+            # Fetch job tasks to track progress
+            tasks = self.get_job_tasks(job['id'])
+            task_by_server = {t['server_id']: t for t in tasks if t.get('server_id')}
+            
+            total_servers = len(servers)
             refreshed_count = 0
             failed_count = 0
             update_errors = []
             
-            for server in servers:
+            for index, server in enumerate(servers):
                 ip = server['ip_address']
+                task = task_by_server.get(server['id'])
+                
+                # Calculate base progress percentage for this server
+                base_progress = int((index / total_servers) * 100) if total_servers > 0 else 0
+                
+                # Update task to running
+                if task:
+                    self.update_task_status(
+                        task['id'],
+                        'running',
+                        log=f"Querying iDRAC at {ip}...",
+                        progress=base_progress,
+                        started_at=datetime.now().isoformat()
+                    )
+                
                 self.log(f"Refreshing server {ip}...")
                 
                 # Resolve credentials using priority order
@@ -1530,11 +1570,33 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server['id']}"
                     requests.patch(update_url, headers=headers, json=update_data, verify=VERIFY_SSL)
                     self.log(f"  ✗ Cannot decrypt credentials for {ip}", "ERROR")
+                    
+                    # Mark task as failed
+                    if task:
+                        self.update_task_status(
+                            task['id'],
+                            'failed',
+                            log=f"✗ Cannot decrypt credentials for {ip}",
+                            progress=100,
+                            completed_at=datetime.now().isoformat()
+                        )
+                    
                     failed_count += 1
                     continue
                 
                 if not username or not password:
                     self.log(f"  ✗ No credentials available for {ip}", "WARN")
+                    
+                    # Mark task as failed
+                    if task:
+                        self.update_task_status(
+                            task['id'],
+                            'failed',
+                            log=f"✗ No credentials available for {ip}",
+                            progress=100,
+                            completed_at=datetime.now().isoformat()
+                        )
+                    
                     failed_count += 1
                     continue
                 
@@ -1579,6 +1641,16 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                         self.log(f"  ✓ Refreshed {ip}: {info.get('model')} - {info.get('hostname')}")
                         refreshed_count += 1
                         
+                        # Mark task as completed
+                        if task:
+                            self.update_task_status(
+                                task['id'],
+                                'completed',
+                                log=f"✓ Refreshed {ip}: {info.get('model')} - {info.get('hostname')}",
+                                progress=100,
+                                completed_at=datetime.now().isoformat()
+                            )
+                        
                         # Create audit trail entry for server discovery
                         self._create_server_audit_entry(
                             server_id=server['id'],
@@ -1603,6 +1675,17 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                         }
                         update_errors.append(error_detail)
                         self.log(f"  ✗ Failed to update DB for {ip}: {update_response.status_code} {update_response.text}", "ERROR")
+                        
+                        # Mark task as failed
+                        if task:
+                            self.update_task_status(
+                                task['id'],
+                                'failed',
+                                log=f"✗ Failed to update DB for {ip}",
+                                progress=100,
+                                completed_at=datetime.now().isoformat()
+                            )
+                        
                         failed_count += 1
                 else:
                     # Update as offline - failed to query iDRAC
@@ -1617,6 +1700,17 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     requests.patch(update_url, headers=headers, json=update_data, verify=VERIFY_SSL)
                     
                     self.log(f"  ✗ Failed to connect to {ip} (tried {cred_source})", "WARN")
+                    
+                    # Mark task as failed
+                    if task:
+                        self.update_task_status(
+                            task['id'],
+                            'failed',
+                            log=f"✗ Failed to connect to {ip}",
+                            progress=100,
+                            completed_at=datetime.now().isoformat()
+                        )
+                    
                     failed_count += 1
             
             # Complete the job
