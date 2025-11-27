@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useServers } from "@/hooks/useServers";
 import { useServerActions } from "@/hooks/useServerActions";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import { ServerStatsBar } from "@/components/servers/ServerStatsBar";
 import { ServerFilterToolbar } from "@/components/servers/ServerFilterToolbar";
 import { ServersTable } from "@/components/servers/ServersTable";
@@ -30,6 +32,7 @@ import type { Server } from "@/hooks/useServers";
 export default function Servers() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { user } = useAuth();
 
   // Search and filter state
   const [searchTerm, setSearchTerm] = useState("");
@@ -77,6 +80,44 @@ export default function Servers() {
   const isLocalMode =
     import.meta.env.VITE_SUPABASE_URL?.includes("127.0.0.1") ||
     import.meta.env.VITE_SUPABASE_URL?.includes("localhost");
+
+  // Bulk refresh handler
+  const [bulkRefreshing, setBulkRefreshing] = useState(false);
+  
+  const handleBulkRefresh = async () => {
+    if (!user || filteredServers.length === 0) return;
+    
+    setBulkRefreshing(true);
+    try {
+      const serverIds = filteredServers.map((s) => s.id);
+      
+      const { data, error } = await supabase.functions.invoke("create-job", {
+        body: {
+          job_type: "discovery_scan",
+          created_by: user.id,
+          target_scope: { server_ids: serverIds },
+        },
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: "Bulk Refresh Started",
+        description: `Refreshing information for ${serverIds.length} server(s). Check Jobs panel for progress.`,
+      });
+
+      // Navigate to dashboard to view job progress
+      navigate("/");
+    } catch (error: any) {
+      toast({
+        title: "Failed to Start Bulk Refresh",
+        description: error.message || "An error occurred",
+        variant: "destructive",
+      });
+    } finally {
+      setBulkRefreshing(false);
+    }
+  };
 
   // Get unique vCenter clusters for filter
   const uniqueVCenterClusters = Array.from(
@@ -128,6 +169,8 @@ export default function Servers() {
         onAddServer={handleAddServer}
         onRefreshAll={refetch}
         onDiscovery={handleDiscovery}
+        onBulkRefresh={handleBulkRefresh}
+        bulkRefreshing={bulkRefreshing}
       />
 
       {/* Main: Full-Width Table */}
