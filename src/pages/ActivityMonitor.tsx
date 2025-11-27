@@ -345,11 +345,7 @@ export default function ActivityMonitor() {
       />
 
       <div className="space-y-4 px-4 pt-4 sm:px-6 lg:px-8">
-        {activeJobs.length > 0 && (
-          <div className="rounded-xl border bg-muted/30 px-4 py-3 shadow-sm sm:px-6">
-            <ActiveJobsBanner jobs={activeJobs} />
-          </div>
-        )}
+        <ActiveJobsBanner />
 
         <div className="rounded-xl border bg-card shadow-sm">
           <div className="flex flex-col gap-2 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
