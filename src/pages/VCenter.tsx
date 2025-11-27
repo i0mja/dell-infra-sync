@@ -408,17 +408,20 @@ export default function VCenter() {
 
         {alarms.length > 0 && <AlarmsPanel alarms={alarms} />}
 
-        <div className="flex-1 flex overflow-hidden">
-          <div className={`transition-all duration-300 ${sidebarOpen ? "w-[calc(100%-400px)]" : "w-full"}`}>
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full">
-              <TabsList className="mx-4 mt-4 mb-0">
-                <TabsTrigger value="hosts">Hosts ({hosts.length})</TabsTrigger>
-                <TabsTrigger value="vms">VMs ({vms.length})</TabsTrigger>
-                <TabsTrigger value="clusters">Clusters ({clusterData.length})</TabsTrigger>
-                <TabsTrigger value="datastores">Datastores ({datastores.length})</TabsTrigger>
-              </TabsList>
+        <div className="flex-1 flex overflow-hidden min-h-0">
+          <div className={`transition-all duration-300 flex-1 flex flex-col overflow-hidden ${sidebarOpen ? "" : ""}`}>
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col flex-1 overflow-hidden">
+              <div className="flex-shrink-0 px-4 pt-4 pb-2">
+                <TabsList>
+                  <TabsTrigger value="hosts">Hosts ({hosts.length})</TabsTrigger>
+                  <TabsTrigger value="vms">VMs ({vms.length})</TabsTrigger>
+                  <TabsTrigger value="clusters">Clusters ({clusterData.length})</TabsTrigger>
+                  <TabsTrigger value="datastores">Datastores ({datastores.length})</TabsTrigger>
+                </TabsList>
+              </div>
 
-              <TabsContent value="hosts" className="flex-1 flex flex-col mt-0 overflow-hidden">
+              <div className="flex-1 overflow-hidden relative">
+                <TabsContent value="hosts" className="absolute inset-0 flex flex-col overflow-hidden data-[state=inactive]:hidden">
                 <HostFilterToolbar
                   searchTerm={searchTerm}
                   onSearchChange={setSearchTerm}
@@ -430,48 +433,49 @@ export default function VCenter() {
                   onLinkFilterChange={setLinkFilter}
                   clusters={uniqueClusters}
                 />
-                <div className="flex-1 p-4 overflow-hidden">
-                  <HostsTable
-                    clusterGroups={clusterGroups}
-                    selectedHostId={selectedHost?.id || null}
-                    selectedCluster={selectedCluster}
-                    onHostClick={handleHostClick}
-                    onClusterClick={handleClusterClick}
-                    onHostSync={handleHostSync}
-                    onClusterUpdate={handleClusterUpdate}
-                    onViewLinkedServer={handleViewLinkedServer}
-                    onLinkToServer={handleLinkToServer}
-                    loading={loading}
+                  <div className="flex-1 p-4 overflow-auto">
+                    <HostsTable
+                      clusterGroups={clusterGroups}
+                      selectedHostId={selectedHost?.id || null}
+                      selectedCluster={selectedCluster}
+                      onHostClick={handleHostClick}
+                      onClusterClick={handleClusterClick}
+                      onHostSync={handleHostSync}
+                      onClusterUpdate={handleClusterUpdate}
+                      onViewLinkedServer={handleViewLinkedServer}
+                      onLinkToServer={handleLinkToServer}
+                      loading={loading}
+                    />
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="vms" className="absolute inset-0 overflow-auto data-[state=inactive]:hidden p-4">
+                  <VMsTable
+                    vms={vms}
+                    selectedVmId={selectedVm?.id || null}
+                    onVmClick={handleVmClick}
+                    loading={vcenterDataLoading}
                   />
-                </div>
-              </TabsContent>
+                </TabsContent>
 
-              <TabsContent value="vms" className="flex-1 mt-0 overflow-hidden">
-                <VMsTable
-                  vms={vms}
-                  selectedVmId={selectedVm?.id || null}
-                  onVmClick={handleVmClick}
-                  loading={vcenterDataLoading}
-                />
-              </TabsContent>
+                <TabsContent value="clusters" className="absolute inset-0 overflow-auto data-[state=inactive]:hidden p-4">
+                  <ClustersPanel
+                    clusters={clusterData}
+                    selectedClusterId={selectedClusterData?.id || null}
+                    onClusterClick={handleClusterDataClick}
+                    loading={vcenterDataLoading}
+                  />
+                </TabsContent>
 
-              <TabsContent value="clusters" className="flex-1 mt-0 overflow-hidden">
-                <ClustersPanel
-                  clusters={clusterData}
-                  selectedClusterId={selectedClusterData?.id || null}
-                  onClusterClick={handleClusterDataClick}
-                  loading={vcenterDataLoading}
-                />
-              </TabsContent>
-
-              <TabsContent value="datastores" className="flex-1 mt-0 overflow-hidden">
-                <DatastoresTable
-                  datastores={datastores}
-                  selectedDatastoreId={selectedDatastore?.id || null}
-                  onDatastoreClick={handleDatastoreClick}
-                  loading={vcenterDataLoading}
-                />
-              </TabsContent>
+                <TabsContent value="datastores" className="absolute inset-0 overflow-auto data-[state=inactive]:hidden p-4">
+                  <DatastoresTable
+                    datastores={datastores}
+                    selectedDatastoreId={selectedDatastore?.id || null}
+                    onDatastoreClick={handleDatastoreClick}
+                    loading={vcenterDataLoading}
+                  />
+                </TabsContent>
+              </div>
             </Tabs>
           </div>
 
