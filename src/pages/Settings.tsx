@@ -20,6 +20,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { DiagnosticsDialog } from "@/components/settings/DiagnosticsDialog";
 import { JobExecutorDiagnostics } from "@/components/settings/JobExecutorDiagnostics";
 import { IsoImageLibrary } from "@/components/settings/IsoImageLibrary";
+import { FirmwareLibrary } from "@/components/settings/FirmwareLibrary";
 import { useSearchParams } from "react-router-dom";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -3858,6 +3859,10 @@ export default function Settings() {
                 </CardContent>
               </Card>
             </div>
+          </TabsContent>
+
+          <TabsContent value="firmware-library">
+            <FirmwareLibrary />
           </TabsContent>
 
           <TabsContent value="network">

@@ -89,15 +89,16 @@ from job_executor.config import (
     VCENTER_USER,
     VERIFY_SSL,
     ISO_DIRECTORY,
-    ISO_SERVER_PORT,
-    ISO_SERVER_ENABLED,
+    FIRMWARE_DIRECTORY,
+    MEDIA_SERVER_PORT,
+    MEDIA_SERVER_ENABLED,
 )
 from job_executor.connectivity import ConnectivityMixin
 from job_executor.scp import ScpMixin
 from job_executor.utils import UNICODE_FALLBACKS, _normalize_unicode, _safe_json_parse, _safe_to_stdout
 from job_executor.dell_redfish.adapter import DellRedfishAdapter
 from job_executor.dell_redfish.operations import DellOperations
-from job_executor.iso_server import ISOServer
+from job_executor.media_server import MediaServer
 
 # Best-effort: prefer UTF-8 output if available, but never crash if not
 try:
@@ -124,7 +125,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
         self.last_settings_fetch = 0  # Timestamp for cache invalidation
         self.dell_operations = None  # Will be initialized on first use
         self._dell_logger = None
-        self.iso_server = None  # ISO HTTP server
+        self.media_server = None  # Media HTTP server (ISOs + firmware)
 
     def _validate_service_role_key(self):
         """Ensure SERVICE_ROLE_KEY is present before making Supabase requests"""
@@ -6178,6 +6179,10 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self.execute_rolling_cluster_update(job)
         elif job_type == 'iso_upload':
             self.execute_iso_upload(job)
+        elif job_type == 'firmware_upload':
+            self.execute_firmware_upload(job)
+        elif job_type == 'catalog_sync':
+            self.execute_catalog_sync(job)
         elif job_type == 'console_launch':
             self.execute_console_launch(job)
         else:
@@ -6944,17 +6949,18 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
         
         self.log("Job executor started. Polling for jobs...")
         
-        # Start ISO server if enabled
-        if ISO_SERVER_ENABLED:
+        # Start media server if enabled (serves ISOs + firmware DUPs)
+        if MEDIA_SERVER_ENABLED:
             try:
-                self.iso_server = ISOServer(ISO_DIRECTORY, ISO_SERVER_PORT)
-                self.iso_server.start()
+                self.media_server = MediaServer(ISO_DIRECTORY, FIRMWARE_DIRECTORY, MEDIA_SERVER_PORT)
+                self.media_server.start()
                 self.log("="*70)
-                self.log(f"ISO SERVER STARTED: http://{self.get_local_ip()}:{ISO_SERVER_PORT}")
+                self.log(f"MEDIA SERVER STARTED: http://{self.get_local_ip()}:{MEDIA_SERVER_PORT}")
                 self.log(f"ISO Directory: {ISO_DIRECTORY}")
+                self.log(f"Firmware Directory: {FIRMWARE_DIRECTORY}")
                 self.log("="*70)
             except Exception as e:
-                self.log(f"Warning: Could not start ISO server: {e}", "WARN")
+                self.log(f"Warning: Could not start media server: {e}", "WARN")
         
         try:
             while self.running:

@@ -93,13 +93,22 @@ export const settingsTabs: SettingsTab[] = [
     order: 9,
   },
   {
+    id: 'firmware-library',
+    name: 'Firmware Library',
+    title: 'Firmware Library',
+    description: 'Manage Dell Update Packages (DUPs) for offline firmware updates',
+    icon: Server,
+    group: 'Infrastructure',
+    order: 10,
+  },
+  {
     id: 'network',
     name: 'Network',
     title: 'Network Connectivity',
     description: 'Test connectivity to iDRAC servers and vCenter hosts',
     icon: Network,
     group: 'Monitoring',
-    order: 10,
+    order: 11,
   },
   {
     id: 'cluster-monitoring',
@@ -108,7 +117,7 @@ export const settingsTabs: SettingsTab[] = [
     description: 'Configure automated cluster health monitoring and safety alerts',
     icon: CloudCog,
     group: 'Monitoring',
-    order: 11,
+    order: 12,
   },
   {
     id: 'activity',
@@ -117,7 +126,7 @@ export const settingsTabs: SettingsTab[] = [
     description: 'Configure log retention, cleanup, and monitoring preferences',
     icon: Activity,
     group: 'Monitoring',
-    order: 12,
+    order: 13,
   },
   {
     id: 'jobs',
@@ -126,7 +135,7 @@ export const settingsTabs: SettingsTab[] = [
     description: 'Configure job retention, cleanup, and stale job management',
     icon: Briefcase,
     group: 'Monitoring',
-    order: 13,
+    order: 14,
   },
 ];
 

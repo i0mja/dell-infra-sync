@@ -33,8 +33,10 @@ VERIFY_SSL = False
 # Optional Supabase URL override for backup storage
 SUPABASE_URL = os.getenv("SUPABASE_URL", DSM_URL)
 
-# ISO Server Configuration (for virtual media local uploads)
+# Media Server Configuration (for virtual media and firmware)
 ISO_DIRECTORY = os.getenv("ISO_DIRECTORY", "/var/lib/idrac-manager/isos")
-ISO_SERVER_PORT = int(os.getenv("ISO_SERVER_PORT", "8888"))
-ISO_SERVER_ENABLED = os.getenv("ISO_SERVER_ENABLED", "true").lower() == "true"
+FIRMWARE_DIRECTORY = os.getenv("FIRMWARE_DIRECTORY", "/var/lib/idrac-manager/firmware")
+MEDIA_SERVER_PORT = int(os.getenv("MEDIA_SERVER_PORT", "8888"))
+MEDIA_SERVER_ENABLED = os.getenv("MEDIA_SERVER_ENABLED", "true").lower() == "true"
 ISO_MAX_STORAGE_GB = int(os.getenv("ISO_MAX_STORAGE_GB", "100"))
+FIRMWARE_MAX_STORAGE_GB = int(os.getenv("FIRMWARE_MAX_STORAGE_GB", "200"))
