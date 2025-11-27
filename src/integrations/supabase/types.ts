@@ -483,6 +483,68 @@ export type Database = {
           },
         ]
       }
+      iso_images: {
+        Row: {
+          checksum: string | null
+          created_at: string | null
+          created_by: string | null
+          description: string | null
+          file_size_bytes: number
+          filename: string
+          id: string
+          last_mounted_at: string | null
+          local_path: string | null
+          mount_count: number | null
+          served_url: string | null
+          tags: string[] | null
+          updated_at: string | null
+          upload_progress: number | null
+          upload_status: string
+        }
+        Insert: {
+          checksum?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          file_size_bytes: number
+          filename: string
+          id?: string
+          last_mounted_at?: string | null
+          local_path?: string | null
+          mount_count?: number | null
+          served_url?: string | null
+          tags?: string[] | null
+          updated_at?: string | null
+          upload_progress?: number | null
+          upload_status?: string
+        }
+        Update: {
+          checksum?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          file_size_bytes?: number
+          filename?: string
+          id?: string
+          last_mounted_at?: string | null
+          local_path?: string | null
+          mount_count?: number | null
+          served_url?: string | null
+          tags?: string[] | null
+          updated_at?: string | null
+          upload_progress?: number | null
+          upload_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "iso_images_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       job_tasks: {
         Row: {
           completed_at: string | null
@@ -1958,6 +2020,7 @@ export type Database = {
         | "verify_host_after_update"
         | "rolling_cluster_update"
         | "server_group_safety_check"
+        | "iso_upload"
       operation_type: "idrac_api" | "vcenter_api" | "openmanage_api"
     }
     CompositeTypes: {
@@ -2111,6 +2174,7 @@ export const Constants = {
         "verify_host_after_update",
         "rolling_cluster_update",
         "server_group_safety_check",
+        "iso_upload",
       ],
       operation_type: ["idrac_api", "vcenter_api", "openmanage_api"],
     },
