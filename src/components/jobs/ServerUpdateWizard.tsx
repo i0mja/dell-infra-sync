@@ -25,6 +25,7 @@ import {
   Clock,
   Shield
 } from "lucide-react";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
 
 interface ServerUpdateWizardProps {
@@ -103,8 +104,7 @@ export const ServerUpdateWizard = ({
   
   // Step 3: Configuration
   const [backupScp, setBackupScp] = useState(true);
-  const [minHealthyHosts, setMinHealthyHosts] = useState(2);
-  const [maxParallel, setMaxParallel] = useState(1);
+  const [preflightMode, setPreflightMode] = useState<'strict' | 'relaxed'>('strict');
   const [verifyAfterEach, setVerifyAfterEach] = useState(true);
   const [continueOnFailure, setContinueOnFailure] = useState(false);
   
@@ -263,16 +263,28 @@ export const ServerUpdateWizard = ({
           throw new Error(`${targetInfo?.total - (targetInfo?.connected || 0)} server(s) not connected`);
         }
       } else {
-        // For clusters/groups, use minHealthyHosts check
-        if (targetInfo && targetInfo.connected >= minHealthyHosts) {
-          setSafetyCheckPassed(true);
-          toast({
-            title: "Safety check passed",
-            description: `Target has ${targetInfo.connected} healthy hosts.`,
-          });
-        } else {
-          throw new Error(`Insufficient healthy hosts. Found ${targetInfo?.connected}, need ${minHealthyHosts}`);
+        // For clusters/groups, check health with preflight mode
+        if (!targetInfo) throw new Error('No target information available');
+        
+        const degradedCount = targetInfo.total - targetInfo.connected;
+        
+        if (targetInfo.total < 2) {
+          throw new Error('Single-host target - no redundancy. Consider using individual server update.');
         }
+        
+        if (preflightMode === 'strict' && degradedCount > 0) {
+          throw new Error(`${degradedCount} host(s) already degraded. All hosts must be healthy in strict mode.`);
+        }
+        
+        if (preflightMode === 'relaxed' && degradedCount > 1) {
+          throw new Error(`${degradedCount} hosts already degraded. Maximum 1 allowed in relaxed mode.`);
+        }
+        
+        setSafetyCheckPassed(true);
+        toast({
+          title: "Safety check passed",
+          description: `Target has ${targetInfo.connected} healthy hosts (${degradedCount} degraded).`,
+        });
       }
     } catch (error: any) {
       toast({
@@ -362,8 +374,8 @@ export const ServerUpdateWizard = ({
               auto_select_latest: autoSelectLatest,
               ...(firmwareSource === 'manual' && { firmware_updates: firmwareUpdates }),
               backup_scp: backupScp,
-              ...(targetType !== 'servers' && { min_healthy_hosts: minHealthyHosts }),
-              max_parallel: maxParallel,
+              ...(targetType !== 'servers' && { preflight_mode: preflightMode }),
+              max_parallel: 1, // Always sequential for safety
               verify_after_each: verifyAfterEach,
               continue_on_failure: continueOnFailure
             } as any,
@@ -394,11 +406,11 @@ export const ServerUpdateWizard = ({
 
   const estimatedTime = () => {
     if (!targetInfo) return 0;
-    const hostsToUpdate = Math.ceil(targetInfo.linked / maxParallel);
+    // Updates are sequential (one at a time), so total time = hosts * time per host
     const timePerHost = firmwareSource === 'manual' 
       ? firmwareUpdates.length * 15 
       : componentFilter.length * 15;
-    return hostsToUpdate * timePerHost;
+    return targetInfo.linked * timePerHost;
   };
 
   const renderStepContent = () => {
@@ -529,11 +541,7 @@ export const ServerUpdateWizard = ({
                   </div>
                   <div className="flex justify-between text-sm">
                     <span>Connected:</span>
-                    <Badge variant={
-                      targetType === 'servers' 
-                        ? (targetInfo.connected === targetInfo.total ? "default" : "destructive")
-                        : (targetInfo.connected >= minHealthyHosts ? "default" : "destructive")
-                    }>
+                    <Badge variant={targetInfo.connected === targetInfo.total ? "default" : "destructive"}>
                       {targetInfo.connected}
                     </Badge>
                   </div>
@@ -641,38 +649,37 @@ export const ServerUpdateWizard = ({
               <Label htmlFor="backup">Create SCP backup for each host before update</Label>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              {targetType !== 'servers' && (
-                <div className="space-y-2">
-                  <Label htmlFor="minHealthy">Minimum Healthy Hosts</Label>
-                  <Input
-                    id="minHealthy"
-                    type="number"
-                    min={1}
-                    value={minHealthyHosts}
-                    onChange={(e) => setMinHealthyHosts(parseInt(e.target.value) || 1)}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Updates will pause if target drops below this threshold
-                  </p>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <Label htmlFor="maxParallel">Max Parallel Updates</Label>
-                <Input
-                  id="maxParallel"
-                  type="number"
-                  min={1}
-                  max={5}
-                  value={maxParallel}
-                  onChange={(e) => setMaxParallel(parseInt(e.target.value) || 1)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  How many hosts to update simultaneously
-                </p>
+            {targetType !== 'servers' && (
+              <div className="space-y-3">
+                <Label>Pre-flight Requirements</Label>
+                <RadioGroup value={preflightMode} onValueChange={(v) => setPreflightMode(v as 'strict' | 'relaxed')}>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="strict" id="strict" />
+                    <Label htmlFor="strict" className="font-normal">
+                      All hosts must be healthy to start (recommended)
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="relaxed" id="relaxed" />
+                    <Label htmlFor="relaxed" className="font-normal">
+                      Allow starting with 1 host already degraded
+                    </Label>
+                  </div>
+                </RadioGroup>
               </div>
-            </div>
+            )}
+
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertTitle>Rolling Update Process</AlertTitle>
+              <AlertDescription>
+                <ul className="list-disc list-inside text-sm space-y-1 mt-2">
+                  <li>Hosts are updated <strong>one at a time</strong></li>
+                  <li>Each host must return to healthy state before proceeding</li>
+                  <li>Update pauses automatically if a host fails to recover</li>
+                </ul>
+              </AlertDescription>
+            </Alert>
 
             <div className="flex items-center space-x-2">
               <Checkbox
@@ -680,7 +687,7 @@ export const ServerUpdateWizard = ({
                 checked={verifyAfterEach}
                 onCheckedChange={(checked) => setVerifyAfterEach(checked as boolean)}
               />
-              <Label htmlFor="verify">Verify each host after update</Label>
+              <Label htmlFor="verify">Verify host health after update completes</Label>
             </div>
 
             <Alert variant="destructive">
@@ -694,9 +701,12 @@ export const ServerUpdateWizard = ({
                     onCheckedChange={(checked) => setContinueOnFailure(checked as boolean)}
                   />
                   <Label htmlFor="continueOnFail" className="font-normal">
-                    Continue updating other hosts even if one fails
+                    Continue to next host even if previous fails
                   </Label>
                 </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Not recommended - may cascade failures across the {targetType === 'cluster' ? 'cluster' : 'group'}
+                </p>
               </AlertDescription>
             </Alert>
           </div>
@@ -760,13 +770,15 @@ export const ServerUpdateWizard = ({
                   <span>SCP Backups:</span>
                   <span>{backupScp ? 'Yes' : 'No'}</span>
                 </div>
+                {targetType !== 'servers' && (
+                  <div className="flex justify-between">
+                    <span>Pre-flight Mode:</span>
+                    <Badge variant="outline">{preflightMode === 'strict' ? 'Strict (all healthy)' : 'Relaxed (1 degraded)'}</Badge>
+                  </div>
+                )}
                 <div className="flex justify-between">
-                  <span>Min Healthy Hosts:</span>
-                  <span>{minHealthyHosts}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Max Parallel:</span>
-                  <span>{maxParallel}</span>
+                  <span>Update Strategy:</span>
+                  <span>Sequential (1 host at a time)</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Estimated Time:</span>
