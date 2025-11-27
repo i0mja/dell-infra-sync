@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
+import { toast } from 'sonner';
 
 type Job = Database['public']['Tables']['jobs']['Row'];
 type JobTask = Database['public']['Tables']['job_tasks']['Row'];
@@ -24,11 +25,60 @@ export interface NotificationSettings {
   maxRecentItems: number;
 }
 
+// Helper to format job type for display
+const formatJobType = (type: string): string => {
+  const typeMap: Record<string, string> = {
+    'discovery_scan': 'Discovery Scan',
+    'test_credentials': 'Credential Test',
+    'refresh_existing_servers': 'Server Refresh',
+    'scp_export': 'SCP Backup',
+    'scp_import': 'SCP Restore',
+    'power_control': 'Power Control',
+    'firmware_update': 'Firmware Update',
+    'vcenter_sync': 'vCenter Sync',
+    'virtual_media': 'Virtual Media',
+    'bios_config': 'BIOS Configuration',
+    'boot_config': 'Boot Configuration',
+  };
+  return typeMap[type] || type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+};
+
+// Helper to show job state toast notifications
+const showJobStateToast = (job: Job, previousStatus: string) => {
+  const jobTypeName = formatJobType(job.job_type);
+  
+  if (job.status === 'running' && previousStatus === 'pending') {
+    toast.info(`Job Started: ${jobTypeName}`, {
+      description: 'Job is now running',
+      duration: 4000,
+    });
+  } else if (job.status === 'completed' && previousStatus !== 'completed') {
+    toast.success(`Job Completed: ${jobTypeName}`, {
+      description: 'Job finished successfully',
+      duration: 5000,
+    });
+  } else if (job.status === 'failed' && previousStatus !== 'failed') {
+    const errorMsg = typeof job.details === 'object' && job.details !== null 
+      ? (job.details as any).error 
+      : undefined;
+    toast.error(`Job Failed: ${jobTypeName}`, {
+      description: errorMsg || 'Job encountered an error',
+      duration: 8000,
+    });
+  } else if (job.status === 'cancelled' && previousStatus !== 'cancelled') {
+    toast.warning(`Job Cancelled: ${jobTypeName}`, {
+      description: 'Job was cancelled',
+      duration: 4000,
+    });
+  }
+};
+
 export const useNotificationCenter = () => {
   const [activeJobs, setActiveJobs] = useState<Job[]>([]);
   const [recentCommands, setRecentCommands] = useState<IdracCommand[]>([]);
   const [jobProgress, setJobProgress] = useState<Map<string, JobProgress>>(new Map());
   const [unreadCount, setUnreadCount] = useState(0);
+  const [previousJobStatuses, setPreviousJobStatuses] = useState<Map<string, string>>(new Map());
   const [settings, setSettings] = useState<NotificationSettings>({
     enabled: true,
     showProgress: true,
@@ -156,6 +206,26 @@ export const useNotificationCenter = () => {
         },
         (payload) => {
           console.log('Job change received:', payload);
+          
+          const newJob = payload.new as Job | null;
+          const oldJob = payload.old as Job | null;
+          
+          // Detect state transitions and show toasts
+          if (payload.eventType === 'UPDATE' && oldJob && newJob) {
+            const previousStatus = previousJobStatuses.get(newJob.id) || oldJob.status;
+            if (previousStatus !== newJob.status) {
+              showJobStateToast(newJob, previousStatus);
+              setPreviousJobStatuses(prev => new Map(prev).set(newJob.id, newJob.status));
+            }
+          } else if (payload.eventType === 'INSERT' && newJob) {
+            // New job created
+            toast.info(`Job Queued: ${formatJobType(newJob.job_type)}`, {
+              description: 'Job added to queue',
+              duration: 3000,
+            });
+            setPreviousJobStatuses(prev => new Map(prev).set(newJob.id, newJob.status));
+          }
+          
           fetchActiveJobs();
         }
       )
