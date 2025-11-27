@@ -1641,6 +1641,10 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                         self.log(f"  ✓ Refreshed {ip}: {info.get('model')} - {info.get('hostname')}")
                         refreshed_count += 1
                         
+                        # Try auto-linking to vCenter if service_tag was updated
+                        if info.get('service_tag'):
+                            self.auto_link_vcenter(server['id'], info.get('service_tag'))
+                        
                         # Mark task as completed
                         if task:
                             self.update_task_status(
@@ -1870,12 +1874,23 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}"
                 requests.patch(update_url, headers=headers, json=server_data, verify=VERIFY_SSL)
                 self.log(f"Updated existing server: {server['ip']}")
+                
+                # Try auto-linking to vCenter
+                if server.get('service_tag'):
+                    self.auto_link_vcenter(server_id, server.get('service_tag'))
             else:
                 # Insert new server
                 server_data['ip_address'] = server['ip']
                 insert_url = f"{DSM_URL}/rest/v1/servers"
-                requests.post(insert_url, headers=headers, json=server_data, verify=VERIFY_SSL)
+                response = requests.post(insert_url, headers=headers, json=server_data, verify=VERIFY_SSL)
                 self.log(f"Inserted new server: {server['ip']}")
+                
+                # Try auto-linking to vCenter for new server
+                if response.status_code in [200, 201] and server.get('service_tag'):
+                    new_server = _safe_json_parse(response)
+                    if new_server:
+                        server_id = new_server[0]['id'] if isinstance(new_server, list) else new_server['id']
+                        self.auto_link_vcenter(server_id, server.get('service_tag'))
         except Exception as e:
             self.log(f"Error inserting server {server['ip']}: {e}", "ERROR")
 
@@ -4982,7 +4997,10 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             return 'new', response.status_code in [200, 201]
     
     def auto_link_vcenter(self, server_id: str, service_tag: str):
-        """Attempt to auto-link server with vCenter host by serial number"""
+        """Attempt to auto-link server with vCenter host by serial number (bidirectional)"""
+        if not service_tag:
+            return
+            
         try:
             headers = {
                 'apikey': SERVICE_ROLE_KEY,
@@ -4990,27 +5008,35 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 'Content-Type': 'application/json'
             }
             
-            # Find matching vCenter host
-            vcenter_url = f"{DSM_URL}/rest/v1/vcenter_hosts?serial_number=eq.{service_tag}&select=id"
+            # Find matching vCenter host that isn't already linked
+            vcenter_url = f"{DSM_URL}/rest/v1/vcenter_hosts?serial_number=eq.{service_tag}&server_id=is.null&select=id,name"
             response = requests.get(vcenter_url, headers=headers, verify=VERIFY_SSL)
             
             if response.status_code == 200:
                 hosts = _safe_json_parse(response)
                 if hosts:
                     vcenter_host_id = hosts[0]['id']
+                    vcenter_name = hosts[0].get('name', 'Unknown')
                     
-                    # Link server to vCenter host
-                    update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}"
+                    # Link server → vCenter host
                     requests.patch(
-                        update_url,
+                        f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}",
                         json={'vcenter_host_id': vcenter_host_id},
                         headers=headers,
                         verify=VERIFY_SSL
                     )
                     
-                    self.log(f"  Auto-linked to vCenter host: {vcenter_host_id}")
+                    # Link vCenter host → server (bidirectional)
+                    requests.patch(
+                        f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{vcenter_host_id}",
+                        json={'server_id': server_id},
+                        headers=headers,
+                        verify=VERIFY_SSL
+                    )
+                    
+                    self.log(f"  ✓ Auto-linked to vCenter host: {vcenter_name} ({vcenter_host_id})")
         except Exception as e:
-            self.log(f"  Auto-link failed: {e}", "WARN")
+            self.log(f"  Auto-link check failed: {e}", "WARN")
     
     def execute_openmanage_sync(self, job: Dict):
         """Execute OpenManage Enterprise sync operation"""
