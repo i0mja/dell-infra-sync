@@ -1,43 +1,68 @@
+import { useState } from "react";
+import { Server } from "@/hooks/useServers";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ChevronDown, ChevronRight, CheckCircle, AlertCircle, Activity, Users, Power, RefreshCw, Stethoscope, Link2 } from "lucide-react";
-import { Fragment, ReactNode, useState } from "react";
-import { ConnectionStatusBadge } from "./ConnectionStatusBadge";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
-  ContextMenuTrigger
+  ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-
-interface Server {
-  id: string;
-  ip_address: string;
-  hostname: string | null;
-  model: string | null;
-  service_tag: string | null;
-  idrac_firmware: string | null;
-  connection_status: 'online' | 'offline' | 'unknown' | null;
-  connection_error: string | null;
-  credential_test_status: string | null;
-  last_connection_test: string | null;
-  vcenter_host_id: string | null;
-  power_state?: string | null;
-  overall_health?: string | null;
-  last_health_check?: string | null;
-  last_health_status?: string | null;
-}
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuCheckboxItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { useToast } from "@/hooks/use-toast";
+import {
+  ChevronDown,
+  ChevronRight,
+  ClipboardCopy,
+  Server as ServerIcon,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Download,
+  Columns3,
+  Save,
+  Trash2,
+  X,
+  RefreshCw,
+  Activity,
+  ShieldCheck,
+  Power,
+  Link2,
+  Monitor,
+  Eye,
+} from "lucide-react";
+import { exportToCSV, ExportColumn } from "@/lib/csv-export";
+import { useColumnVisibility } from "@/hooks/useColumnVisibility";
+import { useSavedViews } from "@/hooks/useSavedViews";
 
 interface GroupData {
+  id: string;
   name: string;
-  group?: { id: string; name: string; color: string; icon?: string };
-  cluster?: string;
+  type?: "manual" | "vcenter";
   servers: Server[];
   onlineCount: number;
-  linkedCount: number;
+  linkedCount?: number;
 }
 
 interface ServersTableProps {
@@ -53,14 +78,15 @@ interface ServersTableProps {
   onServerPower: (server: Server) => void;
   onServerDetails: (server: Server) => void;
   onAutoLinkVCenter?: (server: Server) => void;
+  onConsoleLaunch?: (server: Server) => void;
   loading: boolean;
   refreshing: string | null;
   healthCheckServer: string | null;
   hasActiveHealthCheck: (id: string) => boolean;
   isIncomplete: (server: Server) => boolean;
-  groupMemberships?: any[];
-  vCenterHosts?: any[];
-  renderExpandedRow: (server: Server) => ReactNode;
+  groupMemberships: any[];
+  vCenterHosts: any[];
+  renderExpandedRow: (server: Server) => React.ReactNode;
 }
 
 export function ServersTable({
@@ -76,16 +102,71 @@ export function ServersTable({
   onServerPower,
   onServerDetails,
   onAutoLinkVCenter,
+  onConsoleLaunch,
   loading,
   refreshing,
-  healthCheckServer,
-  hasActiveHealthCheck,
-  isIncomplete,
   groupMemberships = [],
   vCenterHosts = [],
   renderExpandedRow,
 }: ServersTableProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [sortField, setSortField] = useState<string | null>(null);
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const [selectedServers, setSelectedServers] = useState<Set<string>>(new Set());
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [viewName, setViewName] = useState("");
+  const { toast } = useToast();
+
+  const { visibleColumns, isColumnVisible, toggleColumn } = useColumnVisibility(
+    "servers-table-columns",
+    ["hostname", "ip", "status", "model", "service_tag", "idrac_firmware", "vcenter", "groups"]
+  );
+
+  const { savedViews, currentView, saveView, loadView, deleteView, clearView } = useSavedViews(
+    "servers-table-views"
+  );
+
+  // Flatten servers for sorting
+  const allServers = groupedData
+    ? groupedData.flatMap((g) => g.servers.map((s) => ({ ...s, groupName: g.name, groupId: g.id })))
+    : servers || [];
+
+  // Apply sorting
+  const sortedServers = sortField
+    ? [...allServers].sort((a, b) => {
+        let aVal: any = a[sortField as keyof typeof a];
+        let bVal: any = b[sortField as keyof typeof b];
+
+        if (aVal == null) return 1;
+        if (bVal == null) return -1;
+
+        const comparison = aVal > bVal ? 1 : aVal < bVal ? -1 : 0;
+        return sortDirection === "asc" ? comparison : -comparison;
+      })
+    : allServers;
+
+  // Regroup after sorting (if grouped view)
+  const sortedGroupedData =
+    groupedData && sortField
+      ? sortedServers.reduce((acc: GroupData[], server) => {
+          const serverWithGroup = server as typeof server & { groupName: string; groupId: string };
+          let group = acc.find((g) => g.id === serverWithGroup.groupId);
+          if (!group) {
+            const original = groupedData.find((g) => g.id === serverWithGroup.groupId);
+            if (original) {
+              group = { ...original, servers: [] };
+              acc.push(group);
+            }
+          }
+          if (group) {
+            group.servers.push(server);
+          }
+          return acc;
+        }, [])
+      : groupedData;
+
+  const displayGroups = sortedGroupedData;
+  const displayServers = sortedServers;
 
   const toggleGroup = (groupId: string) => {
     const newCollapsed = new Set(collapsedGroups);
@@ -97,26 +178,119 @@ export function ServersTable({
     setCollapsedGroups(newCollapsed);
   };
 
-  const getStatusBadge = (status: string | null) => {
-    switch (status) {
-      case 'online':
-        return <Badge variant="default" className="gap-1"><span className="text-green-400">●</span> Online</Badge>;
-      case 'offline':
-        return <Badge variant="destructive" className="gap-1"><span>●</span> Offline</Badge>;
-      default:
-        return <Badge variant="secondary" className="gap-1"><span className="text-yellow-400">●</span> Unknown</Badge>;
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      if (sortDirection === "desc") {
+        setSortField(null);
+        setSortDirection("asc");
+      } else {
+        setSortDirection("desc");
+      }
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
     }
   };
 
-  const getHealthBadge = (health?: string | null) => {
-    if (!health) return <Badge variant="secondary">Unknown</Badge>;
+  const getSortIcon = (field: string) => {
+    if (sortField !== field) return <ArrowUpDown className="ml-1 h-3 w-3" />;
+    return sortDirection === "asc" ? <ArrowUp className="ml-1 h-3 w-3" /> : <ArrowDown className="ml-1 h-3 w-3" />;
+  };
 
-    const variant = health === 'OK' ? 'default' : health === 'Warning' ? 'outline' : 'destructive';
-    return <Badge variant={variant}>{health}</Badge>;
+  const toggleServerSelection = (serverId: string) => {
+    const newSelected = new Set(selectedServers);
+    if (newSelected.has(serverId)) {
+      newSelected.delete(serverId);
+    } else {
+      newSelected.add(serverId);
+    }
+    setSelectedServers(newSelected);
+  };
+
+  const toggleAllServers = () => {
+    if (selectedServers.size === allServers.length) {
+      setSelectedServers(new Set());
+    } else {
+      setSelectedServers(new Set(allServers.map((s) => s.id)));
+    }
+  };
+
+  const handleExportCSV = () => {
+    const columns: ExportColumn<Server>[] = [
+      { key: "hostname", label: "Hostname" },
+      { key: "ip_address", label: "IP Address" },
+      { key: "connection_status", label: "Status" },
+      { key: "model", label: "Model" },
+      { key: "service_tag", label: "Service Tag" },
+      { key: "idrac_firmware", label: "iDRAC Firmware" },
+      { key: "vcenter_host_id", label: "vCenter Linked", format: (v) => (v ? "Yes" : "No") },
+      { key: "overall_health", label: "Health" },
+      { key: "power_state", label: "Power State" },
+    ];
+
+    const serversToExport =
+      selectedServers.size > 0 ? allServers.filter((s) => selectedServers.has(s.id)) : allServers;
+
+    exportToCSV(serversToExport, columns, "servers");
+    toast({ title: "Export successful", description: `Exported ${serversToExport.length} servers` });
+  };
+
+  const handleSaveView = () => {
+    if (!viewName.trim()) {
+      toast({ title: "Enter view name", variant: "destructive" });
+      return;
+    }
+    saveView(viewName, {}, sortField || undefined, sortDirection, visibleColumns);
+    toast({ title: "View saved", description: `"${viewName}" saved successfully` });
+    setSaveDialogOpen(false);
+    setViewName("");
+  };
+
+  const handleRefreshSelected = () => {
+    const selected = allServers.filter((s) => selectedServers.has(s.id));
+    selected.forEach((server) => onServerRefresh(server));
+    toast({ title: "Refreshing servers", description: `Started refresh for ${selected.length} servers` });
+  };
+
+  const copyToClipboard = async (value: string | null | undefined, label: string) => {
+    if (!value) {
+      toast({ title: `No ${label.toLowerCase()} to copy`, variant: "destructive" });
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(value);
+      toast({ title: `${label} copied`, description: value });
+    } catch (error: any) {
+      toast({ title: "Copy failed", description: error?.message, variant: "destructive" });
+    }
+  };
+
+  const getStatusBadge = (server: Server) => {
+    switch (server.connection_status) {
+      case "online":
+        return (
+          <Badge variant="default" className="bg-success text-success-foreground text-xs">
+            Online
+          </Badge>
+        );
+      case "offline":
+        return (
+          <Badge variant="destructive" className="text-xs">
+            Offline
+          </Badge>
+        );
+      default:
+        return (
+          <Badge variant="secondary" className="text-xs">
+            Unknown
+          </Badge>
+        );
+    }
   };
 
   const getVCenterLink = (serverId: string) => {
-    const host = vCenterHosts?.find(h => h.server_id === serverId);
+    const host = vCenterHosts?.find((h) => h.server_id === serverId);
     return host ? { linked: true, cluster: host.cluster } : { linked: false, cluster: null };
   };
 
@@ -129,367 +303,481 @@ export function ServersTable({
     );
   };
 
-  const renderServerContextMenu = (server: Server, row: ReactNode) => (
-    <ContextMenu key={server.id}>
-      <ContextMenuTrigger asChild>
-        {row}
-      </ContextMenuTrigger>
-      <ContextMenuContent className="w-56">
-        <ContextMenuItem
-          onClick={(e) => {
-            e.stopPropagation();
-            onServerDetails(server);
-          }}
-        >
-          <CheckCircle className="h-4 w-4 mr-2" />
-          View details
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem
-          onClick={(e) => {
-            e.stopPropagation();
-            onServerRefresh(server);
-          }}
-        >
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Refresh inventory
-        </ContextMenuItem>
-        <ContextMenuItem
-          onClick={(e) => {
-            e.stopPropagation();
-            onServerTest(server);
-          }}
-        >
-          <ConnectionStatusBadge 
-            status={server.connection_status}
-            lastTest={server.last_connection_test}
-            error={server.connection_error}
-            credentialTestStatus={server.credential_test_status}
-          />
-          <span className="ml-2">Test credentials</span>
-        </ContextMenuItem>
-        <ContextMenuItem
-          onClick={(e) => {
-            e.stopPropagation();
-            onServerHealth(server);
-          }}
-        >
-          <Stethoscope className="h-4 w-4 mr-2" />
-          Run health check
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem
-          onClick={(e) => {
-            e.stopPropagation();
-            onServerPower(server);
-          }}
-        >
-          <Power className="h-4 w-4 mr-2" />
-          Power controls
-        </ContextMenuItem>
-        {onAutoLinkVCenter && !getVCenterLink(server.id).linked && (
-          <>
-            <ContextMenuSeparator />
-            <ContextMenuItem
-              onClick={(e) => {
-                e.stopPropagation();
-                onAutoLinkVCenter(server);
-              }}
-            >
-              <Link2 className="h-4 w-4 mr-2" />
-              Auto-link vCenter
-            </ContextMenuItem>
-          </>
-        )}
-      </ContextMenuContent>
-    </ContextMenu>
-  );
-
   if (loading) {
     return (
-      <div className="border rounded-lg bg-card">
-        <div className="p-4 space-y-3">
-          {[...Array(8)].map((_, i) => (
-            <Skeleton key={i} className="h-12 w-full" />
-          ))}
+      <div className="flex items-center justify-center h-full py-12">
+        <div className="text-center text-muted-foreground">
+          <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-2" />
+          Loading servers...
         </div>
       </div>
     );
   }
 
-  if (!groupedData) {
-    // Flat view
+  if (allServers.length === 0) {
     return (
-      <div className="border rounded-lg bg-card overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Hostname / IP</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Model</TableHead>
-              <TableHead>Service Tag</TableHead>
-              <TableHead>iDRAC</TableHead>
-              <TableHead>vCenter</TableHead>
-              <TableHead>Groups</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {servers.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                  No servers found
-                </TableCell>
-              </TableRow>
-            ) : (
-              servers.map((server) => {
-                const vcLink = getVCenterLink(server.id);
-                const serverGroups = getServerGroups(server.id);
-                return (
-                  <Fragment key={server.id}>
-                    {renderServerContextMenu(server, (
-                      <TableRow
-                        className={`cursor-pointer ${selectedServerId === server.id ? 'bg-muted' : ''}`}
-                        onClick={() => onServerClick(server)}
-                      >
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-medium">{server.hostname || 'N/A'}</span>
-                            <span className="text-xs text-muted-foreground">{server.ip_address}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            {getStatusBadge(server.connection_status)}
-                            {isIncomplete(server) && (
-                              <AlertCircle className="h-4 w-4 text-orange-500" />
-                            )}
-                            {(refreshing === server.id || hasActiveHealthCheck(server.id)) && (
-                              <Activity className="h-4 w-4 animate-spin text-blue-500" />
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <span className={!server.model ? 'text-muted-foreground' : ''}>
-                            {server.model || 'N/A'}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <span className={!server.service_tag ? 'text-muted-foreground' : ''}>
-                            {server.service_tag || 'N/A'}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <span className={!server.idrac_firmware ? 'text-muted-foreground' : ''}>
-                            {server.idrac_firmware || 'N/A'}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          {vcLink.linked ? (
-                            <Badge variant="secondary" className="gap-1">
-                              <CheckCircle className="h-3 w-3" />
-                              {vcLink.cluster || 'Linked'}
-                            </Badge>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">Not Linked</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-1 flex-wrap">
-                            {serverGroups.length > 0 ? (
-                              serverGroups.slice(0, 2).map((group: any) => (
-                                <Badge
-                                  key={group.id}
-                                  variant="outline"
-                                  style={{ borderColor: group.color }}
-                                  className="gap-1 text-xs"
-                                >
-                                  <Users className="h-3 w-3" />
-                                  {group.name}
-                                </Badge>
-                              ))
-                            ) : (
-                              <span className="text-xs text-muted-foreground">—</span>
-                            )}
-                            {serverGroups.length > 2 && (
-                              <Badge variant="outline" className="text-xs">
-                                +{serverGroups.length - 2}
-                              </Badge>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {selectedServerId === server.id && (
-                      <TableRow className="bg-muted/40">
-                        <TableCell colSpan={7} className="p-3">
-                          {renderExpandedRow(server)}
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </Fragment>
-                );
-              })
-            )}
-          </TableBody>
-        </Table>
+      <div className="flex flex-col items-center justify-center h-full gap-4 py-12">
+        <div className="text-center text-muted-foreground">
+          <ServerIcon className="h-12 w-12 mx-auto mb-3 opacity-50" />
+          <p className="text-lg font-medium mb-2">No servers found</p>
+          <p className="text-sm mb-4">Add your first server or adjust your filters</p>
+          <Button variant="outline" size="sm" onClick={clearView}>
+            <X className="mr-1 h-4 w-4" />
+            Clear Filters
+          </Button>
+        </div>
       </div>
     );
   }
 
-  // Grouped view
   return (
-    <div className="border rounded-lg bg-card overflow-hidden">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Hostname / IP</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Model</TableHead>
-            <TableHead>Service Tag</TableHead>
-            <TableHead>iDRAC</TableHead>
-            <TableHead>vCenter</TableHead>
-            <TableHead>Groups</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {groupedData.length === 0 ? (
-            <TableRow>
-              <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                No servers found
-              </TableCell>
-            </TableRow>
-          ) : (
-            groupedData.map((groupData) => {
-              const groupId = groupData.group?.id || groupData.cluster || 'ungrouped';
-              const isCollapsed = collapsedGroups.has(groupId);
+    <div className="flex flex-col h-full">
+      {/* Toolbar */}
+      <div className="flex items-center gap-2 px-4 py-2 border-b bg-muted/30">
+        <Checkbox
+          checked={selectedServers.size === allServers.length && allServers.length > 0}
+          onCheckedChange={toggleAllServers}
+        />
+        <span className="text-xs text-muted-foreground">
+          {selectedServers.size > 0 ? `${selectedServers.size} selected` : "Select all"}
+        </span>
 
-              return (
-                <>
-                  {/* Group Header Row */}
-                  <TableRow
-                    key={`group-${groupId}`}
-                    className={`bg-muted/50 hover:bg-muted cursor-pointer ${selectedGroupId === groupId ? 'bg-muted' : ''}`}
-                    onClick={() => {
-                      toggleGroup(groupId);
-                      onGroupClick(groupId);
-                    }}
-                  >
-                    <TableCell colSpan={7}>
-                      <div className="flex items-center gap-2 font-semibold">
-                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-                          {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                        </Button>
-                        {groupData.group && (
-                          <Users className="h-4 w-4" style={{ color: groupData.group.color }} />
-                        )}
-                        <span>{groupData.name}</span>
-                        <span className="text-sm font-normal text-muted-foreground">
-                          ({groupData.servers.length} servers, {groupData.onlineCount} online, {groupData.linkedCount} linked)
-                        </span>
-                      </div>
-                    </TableCell>
-                  </TableRow>
+        <div className="flex-1" />
 
-                  {/* Server Rows */}
-                  {!isCollapsed && groupData.servers.map((server) => {
-                    const vcLink = getVCenterLink(server.id);
-                    const serverGroups = getServerGroups(server.id);
-                    return (
-                      <Fragment key={server.id}>
-                        {renderServerContextMenu(server, (
-                          <TableRow
-                            className={`cursor-pointer ${selectedServerId === server.id ? 'bg-muted' : ''}`}
-                            onClick={() => onServerClick(server)}
-                          >
-                            <TableCell className="pl-12">
-                              <div className="flex flex-col">
-                                <span className="font-medium">{server.hostname || 'N/A'}</span>
-                                <span className="text-xs text-muted-foreground">{server.ip_address}</span>
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-2">
-                                {getStatusBadge(server.connection_status)}
-                                {isIncomplete(server) && (
-                                  <AlertCircle className="h-4 w-4 text-orange-500" />
-                                )}
-                                {(refreshing === server.id || hasActiveHealthCheck(server.id)) && (
-                                  <Activity className="h-4 w-4 animate-spin text-blue-500" />
-                                )}
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <span className={!server.model ? 'text-muted-foreground' : ''}>
-                                {server.model || 'N/A'}
-                              </span>
-                            </TableCell>
-                            <TableCell>
-                              <span className={!server.service_tag ? 'text-muted-foreground' : ''}>
-                                {server.service_tag || 'N/A'}
-                              </span>
-                            </TableCell>
-                            <TableCell>
-                              <span className={!server.idrac_firmware ? 'text-muted-foreground' : ''}>
-                                {server.idrac_firmware || 'N/A'}
-                              </span>
-                            </TableCell>
-                            <TableCell>
-                              {vcLink.linked ? (
-                                <Badge variant="secondary" className="gap-1">
-                                  <CheckCircle className="h-3 w-3" />
-                                  {vcLink.cluster || 'Linked'}
-                                </Badge>
-                              ) : (
-                                <span className="text-xs text-muted-foreground">Not Linked</span>
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex gap-1 flex-wrap">
-                                {serverGroups.length > 0 ? (
-                                  serverGroups.slice(0, 2).map((group: any) => (
-                                    <Badge
-                                      key={group.id}
-                                      variant="outline"
-                                      style={{ borderColor: group.color }}
-                                      className="gap-1 text-xs"
-                                    >
-                                      <Users className="h-3 w-3" />
-                                      {group.name}
-                                    </Badge>
-                                  ))
-                                ) : (
-                                  <span className="text-xs text-muted-foreground">—</span>
-                                )}
-                                {serverGroups.length > 2 && (
-                                  <Badge variant="outline" className="text-xs">
-                                    +{serverGroups.length - 2}
-                                  </Badge>
-                                )}
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                        {selectedServerId === server.id && (
-                          <TableRow className="bg-muted/40">
-                            <TableCell colSpan={7} className="p-3">
-                              {renderExpandedRow(server)}
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </>
-              );
-            })
-          )}
-        </TableBody>
-      </Table>
+        {selectedServers.size > 0 && (
+          <Button variant="outline" size="sm" onClick={handleRefreshSelected}>
+            <RefreshCw className="mr-1 h-4 w-4" />
+            Refresh Selected
+          </Button>
+        )}
 
-      <div className="px-4 py-3 border-t bg-muted/20 text-sm text-muted-foreground">
-        Showing {servers.length} server{servers.length !== 1 ? 's' : ''}
-        {groupedData && ` in ${groupedData.length} group${groupedData.length !== 1 ? 's' : ''}`}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm">
+              <Columns3 className="mr-1 h-4 w-4" />
+              Columns
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="w-56 bg-background" align="end">
+            <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuCheckboxItem
+              checked={isColumnVisible("hostname")}
+              onCheckedChange={() => toggleColumn("hostname")}
+            >
+              Hostname
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem checked={isColumnVisible("ip")} onCheckedChange={() => toggleColumn("ip")}>
+              IP Address
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={isColumnVisible("status")}
+              onCheckedChange={() => toggleColumn("status")}
+            >
+              Status
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={isColumnVisible("model")}
+              onCheckedChange={() => toggleColumn("model")}
+            >
+              Model
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={isColumnVisible("service_tag")}
+              onCheckedChange={() => toggleColumn("service_tag")}
+            >
+              Service Tag
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={isColumnVisible("idrac_firmware")}
+              onCheckedChange={() => toggleColumn("idrac_firmware")}
+            >
+              iDRAC Firmware
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={isColumnVisible("vcenter")}
+              onCheckedChange={() => toggleColumn("vcenter")}
+            >
+              vCenter
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={isColumnVisible("groups")}
+              onCheckedChange={() => toggleColumn("groups")}
+            >
+              Groups
+            </DropdownMenuCheckboxItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <Button variant="outline" size="sm" onClick={handleExportCSV}>
+          <Download className="mr-1 h-4 w-4" />
+          Export
+        </Button>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm">
+              <Save className="mr-1 h-4 w-4" />
+              Views
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="w-56" align="end">
+            <DropdownMenuLabel>Saved Views</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => setSaveDialogOpen(true)}>
+              <Save className="mr-2 h-4 w-4" />
+              Save Current View
+            </DropdownMenuItem>
+            {savedViews.length > 0 && (
+              <>
+                <DropdownMenuSeparator />
+                {savedViews.map((view) => (
+                  <DropdownMenuItem key={view.id} className="flex justify-between">
+                    <span onClick={() => loadView(view.id)}>{view.name}</span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteView(view.id);
+                      }}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </DropdownMenuItem>
+                ))}
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
+
+      {/* Table */}
+      <div className="overflow-auto flex-1">
+        <Table>
+          <TableHeader className="sticky top-0 bg-muted z-10">
+            <TableRow>
+              <TableHead className="w-12">
+                <Checkbox checked={selectedServers.size === allServers.length} onCheckedChange={toggleAllServers} />
+              </TableHead>
+              {isColumnVisible("hostname") && (
+                <TableHead className="w-[200px] cursor-pointer" onClick={() => handleSort("hostname")}>
+                  <div className="flex items-center">
+                    Hostname {getSortIcon("hostname")}
+                  </div>
+                </TableHead>
+              )}
+              {isColumnVisible("ip") && (
+                <TableHead className="w-[140px] cursor-pointer" onClick={() => handleSort("ip_address")}>
+                  <div className="flex items-center">
+                    IP Address {getSortIcon("ip_address")}
+                  </div>
+                </TableHead>
+              )}
+              {isColumnVisible("status") && (
+                <TableHead className="w-[100px] cursor-pointer" onClick={() => handleSort("connection_status")}>
+                  <div className="flex items-center">
+                    Status {getSortIcon("connection_status")}
+                  </div>
+                </TableHead>
+              )}
+              {isColumnVisible("model") && (
+                <TableHead className="w-[180px] cursor-pointer" onClick={() => handleSort("model")}>
+                  <div className="flex items-center">
+                    Model {getSortIcon("model")}
+                  </div>
+                </TableHead>
+              )}
+              {isColumnVisible("service_tag") && (
+                <TableHead className="w-[120px] cursor-pointer" onClick={() => handleSort("service_tag")}>
+                  <div className="flex items-center">
+                    Service Tag {getSortIcon("service_tag")}
+                  </div>
+                </TableHead>
+              )}
+              {isColumnVisible("idrac_firmware") && (
+                <TableHead className="w-[140px] cursor-pointer" onClick={() => handleSort("idrac_firmware")}>
+                  <div className="flex items-center">
+                    iDRAC Firmware {getSortIcon("idrac_firmware")}
+                  </div>
+                </TableHead>
+              )}
+              {isColumnVisible("vcenter") && <TableHead className="w-[100px]">vCenter</TableHead>}
+              {isColumnVisible("groups") && <TableHead className="w-[140px]">Groups</TableHead>}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {!displayGroups
+              ? // Flat view
+                displayServers.map((server) => (
+                  <ContextMenu key={server.id}>
+                    <ContextMenuTrigger asChild>
+                      <TableRow
+                        className={`cursor-pointer hover:bg-accent ${selectedServerId === server.id ? "bg-accent" : ""}`}
+                        onClick={() => onServerClick(server)}
+                      >
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          <Checkbox
+                            checked={selectedServers.has(server.id)}
+                            onCheckedChange={() => toggleServerSelection(server.id)}
+                          />
+                        </TableCell>
+                        {isColumnVisible("hostname") && (
+                          <TableCell className="font-medium">{server.hostname || "—"}</TableCell>
+                        )}
+                        {isColumnVisible("ip") && (
+                          <TableCell className="font-mono text-sm">{server.ip_address}</TableCell>
+                        )}
+                        {isColumnVisible("status") && <TableCell>{getStatusBadge(server)}</TableCell>}
+                        {isColumnVisible("model") && <TableCell className="text-sm">{server.model || "—"}</TableCell>}
+                        {isColumnVisible("service_tag") && (
+                          <TableCell className="font-mono text-xs">{server.service_tag || "—"}</TableCell>
+                        )}
+                        {isColumnVisible("idrac_firmware") && (
+                          <TableCell className="text-sm">{server.idrac_firmware || "—"}</TableCell>
+                        )}
+                        {isColumnVisible("vcenter") && (
+                          <TableCell>
+                            {server.vcenter_host_id ? (
+                              <Badge variant="default" className="text-xs">
+                                Linked
+                              </Badge>
+                            ) : (
+                              <Badge variant="secondary" className="text-xs">
+                                —
+                              </Badge>
+                            )}
+                          </TableCell>
+                        )}
+                        {isColumnVisible("groups") && (
+                          <TableCell className="text-sm text-muted-foreground">
+                            {getServerGroups(server.id)
+                              .slice(0, 2)
+                              .map((g: any) => g.name)
+                              .join(", ") || "—"}
+                          </TableCell>
+                        )}
+                      </TableRow>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent className="w-56 bg-background">
+                      <ContextMenuItem onClick={() => copyToClipboard(server.ip_address, "IP Address")}>
+                        <ClipboardCopy className="mr-2 h-4 w-4" />
+                        Copy IP Address
+                      </ContextMenuItem>
+                      <ContextMenuItem onClick={() => copyToClipboard(server.hostname, "Hostname")}>
+                        <ClipboardCopy className="mr-2 h-4 w-4" />
+                        Copy Hostname
+                      </ContextMenuItem>
+                      <ContextMenuItem onClick={() => copyToClipboard(server.service_tag, "Service Tag")}>
+                        <ClipboardCopy className="mr-2 h-4 w-4" />
+                        Copy Service Tag
+                      </ContextMenuItem>
+                      <ContextMenuSeparator />
+                      {onConsoleLaunch && (
+                        <ContextMenuItem onClick={() => onConsoleLaunch(server)}>
+                          <Monitor className="mr-2 h-4 w-4" />
+                          Launch Console
+                        </ContextMenuItem>
+                      )}
+                      <ContextMenuItem onClick={() => onServerDetails(server)}>
+                        <Eye className="mr-2 h-4 w-4" />
+                        View Details
+                      </ContextMenuItem>
+                      <ContextMenuSeparator />
+                      <ContextMenuItem onClick={() => onServerRefresh(server)}>
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                        Refresh Inventory
+                      </ContextMenuItem>
+                      <ContextMenuItem onClick={() => onServerTest(server)}>
+                        <ShieldCheck className="mr-2 h-4 w-4" />
+                        Test Credentials
+                      </ContextMenuItem>
+                      <ContextMenuItem onClick={() => onServerHealth(server)}>
+                        <Activity className="mr-2 h-4 w-4" />
+                        Health Check
+                      </ContextMenuItem>
+                      <ContextMenuSeparator />
+                      <ContextMenuItem onClick={() => onServerPower(server)}>
+                        <Power className="mr-2 h-4 w-4" />
+                        Power Controls
+                      </ContextMenuItem>
+                      {onAutoLinkVCenter && !server.vcenter_host_id && (
+                        <>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem onClick={() => onAutoLinkVCenter(server)}>
+                            <Link2 className="mr-2 h-4 w-4" />
+                            Auto-link vCenter
+                          </ContextMenuItem>
+                        </>
+                      )}
+                    </ContextMenuContent>
+                  </ContextMenu>
+                ))
+              : // Grouped view
+                displayGroups.map((group) => {
+                  const isCollapsed = collapsedGroups.has(group.id);
+                  const isGroupSelected = selectedGroupId === group.id;
+
+                  return (
+                    <>
+                      {/* Group Header Row */}
+                      <TableRow
+                        key={`group-${group.id}`}
+                        className={`cursor-pointer hover:bg-accent/50 font-medium ${isGroupSelected ? "bg-accent" : "bg-muted/30"}`}
+                        onClick={() => {
+                          toggleGroup(group.id);
+                          onGroupClick(group.id);
+                        }}
+                      >
+                        <TableCell colSpan={10} className="py-2">
+                          <div className="flex items-center gap-2">
+                            {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                            <span className="font-semibold">{group.name}</span>
+                            <span className="text-xs text-muted-foreground">
+                              ({group.servers.length} servers, {group.onlineCount} online
+                              {group.linkedCount !== undefined && `, ${group.linkedCount} linked`})
+                            </span>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+
+                      {/* Server Rows */}
+                      {!isCollapsed &&
+                        group.servers.map((server) => (
+                          <ContextMenu key={server.id}>
+                            <ContextMenuTrigger asChild>
+                              <TableRow
+                                className={`cursor-pointer hover:bg-accent ${selectedServerId === server.id ? "bg-accent" : ""}`}
+                                onClick={() => onServerClick(server)}
+                              >
+                                <TableCell onClick={(e) => e.stopPropagation()}>
+                                  <Checkbox
+                                    checked={selectedServers.has(server.id)}
+                                    onCheckedChange={() => toggleServerSelection(server.id)}
+                                  />
+                                </TableCell>
+                                {isColumnVisible("hostname") && (
+                                  <TableCell className="font-medium">{server.hostname || "—"}</TableCell>
+                                )}
+                                {isColumnVisible("ip") && (
+                                  <TableCell className="font-mono text-sm">{server.ip_address}</TableCell>
+                                )}
+                                {isColumnVisible("status") && <TableCell>{getStatusBadge(server)}</TableCell>}
+                                {isColumnVisible("model") && (
+                                  <TableCell className="text-sm">{server.model || "—"}</TableCell>
+                                )}
+                                {isColumnVisible("service_tag") && (
+                                  <TableCell className="font-mono text-xs">{server.service_tag || "—"}</TableCell>
+                                )}
+                                {isColumnVisible("idrac_firmware") && (
+                                  <TableCell className="text-sm">{server.idrac_firmware || "—"}</TableCell>
+                                )}
+                                {isColumnVisible("vcenter") && (
+                                  <TableCell>
+                                    {server.vcenter_host_id ? (
+                                      <Badge variant="default" className="text-xs">
+                                        Linked
+                                      </Badge>
+                                    ) : (
+                                      <Badge variant="secondary" className="text-xs">
+                                        —
+                                      </Badge>
+                                    )}
+                                  </TableCell>
+                                )}
+                                {isColumnVisible("groups") && (
+                                  <TableCell className="text-sm text-muted-foreground">{group.name}</TableCell>
+                                )}
+                              </TableRow>
+                            </ContextMenuTrigger>
+                            <ContextMenuContent className="w-56 bg-background">
+                              <ContextMenuItem onClick={() => copyToClipboard(server.ip_address, "IP Address")}>
+                                <ClipboardCopy className="mr-2 h-4 w-4" />
+                                Copy IP Address
+                              </ContextMenuItem>
+                              <ContextMenuItem onClick={() => copyToClipboard(server.hostname, "Hostname")}>
+                                <ClipboardCopy className="mr-2 h-4 w-4" />
+                                Copy Hostname
+                              </ContextMenuItem>
+                              <ContextMenuItem onClick={() => copyToClipboard(server.service_tag, "Service Tag")}>
+                                <ClipboardCopy className="mr-2 h-4 w-4" />
+                                Copy Service Tag
+                              </ContextMenuItem>
+                              <ContextMenuSeparator />
+                              {onConsoleLaunch && (
+                                <ContextMenuItem onClick={() => onConsoleLaunch(server)}>
+                                  <Monitor className="mr-2 h-4 w-4" />
+                                  Launch Console
+                                </ContextMenuItem>
+                              )}
+                              <ContextMenuItem onClick={() => onServerDetails(server)}>
+                                <Eye className="mr-2 h-4 w-4" />
+                                View Details
+                              </ContextMenuItem>
+                              <ContextMenuSeparator />
+                              <ContextMenuItem onClick={() => onServerRefresh(server)}>
+                                <RefreshCw className="mr-2 h-4 w-4" />
+                                Refresh Inventory
+                              </ContextMenuItem>
+                              <ContextMenuItem onClick={() => onServerTest(server)}>
+                                <ShieldCheck className="mr-2 h-4 w-4" />
+                                Test Credentials
+                              </ContextMenuItem>
+                              <ContextMenuItem onClick={() => onServerHealth(server)}>
+                                <Activity className="mr-2 h-4 w-4" />
+                                Health Check
+                              </ContextMenuItem>
+                              <ContextMenuSeparator />
+                              <ContextMenuItem onClick={() => onServerPower(server)}>
+                                <Power className="mr-2 h-4 w-4" />
+                                Power Controls
+                              </ContextMenuItem>
+                              {onAutoLinkVCenter && !server.vcenter_host_id && (
+                                <>
+                                  <ContextMenuSeparator />
+                                  <ContextMenuItem onClick={() => onAutoLinkVCenter(server)}>
+                                    <Link2 className="mr-2 h-4 w-4" />
+                                    Auto-link vCenter
+                                  </ContextMenuItem>
+                                </>
+                              )}
+                            </ContextMenuContent>
+                          </ContextMenu>
+                        ))}
+                    </>
+                  );
+                })}
+          </TableBody>
+        </Table>
+      </div>
+
+      {/* Save View Dialog */}
+      <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Save Current View</DialogTitle>
+            <DialogDescription>Save your current column configuration and sorting preferences</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="view-name">View Name</Label>
+              <Input
+                id="view-name"
+                placeholder="e.g., Production Servers"
+                value={viewName}
+                onChange={(e) => setViewName(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSaveDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveView}>Save View</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
