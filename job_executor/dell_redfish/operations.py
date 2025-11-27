@@ -107,35 +107,91 @@ class DellOperations:
         user_id: str = None
     ) -> Dict[str, Any]:
         """
-        Get KVM launch info for iDRAC9+ using GetKVMLaunchInfo endpoint.
+        Get KVM launch info for iDRAC9+ using Dell's official GetKVMSession API.
         
-        Dell endpoint: POST /redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DelliDRACCardService/Actions/DelliDRACCardService.GetKVMLaunchInfo
+        Official Dell process (4 steps):
+        1. Set virtual console plugin to HTML5
+        2. Export iDRAC SSL certificate
+        3. Get KVM session temp credentials using cert
+        4. Build console URL with temp credentials for SSO
         """
-        response = self.adapter.make_request(
-            method='POST',
-            ip=ip,
-            endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DelliDRACCardService/Actions/DelliDRACCardService.GetKVMLaunchInfo',
-            username=username,
-            password=password,
-            payload={},
-            operation_name='Get KVM Launch Info',
-            job_id=job_id,
-            server_id=server_id,
-            user_id=user_id
-        )
-        
-        # Extract session key from response
-        session_key = response.get('SessionKey', '')
-        
-        # Construct authenticated console URL with session key
-        console_url = f"https://{ip}/console?sessionKey={session_key}"
-        
-        return {
-            'console_url': console_url,
-            'session_type': 'HTML5',
-            'session_key': session_key,
-            'requires_login': False
-        }
+        try:
+            # Step 1: Set Virtual Console plugin type to HTML5
+            self.adapter.make_request(
+                method='PATCH',
+                ip=ip,
+                endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Attributes',
+                username=username,
+                password=password,
+                payload={"Attributes": {"VirtualConsole.1.PluginType": "HTML5"}},
+                operation_name='Set Virtual Console Plugin',
+                job_id=job_id,
+                server_id=server_id,
+                user_id=user_id
+            )
+            
+            # Step 2: Export SSL Certificate
+            cert_response = self.adapter.make_request(
+                method='POST',
+                ip=ip,
+                endpoint='/redfish/v1/Dell/Managers/iDRAC.Embedded.1/DelliDRACCardService/Actions/DelliDRACCardService.ExportSSLCertificate',
+                username=username,
+                password=password,
+                payload={"SSLCertType": "Server"},
+                operation_name='Export SSL Certificate',
+                job_id=job_id,
+                server_id=server_id,
+                user_id=user_id
+            )
+            
+            cert_content = cert_response.get('CertificateFile', '')
+            if not cert_content:
+                raise DellRedfishError(
+                    message="Failed to export SSL certificate",
+                    error_code='NO_CERT_CONTENT'
+                )
+            
+            # Step 3: Get KVM Session with temp credentials
+            kvm_response = self.adapter.make_request(
+                method='POST',
+                ip=ip,
+                endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DelliDRACCardService/Actions/DelliDRACCardService.GetKVMSession',
+                username=username,
+                password=password,
+                payload={"SessionTypeName": cert_content},
+                operation_name='Get KVM Session',
+                job_id=job_id,
+                server_id=server_id,
+                user_id=user_id
+            )
+            
+            temp_username = kvm_response.get('TempUsername', '')
+            temp_password = kvm_response.get('TempPassword', '')
+            
+            if not temp_username or not temp_password:
+                raise DellRedfishError(
+                    message="Failed to get temporary KVM credentials",
+                    error_code='NO_TEMP_CREDS'
+                )
+            
+            # Step 4: Build authenticated console URL with SSO
+            console_url = f"https://{ip}/console?username={username}&tempUsername={temp_username}&tempPassword={temp_password}"
+            
+            return {
+                'console_url': console_url,
+                'session_type': 'HTML5',
+                'requires_login': False,
+                'temp_username': temp_username
+            }
+            
+        except DellRedfishError:
+            raise
+        except Exception as e:
+            # If official method fails, raise to trigger fallback
+            raise DellRedfishError(
+                message=f"GetKVMSession failed: {str(e)}",
+                error_code='KVM_SESSION_FAILED'
+            )
     
     def _get_kvm_fallback(
         self,
