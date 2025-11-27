@@ -3,6 +3,12 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import {
   X,
   Server as ServerIcon,
   RefreshCw,
@@ -13,6 +19,13 @@ import {
   Eye,
   FileText,
   Loader2,
+  HardDrive,
+  Monitor,
+  Link,
+  Key,
+  ScrollText,
+  GitBranch,
+  Save,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import type { Server } from "@/hooks/useServers";
@@ -34,8 +47,16 @@ interface ServerDetailsSidebarProps {
   onRefreshInfo: (server: Server) => void;
   onPowerControl: (server: Server) => void;
   onBiosConfig: (server: Server) => void;
+  onBootConfig: (server: Server) => void;
+  onVirtualMedia: (server: Server) => void;
+  onScpBackup: (server: Server) => void;
+  onViewEventLog: (server: Server) => void;
   onViewHealth: (server: Server) => void;
   onViewAudit: (server: Server) => void;
+  onViewProperties: (server: Server) => void;
+  onWorkflow: (server: Server) => void;
+  onLinkVCenter: (server: Server) => void;
+  onAssignCredentials: (server: Server) => void;
   onCreateJob: (server: Server) => void;
 }
 
@@ -51,8 +72,16 @@ export function ServerDetailsSidebar({
   onRefreshInfo,
   onPowerControl,
   onBiosConfig,
+  onBootConfig,
+  onVirtualMedia,
+  onScpBackup,
+  onViewEventLog,
   onViewHealth,
   onViewAudit,
+  onViewProperties,
+  onWorkflow,
+  onLinkVCenter,
+  onAssignCredentials,
   onCreateJob,
 }: ServerDetailsSidebarProps) {
   // Server Details View
@@ -187,88 +216,188 @@ export function ServerDetailsSidebar({
 
         <Separator />
 
-        <div className="p-4 space-y-2">
-          <div className="grid grid-cols-2 gap-2">
+        <div className="p-4 space-y-3">
+          {/* Quick Actions - Always Visible */}
+          <div>
+            <h4 className="text-xs font-semibold mb-2 text-muted-foreground">QUICK ACTIONS</h4>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onTestConnection(selectedServer)}
+                disabled={testing}
+              >
+                {testing ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Activity className="h-3 w-3" />
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onRefreshInfo(selectedServer)}
+                disabled={refreshing}
+              >
+                {refreshing ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3 w-3" />
+                )}
+              </Button>
+            </div>
             <Button
               variant="outline"
               size="sm"
-              onClick={() => onTestConnection(selectedServer)}
-              disabled={testing}
+              className="w-full"
+              onClick={() => onPowerControl(selectedServer)}
             >
-              {testing ? (
-                <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-              ) : (
-                <Activity className="mr-2 h-3 w-3" />
-              )}
-              Test
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onRefreshInfo(selectedServer)}
-              disabled={refreshing}
-            >
-              {refreshing ? (
-                <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-              ) : (
-                <RefreshCw className="mr-2 h-3 w-3" />
-              )}
-              Refresh
+              <Power className="mr-2 h-3 w-3" />
+              Power Controls
             </Button>
           </div>
 
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full"
-            onClick={() => onPowerControl(selectedServer)}
-          >
-            <Power className="mr-2 h-3 w-3" />
-            Power Controls
-          </Button>
+          <Separator />
 
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full"
-            onClick={() => onBiosConfig(selectedServer)}
-          >
-            <Settings className="mr-2 h-3 w-3" />
-            BIOS Config
-          </Button>
+          {/* Organized Action Groups */}
+          <Accordion type="single" collapsible className="w-full">
+            {/* Configuration */}
+            <AccordionItem value="config" className="border-b-0">
+              <AccordionTrigger className="py-2 text-xs font-semibold hover:no-underline">
+                Configuration
+              </AccordionTrigger>
+              <AccordionContent className="space-y-1 pb-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start"
+                  onClick={() => onBiosConfig(selectedServer)}
+                >
+                  <Settings className="mr-2 h-3 w-3" />
+                  BIOS Config
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start"
+                  onClick={() => onBootConfig(selectedServer)}
+                >
+                  <HardDrive className="mr-2 h-3 w-3" />
+                  Boot Config
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start"
+                  onClick={() => onVirtualMedia(selectedServer)}
+                >
+                  <Monitor className="mr-2 h-3 w-3" />
+                  Virtual Media
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start"
+                  onClick={() => onScpBackup(selectedServer)}
+                >
+                  <Save className="mr-2 h-3 w-3" />
+                  SCP Backup
+                </Button>
+              </AccordionContent>
+            </AccordionItem>
 
-          <Separator className="my-2" />
+            {/* Logs & Diagnostics */}
+            <AccordionItem value="logs" className="border-b-0">
+              <AccordionTrigger className="py-2 text-xs font-semibold hover:no-underline">
+                Logs & Diagnostics
+              </AccordionTrigger>
+              <AccordionContent className="space-y-1 pb-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start"
+                  onClick={() => onViewEventLog(selectedServer)}
+                >
+                  <ScrollText className="mr-2 h-3 w-3" />
+                  Event Logs
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start"
+                  onClick={() => onViewHealth(selectedServer)}
+                >
+                  <Eye className="mr-2 h-3 w-3" />
+                  Health Status
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start"
+                  onClick={() => onViewAudit(selectedServer)}
+                >
+                  <FileText className="mr-2 h-3 w-3" />
+                  Audit Trail
+                </Button>
+              </AccordionContent>
+            </AccordionItem>
 
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onViewHealth(selectedServer)}
-            >
-              <Eye className="mr-2 h-3 w-3" />
-              Health
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onViewAudit(selectedServer)}
-            >
-              <FileText className="mr-2 h-3 w-3" />
-              Audit
-            </Button>
-          </div>
+            {/* Management */}
+            <AccordionItem value="management" className="border-b-0">
+              <AccordionTrigger className="py-2 text-xs font-semibold hover:no-underline">
+                Management
+              </AccordionTrigger>
+              <AccordionContent className="space-y-1 pb-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start"
+                  onClick={() => onAssignCredentials(selectedServer)}
+                >
+                  <Key className="mr-2 h-3 w-3" />
+                  Assign Credentials
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start"
+                  onClick={() => onLinkVCenter(selectedServer)}
+                >
+                  <Link className="mr-2 h-3 w-3" />
+                  Link vCenter
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start"
+                  onClick={() => onViewProperties(selectedServer)}
+                >
+                  <Eye className="mr-2 h-3 w-3" />
+                  View Properties
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start"
+                  onClick={() => onWorkflow(selectedServer)}
+                >
+                  <GitBranch className="mr-2 h-3 w-3" />
+                  Workflow
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start"
+                  onClick={() => onCreateJob(selectedServer)}
+                >
+                  <Wrench className="mr-2 h-3 w-3" />
+                  Create Job
+                </Button>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
 
-          <Button
-            variant="default"
-            size="sm"
-            className="w-full"
-            onClick={() => onCreateJob(selectedServer)}
-          >
-            <Wrench className="mr-2 h-3 w-3" />
-            Create Job
-          </Button>
-
-          <Separator className="my-2" />
+          <Separator />
 
           <div className="grid grid-cols-2 gap-2">
             <Button

@@ -22,7 +22,6 @@ import { LinkVCenterDialog } from "@/components/servers/LinkVCenterDialog";
 import { AssignCredentialsDialog } from "@/components/servers/AssignCredentialsDialog";
 import { CreateJobDialog } from "@/components/jobs/CreateJobDialog";
 import { WorkflowJobDialog } from "@/components/jobs/WorkflowJobDialog";
-import { PreFlightCheckDialog } from "@/components/jobs/PreFlightCheckDialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import type { Server } from "@/hooks/useServers";
 
@@ -56,7 +55,6 @@ export default function Servers() {
   const [assignCredentialsDialogOpen, setAssignCredentialsDialogOpen] = useState(false);
   const [jobDialogOpen, setJobDialogOpen] = useState(false);
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
-  const [preFlightCheckDialogOpen, setPreFlightCheckDialogOpen] = useState(false);
 
   // Hooks
   const {
@@ -219,6 +217,22 @@ export default function Servers() {
                 setSelectedServer(server);
                 setBiosConfigDialogOpen(true);
               }}
+              onBootConfig={(server) => {
+                setSelectedServer(server);
+                setBootConfigDialogOpen(true);
+              }}
+              onVirtualMedia={(server) => {
+                setSelectedServer(server);
+                setVirtualMediaDialogOpen(true);
+              }}
+              onScpBackup={(server) => {
+                setSelectedServer(server);
+                setScpBackupDialogOpen(true);
+              }}
+              onViewEventLog={(server) => {
+                setSelectedServer(server);
+                setEventLogDialogOpen(true);
+              }}
               onViewHealth={(server) => {
                 setSelectedServer(server);
                 setHealthDialogOpen(true);
@@ -226,6 +240,22 @@ export default function Servers() {
               onViewAudit={(server) => {
                 setSelectedServer(server);
                 setAuditDialogOpen(true);
+              }}
+              onViewProperties={(server) => {
+                setSelectedServer(server);
+                setPropertiesDialogOpen(true);
+              }}
+              onWorkflow={(server) => {
+                setSelectedServer(server);
+                setWorkflowDialogOpen(true);
+              }}
+              onLinkVCenter={(server) => {
+                setSelectedServer(server);
+                setLinkDialogOpen(true);
+              }}
+              onAssignCredentials={(server) => {
+                setSelectedServer(server);
+                setAssignCredentialsDialogOpen(true);
               }}
               onCreateJob={(server) => {
                 setSelectedServer(server);
