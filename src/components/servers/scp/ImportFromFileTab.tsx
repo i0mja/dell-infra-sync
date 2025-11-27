@@ -144,6 +144,8 @@ export function ImportFromFileTab({ serverId, onImportStarted }: ImportFromFileT
           backup_name: `Imported: ${selectedFile.name}`,
           description: `Imported from file on ${new Date().toLocaleString()}`,
           scp_content: parseResult.content,
+          scp_raw_content: fileContent,  // Store original content for import
+          scp_format: parseResult.format,  // Store original format (JSON or XML)
           scp_file_size_bytes: selectedFile.size,
           checksum: checksum,
           include_bios: includeBios,

@@ -15,6 +15,8 @@ export interface ScpParseResult {
   valid: boolean;
   error?: string;
   content?: any;
+  rawContent?: string;  // Original file content (for import)
+  format: 'JSON' | 'XML';  // Original file format
   components?: ScpComponent[];
   metadata?: {
     model?: string;
@@ -202,6 +204,7 @@ export async function parseScpFile(content: string, filename: string): Promise<S
   try {
     let parsed: any;
     const isXml = content.trim().startsWith('<?xml') || content.trim().startsWith('<');
+    const format: 'JSON' | 'XML' = isXml ? 'XML' : 'JSON';
 
     // Parse based on format
     if (isXml) {
@@ -213,6 +216,7 @@ export async function parseScpFile(content: string, filename: string): Promise<S
         return {
           valid: false,
           error: "Invalid JSON format",
+          format: 'JSON',
           detectedComponents: {
             hasBios: false,
             hasIdrac: false,
@@ -233,6 +237,7 @@ export async function parseScpFile(content: string, filename: string): Promise<S
       return {
         valid: false,
         error: validation.error,
+        format,
         detectedComponents: {
           hasBios: false,
           hasIdrac: false,
@@ -254,6 +259,8 @@ export async function parseScpFile(content: string, filename: string): Promise<S
     return {
       valid: true,
       content: parsed,
+      rawContent: content,  // Preserve original content for import
+      format,
       components,
       metadata,
       detectedComponents,
@@ -262,6 +269,7 @@ export async function parseScpFile(content: string, filename: string): Promise<S
     return {
       valid: false,
       error: error instanceof Error ? error.message : "Failed to parse file",
+      format: 'JSON',
       detectedComponents: {
         hasBios: false,
         hasIdrac: false,
