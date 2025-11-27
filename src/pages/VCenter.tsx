@@ -7,13 +7,14 @@ import { HostsTable } from "@/components/vcenter/HostsTable";
 import { VMsTable } from "@/components/vcenter/VMsTable";
 import { ClustersPanel } from "@/components/vcenter/ClustersPanel";
 import { DatastoresTable } from "@/components/vcenter/DatastoresTable";
-import { AlarmsPanel } from "@/components/vcenter/AlarmsPanel";
 import { VCenterSettingsDialog } from "@/components/vcenter/VCenterSettingsDialog";
 import { VCenterConnectivityDialog } from "@/components/vcenter/VCenterConnectivityDialog";
 import { ClusterUpdateWizard } from "@/components/jobs/ClusterUpdateWizard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useVCenterData } from "@/hooks/useVCenterData";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Search, Download, Eye, Columns3 } from "lucide-react";
 
 interface VCenterHost {
   id: string;
@@ -351,7 +352,7 @@ export default function VCenter() {
         unlinkedHosts={unlinkedHosts}
         totalVms={vms.length}
         totalDatastores={datastores.length}
-        activeAlarms={alarms.length}
+        alarms={alarms}
         lastSync={lastSync}
         mode={isPrivateNetwork(vcenterHost) ? "job-executor" : "cloud"}
         syncing={syncing}
@@ -367,16 +368,65 @@ export default function VCenter() {
         hasActiveClusters={uniqueClusters.length > 0}
       />
 
-      {alarms.length > 0 && <AlarmsPanel alarms={alarms} />}
-
       <div className="flex-1 overflow-hidden">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
-          <TabsList className="mx-4 mt-4">
-            <TabsTrigger value="hosts">Hosts ({hosts.length})</TabsTrigger>
-            <TabsTrigger value="vms">VMs ({vms.length})</TabsTrigger>
-            <TabsTrigger value="clusters">Clusters ({clusters.length})</TabsTrigger>
-            <TabsTrigger value="datastores">Datastores ({datastores.length})</TabsTrigger>
-          </TabsList>
+          {/* Combined Tabs + Toolbar Row */}
+          <div className="flex items-center justify-between border-b bg-card px-4">
+            <TabsList className="h-auto p-0 bg-transparent gap-2">
+              <TabsTrigger 
+                value="hosts"
+                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
+              >
+                Hosts ({hosts.length})
+              </TabsTrigger>
+              <TabsTrigger 
+                value="vms"
+                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
+              >
+                VMs ({vms.length})
+              </TabsTrigger>
+              <TabsTrigger 
+                value="clusters"
+                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
+              >
+                Clusters ({clusters.length})
+              </TabsTrigger>
+              <TabsTrigger 
+                value="datastores"
+                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
+              >
+                Datastores ({datastores.length})
+              </TabsTrigger>
+            </TabsList>
+
+            {/* Toolbar controls */}
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder={`Search ${activeTab}...`}
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="h-9 w-64 pl-9"
+                />
+              </div>
+              
+              <Button variant="outline" size="sm">
+                <Columns3 className="mr-2 h-4 w-4" />
+                Columns
+              </Button>
+              
+              <Button variant="outline" size="sm">
+                <Download className="mr-2 h-4 w-4" />
+                Export
+              </Button>
+              
+              <Button variant="outline" size="sm">
+                <Eye className="mr-2 h-4 w-4" />
+                Views
+              </Button>
+            </div>
+          </div>
 
           <TabsContent value="hosts" className="flex-1 mt-0">
             <HostsTable
