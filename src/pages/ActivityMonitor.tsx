@@ -10,6 +10,7 @@ import { CommandDetailDialog } from "@/components/activity/CommandDetailDialog";
 import { ActiveJobsBanner } from "@/components/activity/ActiveJobsBanner";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { useActiveJobs } from "@/hooks/useActiveJobs";
 
 interface IdracCommand {
   id: string;
@@ -47,7 +48,6 @@ interface Job {
 export default function ActivityMonitor() {
   const [commands, setCommands] = useState<IdracCommand[]>([]);
   const [selectedCommand, setSelectedCommand] = useState<IdracCommand | null>(null);
-  const [jobs, setJobs] = useState<Job[]>([]);
   const [isDetailsSheetOpen, setIsDetailsSheetOpen] = useState(false);
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
   
@@ -78,22 +78,8 @@ export default function ActivityMonitor() {
     },
   });
 
-  // Fetch active jobs for live view
-  const { data: activeJobsData, refetch: refetchActiveJobs } = useQuery({
-    queryKey: ['active-jobs'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('jobs')
-        .select('*')
-        .in('status', ['pending', 'running'])
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      return data as Job[];
-    },
-    staleTime: 0,
-    refetchOnWindowFocus: false,
-  });
+  // Fetch active jobs for live view with real-time updates
+  const { activeJobs, refetch: refetchActiveJobs } = useActiveJobs();
 
   // Calculate time range
   const getTimeRangeDate = () => {
@@ -160,12 +146,6 @@ export default function ActivityMonitor() {
       setCommands(commandsData);
     }
   }, [commandsData]);
-
-  useEffect(() => {
-    if (activeJobsData) {
-      setJobs(activeJobsData);
-    }
-  }, [activeJobsData]);
 
   useEffect(() => {
     if (isError) {
@@ -356,7 +336,7 @@ export default function ActivityMonitor() {
       <ActivityStatsBar
         totalCommands={commands.length}
         successRate={calculateSuccessRate()}
-        activeJobs={jobs.length}
+        activeJobs={activeJobs.length}
         failedCount={commands.filter(c => !c.success).length}
         liveStatus={realtimeStatus}
         onRefresh={handleManualRefresh}
@@ -365,9 +345,9 @@ export default function ActivityMonitor() {
       />
 
       <div className="space-y-4 px-4 pt-4 sm:px-6 lg:px-8">
-        {jobs.length > 0 && (
+        {activeJobs.length > 0 && (
           <div className="rounded-xl border bg-muted/30 px-4 py-3 shadow-sm sm:px-6">
-            <ActiveJobsBanner jobs={jobs} />
+            <ActiveJobsBanner jobs={activeJobs} />
           </div>
         )}
 
