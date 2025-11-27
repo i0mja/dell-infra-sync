@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
-import Layout from "@/components/Layout";
 import { VCenterStatsBar } from "@/components/vcenter/VCenterStatsBar";
 import { HostFilterToolbar } from "@/components/vcenter/HostFilterToolbar";
 import { HostsTable } from "@/components/vcenter/HostsTable";
@@ -384,8 +383,7 @@ export default function VCenter() {
   const selectedClusterGroup = selectedCluster ? clusterGroups.find(c => c.name === selectedCluster) || null : null;
 
   return (
-    <Layout>
-      <div className="flex flex-col h-[calc(100vh-4rem)]">
+    <div className="flex flex-col h-full overflow-hidden">
         <VCenterStatsBar
           totalHosts={hosts.length}
           linkedHosts={linkedHosts}
@@ -521,6 +519,6 @@ export default function VCenter() {
           />
         )}
       </div>
-    </Layout>
   );
 }
+
