@@ -16,7 +16,8 @@ import {
   ScpResults,
   MultiServerResults,
   GenericResults,
-  JobTimingCard
+  JobTimingCard,
+  EsxiUpgradeResults
 } from "./results";
 
 interface Job {
@@ -214,6 +215,10 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
       case 'firmware_update':
       case 'power_control':
         return <MultiServerResults details={job.details} />;
+      case 'esxi_upgrade':
+      case 'esxi_then_firmware':
+      case 'firmware_then_esxi':
+        return <EsxiUpgradeResults details={job.details} jobType={job.job_type} />;
       default:
         return <GenericResults details={job.details} />;
     }

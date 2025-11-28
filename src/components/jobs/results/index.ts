@@ -5,3 +5,4 @@ export { ScpResults } from './ScpResults';
 export { MultiServerResults } from './MultiServerResults';
 export { GenericResults } from './GenericResults';
 export { JobTimingCard } from './JobTimingCard';
+export { EsxiUpgradeResults } from './EsxiUpgradeResults';

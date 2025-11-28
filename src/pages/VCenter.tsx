@@ -11,6 +11,7 @@ import { VCenterManagementDialog } from "@/components/vcenter/VCenterManagementD
 import { VCenterConnectivityDialog } from "@/components/vcenter/VCenterConnectivityDialog";
 import { ClusterUpdateWizard } from "@/components/jobs/ClusterUpdateWizard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { EsxiProfilesTab } from "@/components/vcenter/EsxiProfilesTab";
 import { useVCenterData } from "@/hooks/useVCenterData";
 import { useVCenters } from "@/hooks/useVCenters";
 import { Button } from "@/components/ui/button";
@@ -406,11 +407,17 @@ export default function VCenter() {
               >
                 Clusters ({clusters.length})
               </TabsTrigger>
-              <TabsTrigger 
+               <TabsTrigger 
                 value="datastores"
                 className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
               >
                 Datastores ({datastores.length})
+              </TabsTrigger>
+              <TabsTrigger 
+                value="esxi-profiles"
+                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
+              >
+                ESXi Profiles
               </TabsTrigger>
             </TabsList>
             
@@ -469,6 +476,10 @@ export default function VCenter() {
               onDatastoreClick={(ds) => handleDatastoreClick(ds.id)}
               loading={vmsLoading}
             />
+          </TabsContent>
+
+          <TabsContent value="esxi-profiles" className="flex-1 mt-0 p-6 overflow-auto">
+            <EsxiProfilesTab />
           </TabsContent>
         </Tabs>
       </div>
