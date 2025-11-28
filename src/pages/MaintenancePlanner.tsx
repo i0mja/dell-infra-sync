@@ -269,8 +269,8 @@ export default function MaintenancePlanner() {
   };
 
   const confirmBulkDelete = async () => {
-    const jobsToDelete = operations.filter(op => 'job' in op && operationIds.includes(op.id)).map(op => op.id);
-    const windowsToDelete = operations.filter(op => 'maintenance' in op && operationIds.includes(op.id)).map(op => op.id);
+    const jobsToDelete = operations.filter(op => 'job' in op && operationsToDelete.includes(op.id)).map(op => op.id);
+    const windowsToDelete = operations.filter(op => 'maintenance' in op && operationsToDelete.includes(op.id)).map(op => op.id);
     if (jobsToDelete.length > 0) await supabase.from("jobs").delete().in("id", jobsToDelete);
     if (windowsToDelete.length > 0) await supabase.from("maintenance_windows").delete().in("id", windowsToDelete);
     toast({ title: "Operations deleted", description: `${operationsToDelete.length} operation(s) deleted` });
