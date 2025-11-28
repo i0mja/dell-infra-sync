@@ -535,6 +535,7 @@ export const ClusterUpdateWizard = ({
             details: maintenanceDetails,
             cluster_ids: targetType === 'cluster' ? [selectedCluster] : null,
             server_group_ids: targetType === 'group' ? [selectedGroup] : null,
+            server_ids: targetType === 'servers' ? selectedServerIds : null,
             created_by: user.id,
             status: 'planned'
           })

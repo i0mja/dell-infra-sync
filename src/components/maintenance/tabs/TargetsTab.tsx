@@ -13,16 +13,17 @@ export function TargetsTab({ window }: TargetsTabProps) {
   const { data: servers } = useQuery({
     queryKey: ['maintenance-window-servers', window.id],
     queryFn: async () => {
-      if (!window.server_ids || window.server_ids.length === 0) return [];
+      const serverIds = window.server_ids || window.details?.server_ids || [];
+      if (serverIds.length === 0) return [];
       
       const { data } = await supabase
         .from('servers')
         .select('id, ip_address, hostname, model, service_tag, overall_health')
-        .in('id', window.server_ids);
+        .in('id', serverIds);
       
       return data || [];
     },
-    enabled: !!window.server_ids?.length
+    enabled: !!(window.server_ids?.length || window.details?.server_ids?.length)
   });
 
   const { data: clusters } = useQuery({
