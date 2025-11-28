@@ -8,9 +8,10 @@ import { getNextExecutionsFromConfig } from "@/lib/cron-utils";
 
 interface OverviewTabProps {
   window: any;
+  onUpdate?: () => void;
 }
 
-export function OverviewTab({ window }: OverviewTabProps) {
+export function OverviewTab({ window, onUpdate }: OverviewTabProps) {
   const { data: creator } = useQuery({
     queryKey: ['profile', window.created_by],
     queryFn: async () => {

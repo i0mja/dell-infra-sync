@@ -1,15 +1,18 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { format, formatDuration, intervalToDuration } from "date-fns";
-import { Calendar, Clock, Repeat } from "lucide-react";
+import { Calendar, Clock, Repeat, Edit } from "lucide-react";
 import { getNextExecutionsFromConfig, getHumanReadableSchedule } from "@/lib/cron-utils";
 
 interface ScheduleTabProps {
   window: any;
   onUpdate?: () => void;
+  onEdit?: () => void;
+  canEdit?: boolean;
 }
 
-export function ScheduleTab({ window }: ScheduleTabProps) {
+export function ScheduleTab({ window, onUpdate, onEdit, canEdit }: ScheduleTabProps) {
   const duration = intervalToDuration({
     start: new Date(window.planned_start),
     end: new Date(window.planned_end)
@@ -34,8 +37,14 @@ export function ScheduleTab({ window }: ScheduleTabProps) {
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-base">Schedule</CardTitle>
+          {canEdit && onEdit && (
+            <Button variant="outline" size="sm" onClick={onEdit}>
+              <Edit className="mr-2 h-4 w-4" />
+              Edit Schedule
+            </Button>
+          )}
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-4">

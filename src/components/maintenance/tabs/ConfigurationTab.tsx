@@ -1,16 +1,28 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Settings, HardDrive, Shield, Zap } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Settings, HardDrive, Shield, Zap, Edit } from "lucide-react";
 
 interface ConfigurationTabProps {
   window: any;
+  onEdit?: () => void;
+  canEdit?: boolean;
 }
 
-export function ConfigurationTab({ window }: ConfigurationTabProps) {
+export function ConfigurationTab({ window, onEdit, canEdit }: ConfigurationTabProps) {
   const details = window.details || {};
 
   return (
     <div className="space-y-4">
+      {canEdit && onEdit && (
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" onClick={onEdit}>
+            <Edit className="mr-2 h-4 w-4" />
+            Edit Configuration
+          </Button>
+        </div>
+      )}
+
       {window.maintenance_type === 'firmware_only' && (
         <Card>
           <CardHeader>
