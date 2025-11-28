@@ -198,13 +198,13 @@ export const ClusterUpdateWizard = ({
       if (targetType === 'cluster' && selectedCluster) {
         const { data: hosts, error } = await supabase
           .from("vcenter_hosts")
-          .select("id, hostname, connection_status")
+          .select("id, name, status")
           .eq("cluster", selectedCluster);
 
         if (error) throw error;
 
         if (hosts) {
-          const connected = hosts.filter((h: any) => h.connection_status === 'online').length;
+          const connected = hosts.filter((h: any) => h.status === 'connected').length;
           setTargetInfo({
             name: selectedCluster,
             total: hosts.length,
