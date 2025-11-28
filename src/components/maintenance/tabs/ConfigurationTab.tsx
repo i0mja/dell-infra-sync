@@ -2,6 +2,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Settings, HardDrive, Shield, Zap, Edit } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 
 interface ConfigurationTabProps {
   window: any;
@@ -11,6 +13,19 @@ interface ConfigurationTabProps {
 
 export function ConfigurationTab({ window, onEdit, canEdit }: ConfigurationTabProps) {
   const details = window.details || {};
+
+  const { data: selectedPackages } = useQuery({
+    queryKey: ['selected-firmware-packages', details.firmware_package_ids],
+    queryFn: async () => {
+      if (!details.firmware_package_ids?.length) return [];
+      const { data } = await supabase
+        .from('firmware_packages')
+        .select('id, filename, component_type, dell_version')
+        .in('id', details.firmware_package_ids);
+      return data || [];
+    },
+    enabled: !!details.firmware_package_ids?.length
+  });
 
   return (
     <div className="space-y-4">
@@ -35,13 +50,30 @@ export function ConfigurationTab({ window, onEdit, canEdit }: ConfigurationTabPr
             <div>
               <div className="text-sm text-muted-foreground mb-1">Firmware Source</div>
               <Badge variant="outline" className="capitalize">
-                {details.firmware_source === 'dell_catalog' 
+                {details.firmware_source === 'dell_online_catalog' 
                   ? 'Dell Online Catalog' 
+                  : details.firmware_source === 'local_repository'
+                  ? 'Local Repository'
                   : details.firmware_source === 'manual_packages'
                   ? 'Manual Packages'
                   : 'Not configured'}
               </Badge>
             </div>
+
+            {selectedPackages && selectedPackages.length > 0 && (
+              <div>
+                <div className="text-sm text-muted-foreground mb-1">Selected Packages</div>
+                <div className="space-y-1">
+                  {selectedPackages.map((pkg: any) => (
+                    <div key={pkg.id} className="flex items-center gap-2">
+                      <Badge variant="outline">{pkg.component_type}</Badge>
+                      <span className="text-sm truncate flex-1">{pkg.filename}</span>
+                      <span className="text-xs text-muted-foreground">{pkg.dell_version}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {details.component_filter && (
               <div>

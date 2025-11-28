@@ -4,13 +4,15 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
+import { FirmwareSourceSelector } from "@/components/common/FirmwareSourceSelector";
+import { useFirmwarePackages } from "@/hooks/useFirmwarePackages";
 
 interface EditConfigurationDialogProps {
   open: boolean;
@@ -24,11 +26,19 @@ export function EditConfigurationDialog({ open, onOpenChange, window }: EditConf
   const [loading, setLoading] = useState(false);
 
   const details = window.details || {};
+  const { firmwarePackages } = useFirmwarePackages();
 
   // Firmware settings
-  const [firmwareSource, setFirmwareSource] = useState(details.firmware_source || 'dell_catalog');
-  const [componentFilter, setComponentFilter] = useState(details.component_filter || '');
+  const [firmwareSource, setFirmwareSource] = useState<'local_repository' | 'dell_online_catalog' | 'skip' | 'manual'>(
+    details.firmware_source || 'dell_online_catalog'
+  );
+  const [componentFilter, setComponentFilter] = useState<string[]>(
+    details.component_filter || ['all']
+  );
   const [autoSelectLatest, setAutoSelectLatest] = useState(details.auto_select_latest ?? true);
+  const [selectedPackageIds, setSelectedPackageIds] = useState<string[]>(
+    details.firmware_package_ids || []
+  );
 
   // Execution options
   const [maxParallel, setMaxParallel] = useState(details.max_parallel || 1);
@@ -51,6 +61,7 @@ export function EditConfigurationDialog({ open, onOpenChange, window }: EditConf
         firmware_source: firmwareSource,
         component_filter: componentFilter,
         auto_select_latest: autoSelectLatest,
+        firmware_package_ids: selectedPackageIds,
         max_parallel: maxParallel,
         min_healthy_hosts: minHealthyHosts,
         verify_after_each: verifyAfterEach,
@@ -109,42 +120,46 @@ export function EditConfigurationDialog({ open, onOpenChange, window }: EditConf
               <div className="space-y-4">
                 <h3 className="font-medium">Firmware Settings</h3>
                 
-                <div className="space-y-2">
-                  <Label htmlFor="firmware-source">Firmware Source</Label>
-                  <Select value={firmwareSource} onValueChange={setFirmwareSource}>
-                    <SelectTrigger id="firmware-source">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="dell_catalog">Dell Online Catalog</SelectItem>
-                      <SelectItem value="manual_packages">Manual Packages</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+                <FirmwareSourceSelector
+                  value={firmwareSource}
+                  onChange={setFirmwareSource}
+                  componentFilter={componentFilter}
+                  onComponentFilterChange={setComponentFilter}
+                  autoSelectLatest={autoSelectLatest}
+                  onAutoSelectLatestChange={setAutoSelectLatest}
+                  showManualOption={false}
+                  showSkipOption={false}
+                />
 
-                <div className="space-y-2">
-                  <Label htmlFor="component-filter">Component Filter (optional)</Label>
-                  <Input
-                    id="component-filter"
-                    placeholder="e.g., BIOS,iDRAC"
-                    value={componentFilter}
-                    onChange={(e) => setComponentFilter(e.target.value)}
-                  />
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label htmlFor="auto-latest">Auto-select Latest Versions</Label>
-                    <div className="text-sm text-muted-foreground">
-                      Automatically use the latest firmware versions
+                {firmwareSource === 'local_repository' && (
+                  <div className="space-y-2">
+                    <Label>Select Firmware Packages</Label>
+                    <div className="border rounded-lg p-3 max-h-[200px] overflow-y-auto space-y-2">
+                      {firmwarePackages
+                        .filter(pkg => pkg.upload_status === 'completed' || pkg.upload_status === 'available')
+                        .map(pkg => (
+                          <div key={pkg.id} className="flex items-center space-x-2">
+                            <Checkbox
+                              checked={selectedPackageIds.includes(pkg.id)}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  setSelectedPackageIds(prev => [...prev, pkg.id]);
+                                } else {
+                                  setSelectedPackageIds(prev => prev.filter(id => id !== pkg.id));
+                                }
+                              }}
+                            />
+                            <span className="flex-1 text-sm truncate">{pkg.filename}</span>
+                            <Badge variant="outline">{pkg.component_type}</Badge>
+                            <span className="text-xs text-muted-foreground">{pkg.dell_version}</span>
+                          </div>
+                        ))}
                     </div>
+                    <p className="text-xs text-muted-foreground">
+                      {selectedPackageIds.length} package(s) selected
+                    </p>
                   </div>
-                  <Switch
-                    id="auto-latest"
-                    checked={autoSelectLatest}
-                    onCheckedChange={setAutoSelectLatest}
-                  />
-                </div>
+                )}
               </div>
 
               <Separator />
