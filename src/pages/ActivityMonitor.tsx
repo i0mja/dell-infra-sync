@@ -350,34 +350,34 @@ export default function ActivityMonitor() {
 
       <div className="flex-1 overflow-hidden">
         <Tabs defaultValue="operations" className="flex flex-col h-full">
-          <div className="flex flex-col h-full border rounded-lg shadow-sm bg-card">
-            {/* Unified toolbar with tabs and filters */}
-            <div className="flex items-center gap-3 px-4 py-2 border-b flex-wrap">
-              <TabsList>
-                <TabsTrigger value="operations">Operations</TabsTrigger>
-                <TabsTrigger value="api-log">API Log</TabsTrigger>
-              </TabsList>
-              
-              <div className="flex-1" />
-              
-              <div
-                className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${
-                  realtimeStatus === 'connected'
-                    ? 'bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/30'
-                    : 'bg-amber-500/10 text-amber-700 ring-1 ring-amber-500/30'
-                }`}
-              >
-                <span className="h-2 w-2 rounded-full bg-current" />
-                {realtimeStatus === 'connected' ? 'Live' : 'Paused'}
-              </div>
+          {/* Tabs selector */}
+          <div className="px-4 py-2 flex items-center gap-3">
+            <TabsList>
+              <TabsTrigger value="operations">Operations</TabsTrigger>
+              <TabsTrigger value="api-log">API Log</TabsTrigger>
+            </TabsList>
+            
+            <div className="flex-1" />
+            
+            <div
+              className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${
+                realtimeStatus === 'connected'
+                  ? 'bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/30'
+                  : 'bg-amber-500/10 text-amber-700 ring-1 ring-amber-500/30'
+              }`}
+            >
+              <span className="h-2 w-2 rounded-full bg-current" />
+              {realtimeStatus === 'connected' ? 'Live' : 'Paused'}
             </div>
+          </div>
 
-            {/* Content area - full height scroll */}
-            <TabsContent value="operations" className="flex-1 overflow-auto mt-0">
-              <JobsActivityView />
-            </TabsContent>
+          {/* Content area */}
+          <TabsContent value="operations" className="flex-1 overflow-hidden mt-0">
+            <JobsActivityView />
+          </TabsContent>
 
-            <TabsContent value="api-log" className="flex-1 overflow-hidden mt-0 flex flex-col">
+          <TabsContent value="api-log" className="flex-1 overflow-hidden mt-0">
+            <div className="h-full flex flex-col border rounded-lg shadow-sm bg-card">
               {/* Integrated filter toolbar */}
               <div className="px-4 py-3 border-b">
                 <FilterToolbar
@@ -408,8 +408,8 @@ export default function ActivityMonitor() {
                   isLive={realtimeStatus === 'connected'}
                 />
               </div>
-            </TabsContent>
-          </div>
+            </div>
+          </TabsContent>
         </Tabs>
       </div>
 
