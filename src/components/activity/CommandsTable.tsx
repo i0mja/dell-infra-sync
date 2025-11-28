@@ -100,14 +100,13 @@ export const CommandsTable = ({
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-xl border",
+        "overflow-hidden rounded-lg border",
         isLive ? "border-emerald-500/30" : "border-border",
         className
       )}
     >
-      <div className="overflow-x-auto">
-        <div className="max-h-[65vh] overflow-y-auto">
-          <Table className="min-w-full">
+      <div className="overflow-auto max-h-full">
+        <Table className="min-w-full">
             <TableHeader className="sticky top-0 z-10 bg-muted/60 backdrop-blur">
               <TableRow>
                 <TableHead className="w-[120px]">Time</TableHead>
@@ -163,7 +162,6 @@ export const CommandsTable = ({
               )}
             </TableBody>
           </Table>
-        </div>
       </div>
     </div>
   );
