@@ -15,7 +15,7 @@ import { useVCenterData } from "@/hooks/useVCenterData";
 import { useVCenters } from "@/hooks/useVCenters";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search, Download, Eye, Columns3 } from "lucide-react";
+import { Columns3, Download } from "lucide-react";
 
 interface VCenterHost {
   id: string;
@@ -385,7 +385,7 @@ export default function VCenter() {
 
       <div className="flex-1 overflow-hidden">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
-          {/* Tabs Row - Clean and Simple */}
+          {/* Tabs Row with Action Buttons */}
           <div className="flex items-center border-b bg-card px-4">
             <TabsList className="h-auto p-0 bg-transparent gap-2">
               <TabsTrigger 
@@ -413,6 +413,20 @@ export default function VCenter() {
                 Datastores ({datastores.length})
               </TabsTrigger>
             </TabsList>
+            
+            <div className="flex-1" />
+            
+            {/* Action Buttons (only show for data tabs, not clusters) */}
+            {activeTab !== "clusters" && (
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm">
+                  <Columns3 className="mr-1 h-4 w-4" /> Columns
+                </Button>
+                <Button variant="outline" size="sm">
+                  <Download className="mr-1 h-4 w-4" /> Export
+                </Button>
+              </div>
+            )}
           </div>
 
           <TabsContent value="hosts" className="flex-1 mt-0">
