@@ -2,8 +2,9 @@ import { useState } from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { 
   CheckCircle, 
   XCircle, 
@@ -11,20 +12,16 @@ import {
   PlayCircle, 
   Calendar, 
   Zap,
-  Filter,
   MoreHorizontal,
   FileText,
   RotateCcw,
   Trash2,
   Loader2,
-  ChevronDown,
-  ChevronRight,
   Server,
-  HardDrive,
   Sparkles,
-  Shield,
-  RefreshCw,
-  Search
+  Search,
+  Download,
+  Columns3
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -154,7 +151,8 @@ export function OperationsTable({
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [clusterFilter, setClusterFilter] = useState<string>('all');
   const [dateRange, setDateRange] = useState<string>('all');
-  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [selectedOps, setSelectedOps] = useState<Set<string>>(new Set());
   const [bannerDismissed, setBannerDismissed] = useState(false);
 
   const getStatusIcon = (status: string) => {
@@ -168,26 +166,47 @@ export function OperationsTable({
   };
 
   const getStatusBadge = (status: string) => {
-    const variants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-      completed: "secondary",
-      failed: "destructive",
-      active: "default",
-      planned: "outline",
-    };
-    return <Badge variant={variants[status] || "outline"}>{status.toUpperCase()}</Badge>;
+    switch (status) {
+      case 'completed':
+        return <Badge className="bg-success text-success-foreground text-xs">Completed</Badge>;
+      case 'failed':
+        return <Badge variant="destructive" className="text-xs">Failed</Badge>;
+      case 'active':
+        return <Badge className="bg-primary text-primary-foreground text-xs">Active</Badge>;
+      case 'planned':
+        return <Badge variant="outline" className="text-xs">Planned</Badge>;
+      default:
+        return <Badge variant="outline" className="text-xs">{status}</Badge>;
+    }
   };
 
-  const toggleRow = (id: string) => {
-    const newExpanded = new Set(expandedRows);
-    if (newExpanded.has(id)) {
-      newExpanded.delete(id);
+  const toggleSelection = (id: string) => {
+    const newSelected = new Set(selectedOps);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
     } else {
-      newExpanded.add(id);
+      newSelected.add(id);
     }
-    setExpandedRows(newExpanded);
+    setSelectedOps(newSelected);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedOps.size === filteredOps.length) {
+      setSelectedOps(new Set());
+    } else {
+      setSelectedOps(new Set(filteredOps.map(op => op.id)));
+    }
   };
 
   const filteredOps = operations.filter(op => {
+    // Search filter
+    if (searchTerm) {
+      const searchLower = searchTerm.toLowerCase();
+      const titleMatch = op.title.toLowerCase().includes(searchLower);
+      const targetMatch = op.target.toLowerCase().includes(searchLower);
+      if (!titleMatch && !targetMatch) return false;
+    }
+
     if (statusFilter !== 'all' && op.status !== statusFilter) return false;
     
     if (typeFilter === 'maintenance') {
@@ -270,91 +289,91 @@ export function OperationsTable({
         </div>
       )}
 
-      {/* Toolbar with Quick Actions + Filters */}
-      <div className="border-b px-4 py-3 bg-muted/30">
-        <div className="flex flex-col gap-3">
-          {/* Title + Quick Actions */}
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <h3 className="font-semibold">Operations & Maintenance</h3>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant="outline" size="sm" onClick={onRunSafetyCheck}>
-                <Shield className="mr-2 h-4 w-4" />
-                Safety Check
-              </Button>
-              <Button variant="outline" size="sm" onClick={onUpdateWizard}>
-                <Zap className="mr-2 h-4 w-4" />
-                Update Wizard
-              </Button>
-              <Button variant="outline" size="sm" onClick={onSyncVCenters}>
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Sync vCenters
-              </Button>
-              <Button variant="outline" size="sm" onClick={onRunDiscovery}>
-                <Search className="mr-2 h-4 w-4" />
-                Discovery
-              </Button>
-            </div>
+      {/* Toolbar with Search + Filters */}
+      <div className="border-b px-4 py-2 bg-muted/30">
+        <div className="flex flex-wrap items-center gap-2">
+          {selectedOps.size > 0 && (
+            <span className="text-sm text-muted-foreground">
+              {selectedOps.size} selected
+            </span>
+          )}
+
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search operations..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="h-8 pl-8"
+            />
           </div>
+          
+          <Select value={dateRange} onValueChange={setDateRange}>
+            <SelectTrigger className="w-[110px] h-8">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Time</SelectItem>
+              <SelectItem value="today">Today</SelectItem>
+              <SelectItem value="week">This Week</SelectItem>
+              <SelectItem value="month">This Month</SelectItem>
+            </SelectContent>
+          </Select>
 
-          {/* Filters */}
-          <div className="flex flex-wrap items-center gap-2">
-            <Filter className="h-4 w-4 text-muted-foreground" />
-            
-            <Select value={dateRange} onValueChange={setDateRange}>
-              <SelectTrigger className="w-[110px] h-8">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Time</SelectItem>
-                <SelectItem value="today">Today</SelectItem>
-                <SelectItem value="week">This Week</SelectItem>
-                <SelectItem value="month">This Month</SelectItem>
-              </SelectContent>
-            </Select>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-[120px] h-8">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Status</SelectItem>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="planned">Planned</SelectItem>
+              <SelectItem value="completed">Completed</SelectItem>
+              <SelectItem value="failed">Failed</SelectItem>
+            </SelectContent>
+          </Select>
 
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[120px] h-8">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="planned">Planned</SelectItem>
-                <SelectItem value="completed">Completed</SelectItem>
-                <SelectItem value="failed">Failed</SelectItem>
-              </SelectContent>
-            </Select>
+          <Select value={typeFilter} onValueChange={setTypeFilter}>
+            <SelectTrigger className="w-[140px] h-8">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Types</SelectItem>
+              <SelectItem value="job">All Jobs</SelectItem>
+              <SelectItem value="maintenance">Maintenance</SelectItem>
+              <SelectItem value="firmware_update">Firmware Update</SelectItem>
+              <SelectItem value="discovery_scan">Discovery</SelectItem>
+              <SelectItem value="vcenter_sync">vCenter Sync</SelectItem>
+              <SelectItem value="full_server_update">Full Update</SelectItem>
+              <SelectItem value="cluster_safety_check">Safety Check</SelectItem>
+            </SelectContent>
+          </Select>
 
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
+          {clusters.length > 0 && (
+            <Select value={clusterFilter} onValueChange={setClusterFilter}>
               <SelectTrigger className="w-[140px] h-8">
-                <SelectValue />
+                <SelectValue placeholder="All Clusters" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="job">All Jobs</SelectItem>
-                <SelectItem value="maintenance">Maintenance</SelectItem>
-                <SelectItem value="firmware_update">Firmware Update</SelectItem>
-                <SelectItem value="discovery_scan">Discovery</SelectItem>
-                <SelectItem value="vcenter_sync">vCenter Sync</SelectItem>
-                <SelectItem value="full_server_update">Full Update</SelectItem>
-                <SelectItem value="cluster_safety_check">Safety Check</SelectItem>
+                <SelectItem value="all">All Clusters</SelectItem>
+                {clusters.map(cluster => (
+                  <SelectItem key={cluster} value={cluster}>{cluster}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
+          )}
 
-            {clusters.length > 0 && (
-              <Select value={clusterFilter} onValueChange={setClusterFilter}>
-                <SelectTrigger className="w-[140px] h-8">
-                  <SelectValue placeholder="All Clusters" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Clusters</SelectItem>
-                  {clusters.map(cluster => (
-                    <SelectItem key={cluster} value={cluster}>{cluster}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
+          <div className="flex-1" />
+
+          <Button variant="outline" size="sm" className="h-8 gap-2">
+            <Columns3 className="h-4 w-4" />
+            Columns
+          </Button>
+
+          <Button variant="outline" size="sm" className="h-8 gap-2">
+            <Download className="h-4 w-4" />
+            Export
+          </Button>
         </div>
       </div>
 
@@ -362,7 +381,12 @@ export function OperationsTable({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[40px]"></TableHead>
+              <TableHead className="w-[40px]">
+                <Checkbox
+                  checked={selectedOps.size === filteredOps.length && filteredOps.length > 0}
+                  onCheckedChange={toggleSelectAll}
+                />
+              </TableHead>
               <TableHead>Operation</TableHead>
               <TableHead>Type</TableHead>
               <TableHead>Target</TableHead>
@@ -380,260 +404,122 @@ export function OperationsTable({
               </TableRow>
             ) : (
               filteredOps.map((op) => {
-                const isExpanded = expandedRows.has(op.id);
+                const isSelected = selectedOps.has(op.id);
                 const job = op.type === 'job' ? op.data as Job : null;
                 const window = op.type === 'maintenance' ? op.data as MaintenanceWindow : null;
 
                 return (
-                  <Collapsible key={op.id} open={isExpanded} onOpenChange={() => toggleRow(op.id)} asChild>
-                    <>
-                      <TableRow className="cursor-pointer hover:bg-muted/50" onClick={() => toggleRow(op.id)}>
-                        <TableCell>
-                          {isExpanded ? (
-                            <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            {op.type === 'job' ? <Zap className="h-4 w-4 text-primary" /> : <Calendar className="h-4 w-4 text-purple-500" />}
-                            <span className="font-medium">{op.title}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {op.type === 'job' ? 'Job' : 'Window'}
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          <div className="flex items-center gap-1.5">
-                            {job?.target_scope?.server_ids?.length > 0 && (
+                  <TableRow 
+                    key={op.id} 
+                    className="cursor-pointer hover:bg-muted/50" 
+                    onClick={() => onRowClick(op)}
+                  >
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={isSelected}
+                        onCheckedChange={() => toggleSelection(op.id)}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        {op.type === 'job' ? <Zap className="h-4 w-4 text-primary" /> : <Calendar className="h-4 w-4 text-purple-500" />}
+                        <span className="font-medium">{op.title}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {op.type === 'job' ? 'Job' : 'Window'}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <div className="flex items-center gap-1.5">
+                        {job?.target_scope?.server_ids?.length > 0 && (
+                          <>
+                            <Server className="h-3 w-3 text-muted-foreground" />
+                            <span>{job.target_scope.server_ids.length}</span>
+                          </>
+                        )}
+                        {op.target}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      <div className="flex flex-col gap-0.5">
+                        <span>{format(op.timestamp, 'MMM dd, HH:mm')}</span>
+                        {job?.status === 'running' && job.started_at && (
+                          <span className="text-xs">({formatElapsed(job.started_at)} elapsed)</span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-col gap-1.5">
+                        <div className="flex items-center gap-2">
+                          {getStatusIcon(op.status)}
+                          {getStatusBadge(op.status)}
+                        </div>
+                        {job?.status === 'running' && <JobProgressIndicator job={job} />}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {canManage && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={(e) => {
+                              e.stopPropagation();
+                              onRowClick(op);
+                            }}>
+                              <FileText className="mr-2 h-4 w-4" />
+                              View Details
+                            </DropdownMenuItem>
+                            {job && ['pending', 'running'].includes(job.status) && onCancel && (
                               <>
-                                <Server className="h-3 w-3 text-muted-foreground" />
-                                <span>{job.target_scope.server_ids.length}</span>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onCancel(op.id);
+                                  }}
+                                  className="text-destructive"
+                                >
+                                  <XCircle className="mr-2 h-4 w-4" />
+                                  Cancel
+                                </DropdownMenuItem>
                               </>
                             )}
-                            {op.target}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          <div className="flex flex-col gap-0.5">
-                            <span>{format(op.timestamp, 'MMM dd, HH:mm')}</span>
-                            {job?.status === 'running' && job.started_at && (
-                              <span className="text-xs">({formatElapsed(job.started_at)} elapsed)</span>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex flex-col gap-1.5">
-                            <div className="flex items-center gap-2">
-                              {getStatusIcon(op.status)}
-                              {getStatusBadge(op.status)}
-                            </div>
-                            {job?.status === 'running' && <JobProgressIndicator job={job} />}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          {canManage && (
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                                  <MoreHorizontal className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
+                            {job?.status === 'failed' && onRetry && (
+                              <>
+                                <DropdownMenuSeparator />
                                 <DropdownMenuItem onClick={(e) => {
                                   e.stopPropagation();
-                                  onRowClick(op);
+                                  onRetry(job);
                                 }}>
-                                  <FileText className="mr-2 h-4 w-4" />
-                                  View Details
+                                  <RotateCcw className="mr-2 h-4 w-4" />
+                                  Retry
                                 </DropdownMenuItem>
-                                {job && ['pending', 'running'].includes(job.status) && onCancel && (
-                                  <>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem 
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        onCancel(op.id);
-                                      }}
-                                      className="text-destructive"
-                                    >
-                                      <XCircle className="mr-2 h-4 w-4" />
-                                      Cancel
-                                    </DropdownMenuItem>
-                                  </>
-                                )}
-                                {job?.status === 'failed' && onRetry && (
-                                  <>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem onClick={(e) => {
-                                      e.stopPropagation();
-                                      onRetry(job);
-                                    }}>
-                                      <RotateCcw className="mr-2 h-4 w-4" />
-                                      Retry
-                                    </DropdownMenuItem>
-                                  </>
-                                )}
-                                {window && onDelete && (
-                                  <>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem 
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        onDelete(op.id);
-                                      }}
-                                      className="text-destructive"
-                                    >
-                                      <Trash2 className="mr-2 h-4 w-4" />
-                                      Delete
-                                    </DropdownMenuItem>
-                                  </>
-                                )}
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                      
-                      {/* Expandable Details Row */}
-                      <TableRow>
-                        <TableCell colSpan={7} className="p-0 border-0">
-                          <CollapsibleContent>
-                            <div className="px-12 py-4 bg-muted/20 border-t">
-                              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                                {/* Left: Timeline & Target Info */}
-                                <div className="space-y-2">
-                                  <div className="text-xs font-medium text-muted-foreground mb-1">Timeline</div>
-                                  <div className="text-xs space-y-1">
-                                    {job && (
-                                      <>
-                                        <div>Created: {format(new Date(job.created_at), 'MMM dd, HH:mm:ss')}</div>
-                                        {job.started_at && (
-                                          <div>Started: {format(new Date(job.started_at), 'MMM dd, HH:mm:ss')}</div>
-                                        )}
-                                        {job.completed_at && (
-                                          <div>Completed: {format(new Date(job.completed_at), 'MMM dd, HH:mm:ss')}</div>
-                                        )}
-                                        {job.started_at && job.completed_at && (
-                                          <div className="text-muted-foreground pt-1">
-                                            Duration: {formatElapsed(job.started_at)}
-                                          </div>
-                                        )}
-                                      </>
-                                    )}
-                                    {window && (
-                                      <>
-                                        <div>Planned: {format(new Date(window.planned_start), 'MMM dd, HH:mm')}</div>
-                                        <div>End: {format(new Date(window.planned_end), 'MMM dd, HH:mm')}</div>
-                                      </>
-                                    )}
-                                  </div>
-                                  {job?.target_scope?.server_ids && (
-                                    <div className="pt-2">
-                                      <div className="text-xs font-medium text-muted-foreground mb-1">Targets</div>
-                                      <div className="text-xs">
-                                        {job.target_scope.server_ids.length} server{job.target_scope.server_ids.length !== 1 ? 's' : ''}
-                                        {job.target_scope.cluster_name && (
-                                          <span className="text-muted-foreground"> in {job.target_scope.cluster_name}</span>
-                                        )}
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-
-                                {/* Middle: Status-specific details */}
-                                <div className="space-y-2 lg:col-span-1">
-                                  <div className="text-xs font-medium text-muted-foreground mb-1">Details</div>
-                                  {job?.details?.error && (
-                                    <div className="flex gap-2 text-destructive text-sm">
-                                      <XCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                                      <div>
-                                        <span className="font-medium">Error: </span>
-                                        {job.details.error}
-                                      </div>
-                                    </div>
-                                  )}
-                                  {job?.details?.current_step && job.status === 'running' && (
-                                    <div className="flex gap-2 text-sm">
-                                      <Loader2 className="h-4 w-4 mt-0.5 animate-spin flex-shrink-0 text-primary" />
-                                      <span className="text-muted-foreground">{job.details.current_step}</span>
-                                    </div>
-                                  )}
-                                  {job?.status === 'completed' && job.details?.results && (
-                                    <div className="text-sm text-muted-foreground">
-                                      {typeof job.details.results === 'string' 
-                                        ? job.details.results 
-                                        : JSON.stringify(job.details.results).substring(0, 200)}
-                                    </div>
-                                  )}
-                                  {job?.status === 'pending' && job.details && (
-                                    <div className="text-sm text-muted-foreground">
-                                      {Object.entries(job.details)
-                                        .filter(([key]) => !['current_step', 'error', 'results'].includes(key))
-                                        .map(([key, value]) => (
-                                          <div key={key}>
-                                            {key}: {typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}
-                                          </div>
-                                        ))}
-                                    </div>
-                                  )}
-                                  {window && (
-                                    <div className="space-y-1 text-sm text-muted-foreground">
-                                      <div>Type: {window.maintenance_type}</div>
-                                      {window.cluster_ids && window.cluster_ids.length > 0 && (
-                                        <div>Clusters: {window.cluster_ids.join(', ')}</div>
-                                      )}
-                                      {window.server_group_ids && window.server_group_ids.length > 0 && (
-                                        <div>Server Groups: {window.server_group_ids.length}</div>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-
-                                {/* Right: Action buttons */}
-                                <div className="flex flex-col gap-2 lg:items-end lg:justify-start">
-                                  <Button 
-                                    size="sm" 
-                                    variant="outline" 
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      onRowClick(op);
-                                    }}
-                                  >
-                                    <FileText className="h-4 w-4 mr-1" /> View Full Details
-                                  </Button>
-                                  {job?.status === 'failed' && onRetry && canManage && (
-                                    <Button 
-                                      size="sm"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        onRetry(job);
-                                      }}
-                                    >
-                                      <RotateCcw className="h-4 w-4 mr-1" /> Retry Job
-                                    </Button>
-                                  )}
-                                  {job && ['pending', 'running'].includes(job.status) && onCancel && canManage && (
-                                    <Button 
-                                      size="sm" 
-                                      variant="destructive"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        onCancel(op.id);
-                                      }}
-                                    >
-                                      <XCircle className="h-4 w-4 mr-1" /> Cancel Job
-                                    </Button>
-                                  )}
-                                 </div>
-                              </div>
-                            </div>
-                          </CollapsibleContent>
-                        </TableCell>
-                      </TableRow>
-                    </>
-                  </Collapsible>
+                              </>
+                            )}
+                            {window && onDelete && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onDelete(op.id);
+                                  }}
+                                  className="text-destructive"
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" />
+                                  Delete
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
+                    </TableCell>
+                  </TableRow>
                 );
               })
             )}
