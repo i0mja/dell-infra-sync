@@ -48,6 +48,8 @@ export default function Servers() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [serversToDelete, setServersToDelete] = useState<Server[]>([]);
   const [powerControlDialogOpen, setPowerControlDialogOpen] = useState(false);
   const [biosConfigDialogOpen, setBiosConfigDialogOpen] = useState(false);
   const [bootConfigDialogOpen, setBootConfigDialogOpen] = useState(false);
@@ -155,6 +157,26 @@ export default function Servers() {
     setSelectedServer(null);
   };
 
+  const handleServerDelete = (server: Server) => {
+    setSelectedServer(server);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleBulkDelete = (serverIds: string[]) => {
+    const servers = filteredServers.filter(s => serverIds.includes(s.id));
+    setServersToDelete(servers);
+    setBulkDeleteDialogOpen(true);
+  };
+
+  const confirmBulkDelete = async () => {
+    for (const server of serversToDelete) {
+      await handleDeleteServer(server);
+    }
+    setBulkDeleteDialogOpen(false);
+    setServersToDelete([]);
+    refetch();
+  };
+
   const handleAutoLinkVCenter = async (server: Server) => {
     const result = await autoLinkSingleServer(server.id, server.service_tag);
     if (result.success) {
@@ -243,6 +265,8 @@ export default function Servers() {
           onServerDetails={(server) => setSelectedServer(server as any)}
           onAutoLinkVCenter={handleAutoLinkVCenter}
           onConsoleLaunch={handleLaunchConsole}
+          onServerDelete={handleServerDelete}
+          onBulkDelete={handleBulkDelete}
           loading={false}
           refreshing={refreshing}
           healthCheckServer={null}
@@ -431,12 +455,38 @@ export default function Servers() {
             <AlertDialogDescription>
               Are you sure you want to delete{" "}
               {selectedServer?.hostname || selectedServer?.ip_address}? This action cannot be
-              undone.
+              undone. All related data will be permanently removed.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete}>Delete</AlertDialogAction>
+            <AlertDialogAction onClick={confirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkDeleteDialogOpen} onOpenChange={setBulkDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {serversToDelete.length} Server{serversToDelete.length > 1 ? 's' : ''}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The following servers will be permanently deleted:
+              <ul className="mt-2 mb-2 ml-4 list-disc text-sm">
+                {serversToDelete.slice(0, 5).map(s => (
+                  <li key={s.id}>{s.hostname || s.ip_address}</li>
+                ))}
+                {serversToDelete.length > 5 && <li>(and {serversToDelete.length - 5} more...)</li>}
+              </ul>
+              This action cannot be undone. All related data will be permanently removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmBulkDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Delete All
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

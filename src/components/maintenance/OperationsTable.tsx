@@ -5,8 +5,15 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+  ContextMenuSeparator,
+} from "@/components/ui/context-menu";
 import { 
-  CheckCircle, 
+  CheckCircle,
   XCircle, 
   Clock, 
   PlayCircle, 
@@ -409,117 +416,150 @@ export function OperationsTable({
                 const window = op.type === 'maintenance' ? op.data as MaintenanceWindow : null;
 
                 return (
-                  <TableRow 
-                    key={op.id} 
-                    className="cursor-pointer hover:bg-muted/50" 
-                    onClick={() => onRowClick(op)}
-                  >
-                    <TableCell onClick={(e) => e.stopPropagation()}>
-                      <Checkbox
-                        checked={isSelected}
-                        onCheckedChange={() => toggleSelection(op.id)}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        {op.type === 'job' ? <Zap className="h-4 w-4 text-primary" /> : <Calendar className="h-4 w-4 text-purple-500" />}
-                        <span className="font-medium">{op.title}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {op.type === 'job' ? 'Job' : 'Window'}
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      <div className="flex items-center gap-1.5">
-                        {job?.target_scope?.server_ids?.length > 0 && (
-                          <>
-                            <Server className="h-3 w-3 text-muted-foreground" />
-                            <span>{job.target_scope.server_ids.length}</span>
-                          </>
-                        )}
-                        {op.target}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      <div className="flex flex-col gap-0.5">
-                        <span>{format(op.timestamp, 'MMM dd, HH:mm')}</span>
-                        {job?.status === 'running' && job.started_at && (
-                          <span className="text-xs">({formatElapsed(job.started_at)} elapsed)</span>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-col gap-1.5">
-                        <div className="flex items-center gap-2">
-                          {getStatusIcon(op.status)}
-                          {getStatusBadge(op.status)}
-                        </div>
-                        {job?.status === 'running' && <JobProgressIndicator job={job} />}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {canManage && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={(e) => {
-                              e.stopPropagation();
-                              onRowClick(op);
-                            }}>
-                              <FileText className="mr-2 h-4 w-4" />
-                              View Details
-                            </DropdownMenuItem>
-                            {job && ['pending', 'running'].includes(job.status) && onCancel && (
+                  <ContextMenu key={op.id}>
+                    <ContextMenuTrigger asChild>
+                      <TableRow 
+                        className="cursor-pointer hover:bg-muted/50" 
+                        onClick={() => onRowClick(op)}
+                      >
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={() => toggleSelection(op.id)}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            {op.type === 'job' ? <Zap className="h-4 w-4 text-primary" /> : <Calendar className="h-4 w-4 text-purple-500" />}
+                            <span className="font-medium">{op.title}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {op.type === 'job' ? 'Job' : 'Window'}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          <div className="flex items-center gap-1.5">
+                            {job?.target_scope?.server_ids?.length > 0 && (
                               <>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onCancel(op.id);
-                                  }}
-                                  className="text-destructive"
-                                >
-                                  <XCircle className="mr-2 h-4 w-4" />
-                                  Cancel
-                                </DropdownMenuItem>
+                                <Server className="h-3 w-3 text-muted-foreground" />
+                                <span>{job.target_scope.server_ids.length}</span>
                               </>
                             )}
-                            {job?.status === 'failed' && onRetry && (
-                              <>
-                                <DropdownMenuSeparator />
+                            {op.target}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          <div className="flex flex-col gap-0.5">
+                            <span>{format(op.timestamp, 'MMM dd, HH:mm')}</span>
+                            {job?.status === 'running' && job.started_at && (
+                              <span className="text-xs">({formatElapsed(job.started_at)} elapsed)</span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col gap-1.5">
+                            <div className="flex items-center gap-2">
+                              {getStatusIcon(op.status)}
+                              {getStatusBadge(op.status)}
+                            </div>
+                            {job?.status === 'running' && <JobProgressIndicator job={job} />}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {canManage && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
                                 <DropdownMenuItem onClick={(e) => {
                                   e.stopPropagation();
-                                  onRetry(job);
+                                  onRowClick(op);
                                 }}>
-                                  <RotateCcw className="mr-2 h-4 w-4" />
-                                  Retry
+                                  <FileText className="mr-2 h-4 w-4" />
+                                  View Details
                                 </DropdownMenuItem>
-                              </>
-                            )}
-                            {window && onDelete && (
-                              <>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onDelete(op.id);
-                                  }}
-                                  className="text-destructive"
-                                >
-                                  <Trash2 className="mr-2 h-4 w-4" />
-                                  Delete
-                                </DropdownMenuItem>
-                              </>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                                {job && ['pending', 'running'].includes(job.status) && onCancel && (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem 
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onCancel(op.id);
+                                      }}
+                                      className="text-destructive"
+                                    >
+                                      <XCircle className="mr-2 h-4 w-4" />
+                                      Cancel
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
+                                {job?.status === 'failed' && onRetry && (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem onClick={(e) => {
+                                      e.stopPropagation();
+                                      onRetry(job);
+                                    }}>
+                                      <RotateCcw className="mr-2 h-4 w-4" />
+                                      Retry
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
+                                {window && onDelete && (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem 
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onDelete(op.id);
+                                      }}
+                                      className="text-destructive"
+                                    >
+                                      <Trash2 className="mr-2 h-4 w-4" />
+                                      Delete
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent>
+                      <ContextMenuItem onClick={() => onRowClick(op)}>
+                        <FileText className="mr-2 h-4 w-4" />
+                        View Details
+                      </ContextMenuItem>
+                      {job && ['pending', 'running'].includes(job.status) && canManage && onCancel && (
+                        <ContextMenuItem onClick={() => onCancel(op.id)}>
+                          <XCircle className="mr-2 h-4 w-4" />
+                          Cancel Job
+                        </ContextMenuItem>
                       )}
-                    </TableCell>
-                  </TableRow>
+                      {job?.status === 'failed' && canManage && onRetry && (
+                        <ContextMenuItem onClick={() => onRetry(job)}>
+                          <RotateCcw className="mr-2 h-4 w-4" />
+                          Retry Job
+                        </ContextMenuItem>
+                      )}
+                      {window && canManage && onDelete && (
+                        <>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem 
+                            className="text-destructive"
+                            onClick={() => onDelete(op.id)}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete Window
+                          </ContextMenuItem>
+                        </>
+                      )}
+                    </ContextMenuContent>
+                  </ContextMenu>
                 );
               })
             )}

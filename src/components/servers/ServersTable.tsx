@@ -101,6 +101,8 @@ interface ServersTableProps {
   vCenterClusters: string[];
   onBulkAutoLink?: () => void;
   bulkLinking?: boolean;
+  onServerDelete?: (server: Server) => void;
+  onBulkDelete?: (serverIds: string[]) => void;
 }
 
 export function ServersTable({

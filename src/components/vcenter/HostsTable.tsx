@@ -85,6 +85,8 @@ interface HostsTableProps {
   onLinkToServer?: (host: VCenterHost) => void;
   onSync?: () => void;
   loading: boolean;
+  onHostDelete?: (host: VCenterHost) => void;
+  onBulkDelete?: (hostIds: string[]) => void;
 }
 
 export function HostsTable({
@@ -99,6 +101,8 @@ export function HostsTable({
   onLinkToServer,
   onSync,
   loading,
+  onHostDelete,
+  onBulkDelete,
 }: HostsTableProps) {
   const [collapsedClusters, setCollapsedClusters] = useState<Set<string>>(new Set());
   const [sortField, setSortField] = useState<string | null>(null);
