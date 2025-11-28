@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -9,9 +9,11 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
+import { useEsxiProfiles } from "@/hooks/useEsxiProfiles";
 import { 
   Info, 
   Plus, 
@@ -47,7 +49,7 @@ interface ClusterInfo {
 
 const STEPS = [
   { id: 1, name: 'Cluster Selection', icon: Server },
-  { id: 2, name: 'Firmware Selection', icon: Shield },
+  { id: 2, name: 'Update Selection', icon: Shield },
   { id: 3, name: 'Configuration', icon: Clock },
   { id: 4, name: 'Review & Confirm', icon: CheckCircle },
   { id: 5, name: 'Execution', icon: Loader2 },
@@ -68,13 +70,16 @@ export const ClusterUpdateWizard = ({
   const [safetyCheckLoading, setSafetyCheckLoading] = useState(false);
   const [safetyCheckPassed, setSafetyCheckPassed] = useState(false);
   
-  // Step 2: Firmware Selection
+  // Step 2: Update Type and Selection
+  const [updateType, setUpdateType] = useState<'firmware_only' | 'esxi_only' | 'esxi_then_firmware' | 'firmware_then_esxi'>('firmware_only');
   const [firmwareUpdates, setFirmwareUpdates] = useState<any[]>([{
     component: '',
     version: '',
     image_uri: '',
     reboot_required: true
   }]);
+  const [selectedEsxiProfileId, setSelectedEsxiProfileId] = useState<string | null>(null);
+  const [esxiSshPassword, setEsxiSshPassword] = useState('');
   
   // Step 3: Configuration
   const [backupScp, setBackupScp] = useState(true);
@@ -91,6 +96,7 @@ export const ClusterUpdateWizard = ({
 
   const { toast } = useToast();
   const { user } = useAuth();
+  const { profiles: esxiProfiles, isLoading: esxiProfilesLoading } = useEsxiProfiles();
 
   useEffect(() => {
     if (open) {
@@ -185,7 +191,16 @@ export const ClusterUpdateWizard = ({
       case 1:
         return selectedCluster && clusterInfo && safetyCheckPassed;
       case 2:
-        return firmwareUpdates.length > 0 && 
+        if (updateType === 'firmware_only') {
+          return firmwareUpdates.length > 0 && 
+                 firmwareUpdates.every(f => f.component && f.version && f.image_uri);
+        }
+        if (updateType === 'esxi_only') {
+          return selectedEsxiProfileId && esxiSshPassword;
+        }
+        // For combined workflows, need both
+        return selectedEsxiProfileId && esxiSshPassword &&
+               firmwareUpdates.length > 0 && 
                firmwareUpdates.every(f => f.component && f.version && f.image_uri);
       case 3:
         return true;
@@ -211,21 +226,41 @@ export const ClusterUpdateWizard = ({
   const handleExecute = async () => {
     setLoading(true);
     try {
+      // Map update type to job type
+      const jobTypeMap = {
+        'firmware_only': 'rolling_cluster_update',
+        'esxi_only': 'esxi_upgrade',
+        'esxi_then_firmware': 'esxi_then_firmware',
+        'firmware_then_esxi': 'firmware_then_esxi'
+      };
+
+      const jobDetails: any = {
+        cluster_id: selectedCluster,
+        backup_scp: backupScp,
+        min_healthy_hosts: minHealthyHosts,
+        max_parallel: maxParallel,
+        verify_after_each: verifyAfterEach,
+        continue_on_failure: continueOnFailure
+      };
+
+      // Add firmware updates if applicable
+      if (updateType !== 'esxi_only') {
+        jobDetails.firmware_updates = firmwareUpdates;
+      }
+
+      // Add ESXi details if applicable
+      if (updateType !== 'firmware_only') {
+        jobDetails.esxi_profile_id = selectedEsxiProfileId;
+        jobDetails.esxi_ssh_password = esxiSshPassword;
+      }
+
       const { data, error } = await supabase
         .from("jobs")
         .insert([{
-          job_type: 'rolling_cluster_update' as any,
+          job_type: jobTypeMap[updateType] as any,
           created_by: user?.id!,
           target_scope: { cluster_id: selectedCluster } as any,
-          details: {
-            cluster_id: selectedCluster,
-            firmware_updates: firmwareUpdates,
-            backup_scp: backupScp,
-            min_healthy_hosts: minHealthyHosts,
-            max_parallel: maxParallel,
-            verify_after_each: verifyAfterEach,
-            continue_on_failure: continueOnFailure
-          } as any,
+          details: jobDetails as any,
           status: 'pending'
         }])
         .select()
@@ -237,8 +272,8 @@ export const ClusterUpdateWizard = ({
       setCurrentStep(5);
       
       toast({
-        title: "Rolling update started",
-        description: "The cluster update workflow has been initiated.",
+        title: "Update workflow started",
+        description: "The cluster update has been initiated.",
       });
     } catch (error: any) {
       toast({
@@ -323,64 +358,148 @@ export const ClusterUpdateWizard = ({
 
       case 2:
         return (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <Label>Firmware Updates</Label>
-              <Button type="button" variant="outline" size="sm" onClick={addFirmwareUpdate}>
-                <Plus className="h-4 w-4 mr-1" />
-                Add Firmware
-              </Button>
+          <div className="space-y-6">
+            {/* Update Type Selection */}
+            <div className="space-y-3">
+              <Label>Update Type</Label>
+              <RadioGroup value={updateType} onValueChange={(value: any) => setUpdateType(value)}>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="firmware_only" id="firmware_only" />
+                  <Label htmlFor="firmware_only" className="font-normal cursor-pointer">
+                    Dell Firmware Only - Update firmware components on Dell servers
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="esxi_only" id="esxi_only" />
+                  <Label htmlFor="esxi_only" className="font-normal cursor-pointer">
+                    ESXi Upgrade Only - Upgrade ESXi hypervisor version
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="esxi_then_firmware" id="esxi_then_firmware" />
+                  <Label htmlFor="esxi_then_firmware" className="font-normal cursor-pointer">
+                    ESXi → Firmware - Upgrade ESXi first, then update firmware
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="firmware_then_esxi" id="firmware_then_esxi" />
+                  <Label htmlFor="firmware_then_esxi" className="font-normal cursor-pointer">
+                    Firmware → ESXi - Update firmware first, then upgrade ESXi
+                  </Label>
+                </div>
+              </RadioGroup>
             </div>
 
-            {firmwareUpdates.map((firmware, index) => (
-              <Card key={index}>
-                <CardContent className="pt-6 space-y-3">
-                  <div className="grid grid-cols-[1fr_auto] gap-2">
-                    <Input
-                      placeholder="Component (e.g., BIOS, iDRAC)"
-                      value={firmware.component}
-                      onChange={(e) => updateFirmware(index, 'component', e.target.value)}
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeFirmwareUpdate(index)}
-                    >
-                      <X className="h-4 w-4" />
+            <Separator />
+
+            {/* ESXi Profile Selection - Show for ESXi-related updates */}
+            {updateType !== 'firmware_only' && (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>ESXi Upgrade Profile</Label>
+                  <Select value={selectedEsxiProfileId || ''} onValueChange={setSelectedEsxiProfileId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select ESXi profile" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {esxiProfiles.filter(p => p.is_active).map(profile => (
+                        <SelectItem key={profile.id} value={profile.id}>
+                          {profile.name} (ESXi {profile.target_version})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {esxiProfiles.filter(p => p.is_active).length === 0 && (
+                    <Alert>
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertDescription>
+                        No active ESXi profiles found. Create one in the ESXi Profiles tab.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="ssh-password">ESXi Root Password</Label>
+                  <Input
+                    id="ssh-password"
+                    type="password"
+                    value={esxiSshPassword}
+                    onChange={(e) => setEsxiSshPassword(e.target.value)}
+                    placeholder="Enter root password for SSH access"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Required for SSH connection to apply ESXi upgrade
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Firmware Selection - Show for firmware-related updates */}
+            {updateType !== 'esxi_only' && (
+              <>
+                <Separator />
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <Label>Firmware Updates</Label>
+                    <Button type="button" variant="outline" size="sm" onClick={addFirmwareUpdate}>
+                      <Plus className="h-4 w-4 mr-1" />
+                      Add Firmware
                     </Button>
                   </div>
-                  <Input
-                    placeholder="Version"
-                    value={firmware.version}
-                    onChange={(e) => updateFirmware(index, 'version', e.target.value)}
-                  />
-                  <Input
-                    placeholder="Firmware Image URI (HTTP/HTTPS)"
-                    value={firmware.image_uri}
-                    onChange={(e) => updateFirmware(index, 'image_uri', e.target.value)}
-                  />
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id={`reboot-${index}`}
-                      checked={firmware.reboot_required}
-                      onCheckedChange={(checked) => updateFirmware(index, 'reboot_required', checked)}
-                    />
-                    <Label htmlFor={`reboot-${index}`} className="font-normal">
-                      Reboot required
-                    </Label>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
 
-            {firmwareUpdates.length === 0 && (
-              <Alert>
-                <Info className="h-4 w-4" />
-                <AlertDescription>
-                  Add at least one firmware update to proceed.
-                </AlertDescription>
-              </Alert>
+                  {firmwareUpdates.map((firmware, index) => (
+                    <Card key={index}>
+                      <CardContent className="pt-6 space-y-3">
+                        <div className="grid grid-cols-[1fr_auto] gap-2">
+                          <Input
+                            placeholder="Component (e.g., BIOS, iDRAC)"
+                            value={firmware.component}
+                            onChange={(e) => updateFirmware(index, 'component', e.target.value)}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => removeFirmwareUpdate(index)}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        <Input
+                          placeholder="Version"
+                          value={firmware.version}
+                          onChange={(e) => updateFirmware(index, 'version', e.target.value)}
+                        />
+                        <Input
+                          placeholder="Firmware Image URI (HTTP/HTTPS)"
+                          value={firmware.image_uri}
+                          onChange={(e) => updateFirmware(index, 'image_uri', e.target.value)}
+                        />
+                        <div className="flex items-center space-x-2">
+                          <Checkbox
+                            id={`reboot-${index}`}
+                            checked={firmware.reboot_required}
+                            onCheckedChange={(checked) => updateFirmware(index, 'reboot_required', checked)}
+                          />
+                          <Label htmlFor={`reboot-${index}`} className="font-normal">
+                            Reboot required
+                          </Label>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+
+                  {firmwareUpdates.length === 0 && (
+                    <Alert>
+                      <Info className="h-4 w-4" />
+                      <AlertDescription>
+                        Add at least one firmware update to proceed.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </div>
+              </>
             )}
           </div>
         );
