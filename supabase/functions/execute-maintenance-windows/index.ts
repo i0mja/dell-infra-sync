@@ -64,11 +64,26 @@ serve(async (req) => {
     const newInstances: any[] = [];
     if (recurringWindows && recurringWindows.length > 0) {
       for (const template of recurringWindows) {
-        const nextExecution = calculateNextExecution(
-          template.recurrence_pattern!,
-          template.last_executed_at || template.created_at,
-          now.toISOString()
-        );
+        // Check if config exists in details for interval-based recurrence
+        const recurrenceConfig = template.details?.recurrence_config;
+        
+        let nextExecution: Date | null = null;
+        
+        if (recurrenceConfig && recurrenceConfig.enabled) {
+          // Use interval-based calculation
+          nextExecution = calculateNextExecutionFromConfig(
+            recurrenceConfig,
+            template.last_executed_at || template.created_at,
+            now.toISOString()
+          );
+        } else if (template.recurrence_pattern) {
+          // Fallback to cron pattern
+          nextExecution = calculateNextExecution(
+            template.recurrence_pattern,
+            template.last_executed_at || template.created_at,
+            now.toISOString()
+          );
+        }
 
         if (nextExecution && nextExecution <= now) {
           console.log(`Creating new instance for recurring window: ${template.title}`);
@@ -352,6 +367,73 @@ serve(async (req) => {
     );
   }
 });
+
+/**
+ * Calculate next execution from recurrence config
+ */
+function calculateNextExecutionFromConfig(
+  config: any,
+  lastExecution: string,
+  currentTime: string
+): Date | null {
+  try {
+    if (!config || !config.enabled) return null;
+    
+    const last = new Date(lastExecution);
+    const now = new Date(currentTime);
+    let next = new Date(last);
+    
+    switch (config.unit) {
+      case 'hours':
+        next.setHours(next.getHours() + config.interval);
+        next.setMinutes(config.minute);
+        break;
+        
+      case 'days':
+        next.setDate(next.getDate() + config.interval);
+        next.setHours(config.hour);
+        next.setMinutes(config.minute);
+        break;
+        
+      case 'weeks':
+        next.setDate(next.getDate() + (config.interval * 7));
+        if (config.dayOfWeek !== undefined) {
+          const currentDay = next.getDay();
+          const daysToAdd = (config.dayOfWeek - currentDay + 7) % 7;
+          next.setDate(next.getDate() + daysToAdd);
+        }
+        next.setHours(config.hour);
+        next.setMinutes(config.minute);
+        break;
+        
+      case 'months':
+        next.setMonth(next.getMonth() + config.interval);
+        if (config.dayOfMonth !== undefined) {
+          next.setDate(Math.min(config.dayOfMonth, new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate()));
+        }
+        next.setHours(config.hour);
+        next.setMinutes(config.minute);
+        break;
+        
+      case 'years':
+        next.setFullYear(next.getFullYear() + config.interval);
+        if (config.dayOfMonth !== undefined) {
+          next.setDate(Math.min(config.dayOfMonth, new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate()));
+        }
+        next.setHours(config.hour);
+        next.setMinutes(config.minute);
+        break;
+    }
+    
+    next.setSeconds(0);
+    next.setMilliseconds(0);
+    
+    return next <= now ? next : null;
+  } catch (error) {
+    console.error('Error calculating next execution from config:', error);
+    return null;
+  }
+}
 
 /**
  * Calculate next execution time based on cron pattern

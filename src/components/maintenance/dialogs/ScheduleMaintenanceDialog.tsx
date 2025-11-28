@@ -13,6 +13,9 @@ import { Loader2, CheckCircle, AlertTriangle } from "lucide-react";
 import { format, addHours } from "date-fns";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { FirmwareSourceSelector } from "@/components/common/FirmwareSourceSelector";
+import { Switch } from "@/components/ui/switch";
+import { getNextExecutionsFromConfig, getHumanReadableSchedule, type RecurrenceConfig } from "@/lib/cron-utils";
+import { Calendar, Clock } from "lucide-react";
 
 interface ScheduleMaintenanceDialogProps {
   open: boolean;
@@ -57,7 +60,35 @@ export function ScheduleMaintenanceDialog({
     firmware_source: "local_repository" as "local_repository" | "dell_online_catalog" | "skip" | "manual",
     component_filter: ["all"] as string[],
     auto_select_latest: true,
+    recurrence_enabled: false,
+    recurrence_interval: 1,
+    recurrence_unit: 'weeks' as 'hours' | 'days' | 'weeks' | 'months' | 'years',
+    recurrence_hour: 2,
+    recurrence_minute: 0,
+    recurrence_day_of_week: 0,
+    recurrence_day_of_month: 1,
+    recurrence_advanced: false,
+    recurrence_custom_cron: '',
   });
+
+  const recurrenceConfig: RecurrenceConfig = {
+    enabled: formData.recurrence_enabled,
+    interval: formData.recurrence_interval,
+    unit: formData.recurrence_unit,
+    hour: formData.recurrence_hour,
+    minute: formData.recurrence_minute,
+    dayOfWeek: formData.recurrence_day_of_week,
+    dayOfMonth: formData.recurrence_day_of_month,
+    customCron: formData.recurrence_advanced ? formData.recurrence_custom_cron : undefined,
+  };
+
+  const nextExecutions = formData.recurrence_enabled 
+    ? getNextExecutionsFromConfig(recurrenceConfig, new Date(), 5)
+    : [];
+
+  const scheduleDescription = formData.recurrence_enabled 
+    ? getHumanReadableSchedule(recurrenceConfig)
+    : null;
 
   useEffect(() => {
     if (!open) return;
@@ -166,26 +197,34 @@ export function ScheduleMaintenanceDialog({
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
+      const insertData = {
+        title: formData.title,
+        description: formData.description || null,
+        cluster_ids: formData.cluster_ids.length > 0 ? formData.cluster_ids : null,
+        server_group_ids: formData.server_group_ids.length > 0 ? formData.server_group_ids : null,
+        planned_start: new Date(formData.planned_start).toISOString(),
+        planned_end: new Date(formData.planned_end).toISOString(),
+        maintenance_type: formData.maintenance_type,
+        created_by: user.id,
+        safety_check_snapshot: validation || null,
+        status: 'planned' as const,
+        auto_execute: formData.auto_execute,
+        recurrence_enabled: formData.recurrence_enabled || null,
+        recurrence_type: formData.recurrence_enabled ? formData.recurrence_unit : null,
+        recurrence_pattern: (formData.recurrence_enabled && formData.recurrence_custom_cron) 
+          ? formData.recurrence_custom_cron 
+          : null,
+        details: {
+          firmware_source: formData.firmware_source,
+          component_filter: formData.component_filter,
+          auto_select_latest: formData.auto_select_latest,
+          recurrence_config: formData.recurrence_enabled ? recurrenceConfig : null,
+        } as any,
+      };
+
       const { error } = await supabase
         .from('maintenance_windows')
-        .insert({
-          title: formData.title,
-          description: formData.description || null,
-          cluster_ids: formData.cluster_ids.length > 0 ? formData.cluster_ids : null,
-          server_group_ids: formData.server_group_ids.length > 0 ? formData.server_group_ids : null,
-          planned_start: new Date(formData.planned_start).toISOString(),
-          planned_end: new Date(formData.planned_end).toISOString(),
-          maintenance_type: formData.maintenance_type,
-          created_by: user.id,
-          safety_check_snapshot: validation || null,
-          status: 'planned',
-          auto_execute: formData.auto_execute,
-          details: {
-            firmware_source: formData.firmware_source,
-            component_filter: formData.component_filter,
-            auto_select_latest: formData.auto_select_latest,
-          },
-        });
+        .insert(insertData);
 
       if (error) throw error;
 
@@ -332,38 +371,271 @@ export function ScheduleMaintenanceDialog({
             />
           </TabsContent>
 
-          <TabsContent value="schedule" className="space-y-4 mt-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="planned_start">Start Time *</Label>
-                <Input
-                  id="planned_start"
-                  type="datetime-local"
-                  value={formData.planned_start}
-                  onChange={(e) => setFormData({ ...formData, planned_start: e.target.value })}
-                />
+          <TabsContent value="schedule" className="space-y-6 mt-4">
+            {/* One-time Schedule */}
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="planned_start">Start Time *</Label>
+                  <Input
+                    id="planned_start"
+                    type="datetime-local"
+                    value={formData.planned_start}
+                    onChange={(e) => setFormData({ ...formData, planned_start: e.target.value })}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="planned_end">End Time *</Label>
+                  <Input
+                    id="planned_end"
+                    type="datetime-local"
+                    value={formData.planned_end}
+                    onChange={(e) => setFormData({ ...formData, planned_end: e.target.value })}
+                  />
+                </div>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="planned_end">End Time *</Label>
-                <Input
-                  id="planned_end"
-                  type="datetime-local"
-                  value={formData.planned_end}
-                  onChange={(e) => setFormData({ ...formData, planned_end: e.target.value })}
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="auto_execute"
+                  checked={formData.auto_execute}
+                  onCheckedChange={(checked) => setFormData({ ...formData, auto_execute: checked as boolean })}
                 />
+                <label htmlFor="auto_execute" className="text-sm cursor-pointer">
+                  Automatically execute jobs at start time
+                </label>
               </div>
             </div>
 
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="auto_execute"
-                checked={formData.auto_execute}
-                onCheckedChange={(checked) => setFormData({ ...formData, auto_execute: checked as boolean })}
-              />
-              <label htmlFor="auto_execute" className="text-sm cursor-pointer">
-                Automatically execute jobs at start time
-              </label>
+            {/* Recurring Schedule */}
+            <div className="border-t pt-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <Label htmlFor="recurrence_enabled" className="text-base font-semibold flex items-center gap-2">
+                    <Calendar className="h-4 w-4" />
+                    Recurring Schedule
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Schedule this maintenance to repeat automatically
+                  </p>
+                </div>
+                <Switch
+                  id="recurrence_enabled"
+                  checked={formData.recurrence_enabled}
+                  onCheckedChange={(checked) => setFormData({ ...formData, recurrence_enabled: checked })}
+                />
+              </div>
+
+              {formData.recurrence_enabled && (
+                <div className="space-y-4 pl-6 border-l-2 border-primary/20">
+                  {/* Quick Presets */}
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Quick Presets</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        { label: 'Daily', interval: 1, unit: 'days', hour: 2 },
+                        { label: 'Weekly', interval: 1, unit: 'weeks', hour: 2, dayOfWeek: 0 },
+                        { label: 'Bi-weekly', interval: 2, unit: 'weeks', hour: 2, dayOfWeek: 0 },
+                        { label: 'Monthly', interval: 1, unit: 'months', hour: 2, dayOfMonth: 1 },
+                        { label: 'Quarterly', interval: 3, unit: 'months', hour: 2, dayOfMonth: 1 },
+                        { label: 'Yearly', interval: 1, unit: 'years', hour: 2, dayOfMonth: 1 },
+                        { label: 'Every 2 Years', interval: 2, unit: 'years', hour: 2, dayOfMonth: 1 },
+                        { label: 'Every 5 Years', interval: 5, unit: 'years', hour: 2, dayOfMonth: 1 },
+                      ].map((preset) => (
+                        <Button
+                          key={preset.label}
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setFormData({
+                            ...formData,
+                            recurrence_interval: preset.interval,
+                            recurrence_unit: preset.unit as any,
+                            recurrence_hour: preset.hour,
+                            recurrence_minute: 0,
+                            recurrence_day_of_week: preset.dayOfWeek || 0,
+                            recurrence_day_of_month: preset.dayOfMonth || 1,
+                            recurrence_advanced: false,
+                          })}
+                        >
+                          {preset.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Interval Configuration */}
+                  {!formData.recurrence_advanced && (
+                    <>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="interval">Run Every</Label>
+                          <Input
+                            id="interval"
+                            type="number"
+                            min="1"
+                            max={formData.recurrence_unit === 'years' ? 10 : formData.recurrence_unit === 'months' ? 60 : 365}
+                            value={formData.recurrence_interval}
+                            onChange={(e) => setFormData({ ...formData, recurrence_interval: parseInt(e.target.value) || 1 })}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="unit">Unit</Label>
+                          <Select
+                            value={formData.recurrence_unit}
+                            onValueChange={(value: any) => setFormData({ ...formData, recurrence_unit: value })}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="hours">Hours</SelectItem>
+                              <SelectItem value="days">Days</SelectItem>
+                              <SelectItem value="weeks">Weeks</SelectItem>
+                              <SelectItem value="months">Months</SelectItem>
+                              <SelectItem value="years">Years</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      {/* Day/Time Configuration */}
+                      <div className="grid grid-cols-2 gap-4">
+                        {formData.recurrence_unit === 'weeks' && (
+                          <div className="space-y-2">
+                            <Label htmlFor="day_of_week">Day of Week</Label>
+                            <Select
+                              value={String(formData.recurrence_day_of_week)}
+                              onValueChange={(value) => setFormData({ ...formData, recurrence_day_of_week: parseInt(value) })}
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="0">Sunday</SelectItem>
+                                <SelectItem value="1">Monday</SelectItem>
+                                <SelectItem value="2">Tuesday</SelectItem>
+                                <SelectItem value="3">Wednesday</SelectItem>
+                                <SelectItem value="4">Thursday</SelectItem>
+                                <SelectItem value="5">Friday</SelectItem>
+                                <SelectItem value="6">Saturday</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
+
+                        {(formData.recurrence_unit === 'months' || formData.recurrence_unit === 'years') && (
+                          <div className="space-y-2">
+                            <Label htmlFor="day_of_month">Day of Month</Label>
+                            <Input
+                              id="day_of_month"
+                              type="number"
+                              min="1"
+                              max="31"
+                              value={formData.recurrence_day_of_month}
+                              onChange={(e) => setFormData({ ...formData, recurrence_day_of_month: parseInt(e.target.value) || 1 })}
+                            />
+                          </div>
+                        )}
+
+                        {formData.recurrence_unit !== 'hours' && (
+                          <>
+                            <div className="space-y-2">
+                              <Label htmlFor="hour" className="flex items-center gap-2">
+                                <Clock className="h-4 w-4" />
+                                Hour (24h)
+                              </Label>
+                              <Input
+                                id="hour"
+                                type="number"
+                                min="0"
+                                max="23"
+                                value={formData.recurrence_hour}
+                                onChange={(e) => setFormData({ ...formData, recurrence_hour: parseInt(e.target.value) || 0 })}
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="minute">Minute</Label>
+                              <Input
+                                id="minute"
+                                type="number"
+                                min="0"
+                                max="59"
+                                value={formData.recurrence_minute}
+                                onChange={(e) => setFormData({ ...formData, recurrence_minute: parseInt(e.target.value) || 0 })}
+                              />
+                            </div>
+                          </>
+                        )}
+
+                        {formData.recurrence_unit === 'hours' && (
+                          <div className="space-y-2">
+                            <Label htmlFor="minute">At Minute</Label>
+                            <Input
+                              id="minute"
+                              type="number"
+                              min="0"
+                              max="59"
+                              value={formData.recurrence_minute}
+                              onChange={(e) => setFormData({ ...formData, recurrence_minute: parseInt(e.target.value) || 0 })}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {/* Advanced Mode */}
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="advanced"
+                      checked={formData.recurrence_advanced}
+                      onCheckedChange={(checked) => setFormData({ ...formData, recurrence_advanced: checked as boolean })}
+                    />
+                    <label htmlFor="advanced" className="text-sm cursor-pointer">
+                      Advanced mode (custom cron pattern)
+                    </label>
+                  </div>
+
+                  {formData.recurrence_advanced && (
+                    <div className="space-y-2">
+                      <Label htmlFor="cron">Cron Pattern</Label>
+                      <Input
+                        id="cron"
+                        value={formData.recurrence_custom_cron}
+                        onChange={(e) => setFormData({ ...formData, recurrence_custom_cron: e.target.value })}
+                        placeholder="0 2 * * 0 (minute hour day month weekday)"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Format: minute hour day month weekday (e.g., "0 2 * * 0" = Every Sunday at 2:00 AM)
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Schedule Preview */}
+                  {scheduleDescription && (
+                    <Alert>
+                      <Calendar className="h-4 w-4" />
+                      <AlertDescription>
+                        <div className="space-y-2">
+                          <p className="font-medium">{scheduleDescription}</p>
+                          {nextExecutions.length > 0 && (
+                            <div className="space-y-1">
+                              <p className="text-sm font-medium">Next Scheduled Runs:</p>
+                              {nextExecutions.map((date, i) => (
+                                <div key={i} className="text-sm text-muted-foreground">
+                                  • {format(date, 'PPpp')}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </div>
+              )}
             </div>
           </TabsContent>
 
