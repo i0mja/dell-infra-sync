@@ -10,6 +10,7 @@ import { ScheduleMaintenanceDialog } from "@/components/maintenance/dialogs/Sche
 
 import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
 import { ClusterUpdateWizard } from "@/components/jobs/ClusterUpdateWizard";
+import { MaintenanceWindowDetailDialog } from "@/components/maintenance/MaintenanceWindowDetailDialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -66,6 +67,8 @@ export default function MaintenancePlanner() {
   
   const [selectedJob, setSelectedJob] = useState<any>(null);
   const [jobDetailDialogOpen, setJobDetailDialogOpen] = useState(false);
+  const [selectedWindow, setSelectedWindow] = useState<any>(null);
+  const [windowDetailDialogOpen, setWindowDetailDialogOpen] = useState(false);
   const [trendChartOpen, setTrendChartOpen] = useState(false);
   const [updateWizardOpen, setUpdateWizardOpen] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -175,6 +178,9 @@ export default function MaintenancePlanner() {
     if (operation.type === 'job') {
       setSelectedJob(operation.data);
       setJobDetailDialogOpen(true);
+    } else if (operation.type === 'maintenance') {
+      setSelectedWindow(operation.data);
+      setWindowDetailDialogOpen(true);
     }
   };
 
@@ -363,6 +369,28 @@ export default function MaintenancePlanner() {
           open={jobDetailDialogOpen}
           onOpenChange={setJobDetailDialogOpen}
           job={selectedJob}
+        />
+      )}
+
+      {selectedWindow && (
+        <MaintenanceWindowDetailDialog
+          window={selectedWindow}
+          open={windowDetailDialogOpen}
+          onOpenChange={setWindowDetailDialogOpen}
+          onUpdate={() => {
+            refetchData();
+            // Refresh jobs too since they may be linked
+            const fetchJobs = async () => {
+              const { data } = await supabase
+                .from("jobs")
+                .select("*")
+                .is("parent_job_id", null)
+                .order("created_at", { ascending: false });
+              
+              if (data) setJobs(data);
+            };
+            fetchJobs();
+          }}
         />
       )}
 
