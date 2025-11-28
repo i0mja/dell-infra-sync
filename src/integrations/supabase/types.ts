@@ -2719,6 +2719,7 @@ export type Database = {
         | "esxi_upgrade"
         | "esxi_then_firmware"
         | "firmware_then_esxi"
+        | "browse_datastore"
       operation_type: "idrac_api" | "vcenter_api" | "openmanage_api"
     }
     CompositeTypes: {
@@ -2882,6 +2883,7 @@ export const Constants = {
         "esxi_upgrade",
         "esxi_then_firmware",
         "firmware_then_esxi",
+        "browse_datastore",
       ],
       operation_type: ["idrac_api", "vcenter_api", "openmanage_api"],
     },
