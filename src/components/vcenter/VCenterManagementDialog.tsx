@@ -85,7 +85,7 @@ export function VCenterManagementDialog({
 
       const { error } = await supabase.functions.invoke("create-job", {
         body: {
-          job_type: "vcenter_test_connection",
+          job_type: "vcenter_connectivity_test",
           details: { vcenter_id: vcenter.id },
         },
       });
