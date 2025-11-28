@@ -2094,13 +2094,102 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self.log(f"Error fetching credential sets: {e}", "ERROR")
             return []
 
+    def _quick_port_check(self, ip: str, port: int = 443, timeout: float = 1.0) -> bool:
+        """
+        Stage 1: Quick TCP port check to identify live IPs.
+        Returns True if port is open, False otherwise.
+        """
+        import socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        try:
+            result = sock.connect_ex((ip, port))
+            sock.close()
+            return result == 0
+        except:
+            return False
+    
+    def _detect_idrac(self, ip: str, timeout: float = 2.0) -> bool:
+        """
+        Stage 2: Quick iDRAC detection via unauthenticated request to /redfish/v1.
+        Dell iDRACs respond with 401/403 and specific headers.
+        Returns True if iDRAC detected, False otherwise.
+        """
+        try:
+            url = f"https://{ip}/redfish/v1"
+            response = requests.get(
+                url,
+                verify=False,
+                timeout=timeout,
+                allow_redirects=False
+            )
+            
+            # Dell iDRACs typically return 401/403 for unauthenticated requests
+            # or 200 with Redfish service root
+            if response.status_code in [200, 401, 403]:
+                # Check for Dell/iDRAC indicators in headers or response
+                server_header = response.headers.get('Server', '').lower()
+                content_type = response.headers.get('Content-Type', '').lower()
+                
+                # Dell iDRAC indicators
+                if 'idrac' in server_header or 'dell' in server_header:
+                    return True
+                
+                # Redfish service root check (200 response)
+                if response.status_code == 200 and 'application/json' in content_type:
+                    try:
+                        data = response.json()
+                        # Check for Redfish identifiers
+                        if 'RedfishVersion' in data or '@odata.context' in data:
+                            return True
+                    except:
+                        pass
+                
+                # 401/403 with WWW-Authenticate suggests Redfish API
+                if response.status_code in [401, 403]:
+                    www_auth = response.headers.get('WWW-Authenticate', '').lower()
+                    if 'basic' in www_auth or 'digest' in www_auth:
+                        return True
+            
+            return False
+        except:
+            return False
+    
     def discover_single_ip(self, ip: str, credential_sets: List[Dict], job_id: str) -> Dict:
         """
-        Try credentials for a single IP.
+        3-Stage optimized IP discovery:
+        Stage 1: Quick TCP port check (443)
+        Stage 2: Unauthenticated iDRAC detection (/redfish/v1)
+        Stage 3: Full authentication only on confirmed iDRACs
+        
         Priority:
           1. Credential sets matching IP ranges (highest priority)
           2. Global credential sets selected in the discovery job
         """
+        
+        # Stage 1: Quick port check - skip IPs with closed port 443
+        port_open = self._quick_port_check(ip, port=443, timeout=1.0)
+        if not port_open:
+            return {
+                'success': False,
+                'ip': ip,
+                'idrac_detected': False,
+                'auth_failed': False,
+                'port_open': False
+            }
+        
+        # Stage 2: Quick iDRAC detection - skip non-iDRAC devices
+        if not self._detect_idrac(ip, timeout=2.0):
+            return {
+                'success': False,
+                'ip': ip,
+                'idrac_detected': False,
+                'auth_failed': False,
+                'port_open': True
+            }
+        
+        # Stage 3: Full authentication on confirmed iDRACs
+        self.log(f"iDRAC detected at {ip}, attempting authentication...", "INFO")
         
         # Step 1: Get credential sets that match this IP's range
         range_based_credentials = self.get_credential_sets_for_ip(ip)
@@ -2343,7 +2432,10 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             else:
                 raise ValueError(f"Invalid IP range format: {ip_range}")
             
-            self.log(f"Scanning {len(ips_to_scan)} IPs...")
+            self.log(f"Scanning {len(ips_to_scan)} IPs with 3-stage optimization...")
+            self.log(f"  Stage 1: TCP port check (443)")
+            self.log(f"  Stage 2: iDRAC detection (/redfish/v1)")
+            self.log(f"  Stage 3: Full authentication")
             
             # Get activity settings for discovery thread limit
             settings = self.fetch_activity_settings()
@@ -2352,6 +2444,8 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             
             discovered = []
             auth_failures = []
+            stage1_filtered = 0  # Port closed
+            stage2_filtered = 0  # Not an iDRAC
             
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
                 futures = {}
@@ -2386,6 +2480,12 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                                 'ip': ip,
                                 'reason': 'iDRAC detected but authentication failed'
                             })
+                        elif not result.get('idrac_detected'):
+                            # Track filtering stages
+                            if not result.get('port_open', True):
+                                stage1_filtered += 1
+                            else:
+                                stage2_filtered += 1
                         # else: No iDRAC at this IP - don't add to anything
                     except concurrent.futures.TimeoutError:
                         timeout_count += 1
@@ -2395,7 +2495,14 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     except Exception as e:
                         pass  # Silent fail for non-responsive IPs
             
-            self.log(f"Discovery complete: {len(discovered)} servers authenticated, {len(auth_failures)} require credentials")
+            self.log(f"Discovery complete:")
+            self.log(f"  ✓ {len(discovered)} servers authenticated")
+            self.log(f"  ⚠ {len(auth_failures)} iDRACs require credentials")
+            self.log(f"  ⊗ {stage1_filtered} IPs filtered (port closed)")
+            self.log(f"  ⊗ {stage2_filtered} IPs filtered (not iDRAC)")
+            total_filtered = stage1_filtered + stage2_filtered
+            if total_filtered > 0:
+                self.log(f"  Optimization: Skipped full auth on {total_filtered} IPs ({total_filtered/len(ips_to_scan)*100:.1f}%)")
             
             # Insert discovered servers into database with credential info
             for server in discovered:
@@ -2439,7 +2546,10 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     "auth_failures": len(auth_failures),
                     "scanned_ips": len(ips_to_scan),
                     "auth_failure_ips": [f['ip'] for f in auth_failures],
-                    "auto_refresh_triggered": len(discovered) > 0
+                    "auto_refresh_triggered": len(discovered) > 0,
+                    "stage1_filtered": stage1_filtered,
+                    "stage2_filtered": stage2_filtered,
+                    "optimization_enabled": True
                 }
             )
             
