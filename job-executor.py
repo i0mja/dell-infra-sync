@@ -557,6 +557,138 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self.log(f"Invalid IP range format: {ip_range}", "ERROR")
             return False
 
+    def get_esxi_credentials_for_host(self, host_id: str, host_ip: str, credential_set_id: Optional[str] = None) -> Optional[Dict]:
+        """
+        Get ESXi SSH credentials for a host with priority:
+        1. Explicit credential_set_id (passed from job details)
+        2. Direct vcenter_host_id match (per-host credentials)
+        3. IP range match with credential_type='esxi'
+        4. Default ESXi credential set (is_default=true, credential_type='esxi')
+        
+        Returns: {'username': 'root', 'password': 'decrypted_password', 'source': 'credential_set_id'}
+        """
+        headers = {
+            "apikey": SERVICE_ROLE_KEY,
+            "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+        }
+        
+        # Priority 1: Explicit credential_set_id
+        if credential_set_id:
+            try:
+                url = f"{DSM_URL}/rest/v1/credential_sets"
+                params = {
+                    "id": f"eq.{credential_set_id}",
+                    "credential_type": "eq.esxi"
+                }
+                response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
+                if response.status_code == 200:
+                    creds = _safe_json_parse(response)
+                    if creds:
+                        cred = creds[0]
+                        password = None
+                        if cred.get('password_encrypted'):
+                            password = self.decrypt_password(cred['password_encrypted'])
+                        if password:
+                            self.log(f"ESXi credentials for {host_ip}: using explicit credential_set_id", "DEBUG")
+                            return {
+                                'username': cred['username'],
+                                'password': password,
+                                'source': 'credential_set_id'
+                            }
+            except Exception as e:
+                self.log(f"Error fetching explicit ESXi credential set: {e}", "WARN")
+        
+        # Priority 2: Direct vcenter_host_id match
+        try:
+            url = f"{DSM_URL}/rest/v1/credential_sets"
+            params = {
+                "vcenter_host_id": f"eq.{host_id}",
+                "credential_type": "eq.esxi"
+            }
+            response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
+            if response.status_code == 200:
+                creds = _safe_json_parse(response)
+                if creds:
+                    cred = creds[0]
+                    password = None
+                    if cred.get('password_encrypted'):
+                        password = self.decrypt_password(cred['password_encrypted'])
+                    if password:
+                        self.log(f"ESXi credentials for {host_ip}: using per-host credential", "DEBUG")
+                        return {
+                            'username': cred['username'],
+                            'password': password,
+                            'source': 'vcenter_host_id'
+                        }
+        except Exception as e:
+            self.log(f"Error fetching per-host ESXi credentials: {e}", "WARN")
+        
+        # Priority 3: IP range match with ESXi type
+        try:
+            url = f"{DSM_URL}/rest/v1/credential_ip_ranges"
+            params = {
+                "select": "*, credential_sets(*)"
+            }
+            response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
+            if response.status_code == 200:
+                ip_range_entries = _safe_json_parse(response)
+                matching_sets = []
+                
+                for ip_range_entry in ip_range_entries:
+                    cred_set = ip_range_entry.get('credential_sets')
+                    if not cred_set or cred_set.get('credential_type') != 'esxi':
+                        continue
+                    
+                    ip_range = ip_range_entry['ip_range']
+                    if self.ip_in_range(host_ip, ip_range):
+                        password = None
+                        if cred_set.get('password_encrypted'):
+                            password = self.decrypt_password(cred_set['password_encrypted'])
+                        if password:
+                            matching_sets.append({
+                                'username': cred_set['username'],
+                                'password': password,
+                                'priority': ip_range_entry['priority'],
+                                'source': 'ip_range'
+                            })
+                
+                # Sort by priority and return first match
+                if matching_sets:
+                    matching_sets.sort(key=lambda x: x['priority'])
+                    self.log(f"ESXi credentials for {host_ip}: using IP range match", "DEBUG")
+                    return matching_sets[0]
+        except Exception as e:
+            self.log(f"Error fetching IP range ESXi credentials: {e}", "WARN")
+        
+        # Priority 4: Default ESXi credential
+        try:
+            url = f"{DSM_URL}/rest/v1/credential_sets"
+            params = {
+                "credential_type": "eq.esxi",
+                "is_default": "eq.true"
+            }
+            response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
+            if response.status_code == 200:
+                creds = _safe_json_parse(response)
+                if creds:
+                    cred = creds[0]
+                    password = None
+                    if cred.get('password_encrypted'):
+                        password = self.decrypt_password(cred['password_encrypted'])
+                    if password:
+                        self.log(f"ESXi credentials for {host_ip}: using default ESXi credential", "DEBUG")
+                        return {
+                            'username': cred['username'],
+                            'password': password,
+                            'source': 'default'
+                        }
+        except Exception as e:
+            self.log(f"Error fetching default ESXi credentials: {e}", "WARN")
+        
+        # No credentials found
+        self.log(f"No ESXi credentials found for host {host_ip} (ID: {host_id})", "WARN")
+        return None
+
     def get_credential_sets_for_ip(self, ip_address: str) -> List[Dict]:
         """
         Get credential sets that match the given IP address based on IP ranges.
@@ -8472,14 +8604,13 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             host_ids = details.get('host_ids', [])
             ssh_username = details.get('ssh_username', 'root')
             ssh_password = details.get('ssh_password', '')
+            esxi_credential_set_id = details.get('esxi_credential_set_id')
             dry_run = details.get('dry_run', False)
             
             if not profile_id:
                 raise ValueError("Missing profile_id in job details")
             if not host_ids:
                 raise ValueError("Missing host_ids in job details")
-            if not ssh_password:
-                raise ValueError("Missing ssh_password in job details")
             
             # Fetch ESXi upgrade profile
             profile = self.get_esxi_profile(profile_id)
@@ -8529,6 +8660,20 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     # Try to extract IP from vCenter host name or use hostname
                     management_ip = vcenter_host.get('name', '')
                     self.log(f"No linked server, using vCenter host name as IP: {management_ip}")
+                
+                # Resolve ESXi credentials if password not provided in job details
+                if not ssh_password:
+                    esxi_creds = self.get_esxi_credentials_for_host(
+                        host_id=host_id,
+                        host_ip=management_ip,
+                        credential_set_id=esxi_credential_set_id
+                    )
+                    if esxi_creds:
+                        ssh_username = esxi_creds['username']
+                        ssh_password = esxi_creds['password']
+                        self.log(f"Using ESXi credentials from {esxi_creds['source']}")
+                    else:
+                        raise ValueError(f"No ESXi credentials found for host {host_name} ({management_ip})")
                 
                 # Create task for this host
                 task_data = {

@@ -355,6 +355,7 @@ export type Database = {
       credential_sets: {
         Row: {
           created_at: string | null
+          credential_type: Database["public"]["Enums"]["credential_type"]
           description: string | null
           id: string
           is_default: boolean | null
@@ -363,9 +364,11 @@ export type Database = {
           priority: number | null
           updated_at: string | null
           username: string
+          vcenter_host_id: string | null
         }
         Insert: {
           created_at?: string | null
+          credential_type?: Database["public"]["Enums"]["credential_type"]
           description?: string | null
           id?: string
           is_default?: boolean | null
@@ -374,9 +377,11 @@ export type Database = {
           priority?: number | null
           updated_at?: string | null
           username: string
+          vcenter_host_id?: string | null
         }
         Update: {
           created_at?: string | null
+          credential_type?: Database["public"]["Enums"]["credential_type"]
           description?: string | null
           id?: string
           is_default?: boolean | null
@@ -385,8 +390,17 @@ export type Database = {
           priority?: number | null
           updated_at?: string | null
           username?: string
+          vcenter_host_id?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "credential_sets_vcenter_host_id_fkey"
+            columns: ["vcenter_host_id"]
+            isOneToOne: false
+            referencedRelation: "vcenter_hosts"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       esxi_upgrade_history: {
         Row: {
@@ -2668,6 +2682,7 @@ export type Database = {
     }
     Enums: {
       app_role: "admin" | "operator" | "viewer"
+      credential_type: "idrac" | "esxi"
       job_status: "pending" | "running" | "completed" | "failed" | "cancelled"
       job_type:
         | "firmware_update"
@@ -2830,6 +2845,7 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["admin", "operator", "viewer"],
+      credential_type: ["idrac", "esxi"],
       job_status: ["pending", "running", "completed", "failed", "cancelled"],
       job_type: [
         "firmware_update",
