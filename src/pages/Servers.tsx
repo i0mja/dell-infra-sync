@@ -25,7 +25,7 @@ import { LinkVCenterDialog } from "@/components/servers/LinkVCenterDialog";
 import { AssignCredentialsDialog } from "@/components/servers/AssignCredentialsDialog";
 import { DiscoveryScanDialog } from "@/components/servers/DiscoveryScanDialog";
 import { WorkflowJobDialog } from "@/components/jobs/WorkflowJobDialog";
-import { ServerUpdateWizard } from "@/components/jobs/ServerUpdateWizard";
+import { ClusterUpdateWizard } from "@/components/jobs/ClusterUpdateWizard";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { ConsoleLaunchDialog } from "@/components/servers/ConsoleLaunchDialog";
 import type { Server } from "@/hooks/useServers";
@@ -413,7 +413,7 @@ export default function Servers() {
             jobId={consoleJobId}
           />
 
-          <ServerUpdateWizard
+          <ClusterUpdateWizard
             open={updateWizardOpen}
             onOpenChange={setUpdateWizardOpen}
             preSelectedTarget={{

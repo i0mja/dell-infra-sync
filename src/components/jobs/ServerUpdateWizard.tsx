@@ -903,6 +903,3 @@ export const ServerUpdateWizard = ({
     </Dialog>
   );
 };
-
-// Export as ClusterUpdateWizard for backward compatibility
-export const ClusterUpdateWizard = ServerUpdateWizard;

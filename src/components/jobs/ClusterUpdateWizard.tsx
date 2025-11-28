@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -24,7 +25,8 @@ import {
   AlertTriangle,
   Server,
   Clock,
-  Shield
+  Shield,
+  Settings
 } from "lucide-react";
 import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
 
@@ -32,6 +34,11 @@ interface ClusterUpdateWizardProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   preSelectedCluster?: string;
+  preSelectedTarget?: {
+    type: 'cluster' | 'group' | 'servers';
+    id?: string;
+    ids?: string[];
+  };
 }
 
 interface FirmwareUpdate {
@@ -41,17 +48,17 @@ interface FirmwareUpdate {
   reboot_required: boolean;
 }
 
-interface ClusterInfo {
+interface TargetInfo {
   name: string;
-  totalHosts: number;
-  linkedServers: number;
-  connectedHosts: number;
+  total: number;
+  linked: number;
+  connected: number;
 }
 
 const STEPS = [
-  { id: 1, name: 'Cluster Selection', icon: Server },
-  { id: 2, name: 'Update Selection', icon: Shield },
-  { id: 3, name: 'Configuration', icon: Clock },
+  { id: 1, name: 'Target Selection', icon: Server },
+  { id: 2, name: 'Update Type & Details', icon: Shield },
+  { id: 3, name: 'Configuration', icon: Settings },
   { id: 4, name: 'Review & Confirm', icon: CheckCircle },
   { id: 5, name: 'Execution', icon: Loader2 },
 ];
@@ -59,21 +66,35 @@ const STEPS = [
 export const ClusterUpdateWizard = ({
   open,
   onOpenChange,
-  preSelectedCluster
+  preSelectedCluster,
+  preSelectedTarget
 }: ClusterUpdateWizardProps) => {
   const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(false);
-  const [clusters, setClusters] = useState<string[]>([]);
   
-  // Step 1: Cluster Selection
-  const [selectedCluster, setSelectedCluster] = useState(preSelectedCluster || '');
-  const [clusterInfo, setClusterInfo] = useState<ClusterInfo | null>(null);
+  // Step 1: Target Selection
+  const [targetType, setTargetType] = useState<'cluster' | 'group' | 'servers'>(
+    preSelectedTarget?.type || (preSelectedCluster ? 'cluster' : 'cluster')
+  );
+  const [clusters, setClusters] = useState<string[]>([]);
+  const [groups, setGroups] = useState<any[]>([]);
+  const [servers, setServers] = useState<any[]>([]);
+  const [selectedCluster, setSelectedCluster] = useState<string>(
+    preSelectedCluster || (preSelectedTarget?.type === 'cluster' && preSelectedTarget?.id ? preSelectedTarget.id : '')
+  );
+  const [selectedGroup, setSelectedGroup] = useState<string>(
+    preSelectedTarget?.type === 'group' && preSelectedTarget?.id ? preSelectedTarget.id : ''
+  );
+  const [selectedServerIds, setSelectedServerIds] = useState<string[]>(
+    preSelectedTarget?.type === 'servers' && preSelectedTarget?.ids ? preSelectedTarget.ids : []
+  );
+  const [targetInfo, setTargetInfo] = useState<TargetInfo | null>(null);
   const [safetyCheckLoading, setSafetyCheckLoading] = useState(false);
   const [safetyCheckPassed, setSafetyCheckPassed] = useState(false);
   
   // Step 2: Update Type and Selection
   const [updateType, setUpdateType] = useState<'firmware_only' | 'esxi_only' | 'esxi_then_firmware' | 'firmware_then_esxi'>('firmware_only');
-  const [firmwareUpdates, setFirmwareUpdates] = useState<any[]>([{
+  const [firmwareUpdates, setFirmwareUpdates] = useState<FirmwareUpdate[]>([{
     component: '',
     version: '',
     image_uri: '',
@@ -118,61 +139,119 @@ export const ClusterUpdateWizard = ({
 
   useEffect(() => {
     if (open) {
-      fetchClusters();
-      if (preSelectedCluster) {
-        setSelectedCluster(preSelectedCluster);
-      }
+      fetchTargets();
     }
-  }, [open, preSelectedCluster]);
+  }, [open, targetType]);
 
   useEffect(() => {
-    if (selectedCluster) {
-      fetchClusterInfo();
+    if (targetType === 'cluster' && selectedCluster) {
+      fetchTargetInfo();
+    } else if (targetType === 'group' && selectedGroup) {
+      fetchTargetInfo();
+    } else if (targetType === 'servers' && selectedServerIds.length > 0) {
+      fetchTargetInfo();
     }
-  }, [selectedCluster]);
+  }, [targetType, selectedCluster, selectedGroup, selectedServerIds]);
 
-  const fetchClusters = async () => {
-    const { data } = await supabase
-      .from("vcenter_hosts")
-      .select("cluster")
-      .not("cluster", "is", null);
-    
-    if (data) {
-      const uniqueClusters = [...new Set(data.map(h => h.cluster).filter(Boolean))];
-      setClusters(uniqueClusters as string[]);
+  const fetchTargets = async () => {
+    if (targetType === 'cluster') {
+      const { data } = await supabase
+        .from("vcenter_hosts")
+        .select("cluster")
+        .not("cluster", "is", null);
+      
+      if (data) {
+        const uniqueClusters = [...new Set(data.map(h => h.cluster).filter(Boolean))];
+        setClusters(uniqueClusters as string[]);
+      }
+    } else if (targetType === 'group') {
+      const { data } = await supabase
+        .from("server_groups")
+        .select("*")
+        .order("name");
+      
+      if (data) {
+        setGroups(data);
+      }
+    } else if (targetType === 'servers') {
+      const { data } = await supabase
+        .from("servers")
+        .select("id, hostname, ip_address, connection_status")
+        .order("hostname");
+      
+      if (data) {
+        setServers(data);
+      }
     }
   };
 
-  const fetchClusterInfo = async () => {
-    const { data: hosts } = await supabase
-      .from("vcenter_hosts")
-      .select("id, server_id, status")
-      .eq("cluster", selectedCluster);
-    
-    if (hosts) {
-      setClusterInfo({
-        name: selectedCluster,
-        totalHosts: hosts.length,
-        linkedServers: hosts.filter(h => h.server_id).length,
-        connectedHosts: hosts.filter(h => h.status === 'connected').length
-      });
+  const fetchTargetInfo = async () => {
+    if (targetType === 'cluster' && selectedCluster) {
+      const { data: hosts } = await supabase
+        .from("vcenter_hosts")
+        .select("id, hostname, connection_status")
+        .eq("cluster", selectedCluster);
+
+      if (hosts) {
+        const connected = hosts.filter((h: any) => h.connection_status === 'online').length;
+        setTargetInfo({
+          name: selectedCluster,
+          total: hosts.length,
+          linked: connected,
+          connected
+        });
+      }
+    } else if (targetType === 'group' && selectedGroup) {
+      const { data: members } = await supabase
+        .from("server_group_members")
+        .select("server_id, servers(id, hostname, connection_status)")
+        .eq("server_group_id", selectedGroup);
+
+      if (members) {
+        const total = members.length;
+        const connected = members.filter((m: any) => m.servers?.connection_status === 'online').length;
+        const groupName = groups.find(g => g.id === selectedGroup)?.name || selectedGroup;
+        setTargetInfo({
+          name: groupName,
+          total,
+          linked: connected,
+          connected
+        });
+      }
+    } else if (targetType === 'servers' && selectedServerIds.length > 0) {
+      const { data: serverData } = await supabase
+        .from("servers")
+        .select("id, hostname, connection_status")
+        .in("id", selectedServerIds);
+
+      if (serverData) {
+        const connected = serverData.filter((s: any) => s.connection_status === 'online').length;
+        setTargetInfo({
+          name: `${serverData.length} selected server(s)`,
+          total: serverData.length,
+          linked: connected,
+          connected
+        });
+      }
     }
   };
 
   const runSafetyCheck = async () => {
+    if (!targetInfo) return;
+
     setSafetyCheckLoading(true);
     try {
       // Simulate safety check - in real implementation this would call an edge function
       await new Promise(resolve => setTimeout(resolve, 2000));
       
-      if (clusterInfo && clusterInfo.connectedHosts >= minHealthyHosts) {
+      if (targetInfo.connected >= minHealthyHosts) {
         setSafetyCheckPassed(true);
         toast({
           title: "Safety check passed",
-          description: `Cluster has ${clusterInfo.connectedHosts} healthy hosts.`,
+          description: `Target has ${targetInfo.connected} healthy hosts.`,
         });
       } else {
-        throw new Error(`Insufficient healthy hosts. Found ${clusterInfo?.connectedHosts}, need ${minHealthyHosts}`);
+        throw new Error(`Insufficient healthy hosts. Found ${targetInfo.connected}, need ${minHealthyHosts}`);
       }
     } catch (error: any) {
       toast({
@@ -198,16 +277,23 @@ export const ClusterUpdateWizard = ({
     setFirmwareUpdates(firmwareUpdates.filter((_, i) => i !== index));
   };
 
-  const updateFirmware = (index: number, field: keyof FirmwareUpdate, value: any) => {
+  const updateFirmware = (index: number, field: keyof FirmwareUpdate, value: string | boolean) => {
     const updated = [...firmwareUpdates];
-    updated[index][field] = value;
+    (updated[index][field] as any) = value;
     setFirmwareUpdates(updated);
   };
 
   const canProceedToNextStep = () => {
     switch (currentStep) {
       case 1:
-        return selectedCluster && clusterInfo && safetyCheckPassed;
+        if (targetType === 'cluster') {
+          return selectedCluster && safetyCheckPassed;
+        } else if (targetType === 'group') {
+          return selectedGroup && safetyCheckPassed;
+        } else if (targetType === 'servers') {
+          return selectedServerIds.length > 0 && safetyCheckPassed;
+        }
+        return false;
       case 2:
         if (updateType === 'firmware_only') {
           return firmwareUpdates.length > 0 && 
@@ -248,6 +334,11 @@ export const ClusterUpdateWizard = ({
   };
 
   const handleExecute = async () => {
+    if (!user) return;
+    if (targetType === 'cluster' && !selectedCluster) return;
+    if (targetType === 'group' && !selectedGroup) return;
+    if (targetType === 'servers' && selectedServerIds.length === 0) return;
+
     setLoading(true);
     try {
       // Map update type to job type
@@ -258,8 +349,26 @@ export const ClusterUpdateWizard = ({
         'firmware_then_esxi': 'firmware_then_esxi'
       };
 
+      let targetScope: any = {};
+      if (targetType === 'cluster') {
+        targetScope = {
+          type: 'cluster',
+          cluster_name: selectedCluster,
+        };
+      } else if (targetType === 'group') {
+        targetScope = {
+          type: 'group',
+          group_id: selectedGroup,
+          group_name: groups.find(g => g.id === selectedGroup)?.name
+        };
+      } else if (targetType === 'servers') {
+        targetScope = {
+          type: 'servers',
+          server_ids: selectedServerIds
+        };
+      }
+
       const jobDetails: any = {
-        cluster_id: selectedCluster,
         backup_scp: backupScp,
         min_healthy_hosts: minHealthyHosts,
         max_parallel: maxParallel,
@@ -284,13 +393,13 @@ export const ClusterUpdateWizard = ({
 
       const { data, error } = await supabase
         .from("jobs")
-        .insert([{
-          job_type: jobTypeMap[updateType] as any,
-          created_by: user?.id!,
-          target_scope: { cluster_id: selectedCluster } as any,
-          details: jobDetails as any,
+        .insert({
+          job_type: jobTypeMap[updateType] as "rolling_cluster_update" | "esxi_upgrade" | "esxi_then_firmware" | "firmware_then_esxi",
+          created_by: user.id,
+          target_scope: targetScope,
+          details: jobDetails,
           status: 'pending'
-        }])
+        })
         .select()
         .single();
 
@@ -301,7 +410,7 @@ export const ClusterUpdateWizard = ({
       
       toast({
         title: "Update workflow started",
-        description: "The cluster update has been initiated.",
+        description: "The update has been initiated.",
       });
     } catch (error: any) {
       toast({
@@ -315,8 +424,8 @@ export const ClusterUpdateWizard = ({
   };
 
   const estimatedTime = () => {
-    if (!clusterInfo) return 0;
-    const hostsToUpdate = Math.ceil(clusterInfo.linkedServers / maxParallel);
+    if (!targetInfo) return 0;
+    const hostsToUpdate = Math.ceil(targetInfo.linked / maxParallel);
     const timePerHost = firmwareUpdates.length * 15; // 15 min per firmware update
     return hostsToUpdate * timePerHost;
   };
@@ -325,41 +434,104 @@ export const ClusterUpdateWizard = ({
     switch (currentStep) {
       case 1:
         return (
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Select Cluster</Label>
-              <Select value={selectedCluster} onValueChange={setSelectedCluster}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Choose a cluster" />
-                </SelectTrigger>
-                <SelectContent>
-                  {clusters.map(cluster => (
-                    <SelectItem key={cluster} value={cluster}>
-                      {cluster}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+          <div className="space-y-6">
+            {/* Target Type Selection */}
+            <div>
+              <Label className="mb-2 block">Target Type</Label>
+              <Tabs value={targetType} onValueChange={(v) => setTargetType(v as any)}>
+                <TabsList className="grid w-full grid-cols-3">
+                  <TabsTrigger value="cluster">vCenter Cluster</TabsTrigger>
+                  <TabsTrigger value="group">Server Group</TabsTrigger>
+                  <TabsTrigger value="servers">Individual Servers</TabsTrigger>
+                </TabsList>
+              </Tabs>
             </div>
 
-            {clusterInfo && (
+            {/* Cluster Selection */}
+            {targetType === 'cluster' && (
+              <div>
+                <Label>Select vCenter Cluster</Label>
+                <Select value={selectedCluster} onValueChange={setSelectedCluster}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose a cluster" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {clusters.map((cluster) => (
+                      <SelectItem key={cluster} value={cluster}>
+                        {cluster}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* Group Selection */}
+            {targetType === 'group' && (
+              <div>
+                <Label>Select Server Group</Label>
+                <Select value={selectedGroup} onValueChange={setSelectedGroup}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose a server group" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {groups.map((group) => (
+                      <SelectItem key={group.id} value={group.id}>
+                        {group.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* Server Selection */}
+            {targetType === 'servers' && (
+              <div>
+                <Label className="mb-2 block">Select Servers</Label>
+                <div className="border rounded-md p-4 max-h-64 overflow-y-auto space-y-2">
+                  {servers.map((server) => (
+                    <div key={server.id} className="flex items-center space-x-2">
+                      <Checkbox
+                        checked={selectedServerIds.includes(server.id)}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setSelectedServerIds([...selectedServerIds, server.id]);
+                          } else {
+                            setSelectedServerIds(selectedServerIds.filter(id => id !== server.id));
+                          }
+                        }}
+                      />
+                      <Label className="flex-1 cursor-pointer">
+                        {server.hostname || server.ip_address}
+                        <Badge variant={server.connection_status === 'online' ? 'default' : 'secondary'} className="ml-2">
+                          {server.connection_status}
+                        </Badge>
+                      </Label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {targetInfo && (
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Cluster Information</CardTitle>
+                  <CardTitle className="text-base">Target Information</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2">
                   <div className="flex justify-between text-sm">
-                    <span>Total Hosts:</span>
-                    <Badge>{clusterInfo.totalHosts}</Badge>
+                    <span>Name:</span>
+                    <span className="font-medium">{targetInfo.name}</span>
                   </div>
                   <div className="flex justify-between text-sm">
-                    <span>Linked Servers:</span>
-                    <Badge>{clusterInfo.linkedServers}</Badge>
+                    <span>Total:</span>
+                    <Badge>{targetInfo.total}</Badge>
                   </div>
                   <div className="flex justify-between text-sm">
-                    <span>Connected Hosts:</span>
-                    <Badge variant={clusterInfo.connectedHosts >= minHealthyHosts ? "default" : "destructive"}>
-                      {clusterInfo.connectedHosts}
+                    <span>Connected:</span>
+                    <Badge variant={targetInfo.connected >= minHealthyHosts ? "default" : "destructive"}>
+                      {targetInfo.connected}
                     </Badge>
                   </div>
                   <Separator className="my-3" />
@@ -441,7 +613,7 @@ export const ClusterUpdateWizard = ({
                     <Alert>
                       <AlertTriangle className="h-4 w-4" />
                       <AlertDescription>
-                        No active ESXi profiles found. Create one in the ESXi Profiles tab.
+                        No active ESXi profiles found. Create one in Settings → ESXi Profiles.
                       </AlertDescription>
                     </Alert>
                   )}
@@ -654,35 +826,41 @@ export const ClusterUpdateWizard = ({
           <div className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Cluster</CardTitle>
+                <CardTitle className="text-base">Target</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="text-sm space-y-1">
                   <div className="flex justify-between">
+                    <span className="text-muted-foreground">Type:</span>
+                    <span className="font-medium">{targetType}</span>
+                  </div>
+                  <div className="flex justify-between">
                     <span className="text-muted-foreground">Name:</span>
-                    <span className="font-medium">{selectedCluster}</span>
+                    <span className="font-medium">{targetInfo?.name}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Hosts to update:</span>
-                    <span className="font-medium">{clusterInfo?.linkedServers}</span>
+                    <span className="font-medium">{targetInfo?.linked}</span>
                   </div>
                 </div>
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Firmware Updates</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {firmwareUpdates.map((fw, index) => (
-                  <div key={index} className="text-sm flex justify-between">
-                    <span>{fw.component}</span>
-                    <Badge variant="outline">{fw.version}</Badge>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
+            {updateType !== 'esxi_only' && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Firmware Updates</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {firmwareUpdates.map((fw, index) => (
+                    <div key={index} className="text-sm flex justify-between">
+                      <span>{fw.component}</span>
+                      <Badge variant="outline">{fw.version}</Badge>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
 
             <Card>
               <CardHeader>
@@ -752,9 +930,9 @@ export const ClusterUpdateWizard = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Rolling Cluster Update Wizard</DialogTitle>
+          <DialogTitle>Update Wizard</DialogTitle>
           <DialogDescription>
-            Guided workflow for orchestrating cluster-wide firmware updates
+            Guided workflow for firmware and ESXi updates across clusters, groups, or servers
           </DialogDescription>
         </DialogHeader>
 
@@ -765,16 +943,12 @@ export const ClusterUpdateWizard = ({
               <div className={`flex items-center justify-center w-10 h-10 rounded-full border-2 ${
                 currentStep >= step.id 
                   ? 'border-primary bg-primary text-primary-foreground' 
-                  : 'border-muted bg-background'
+                  : 'border-muted bg-muted text-muted-foreground'
               }`}>
-                {currentStep > step.id ? (
-                  <CheckCircle className="h-5 w-5" />
-                ) : (
-                  <step.icon className="h-5 w-5" />
-                )}
+                <step.icon className="h-5 w-5" />
               </div>
               {index < STEPS.length - 1 && (
-                <div className={`w-16 h-0.5 mx-2 ${
+                <div className={`h-0.5 w-12 mx-2 ${
                   currentStep > step.id ? 'bg-primary' : 'bg-muted'
                 }`} />
               )}
@@ -782,14 +956,12 @@ export const ClusterUpdateWizard = ({
           ))}
         </div>
 
-        <div className="py-4">
-          <h3 className="text-lg font-semibold mb-4">
-            Step {currentStep}: {STEPS[currentStep - 1].name}
-          </h3>
+        {/* Step Content */}
+        <div className="min-h-[400px]">
           {renderStepContent()}
         </div>
 
-        {/* Navigation */}
+        {/* Footer Navigation */}
         <div className="flex justify-between pt-4 border-t">
           <Button
             variant="outline"
@@ -798,31 +970,26 @@ export const ClusterUpdateWizard = ({
           >
             Back
           </Button>
-
-          <div className="flex gap-2">
-            {currentStep < 4 && (
-              <Button
-                onClick={handleNext}
-                disabled={!canProceedToNextStep()}
-              >
-                Next
-              </Button>
-            )}
-            {currentStep === 4 && (
-              <Button
-                onClick={handleExecute}
-                disabled={!canProceedToNextStep() || loading}
-              >
-                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Start Update
-              </Button>
-            )}
-            {currentStep === 5 && (
-              <Button onClick={() => onOpenChange(false)}>
-                Close
-              </Button>
-            )}
-          </div>
+          {currentStep < 4 ? (
+            <Button 
+              onClick={handleNext}
+              disabled={!canProceedToNextStep()}
+            >
+              Next
+            </Button>
+          ) : currentStep === 4 ? (
+            <Button
+              onClick={handleExecute}
+              disabled={!canProceedToNextStep() || loading}
+            >
+              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Start Update
+            </Button>
+          ) : (
+            <Button onClick={() => onOpenChange(false)}>
+              Close
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>
