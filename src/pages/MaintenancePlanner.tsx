@@ -9,7 +9,7 @@ import { ClusterSafetyTrendChart } from "@/components/maintenance/ClusterSafetyT
 import { ScheduleMaintenanceDialog } from "@/components/maintenance/dialogs/ScheduleMaintenanceDialog";
 
 import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
-import { ServerUpdateWizard } from "@/components/jobs/ServerUpdateWizard";
+import { ClusterUpdateWizard } from "@/components/jobs/ClusterUpdateWizard";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -366,7 +366,7 @@ export default function MaintenancePlanner() {
         />
       )}
 
-      <ServerUpdateWizard 
+      <ClusterUpdateWizard 
         open={updateWizardOpen}
         onOpenChange={setUpdateWizardOpen}
       />

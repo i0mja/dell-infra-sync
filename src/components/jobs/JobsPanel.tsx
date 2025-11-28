@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Link } from "react-router-dom";
-import { ServerUpdateWizard } from "./ServerUpdateWizard";
+import { ClusterUpdateWizard } from "./ClusterUpdateWizard";
 
 interface Job {
   id: string;
@@ -692,7 +692,7 @@ export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) =>
         </TabsContent>
       </Tabs>
 
-      <ServerUpdateWizard
+      <ClusterUpdateWizard
         open={updateWizardOpen}
         onOpenChange={setUpdateWizardOpen}
       />
