@@ -1,15 +1,18 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Server, Users, Box } from "lucide-react";
+import { Server, Users, Box, Edit } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 interface TargetsTabProps {
   window: any;
+  onEdit?: () => void;
+  canEdit?: boolean;
 }
 
-export function TargetsTab({ window }: TargetsTabProps) {
+export function TargetsTab({ window, onEdit, canEdit }: TargetsTabProps) {
   const { data: servers } = useQuery({
     queryKey: ['maintenance-window-servers', window.id],
     queryFn: async () => {
@@ -75,6 +78,15 @@ export function TargetsTab({ window }: TargetsTabProps) {
 
   return (
     <div className="space-y-4">
+      {canEdit && onEdit && (
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" onClick={onEdit}>
+            <Edit className="mr-2 h-4 w-4" />
+            Edit Targets
+          </Button>
+        </div>
+      )}
+
       {servers && servers.length > 0 && (
         <Card>
           <CardHeader>

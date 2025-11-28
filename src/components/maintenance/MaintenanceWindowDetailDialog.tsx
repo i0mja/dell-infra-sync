@@ -4,16 +4,20 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { 
   Play, Pause, Copy, SkipForward, ShieldCheck, 
-  Calendar, Server, Settings, History, Info 
+  Calendar, Server, Settings, History, Info, Trash2 
 } from "lucide-react";
 import { OverviewTab } from "./tabs/OverviewTab";
 import { ScheduleTab } from "./tabs/ScheduleTab";
 import { TargetsTab } from "./tabs/TargetsTab";
 import { ConfigurationTab } from "./tabs/ConfigurationTab";
 import { ExecutionHistoryTab } from "./tabs/ExecutionHistoryTab";
+import { EditTargetsDialog } from "./EditTargetsDialog";
+import { EditScheduleDialog } from "./EditScheduleDialog";
+import { EditConfigurationDialog } from "./EditConfigurationDialog";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { getNextExecutionsFromConfig } from "@/lib/cron-utils";
 
@@ -30,9 +34,14 @@ export function MaintenanceWindowDetailDialog({
   onOpenChange,
   onUpdate
 }: MaintenanceWindowDetailDialogProps) {
+  const queryClient = useQueryClient();
   const [runNowDialogOpen, setRunNowDialogOpen] = useState(false);
   const [skipNextDialogOpen, setSkipNextDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [safetyCheckRunning, setSafetyCheckRunning] = useState(false);
+  const [editTargetsOpen, setEditTargetsOpen] = useState(false);
+  const [editScheduleOpen, setEditScheduleOpen] = useState(false);
+  const [editConfigOpen, setEditConfigOpen] = useState(false);
 
   const handleRunNow = async () => {
     try {
@@ -228,7 +237,31 @@ export function MaintenanceWindowDetailDialog({
     }
   };
 
+  const handleDelete = async () => {
+    try {
+      const { error } = await supabase
+        .from('maintenance_windows')
+        .delete()
+        .eq('id', window.id);
+
+      if (error) throw error;
+
+      toast.success("Maintenance window deleted", {
+        description: "The maintenance window has been deleted successfully."
+      });
+
+      queryClient.invalidateQueries({ queryKey: ['maintenance-windows'] });
+      onOpenChange(false);
+    } catch (error: any) {
+      toast.error("Error deleting maintenance window", {
+        description: error.message
+      });
+    }
+  };
+
   const isPaused = window.status === 'paused';
+  const canEdit = window.status === 'planned' || window.status === 'paused';
+  const canDelete = window.status === 'planned' || window.status === 'paused';
 
   return (
     <>
@@ -306,6 +339,17 @@ export function MaintenanceWindowDetailDialog({
                   <ShieldCheck className="w-4 h-4 mr-1" />
                   {safetyCheckRunning ? "Checking..." : "Pre-flight"}
                 </Button>
+                {canDelete && (
+                  <Button 
+                    size="sm" 
+                    variant="outline"
+                    onClick={() => setDeleteDialogOpen(true)}
+                    className="text-destructive hover:text-destructive"
+                  >
+                    <Trash2 className="w-4 h-4 mr-1" />
+                    Delete
+                  </Button>
+                )}
               </div>
             </div>
           </DialogHeader>
@@ -336,16 +380,16 @@ export function MaintenanceWindowDetailDialog({
 
             <div className="flex-1 overflow-auto mt-4">
               <TabsContent value="overview" className="mt-0">
-                <OverviewTab window={window} />
+                <OverviewTab window={window} onUpdate={onUpdate} />
               </TabsContent>
               <TabsContent value="schedule" className="mt-0">
-                <ScheduleTab window={window} onUpdate={onUpdate} />
+                <ScheduleTab window={window} onUpdate={onUpdate} onEdit={() => setEditScheduleOpen(true)} canEdit={canEdit} />
               </TabsContent>
               <TabsContent value="targets" className="mt-0">
-                <TargetsTab window={window} />
+                <TargetsTab window={window} onEdit={() => setEditTargetsOpen(true)} canEdit={canEdit} />
               </TabsContent>
               <TabsContent value="configuration" className="mt-0">
-                <ConfigurationTab window={window} />
+                <ConfigurationTab window={window} onEdit={() => setEditConfigOpen(true)} canEdit={canEdit} />
               </TabsContent>
               <TabsContent value="history" className="mt-0">
                 <ExecutionHistoryTab window={window} />
@@ -390,6 +434,42 @@ export function MaintenanceWindowDetailDialog({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Maintenance Window</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete "{window.title}"? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <EditTargetsDialog
+        open={editTargetsOpen}
+        onOpenChange={setEditTargetsOpen}
+        window={window}
+      />
+      <EditScheduleDialog
+        open={editScheduleOpen}
+        onOpenChange={setEditScheduleOpen}
+        window={window}
+      />
+      <EditConfigurationDialog
+        open={editConfigOpen}
+        onOpenChange={setEditConfigOpen}
+        window={window}
+      />
     </>
   );
 }
