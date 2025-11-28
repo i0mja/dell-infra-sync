@@ -324,6 +324,24 @@ export function HostsTable({
 
   return (
     <div className="flex flex-col h-full bg-background">
+      {/* Bulk Actions Bar */}
+      {selectedHosts.size > 0 && (
+        <div className="flex items-center gap-2 px-4 py-2 border-b bg-muted/50">
+          <span className="text-sm text-muted-foreground">{selectedHosts.size} selected</span>
+          <Button variant="ghost" size="sm" onClick={handleSyncSelected}>
+            <RefreshCcw className="h-3.5 w-3.5 mr-1" />
+            Sync Selected
+          </Button>
+          {onBulkDelete && (
+            <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive"
+              onClick={() => onBulkDelete(Array.from(selectedHosts))}>
+              <Trash2 className="h-3.5 w-3.5 mr-1" />
+              Remove ({selectedHosts.size})
+            </Button>
+          )}
+        </div>
+      )}
+      
       {/* Table */}
       <div className="overflow-auto flex-1">
         <Table>
@@ -553,6 +571,18 @@ export function HostsTable({
                               </ContextMenuItem>
                             </ContextMenuSubContent>
                           </ContextMenuSub>
+                          {onHostDelete && (
+                            <>
+                              <ContextMenuSeparator />
+                              <ContextMenuItem 
+                                className="text-destructive focus:text-destructive"
+                                onClick={() => onHostDelete(host)}
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Remove from sync
+                              </ContextMenuItem>
+                            </>
+                          )}
                         </ContextMenuContent>
                       </ContextMenu>
                     ))}

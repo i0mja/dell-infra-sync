@@ -134,6 +134,8 @@ export function ServersTable({
   vCenterClusters = [],
   onBulkAutoLink,
   bulkLinking = false,
+  onServerDelete,
+  onBulkDelete,
 }: ServersTableProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [sortField, setSortField] = useState<string | null>(null);
@@ -418,10 +420,19 @@ export function ServersTable({
 
         {/* Right: Actions */}
         {selectedServers.size > 0 && (
-          <Button variant="ghost" size="sm" className="h-8" onClick={handleRefreshSelected}>
-            <RefreshCw className="h-3.5 w-3.5 mr-1" />
-            Refresh
-          </Button>
+          <>
+            <Button variant="ghost" size="sm" className="h-8" onClick={handleRefreshSelected}>
+              <RefreshCw className="h-3.5 w-3.5 mr-1" />
+              Refresh
+            </Button>
+            {onBulkDelete && (
+              <Button variant="ghost" size="sm" className="h-8 text-destructive hover:text-destructive" 
+                onClick={() => onBulkDelete(Array.from(selectedServers))}>
+                <Trash2 className="h-3.5 w-3.5 mr-1" />
+                Delete ({selectedServers.size})
+              </Button>
+            )}
+          </>
         )}
 
         <DropdownMenu>
@@ -679,6 +690,18 @@ export function ServersTable({
                           </ContextMenuItem>
                         </>
                       )}
+                      {onServerDelete && (
+                        <>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem 
+                            className="text-destructive focus:text-destructive"
+                            onClick={() => onServerDelete(server)}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete Server
+                          </ContextMenuItem>
+                        </>
+                      )}
                     </ContextMenuContent>
                   </ContextMenu>
                 ))
@@ -807,6 +830,18 @@ export function ServersTable({
                                   <ContextMenuItem onClick={() => onAutoLinkVCenter(server)}>
                                     <Link2 className="mr-2 h-4 w-4" />
                                     Auto-link vCenter
+                                  </ContextMenuItem>
+                                </>
+                              )}
+                              {onServerDelete && (
+                                <>
+                                  <ContextMenuSeparator />
+                                  <ContextMenuItem 
+                                    className="text-destructive focus:text-destructive"
+                                    onClick={() => onServerDelete(server)}
+                                  >
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    Delete Server
                                   </ContextMenuItem>
                                 </>
                               )}

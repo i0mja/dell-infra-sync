@@ -359,6 +359,8 @@ export default function MaintenancePlanner() {
           onSyncVCenters={syncVCenters}
           onRunDiscovery={runDiscovery}
           onUpdateWizard={() => setUpdateWizardOpen(true)}
+          onBulkCancel={handleBulkCancel}
+          onBulkDelete={handleBulkDelete}
         />
       </div>
 

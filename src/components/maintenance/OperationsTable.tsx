@@ -136,6 +136,8 @@ interface OperationsTableProps {
   onSyncVCenters?: () => void;
   onRunDiscovery?: () => void;
   onUpdateWizard?: () => void;
+  onBulkCancel?: (jobIds: string[]) => void;
+  onBulkDelete?: (operationIds: string[]) => void;
 }
 
 export function OperationsTable({ 
@@ -152,7 +154,9 @@ export function OperationsTable({
   onRunSafetyCheck,
   onSyncVCenters,
   onRunDiscovery,
-  onUpdateWizard
+  onUpdateWizard,
+  onBulkCancel,
+  onBulkDelete
 }: OperationsTableProps) {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
@@ -300,9 +304,25 @@ export function OperationsTable({
       <div className="border-b px-4 py-2 bg-card">
         <div className="flex flex-wrap items-center gap-2">
           {selectedOps.size > 0 && (
-            <span className="text-sm text-muted-foreground">
-              {selectedOps.size} selected
-            </span>
+            <>
+              <span className="text-sm text-muted-foreground">
+                {selectedOps.size} selected
+              </span>
+              {onBulkCancel && (
+                <Button variant="ghost" size="sm" className="h-8"
+                  onClick={() => onBulkCancel(Array.from(selectedOps))}>
+                  <XCircle className="h-3.5 w-3.5 mr-1" />
+                  Cancel ({selectedOps.size})
+                </Button>
+              )}
+              {onBulkDelete && (
+                <Button variant="ghost" size="sm" className="h-8 text-destructive hover:text-destructive"
+                  onClick={() => onBulkDelete(Array.from(selectedOps))}>
+                  <Trash2 className="h-3.5 w-3.5 mr-1" />
+                  Delete ({selectedOps.size})
+                </Button>
+              )}
+            </>
           )}
 
           <div className="relative flex-1 max-w-sm">
