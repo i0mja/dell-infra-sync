@@ -14,6 +14,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { useEsxiProfiles } from "@/hooks/useEsxiProfiles";
+import { useQuery } from "@tanstack/react-query";
 import { 
   Info, 
   Plus, 
@@ -79,7 +80,24 @@ export const ClusterUpdateWizard = ({
     reboot_required: true
   }]);
   const [selectedEsxiProfileId, setSelectedEsxiProfileId] = useState<string | null>(null);
+  const [esxiCredentialMode, setEsxiCredentialMode] = useState<'stored' | 'manual'>('stored');
+  const [esxiCredentialSetId, setEsxiCredentialSetId] = useState<string | null>(null);
   const [esxiSshPassword, setEsxiSshPassword] = useState('');
+  
+  // Fetch ESXi credential sets
+  const { data: esxiCredentials } = useQuery({
+    queryKey: ['credential_sets', 'esxi'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('credential_sets')
+        .select('*')
+        .eq('credential_type', 'esxi')
+        .order('priority', { ascending: true });
+      
+      if (error) throw error;
+      return data;
+    },
+  });
   
   // Step 3: Configuration
   const [backupScp, setBackupScp] = useState(true);
@@ -196,10 +214,16 @@ export const ClusterUpdateWizard = ({
                  firmwareUpdates.every(f => f.component && f.version && f.image_uri);
         }
         if (updateType === 'esxi_only') {
-          return selectedEsxiProfileId && esxiSshPassword;
+          const hasCredentials = esxiCredentialMode === 'stored' 
+            ? esxiCredentialSetId 
+            : esxiSshPassword;
+          return selectedEsxiProfileId && hasCredentials;
         }
         // For combined workflows, need both
-        return selectedEsxiProfileId && esxiSshPassword &&
+        const hasCredentials = esxiCredentialMode === 'stored' 
+          ? esxiCredentialSetId 
+          : esxiSshPassword;
+        return selectedEsxiProfileId && hasCredentials &&
                firmwareUpdates.length > 0 && 
                firmwareUpdates.every(f => f.component && f.version && f.image_uri);
       case 3:
@@ -251,7 +275,11 @@ export const ClusterUpdateWizard = ({
       // Add ESXi details if applicable
       if (updateType !== 'firmware_only') {
         jobDetails.esxi_profile_id = selectedEsxiProfileId;
-        jobDetails.esxi_ssh_password = esxiSshPassword;
+        if (esxiCredentialMode === 'stored') {
+          jobDetails.esxi_credential_set_id = esxiCredentialSetId;
+        } else {
+          jobDetails.esxi_ssh_password = esxiSshPassword;
+        }
       }
 
       const { data, error } = await supabase
@@ -419,18 +447,64 @@ export const ClusterUpdateWizard = ({
                   )}
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="ssh-password">ESXi Root Password</Label>
-                  <Input
-                    id="ssh-password"
-                    type="password"
-                    value={esxiSshPassword}
-                    onChange={(e) => setEsxiSshPassword(e.target.value)}
-                    placeholder="Enter root password for SSH access"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Required for SSH connection to apply ESXi upgrade
-                  </p>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>ESXi SSH Credentials</Label>
+                    <RadioGroup value={esxiCredentialMode} onValueChange={(v: any) => setEsxiCredentialMode(v)}>
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="stored" id="stored" />
+                        <Label htmlFor="stored" className="font-normal cursor-pointer">
+                          Use stored credentials
+                        </Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="manual" id="manual" />
+                        <Label htmlFor="manual" className="font-normal cursor-pointer">
+                          Enter password manually
+                        </Label>
+                      </div>
+                    </RadioGroup>
+                  </div>
+
+                  {esxiCredentialMode === 'stored' ? (
+                    <div className="space-y-2">
+                      <Label htmlFor="esxi-credential">Select Credential Set</Label>
+                      <Select value={esxiCredentialSetId || ''} onValueChange={setEsxiCredentialSetId}>
+                        <SelectTrigger id="esxi-credential">
+                          <SelectValue placeholder="Choose ESXi credentials" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {esxiCredentials?.map(cred => (
+                            <SelectItem key={cred.id} value={cred.id}>
+                              {cred.name} ({cred.username})
+                            </SelectItem>
+                          ))}
+                          {(!esxiCredentials || esxiCredentials.length === 0) && (
+                            <SelectItem value="_none" disabled>
+                              No ESXi credentials configured
+                            </SelectItem>
+                          )}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Configure ESXi credentials in Settings → Credentials
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Label htmlFor="ssh-password">ESXi Root Password</Label>
+                      <Input
+                        id="ssh-password"
+                        type="password"
+                        value={esxiSshPassword}
+                        onChange={(e) => setEsxiSshPassword(e.target.value)}
+                        placeholder="Enter root password for SSH access"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Required for SSH connection to apply ESXi upgrade
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
