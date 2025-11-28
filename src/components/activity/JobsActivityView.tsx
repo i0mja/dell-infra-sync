@@ -95,27 +95,25 @@ export function JobsActivityView() {
 
   if (isLoading) {
     return (
-      <div className="p-4">
-        <Skeleton className="h-[600px] w-full" />
+      <div className="h-full flex items-center justify-center">
+        <Skeleton className="h-full w-full" />
       </div>
     );
   }
 
   return (
-    <div className="p-4">
-      <JobsTable
-        jobs={filteredJobs}
-        searchTerm={searchTerm}
-        onSearchChange={setSearchTerm}
-        statusFilter={statusFilter}
-        onStatusFilterChange={setStatusFilter}
-        jobTypeFilter={jobTypeFilter}
-        onJobTypeFilterChange={setJobTypeFilter}
-        timeRangeFilter={timeRangeFilter}
-        onTimeRangeFilterChange={setTimeRangeFilter}
-        onJobClick={handleJobClick}
-        expandedJobId={expandedJobId}
-      />
-    </div>
+    <JobsTable
+      jobs={filteredJobs}
+      searchTerm={searchTerm}
+      onSearchChange={setSearchTerm}
+      statusFilter={statusFilter}
+      onStatusFilterChange={setStatusFilter}
+      jobTypeFilter={jobTypeFilter}
+      onJobTypeFilterChange={setJobTypeFilter}
+      timeRangeFilter={timeRangeFilter}
+      onTimeRangeFilterChange={setTimeRangeFilter}
+      onJobClick={handleJobClick}
+      expandedJobId={expandedJobId}
+    />
   );
 }
