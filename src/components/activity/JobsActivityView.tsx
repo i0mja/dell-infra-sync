@@ -88,7 +88,7 @@ export function JobsActivityView() {
 
   if (isLoading) {
     return (
-      <div className="space-y-3 px-4 sm:px-6 lg:px-8">
+      <div className="space-y-3 p-4">
         {[1, 2, 3].map(i => (
           <Skeleton key={i} className="h-32 w-full rounded-xl" />
         ))}
@@ -111,7 +111,7 @@ export function JobsActivityView() {
   }
 
   return (
-    <div className="space-y-3 px-4 sm:px-6 lg:px-8">
+    <div className="space-y-3 p-4">
       {jobs.map(job => (
         <JobActivityCard key={job.id} job={job} />
       ))}
