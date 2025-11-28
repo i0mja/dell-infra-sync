@@ -290,7 +290,7 @@ export function OperationsTable({
       )}
 
       {/* Toolbar with Search + Filters */}
-      <div className="border-b px-4 py-2 bg-muted/30">
+      <div className="border-b px-4 py-2 bg-card">
         <div className="flex flex-wrap items-center gap-2">
           {selectedOps.size > 0 && (
             <span className="text-sm text-muted-foreground">
@@ -377,7 +377,7 @@ export function OperationsTable({
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto bg-background">
         <Table>
           <TableHeader>
             <TableRow>
