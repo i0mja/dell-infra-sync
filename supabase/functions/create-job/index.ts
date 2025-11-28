@@ -12,7 +12,7 @@ interface CreateJobRequest {
             'test_credentials' | 'power_action' | 'health_check' | 'fetch_event_logs' |
             'boot_configuration' | 'virtual_media_mount' | 'virtual_media_unmount' |
             'bios_config_read' | 'bios_config_write' | 'scp_export' | 'scp_import' |
-            'vcenter_connectivity_test' | 'openmanage_sync';
+            'vcenter_connectivity_test' | 'openmanage_sync' | 'console_launch';
   target_scope: any;
   details?: any;
   schedule_at?: string;
@@ -50,7 +50,8 @@ function validateJobRequest(request: CreateJobRequest): { valid: boolean; error?
     'scp_export',
     'scp_import',
     'vcenter_connectivity_test',
-    'openmanage_sync'
+    'openmanage_sync',
+    'console_launch'
   ];
   if (!request.job_type || !validTypes.includes(request.job_type)) {
     return { valid: false, error: 'Invalid job_type. Must be one of: ' + validTypes.join(', ') };

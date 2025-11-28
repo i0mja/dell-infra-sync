@@ -173,7 +173,7 @@ export default function Servers() {
     try {
       const { data, error } = await supabase.functions.invoke("create-job", {
         body: {
-          job_type: "launch_console",
+          job_type: "console_launch",
           created_by: user.id,
           target_scope: { server_ids: [server.id] },
         },
