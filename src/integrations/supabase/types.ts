@@ -388,6 +388,139 @@ export type Database = {
         }
         Relationships: []
       }
+      esxi_upgrade_history: {
+        Row: {
+          completed_at: string | null
+          created_at: string | null
+          error_message: string | null
+          id: string
+          job_id: string | null
+          profile_id: string | null
+          server_id: string | null
+          ssh_output: string | null
+          started_at: string | null
+          status: string | null
+          vcenter_host_id: string | null
+          version_after: string | null
+          version_before: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          job_id?: string | null
+          profile_id?: string | null
+          server_id?: string | null
+          ssh_output?: string | null
+          started_at?: string | null
+          status?: string | null
+          vcenter_host_id?: string | null
+          version_after?: string | null
+          version_before: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          job_id?: string | null
+          profile_id?: string | null
+          server_id?: string | null
+          ssh_output?: string | null
+          started_at?: string | null
+          status?: string | null
+          vcenter_host_id?: string | null
+          version_after?: string | null
+          version_before?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "esxi_upgrade_history_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "esxi_upgrade_history_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "esxi_upgrade_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "esxi_upgrade_history_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "esxi_upgrade_history_vcenter_host_id_fkey"
+            columns: ["vcenter_host_id"]
+            isOneToOne: false
+            referencedRelation: "vcenter_hosts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      esxi_upgrade_profiles: {
+        Row: {
+          bundle_path: string
+          created_at: string | null
+          created_by: string | null
+          datastore_name: string | null
+          description: string | null
+          id: string
+          is_active: boolean | null
+          min_source_version: string | null
+          name: string
+          profile_name: string
+          release_date: string | null
+          target_version: string
+          updated_at: string | null
+        }
+        Insert: {
+          bundle_path: string
+          created_at?: string | null
+          created_by?: string | null
+          datastore_name?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          min_source_version?: string | null
+          name: string
+          profile_name: string
+          release_date?: string | null
+          target_version: string
+          updated_at?: string | null
+        }
+        Update: {
+          bundle_path?: string
+          created_at?: string | null
+          created_by?: string | null
+          datastore_name?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          min_source_version?: string | null
+          name?: string
+          profile_name?: string
+          release_date?: string | null
+          target_version?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "esxi_upgrade_profiles_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       firmware_packages: {
         Row: {
           applicable_models: string[] | null
@@ -2565,6 +2698,9 @@ export type Database = {
         | "catalog_sync"
         | "scan_local_isos"
         | "register_iso_url"
+        | "esxi_upgrade"
+        | "esxi_then_firmware"
+        | "firmware_then_esxi"
       operation_type: "idrac_api" | "vcenter_api" | "openmanage_api"
     }
     CompositeTypes: {
@@ -2724,6 +2860,9 @@ export const Constants = {
         "catalog_sync",
         "scan_local_isos",
         "register_iso_url",
+        "esxi_upgrade",
+        "esxi_then_firmware",
+        "firmware_then_esxi",
       ],
       operation_type: ["idrac_api", "vcenter_api", "openmanage_api"],
     },
