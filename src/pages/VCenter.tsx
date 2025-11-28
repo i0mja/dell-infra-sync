@@ -447,6 +447,7 @@ export default function VCenter() {
               onClusterUpdate={handleClusterUpdate}
               onViewLinkedServer={(host) => handleViewLinkedServer(host.server_id!)}
               onLinkToServer={(host) => handleLinkToServer(host.id)}
+              onSync={handleSyncNow}
               loading={hostsLoading}
             />
           </TabsContent>

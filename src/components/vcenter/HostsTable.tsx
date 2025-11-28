@@ -83,6 +83,7 @@ interface HostsTableProps {
   onClusterUpdate?: (clusterName?: string) => void;
   onViewLinkedServer?: (host: VCenterHost) => void;
   onLinkToServer?: (host: VCenterHost) => void;
+  onSync?: () => void;
   loading: boolean;
 }
 
@@ -96,6 +97,7 @@ export function HostsTable({
   onClusterUpdate,
   onViewLinkedServer,
   onLinkToServer,
+  onSync,
   loading,
 }: HostsTableProps) {
   const [collapsedClusters, setCollapsedClusters] = useState<Set<string>>(new Set());
@@ -304,9 +306,9 @@ export function HostsTable({
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={clearView}>
               <X className="mr-1 h-4 w-4" />
-              Clear Filters
+              Clear View
             </Button>
-            <Button variant="default" size="sm" onClick={() => onClusterUpdate?.()}>
+            <Button variant="default" size="sm" onClick={() => onSync?.()}>
               <RefreshCcw className="mr-1 h-4 w-4" />
               Sync Now
             </Button>
