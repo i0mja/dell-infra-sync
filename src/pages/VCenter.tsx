@@ -17,6 +17,7 @@ import { useVCenters } from "@/hooks/useVCenters";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Columns3, Download } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 interface VCenterHost {
   id: string;
@@ -56,6 +57,10 @@ export default function VCenter() {
   const [testing, setTesting] = useState(false);
   const [vcenterHost, setVcenterHost] = useState("");
   const [activeTab, setActiveTab] = useState("hosts");
+  const [deleteHostDialogOpen, setDeleteHostDialogOpen] = useState(false);
+  const [bulkDeleteHostDialogOpen, setBulkDeleteHostDialogOpen] = useState(false);
+  const [hostToDelete, setHostToDelete] = useState<VCenterHost | null>(null);
+  const [hostsToDelete, setHostsToDelete] = useState<VCenterHost[]>([]);
   
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -357,6 +362,72 @@ export default function VCenter() {
     navigate(`/servers?link_vcenter=${hostId}`);
   };
 
+  const handleHostDelete = (host: VCenterHost) => {
+    setHostToDelete(host);
+    setDeleteHostDialogOpen(true);
+  };
+
+  const handleBulkHostDelete = (hostIds: string[]) => {
+    const hostsToRemove = hosts.filter(h => hostIds.includes(h.id));
+    setHostsToDelete(hostsToRemove);
+    setBulkDeleteHostDialogOpen(true);
+  };
+
+  const confirmDeleteHost = async () => {
+    if (!hostToDelete) return;
+    
+    try {
+      const { error } = await supabase
+        .from("vcenter_hosts")
+        .delete()
+        .eq("id", hostToDelete.id);
+
+      if (error) throw error;
+
+      toast({
+        title: "Host removed",
+        description: "Host has been removed from sync tracking. It will reappear on next vCenter sync.",
+      });
+
+      fetchHosts();
+      setDeleteHostDialogOpen(false);
+      setHostToDelete(null);
+    } catch (error: any) {
+      toast({
+        title: "Error removing host",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const confirmBulkDeleteHosts = async () => {
+    try {
+      const hostIds = hostsToDelete.map(h => h.id);
+      const { error } = await supabase
+        .from("vcenter_hosts")
+        .delete()
+        .in("id", hostIds);
+
+      if (error) throw error;
+
+      toast({
+        title: `${hostIds.length} hosts removed`,
+        description: "Hosts have been removed from sync tracking. They will reappear on next vCenter sync.",
+      });
+
+      fetchHosts();
+      setBulkDeleteHostDialogOpen(false);
+      setHostsToDelete([]);
+    } catch (error: any) {
+      toast({
+        title: "Error removing hosts",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <VCenterStatsBar
@@ -449,6 +520,8 @@ export default function VCenter() {
               onLinkToServer={(host) => handleLinkToServer(host.id)}
               onSync={handleSyncNow}
               loading={hostsLoading}
+              onHostDelete={handleHostDelete}
+              onBulkDelete={handleBulkHostDelete}
             />
           </TabsContent>
 
@@ -494,6 +567,50 @@ export default function VCenter() {
         }}
       />
       <VCenterConnectivityDialog open={testDialogOpen} onOpenChange={setTestDialogOpen} results={null} />
+      
+      <AlertDialog open={deleteHostDialogOpen} onOpenChange={setDeleteHostDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove Host</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to remove {hostToDelete?.name} from sync tracking?
+              <br /><br />
+              <strong>Note:</strong> This will remove the host from your local tracking. The host will reappear on the next vCenter sync if it still exists in vCenter.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDeleteHost} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkDeleteHostDialogOpen} onOpenChange={setBulkDeleteHostDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove {hostsToDelete.length} Host{hostsToDelete.length > 1 ? 's' : ''}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The following hosts will be removed from sync tracking:
+              <ul className="mt-2 mb-2 ml-4 list-disc text-sm">
+                {hostsToDelete.slice(0, 5).map(h => (
+                  <li key={h.id}>{h.name}</li>
+                ))}
+                {hostsToDelete.length > 5 && <li>(and {hostsToDelete.length - 5} more...)</li>}
+              </ul>
+              <strong>Note:</strong> These hosts will reappear on the next vCenter sync if they still exist in vCenter.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmBulkDeleteHosts} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Remove All
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <ClusterUpdateWizard
         open={clusterUpdateOpen}
         onOpenChange={setClusterUpdateOpen}

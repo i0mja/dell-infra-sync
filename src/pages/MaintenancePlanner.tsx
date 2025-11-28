@@ -18,6 +18,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { subMonths, addMonths, isFuture, format } from "date-fns";
 import { ChevronDown, ChevronUp } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 interface Job {
   id: string;
@@ -69,6 +70,10 @@ export default function MaintenancePlanner() {
   const [jobDetailDialogOpen, setJobDetailDialogOpen] = useState(false);
   const [selectedWindow, setSelectedWindow] = useState<any>(null);
   const [windowDetailDialogOpen, setWindowDetailDialogOpen] = useState(false);
+  const [bulkCancelDialogOpen, setBulkCancelDialogOpen] = useState(false);
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [jobsToCancel, setJobsToCancel] = useState<string[]>([]);
+  const [operationsToDelete, setOperationsToDelete] = useState<string[]>([]);
   const [trendChartOpen, setTrendChartOpen] = useState(false);
   const [updateWizardOpen, setUpdateWizardOpen] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -244,6 +249,35 @@ export default function MaintenancePlanner() {
     setScheduleDialogOpen(true);
   };
 
+  const handleBulkCancel = (jobIds: string[]) => {
+    setJobsToCancel(jobIds);
+    setBulkCancelDialogOpen(true);
+  };
+
+  const confirmBulkCancel = async () => {
+    for (const jobId of jobsToCancel) {
+      await supabase.from("jobs").update({ status: "cancelled" }).eq("id", jobId);
+    }
+    toast({ title: "Jobs cancelled", description: `${jobsToCancel.length} job(s) cancelled` });
+    setBulkCancelDialogOpen(false);
+    setJobsToCancel([]);
+  };
+
+  const handleBulkDelete = (operationIds: string[]) => {
+    setOperationsToDelete(operationIds);
+    setBulkDeleteDialogOpen(true);
+  };
+
+  const confirmBulkDelete = async () => {
+    const jobsToDelete = operations.filter(op => 'job' in op && operationIds.includes(op.id)).map(op => op.id);
+    const windowsToDelete = operations.filter(op => 'maintenance' in op && operationIds.includes(op.id)).map(op => op.id);
+    if (jobsToDelete.length > 0) await supabase.from("jobs").delete().in("id", jobsToDelete);
+    if (windowsToDelete.length > 0) await supabase.from("maintenance_windows").delete().in("id", windowsToDelete);
+    toast({ title: "Operations deleted", description: `${operationsToDelete.length} operation(s) deleted` });
+    setBulkDeleteDialogOpen(false);
+    setOperationsToDelete([]);
+  };
+
   const failedJobs = jobs.filter(j => j.status === 'failed').length;
 
   // Quick action handlers for OperationsTable
@@ -398,6 +432,32 @@ export default function MaintenancePlanner() {
         open={updateWizardOpen}
         onOpenChange={setUpdateWizardOpen}
       />
+
+      <AlertDialog open={bulkCancelDialogOpen} onOpenChange={setBulkCancelDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel {jobsToCancel.length} Job{jobsToCancel.length > 1 ? 's' : ''}?</AlertDialogTitle>
+            <AlertDialogDescription>Are you sure you want to cancel {jobsToCancel.length} running job(s)?</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmBulkCancel}>Confirm</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkDeleteDialogOpen} onOpenChange={setBulkDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {operationsToDelete.length} Operation{operationsToDelete.length > 1 ? 's' : ''}?</AlertDialogTitle>
+            <AlertDialogDescription>This action cannot be undone.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmBulkDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete All</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
