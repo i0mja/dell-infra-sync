@@ -5,7 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { FolderOpen } from "lucide-react";
 import { EsxiUpgradeProfile, useEsxiProfiles } from "@/hooks/useEsxiProfiles";
+import { DatastoreBrowserDialog } from "./DatastoreBrowserDialog";
 
 interface EsxiProfileDialogProps {
   open: boolean;
@@ -15,6 +17,7 @@ interface EsxiProfileDialogProps {
 
 export function EsxiProfileDialog({ open, onOpenChange, editProfile }: EsxiProfileDialogProps) {
   const { createProfile, updateProfile } = useEsxiProfiles();
+  const [browseDialogOpen, setBrowseDialogOpen] = useState(false);
   
   const [formData, setFormData] = useState({
     name: "",
@@ -114,13 +117,23 @@ export function EsxiProfileDialog({ open, onOpenChange, editProfile }: EsxiProfi
 
           <div className="space-y-2">
             <Label htmlFor="bundle_path">Bundle Path *</Label>
-            <Input
-              id="bundle_path"
-              required
-              value={formData.bundle_path}
-              onChange={(e) => setFormData({ ...formData, bundle_path: e.target.value })}
-              placeholder="/vmfs/volumes/shared-datastore/VMware-ESXi-8.0U3.zip"
-            />
+            <div className="flex gap-2">
+              <Input
+                id="bundle_path"
+                required
+                value={formData.bundle_path}
+                onChange={(e) => setFormData({ ...formData, bundle_path: e.target.value })}
+                placeholder="/vmfs/volumes/shared-datastore/VMware-ESXi-8.0U3.zip"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setBrowseDialogOpen(true)}
+              >
+                <FolderOpen className="h-4 w-4 mr-1" />
+                Browse
+              </Button>
+            </div>
           </div>
 
           <div className="space-y-2">
@@ -195,6 +208,20 @@ export function EsxiProfileDialog({ open, onOpenChange, editProfile }: EsxiProfi
             </Button>
           </DialogFooter>
         </form>
+        
+        <DatastoreBrowserDialog
+          open={browseDialogOpen}
+          onOpenChange={setBrowseDialogOpen}
+          onFileSelect={(file, datastoreName) => {
+            setFormData({
+              ...formData,
+              bundle_path: file.full_path,
+              datastore_name: datastoreName,
+            });
+            setBrowseDialogOpen(false);
+          }}
+          filePatterns={['*.zip', '*.iso']}
+        />
       </DialogContent>
     </Dialog>
   );
