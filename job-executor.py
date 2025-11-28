@@ -98,6 +98,7 @@ from job_executor.scp import ScpMixin
 from job_executor.utils import UNICODE_FALLBACKS, _normalize_unicode, _safe_json_parse, _safe_to_stdout
 from job_executor.dell_redfish.adapter import DellRedfishAdapter
 from job_executor.dell_redfish.operations import DellOperations
+from job_executor.esxi.orchestrator import EsxiOrchestrator
 from job_executor.media_server import MediaServer
 
 # Best-effort: prefer UTF-8 output if available, but never crash if not
@@ -7254,7 +7255,8 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             'fetch_event_logs', 'boot_configuration', 'virtual_media_mount',
             'virtual_media_unmount', 'scp_export', 'scp_import',
             'bios_config_read', 'bios_config_write',
-            'prepare_host_for_update', 'verify_host_after_update', 'rolling_cluster_update'
+            'prepare_host_for_update', 'verify_host_after_update', 'rolling_cluster_update',
+            'esxi_upgrade', 'esxi_then_firmware', 'firmware_then_esxi'
         ]
         
         if job_type in idrac_job_types and self.check_idrac_pause():
@@ -7323,6 +7325,12 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self.execute_catalog_sync(job)
         elif job_type == 'console_launch':
             self.execute_console_launch(job)
+        elif job_type == 'esxi_upgrade':
+            self.execute_esxi_upgrade(job)
+        elif job_type == 'esxi_then_firmware':
+            self.execute_esxi_then_firmware(job)
+        elif job_type == 'firmware_then_esxi':
+            self.execute_firmware_then_esxi(job)
         else:
             self.log(f"Unknown job type: {job_type}", "ERROR")
             self.update_job_status(
@@ -8364,6 +8372,526 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             
         except Exception as e:
             self.log(f"Server group safety check failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e)}
+            )
+
+    # ========================================================================
+    # ESXi Upgrade Methods
+    # ========================================================================
+    
+    def get_esxi_profile(self, profile_id: str) -> Optional[Dict]:
+        """Fetch ESXi upgrade profile from database"""
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            url = f"{DSM_URL}/rest/v1/esxi_upgrade_profiles?id=eq.{profile_id}"
+            response = requests.get(url, headers=headers, verify=VERIFY_SSL)
+            
+            if response.status_code == 200:
+                profiles = _safe_json_parse(response)
+                if profiles and len(profiles) > 0:
+                    return profiles[0]
+            
+            return None
+        except Exception as e:
+            self.log(f"Error fetching ESXi profile: {e}", "ERROR")
+            return None
+    
+    def get_vcenter_host(self, host_id: str) -> Optional[Dict]:
+        """Fetch vCenter host details from database"""
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            url = f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{host_id}&select=*,servers(*)"
+            response = requests.get(url, headers=headers, verify=VERIFY_SSL)
+            
+            if response.status_code == 200:
+                hosts = _safe_json_parse(response)
+                if hosts and len(hosts) > 0:
+                    return hosts[0]
+            
+            return None
+        except Exception as e:
+            self.log(f"Error fetching vCenter host: {e}", "ERROR")
+            return None
+    
+    def record_esxi_upgrade_history(self, host_id: str, server_id: Optional[str], 
+                                   job_id: str, profile_id: str, 
+                                   version_before: str, version_after: Optional[str],
+                                   status: str, error_message: Optional[str] = None,
+                                   ssh_output: Optional[str] = None) -> bool:
+        """Record ESXi upgrade result to esxi_upgrade_history table"""
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            history_data = {
+                'vcenter_host_id': host_id,
+                'server_id': server_id,
+                'job_id': job_id,
+                'profile_id': profile_id,
+                'version_before': version_before,
+                'version_after': version_after,
+                'status': status,
+                'error_message': error_message,
+                'ssh_output': ssh_output[:5000] if ssh_output else None,  # Limit length
+                'started_at': datetime.now().isoformat(),
+                'completed_at': datetime.now().isoformat() if status in ['completed', 'failed'] else None
+            }
+            
+            url = f"{DSM_URL}/rest/v1/esxi_upgrade_history"
+            response = requests.post(url, headers=headers, json=history_data, verify=VERIFY_SSL)
+            
+            return response.status_code in [200, 201]
+        except Exception as e:
+            self.log(f"Error recording ESXi upgrade history: {e}", "ERROR")
+            return False
+    
+    def execute_esxi_upgrade(self, job: Dict):
+        """Execute ESXi host upgrade via SSH"""
+        try:
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            details = job.get('details', {})
+            profile_id = details.get('profile_id')
+            host_ids = details.get('host_ids', [])
+            ssh_username = details.get('ssh_username', 'root')
+            ssh_password = details.get('ssh_password', '')
+            dry_run = details.get('dry_run', False)
+            
+            if not profile_id:
+                raise ValueError("Missing profile_id in job details")
+            if not host_ids:
+                raise ValueError("Missing host_ids in job details")
+            if not ssh_password:
+                raise ValueError("Missing ssh_password in job details")
+            
+            # Fetch ESXi upgrade profile
+            profile = self.get_esxi_profile(profile_id)
+            if not profile:
+                raise ValueError(f"ESXi upgrade profile {profile_id} not found")
+            
+            self.log(f"ESXi Upgrade: {profile['name']} (Target: {profile['target_version']})")
+            self.log(f"Bundle Path: {profile['bundle_path']}")
+            self.log(f"Profile Name: {profile['profile_name']}")
+            self.log(f"Targets: {len(host_ids)} host(s)")
+            if dry_run:
+                self.log("DRY RUN MODE - No actual changes will be made")
+            
+            success_count = 0
+            failed_count = 0
+            results = []
+            
+            # Create orchestrator with maintenance mode callbacks
+            orchestrator = EsxiOrchestrator(
+                enter_maintenance_fn=lambda host_id: self.enter_vcenter_maintenance_mode(host_id),
+                exit_maintenance_fn=lambda host_id: self.exit_vcenter_maintenance_mode(host_id),
+                logger=lambda msg, level='INFO': self.log(msg, level)
+            )
+            
+            # Process each host
+            for host_id in host_ids:
+                # Fetch vCenter host details
+                vcenter_host = self.get_vcenter_host(host_id)
+                if not vcenter_host:
+                    self.log(f"vCenter host {host_id} not found", "ERROR")
+                    failed_count += 1
+                    results.append({
+                        'host_id': host_id,
+                        'success': False,
+                        'error': 'Host not found in database'
+                    })
+                    continue
+                
+                host_name = vcenter_host['name']
+                
+                # Get management IP (from linked server or vCenter data)
+                linked_server = vcenter_host.get('servers')
+                if linked_server:
+                    management_ip = linked_server['ip_address']
+                    self.log(f"Using management IP from linked server: {management_ip}")
+                else:
+                    # Try to extract IP from vCenter host name or use hostname
+                    management_ip = vcenter_host.get('name', '')
+                    self.log(f"No linked server, using vCenter host name as IP: {management_ip}")
+                
+                # Create task for this host
+                task_data = {
+                    'job_id': job['id'],
+                    'vcenter_host_id': host_id,
+                    'status': 'running',
+                    'log': f'Starting ESXi upgrade for {host_name}',
+                    'started_at': datetime.now().isoformat()
+                }
+                task_id = self.create_task(task_data)
+                
+                try:
+                    # Execute upgrade
+                    self.log(f"\n{'='*60}")
+                    self.log(f"Upgrading {host_name} ({management_ip})")
+                    self.log(f"{'='*60}")
+                    
+                    result = orchestrator.upgrade_host(
+                        host_name=host_name,
+                        host_ip=management_ip,
+                        ssh_username=ssh_username,
+                        ssh_password=ssh_password,
+                        bundle_path=profile['bundle_path'],
+                        profile_name=profile['profile_name'],
+                        vcenter_host_id=host_id,
+                        dry_run=dry_run
+                    )
+                    
+                    if result['success']:
+                        self.log(f"✓ {host_name} upgrade completed successfully")
+                        success_count += 1
+                        
+                        # Update task
+                        self.update_task_status(
+                            task_id,
+                            'completed',
+                            log=f"Upgraded from {result.get('version_before')} to {result.get('version_after')}",
+                            completed_at=datetime.now().isoformat()
+                        )
+                        
+                        # Record history
+                        self.record_esxi_upgrade_history(
+                            host_id=host_id,
+                            server_id=linked_server['id'] if linked_server else None,
+                            job_id=job['id'],
+                            profile_id=profile_id,
+                            version_before=result.get('version_before', 'Unknown'),
+                            version_after=result.get('version_after', 'Unknown'),
+                            status='completed',
+                            ssh_output=json.dumps(result.get('steps_completed', []))
+                        )
+                    else:
+                        self.log(f"✗ {host_name} upgrade failed: {result.get('error')}", "ERROR")
+                        failed_count += 1
+                        
+                        # Update task
+                        self.update_task_status(
+                            task_id,
+                            'failed',
+                            log=f"Upgrade failed: {result.get('error')}",
+                            completed_at=datetime.now().isoformat()
+                        )
+                        
+                        # Record history
+                        self.record_esxi_upgrade_history(
+                            host_id=host_id,
+                            server_id=linked_server['id'] if linked_server else None,
+                            job_id=job['id'],
+                            profile_id=profile_id,
+                            version_before=result.get('version_before', 'Unknown'),
+                            version_after=None,
+                            status='failed',
+                            error_message=result.get('error'),
+                            ssh_output=json.dumps(result)
+                        )
+                    
+                    results.append({
+                        'host_id': host_id,
+                        'host_name': host_name,
+                        'success': result['success'],
+                        'version_before': result.get('version_before'),
+                        'version_after': result.get('version_after'),
+                        'steps_completed': result.get('steps_completed', []),
+                        'error': result.get('error')
+                    })
+                    
+                except Exception as e:
+                    error_msg = str(e)
+                    self.log(f"✗ {host_name} upgrade exception: {error_msg}", "ERROR")
+                    failed_count += 1
+                    
+                    # Update task
+                    self.update_task_status(
+                        task_id,
+                        'failed',
+                        log=f"Exception: {error_msg}",
+                        completed_at=datetime.now().isoformat()
+                    )
+                    
+                    # Record history
+                    self.record_esxi_upgrade_history(
+                        host_id=host_id,
+                        server_id=linked_server['id'] if linked_server else None,
+                        job_id=job['id'],
+                        profile_id=profile_id,
+                        version_before='Unknown',
+                        version_after=None,
+                        status='failed',
+                        error_message=error_msg
+                    )
+                    
+                    results.append({
+                        'host_id': host_id,
+                        'host_name': host_name,
+                        'success': False,
+                        'error': error_msg
+                    })
+            
+            # Complete job
+            job_result = {
+                'profile': profile['name'],
+                'target_version': profile['target_version'],
+                'success_count': success_count,
+                'failed_count': failed_count,
+                'total': len(host_ids),
+                'dry_run': dry_run,
+                'results': results
+            }
+            
+            final_status = 'completed' if failed_count == 0 else 'failed'
+            self.update_job_status(
+                job['id'],
+                final_status,
+                completed_at=datetime.now().isoformat(),
+                details=job_result
+            )
+            
+            self.log(f"\nESXi Upgrade Complete: {success_count} succeeded, {failed_count} failed")
+            
+        except Exception as e:
+            import traceback
+            error_msg = str(e)
+            stack_trace = traceback.format_exc()
+            self.log(f"ESXi upgrade job failed: {error_msg}\n{stack_trace}", "ERROR")
+            
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={
+                    'error': error_msg,
+                    'traceback': stack_trace[:2000]
+                }
+            )
+    
+    def execute_esxi_then_firmware(self, job: Dict):
+        """Execute ESXi upgrade first, then Dell firmware update"""
+        try:
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            details = job.get('details', {})
+            esxi_profile_id = details.get('esxi_profile_id')
+            firmware_details = details.get('firmware_details', {})
+            host_ids = details.get('host_ids', [])
+            ssh_username = details.get('ssh_username', 'root')
+            ssh_password = details.get('ssh_password', '')
+            
+            self.log("Combined ESXi → Firmware Upgrade Workflow")
+            self.log(f"Processing {len(host_ids)} host(s)")
+            
+            results = []
+            
+            for host_id in host_ids:
+                vcenter_host = self.get_vcenter_host(host_id)
+                if not vcenter_host:
+                    continue
+                
+                host_name = vcenter_host['name']
+                linked_server = vcenter_host.get('servers')
+                
+                self.log(f"\n{'='*60}")
+                self.log(f"Processing {host_name}")
+                self.log(f"{'='*60}")
+                
+                # Step 1: ESXi Upgrade
+                self.log("Step 1: ESXi Hypervisor Upgrade")
+                esxi_job_data = {
+                    'id': job['id'],
+                    'job_type': 'esxi_upgrade',
+                    'details': {
+                        'profile_id': esxi_profile_id,
+                        'host_ids': [host_id],
+                        'ssh_username': ssh_username,
+                        'ssh_password': ssh_password,
+                        'dry_run': False
+                    }
+                }
+                
+                try:
+                    self.execute_esxi_upgrade(esxi_job_data)
+                    esxi_success = True
+                except Exception as e:
+                    self.log(f"ESXi upgrade failed: {e}", "ERROR")
+                    esxi_success = False
+                
+                # Step 2: Firmware Update (only if ESXi succeeded and server is linked)
+                firmware_success = False
+                if esxi_success and linked_server:
+                    self.log("\nStep 2: Dell Firmware Update")
+                    # Execute firmware update using existing firmware update logic
+                    # This is a simplified version - you'd call the actual firmware update method
+                    try:
+                        # Create a firmware update sub-job
+                        firmware_job_data = {
+                            'id': job['id'],
+                            'job_type': 'firmware_update',
+                            'details': firmware_details,
+                            'target_scope': {
+                                'type': 'specific',
+                                'server_ids': [linked_server['id']]
+                            }
+                        }
+                        self.execute_firmware_update(firmware_job_data)
+                        firmware_success = True
+                    except Exception as e:
+                        self.log(f"Firmware update failed: {e}", "ERROR")
+                else:
+                    self.log("Skipping firmware update (ESXi failed or no linked server)")
+                
+                results.append({
+                    'host_id': host_id,
+                    'host_name': host_name,
+                    'esxi_success': esxi_success,
+                    'firmware_success': firmware_success,
+                    'overall_success': esxi_success and firmware_success
+                })
+            
+            # Complete job
+            success_count = sum(1 for r in results if r['overall_success'])
+            job_result = {
+                'workflow': 'esxi_then_firmware',
+                'success_count': success_count,
+                'total': len(host_ids),
+                'results': results
+            }
+            
+            self.update_job_status(
+                job['id'],
+                'completed' if success_count == len(host_ids) else 'failed',
+                completed_at=datetime.now().isoformat(),
+                details=job_result
+            )
+            
+        except Exception as e:
+            self.log(f"Combined upgrade job failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e)}
+            )
+    
+    def execute_firmware_then_esxi(self, job: Dict):
+        """Execute Dell firmware update first, then ESXi upgrade"""
+        try:
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            details = job.get('details', {})
+            esxi_profile_id = details.get('esxi_profile_id')
+            firmware_details = details.get('firmware_details', {})
+            host_ids = details.get('host_ids', [])
+            ssh_username = details.get('ssh_username', 'root')
+            ssh_password = details.get('ssh_password', '')
+            
+            self.log("Combined Firmware → ESXi Upgrade Workflow")
+            self.log(f"Processing {len(host_ids)} host(s)")
+            
+            results = []
+            
+            for host_id in host_ids:
+                vcenter_host = self.get_vcenter_host(host_id)
+                if not vcenter_host:
+                    continue
+                
+                host_name = vcenter_host['name']
+                linked_server = vcenter_host.get('servers')
+                
+                self.log(f"\n{'='*60}")
+                self.log(f"Processing {host_name}")
+                self.log(f"{'='*60}")
+                
+                # Step 1: Firmware Update (only if server is linked)
+                firmware_success = False
+                if linked_server:
+                    self.log("Step 1: Dell Firmware Update")
+                    try:
+                        firmware_job_data = {
+                            'id': job['id'],
+                            'job_type': 'firmware_update',
+                            'details': firmware_details,
+                            'target_scope': {
+                                'type': 'specific',
+                                'server_ids': [linked_server['id']]
+                            }
+                        }
+                        self.execute_firmware_update(firmware_job_data)
+                        firmware_success = True
+                    except Exception as e:
+                        self.log(f"Firmware update failed: {e}", "ERROR")
+                else:
+                    self.log("No linked server - skipping firmware update")
+                    firmware_success = True  # Continue with ESXi anyway
+                
+                # Step 2: ESXi Upgrade (only if firmware succeeded)
+                esxi_success = False
+                if firmware_success:
+                    self.log("\nStep 2: ESXi Hypervisor Upgrade")
+                    esxi_job_data = {
+                        'id': job['id'],
+                        'job_type': 'esxi_upgrade',
+                        'details': {
+                            'profile_id': esxi_profile_id,
+                            'host_ids': [host_id],
+                            'ssh_username': ssh_username,
+                            'ssh_password': ssh_password,
+                            'dry_run': False
+                        }
+                    }
+                    
+                    try:
+                        self.execute_esxi_upgrade(esxi_job_data)
+                        esxi_success = True
+                    except Exception as e:
+                        self.log(f"ESXi upgrade failed: {e}", "ERROR")
+                else:
+                    self.log("Skipping ESXi upgrade (firmware failed)")
+                
+                results.append({
+                    'host_id': host_id,
+                    'host_name': host_name,
+                    'firmware_success': firmware_success,
+                    'esxi_success': esxi_success,
+                    'overall_success': firmware_success and esxi_success
+                })
+            
+            # Complete job
+            success_count = sum(1 for r in results if r['overall_success'])
+            job_result = {
+                'workflow': 'firmware_then_esxi',
+                'success_count': success_count,
+                'total': len(host_ids),
+                'results': results
+            }
+            
+            self.update_job_status(
+                job['id'],
+                'completed' if success_count == len(host_ids) else 'failed',
+                completed_at=datetime.now().isoformat(),
+                details=job_result
+            )
+            
+        except Exception as e:
+            self.log(f"Combined upgrade job failed: {e}", "ERROR")
             self.update_job_status(
                 job['id'],
                 'failed',
