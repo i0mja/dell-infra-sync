@@ -89,6 +89,7 @@ export const ClusterUpdateWizard = ({
     preSelectedTarget?.type === 'servers' && preSelectedTarget?.ids ? preSelectedTarget.ids : []
   );
   const [targetInfo, setTargetInfo] = useState<TargetInfo | null>(null);
+  const [targetInfoLoading, setTargetInfoLoading] = useState(false);
   const [safetyCheckLoading, setSafetyCheckLoading] = useState(false);
   const [safetyCheckPassed, setSafetyCheckPassed] = useState(false);
   
@@ -153,9 +154,10 @@ export const ClusterUpdateWizard = ({
     }
   }, [targetType, selectedCluster, selectedGroup, selectedServerIds]);
 
-  // Reset safety check when target selection changes
+  // Reset safety check and target info when target selection changes
   useEffect(() => {
     setSafetyCheckPassed(false);
+    setTargetInfo(null);
   }, [targetType, selectedCluster, selectedGroup, selectedServerIds]);
 
   const fetchTargets = async () => {
@@ -191,53 +193,71 @@ export const ClusterUpdateWizard = ({
   };
 
   const fetchTargetInfo = async () => {
-    if (targetType === 'cluster' && selectedCluster) {
-      const { data: hosts } = await supabase
-        .from("vcenter_hosts")
-        .select("id, hostname, connection_status")
-        .eq("cluster", selectedCluster);
+    setTargetInfoLoading(true);
+    try {
+      if (targetType === 'cluster' && selectedCluster) {
+        const { data: hosts, error } = await supabase
+          .from("vcenter_hosts")
+          .select("id, hostname, connection_status")
+          .eq("cluster", selectedCluster);
 
-      if (hosts) {
-        const connected = hosts.filter((h: any) => h.connection_status === 'online').length;
-        setTargetInfo({
-          name: selectedCluster,
-          total: hosts.length,
-          linked: connected,
-          connected
-        });
-      }
-    } else if (targetType === 'group' && selectedGroup) {
-      const { data: members } = await supabase
-        .from("server_group_members")
-        .select("server_id, servers(id, hostname, connection_status)")
-        .eq("server_group_id", selectedGroup);
+        if (error) throw error;
 
-      if (members) {
-        const total = members.length;
-        const connected = members.filter((m: any) => m.servers?.connection_status === 'online').length;
-        const groupName = groups.find(g => g.id === selectedGroup)?.name || selectedGroup;
-        setTargetInfo({
-          name: groupName,
-          total,
-          linked: connected,
-          connected
-        });
-      }
-    } else if (targetType === 'servers' && selectedServerIds.length > 0) {
-      const { data: serverData } = await supabase
-        .from("servers")
-        .select("id, hostname, connection_status")
-        .in("id", selectedServerIds);
+        if (hosts) {
+          const connected = hosts.filter((h: any) => h.connection_status === 'online').length;
+          setTargetInfo({
+            name: selectedCluster,
+            total: hosts.length,
+            linked: connected,
+            connected
+          });
+        }
+      } else if (targetType === 'group' && selectedGroup) {
+        const { data: members, error } = await supabase
+          .from("server_group_members")
+          .select("server_id, servers(id, hostname, connection_status)")
+          .eq("server_group_id", selectedGroup);
 
-      if (serverData) {
-        const connected = serverData.filter((s: any) => s.connection_status === 'online').length;
-        setTargetInfo({
-          name: `${serverData.length} selected server(s)`,
-          total: serverData.length,
-          linked: connected,
-          connected
-        });
+        if (error) throw error;
+
+        if (members) {
+          const total = members.length;
+          const connected = members.filter((m: any) => m.servers?.connection_status === 'online').length;
+          const groupName = groups.find(g => g.id === selectedGroup)?.name || selectedGroup;
+          setTargetInfo({
+            name: groupName,
+            total,
+            linked: connected,
+            connected
+          });
+        }
+      } else if (targetType === 'servers' && selectedServerIds.length > 0) {
+        const { data: serverData, error } = await supabase
+          .from("servers")
+          .select("id, hostname, connection_status")
+          .in("id", selectedServerIds);
+
+        if (error) throw error;
+
+        if (serverData) {
+          const connected = serverData.filter((s: any) => s.connection_status === 'online').length;
+          setTargetInfo({
+            name: `${serverData.length} selected server(s)`,
+            total: serverData.length,
+            linked: connected,
+            connected
+          });
+        }
       }
+    } catch (error: any) {
+      console.error("Error fetching target info:", error);
+      toast({
+        title: "Error fetching target info",
+        description: error.message || "Could not load target information",
+        variant: "destructive"
+      });
+    } finally {
+      setTargetInfoLoading(false);
     }
   };
 
@@ -519,7 +539,16 @@ export const ClusterUpdateWizard = ({
               </div>
             )}
 
-            {targetInfo && (
+            {targetInfoLoading && (
+              <Card>
+                <CardContent className="py-8 flex items-center justify-center">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  <span className="ml-2 text-sm text-muted-foreground">Loading target information...</span>
+                </CardContent>
+              </Card>
+            )}
+
+            {!targetInfoLoading && targetInfo && (
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base">Target Information</CardTitle>
