@@ -29,6 +29,7 @@ import {
   Settings
 } from "lucide-react";
 import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
+import { FirmwareSourceSelector } from "@/components/common/FirmwareSourceSelector";
 
 interface ClusterUpdateWizardProps {
   open: boolean;
@@ -95,6 +96,9 @@ export const ClusterUpdateWizard = ({
   
   // Step 2: Update Type and Selection
   const [updateType, setUpdateType] = useState<'firmware_only' | 'esxi_only' | 'esxi_then_firmware' | 'firmware_then_esxi'>('firmware_only');
+  const [firmwareSource, setFirmwareSource] = useState<'local_repository' | 'dell_online_catalog' | 'skip' | 'manual'>('dell_online_catalog');
+  const [componentFilter, setComponentFilter] = useState<string[]>(['all']);
+  const [autoSelectLatest, setAutoSelectLatest] = useState(true);
   const [firmwareUpdates, setFirmwareUpdates] = useState<FirmwareUpdate[]>([{
     component: '',
     version: '',
@@ -321,8 +325,14 @@ export const ClusterUpdateWizard = ({
         return false;
       case 2:
         if (updateType === 'firmware_only') {
-          return firmwareUpdates.length > 0 && 
-                 firmwareUpdates.every(f => f.component && f.version && f.image_uri);
+          // Check based on firmware source
+          if (firmwareSource === 'dell_online_catalog' || firmwareSource === 'local_repository') {
+            return componentFilter.length > 0;
+          } else if (firmwareSource === 'manual') {
+            return firmwareUpdates.length > 0 && 
+                   firmwareUpdates.every(f => f.component && f.version && f.image_uri);
+          }
+          return false;
         }
         if (updateType === 'esxi_only') {
           const hasCredentials = esxiCredentialMode === 'stored' 
@@ -334,9 +344,10 @@ export const ClusterUpdateWizard = ({
         const hasCredentials = esxiCredentialMode === 'stored' 
           ? esxiCredentialSetId 
           : esxiSshPassword;
-        return selectedEsxiProfileId && hasCredentials &&
-               firmwareUpdates.length > 0 && 
-               firmwareUpdates.every(f => f.component && f.version && f.image_uri);
+        const hasFirmware = firmwareSource === 'dell_online_catalog' || firmwareSource === 'local_repository'
+          ? componentFilter.length > 0
+          : (firmwareUpdates.length > 0 && firmwareUpdates.every(f => f.component && f.version && f.image_uri));
+        return selectedEsxiProfileId && hasCredentials && hasFirmware;
       case 3:
         return true;
       case 4:
@@ -403,7 +414,18 @@ export const ClusterUpdateWizard = ({
 
       // Add firmware updates if applicable
       if (updateType !== 'esxi_only') {
-        jobDetails.firmware_updates = firmwareUpdates;
+        jobDetails.firmware_source = firmwareSource;
+        
+        if (firmwareSource === 'dell_online_catalog') {
+          jobDetails.dell_catalog_url = 'https://downloads.dell.com/catalog/Catalog.xml';
+          jobDetails.component_filter = componentFilter;
+          jobDetails.auto_select_latest = autoSelectLatest;
+        } else if (firmwareSource === 'local_repository') {
+          jobDetails.component_filter = componentFilter;
+          jobDetails.auto_select_latest = autoSelectLatest;
+        } else if (firmwareSource === 'manual') {
+          jobDetails.firmware_updates = firmwareUpdates;
+        }
       }
 
       // Add ESXi details if applicable
@@ -720,63 +742,79 @@ export const ClusterUpdateWizard = ({
               <>
                 <Separator />
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <Label>Firmware Updates</Label>
-                    <Button type="button" variant="outline" size="sm" onClick={addFirmwareUpdate}>
-                      <Plus className="h-4 w-4 mr-1" />
-                      Add Firmware
-                    </Button>
-                  </div>
+                  <FirmwareSourceSelector
+                    value={firmwareSource}
+                    onChange={setFirmwareSource}
+                    componentFilter={componentFilter}
+                    onComponentFilterChange={setComponentFilter}
+                    autoSelectLatest={autoSelectLatest}
+                    onAutoSelectLatestChange={setAutoSelectLatest}
+                    showManualOption={true}
+                    showSkipOption={false}
+                  />
 
-                  {firmwareUpdates.map((firmware, index) => (
-                    <Card key={index}>
-                      <CardContent className="pt-6 space-y-3">
-                        <div className="grid grid-cols-[1fr_auto] gap-2">
-                          <Input
-                            placeholder="Component (e.g., BIOS, iDRAC)"
-                            value={firmware.component}
-                            onChange={(e) => updateFirmware(index, 'component', e.target.value)}
-                          />
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => removeFirmwareUpdate(index)}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </div>
-                        <Input
-                          placeholder="Version"
-                          value={firmware.version}
-                          onChange={(e) => updateFirmware(index, 'version', e.target.value)}
-                        />
-                        <Input
-                          placeholder="Firmware Image URI (HTTP/HTTPS)"
-                          value={firmware.image_uri}
-                          onChange={(e) => updateFirmware(index, 'image_uri', e.target.value)}
-                        />
-                        <div className="flex items-center space-x-2">
-                          <Checkbox
-                            id={`reboot-${index}`}
-                            checked={firmware.reboot_required}
-                            onCheckedChange={(checked) => updateFirmware(index, 'reboot_required', checked)}
-                          />
-                          <Label htmlFor={`reboot-${index}`} className="font-normal">
-                            Reboot required
-                          </Label>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                  {/* Manual firmware entry - only show when manual mode selected */}
+                  {firmwareSource === 'manual' && (
+                    <div className="space-y-4 pt-4">
+                      <div className="flex items-center justify-between">
+                        <Label>Firmware Updates</Label>
+                        <Button type="button" variant="outline" size="sm" onClick={addFirmwareUpdate}>
+                          <Plus className="h-4 w-4 mr-1" />
+                          Add Firmware
+                        </Button>
+                      </div>
 
-                  {firmwareUpdates.length === 0 && (
-                    <Alert>
-                      <Info className="h-4 w-4" />
-                      <AlertDescription>
-                        Add at least one firmware update to proceed.
-                      </AlertDescription>
-                    </Alert>
+                      {firmwareUpdates.map((firmware, index) => (
+                        <Card key={index}>
+                          <CardContent className="pt-6 space-y-3">
+                            <div className="grid grid-cols-[1fr_auto] gap-2">
+                              <Input
+                                placeholder="Component (e.g., BIOS, iDRAC)"
+                                value={firmware.component}
+                                onChange={(e) => updateFirmware(index, 'component', e.target.value)}
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => removeFirmwareUpdate(index)}
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
+                            <Input
+                              placeholder="Version"
+                              value={firmware.version}
+                              onChange={(e) => updateFirmware(index, 'version', e.target.value)}
+                            />
+                            <Input
+                              placeholder="Firmware Image URI (HTTP/HTTPS)"
+                              value={firmware.image_uri}
+                              onChange={(e) => updateFirmware(index, 'image_uri', e.target.value)}
+                            />
+                            <div className="flex items-center space-x-2">
+                              <Checkbox
+                                id={`reboot-${index}`}
+                                checked={firmware.reboot_required}
+                                onCheckedChange={(checked) => updateFirmware(index, 'reboot_required', checked)}
+                              />
+                              <Label htmlFor={`reboot-${index}`} className="font-normal">
+                                Reboot required
+                              </Label>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+
+                      {firmwareUpdates.length === 0 && (
+                        <Alert>
+                          <Info className="h-4 w-4" />
+                          <AlertDescription>
+                            Add at least one firmware update to proceed.
+                          </AlertDescription>
+                        </Alert>
+                      )}
+                    </div>
                   )}
                 </div>
               </>
@@ -886,12 +924,38 @@ export const ClusterUpdateWizard = ({
                   <CardTitle className="text-base">Firmware Updates</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                  {firmwareUpdates.map((fw, index) => (
-                    <div key={index} className="text-sm flex justify-between">
-                      <span>{fw.component}</span>
-                      <Badge variant="outline">{fw.version}</Badge>
+                  <div className="text-sm space-y-1">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Source:</span>
+                      <Badge variant="outline">
+                        {firmwareSource === 'dell_online_catalog' ? 'Dell Online Catalog' : 
+                         firmwareSource === 'local_repository' ? 'Local Repository' : 
+                         firmwareSource === 'manual' ? 'Manual Entry' : 'Skip'}
+                      </Badge>
                     </div>
-                  ))}
+                    {(firmwareSource === 'dell_online_catalog' || firmwareSource === 'local_repository') && (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Components:</span>
+                          <span className="font-medium">
+                            {componentFilter.includes('all') ? 'All' : componentFilter.join(', ')}
+                          </span>
+                        </div>
+                        {firmwareSource === 'dell_online_catalog' && (
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Auto-select Latest:</span>
+                            <span className="font-medium">{autoSelectLatest ? 'Yes' : 'No'}</span>
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {firmwareSource === 'manual' && firmwareUpdates.map((fw, index) => (
+                      <div key={index} className="text-sm flex justify-between pt-2">
+                        <span>{fw.component}</span>
+                        <Badge variant="outline">{fw.version}</Badge>
+                      </div>
+                    ))}
+                  </div>
                 </CardContent>
               </Card>
             )}
