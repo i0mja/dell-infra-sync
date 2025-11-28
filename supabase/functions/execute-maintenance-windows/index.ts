@@ -13,7 +13,12 @@ const MAINTENANCE_TYPE_TO_JOB_TYPE: Record<string, string> = {
   'cluster_update': 'rolling_cluster_update',
   'emergency_patch': 'firmware_update',
   'safety_check': 'cluster_safety_check',
-  'full_update': 'full_server_update'
+  'full_update': 'full_server_update',
+  'firmware_only': 'rolling_cluster_update',
+  'esxi_only': 'esxi_upgrade',
+  'esxi_upgrade': 'esxi_upgrade',
+  'esxi_then_firmware': 'esxi_then_firmware',
+  'firmware_then_esxi': 'firmware_then_esxi'
 };
 
 serve(async (req) => {

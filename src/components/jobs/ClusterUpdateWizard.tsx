@@ -26,10 +26,13 @@ import {
   Server,
   Clock,
   Shield,
-  Settings
+  Settings,
+  Calendar
 } from "lucide-react";
 import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
 import { FirmwareSourceSelector } from "@/components/common/FirmwareSourceSelector";
+import { RecurrenceConfig, getNextExecutionsFromConfig, getHumanReadableSchedule } from "@/lib/cron-utils";
+import { addHours, addDays, format } from "date-fns";
 
 interface ClusterUpdateWizardProps {
   open: boolean;
@@ -60,8 +63,9 @@ const STEPS = [
   { id: 1, name: 'Target Selection', icon: Server },
   { id: 2, name: 'Update Type & Details', icon: Shield },
   { id: 3, name: 'Configuration', icon: Settings },
-  { id: 4, name: 'Review & Confirm', icon: CheckCircle },
-  { id: 5, name: 'Execution', icon: Loader2 },
+  { id: 4, name: 'Timing', icon: Clock },
+  { id: 5, name: 'Review & Confirm', icon: CheckCircle },
+  { id: 6, name: 'Execution', icon: Loader2 },
 ];
 
 export const ClusterUpdateWizard = ({
@@ -132,10 +136,24 @@ export const ClusterUpdateWizard = ({
   const [verifyAfterEach, setVerifyAfterEach] = useState(true);
   const [continueOnFailure, setContinueOnFailure] = useState(false);
   
-  // Step 4: Review
+  // Step 4: Timing
+  const [executionMode, setExecutionMode] = useState<'immediate' | 'scheduled' | 'recurring'>('immediate');
+  const [scheduledStart, setScheduledStart] = useState<Date>(addDays(new Date(), 1));
+  const [scheduledEnd, setScheduledEnd] = useState<Date>(addHours(addDays(new Date(), 1), 4));
+  const [recurrenceConfig, setRecurrenceConfig] = useState<RecurrenceConfig>({
+    enabled: false,
+    interval: 1,
+    unit: 'months',
+    hour: 2,
+    minute: 0,
+    dayOfWeek: 0,
+    dayOfMonth: 1,
+  });
+  
+  // Step 5: Review
   const [confirmed, setConfirmed] = useState(false);
   
-  // Step 5: Execution
+  // Step 6: Execution
   const [jobId, setJobId] = useState<string | null>(null);
 
   const { toast } = useToast();
@@ -351,6 +369,8 @@ export const ClusterUpdateWizard = ({
       case 3:
         return true;
       case 4:
+        return true; // Timing step always allows proceeding
+      case 5:
         return confirmed;
       default:
         return true;
@@ -358,7 +378,7 @@ export const ClusterUpdateWizard = ({
   };
 
   const handleNext = () => {
-    if (currentStep < 5) {
+    if (currentStep < 6) {
       setCurrentStep(currentStep + 1);
     }
   };
@@ -377,88 +397,161 @@ export const ClusterUpdateWizard = ({
 
     setLoading(true);
     try {
-      // Map update type to job type
-      const jobTypeMap = {
-        'firmware_only': 'rolling_cluster_update',
-        'esxi_only': 'esxi_upgrade',
-        'esxi_then_firmware': 'esxi_then_firmware',
-        'firmware_then_esxi': 'firmware_then_esxi'
-      };
-
-      let targetScope: any = {};
-      if (targetType === 'cluster') {
-        targetScope = {
-          type: 'cluster',
-          cluster_name: selectedCluster,
+      if (executionMode === 'immediate') {
+        // Map update type to job type
+        const jobTypeMap = {
+          'firmware_only': 'rolling_cluster_update',
+          'esxi_only': 'esxi_upgrade',
+          'esxi_then_firmware': 'esxi_then_firmware',
+          'firmware_then_esxi': 'firmware_then_esxi'
         };
-      } else if (targetType === 'group') {
-        targetScope = {
-          type: 'group',
-          group_id: selectedGroup,
-          group_name: groups.find(g => g.id === selectedGroup)?.name
-        };
-      } else if (targetType === 'servers') {
-        targetScope = {
-          type: 'servers',
-          server_ids: selectedServerIds
-        };
-      }
 
-      const jobDetails: any = {
-        backup_scp: backupScp,
-        min_healthy_hosts: minHealthyHosts,
-        max_parallel: maxParallel,
-        verify_after_each: verifyAfterEach,
-        continue_on_failure: continueOnFailure
-      };
+        let targetScope: any = {};
+        if (targetType === 'cluster') {
+          targetScope = {
+            type: 'cluster',
+            cluster_name: selectedCluster,
+          };
+        } else if (targetType === 'group') {
+          targetScope = {
+            type: 'group',
+            group_id: selectedGroup,
+            group_name: groups.find(g => g.id === selectedGroup)?.name
+          };
+        } else if (targetType === 'servers') {
+          targetScope = {
+            type: 'servers',
+            server_ids: selectedServerIds
+          };
+        }
 
-      // Add firmware updates if applicable
-      if (updateType !== 'esxi_only') {
-        jobDetails.firmware_source = firmwareSource;
+        const jobDetails: any = {
+          backup_scp: backupScp,
+          min_healthy_hosts: minHealthyHosts,
+          max_parallel: maxParallel,
+          verify_after_each: verifyAfterEach,
+          continue_on_failure: continueOnFailure
+        };
+
+        // Add firmware updates if applicable
+        if (updateType !== 'esxi_only') {
+          jobDetails.firmware_source = firmwareSource;
+          
+          if (firmwareSource === 'dell_online_catalog') {
+            jobDetails.dell_catalog_url = 'https://downloads.dell.com/catalog/Catalog.xml';
+            jobDetails.component_filter = componentFilter;
+            jobDetails.auto_select_latest = autoSelectLatest;
+          } else if (firmwareSource === 'local_repository') {
+            jobDetails.component_filter = componentFilter;
+            jobDetails.auto_select_latest = autoSelectLatest;
+          } else if (firmwareSource === 'manual') {
+            jobDetails.firmware_updates = firmwareUpdates;
+          }
+        }
+
+        // Add ESXi details if applicable
+        if (updateType !== 'firmware_only') {
+          jobDetails.esxi_profile_id = selectedEsxiProfileId;
+          if (esxiCredentialMode === 'stored') {
+            jobDetails.esxi_credential_set_id = esxiCredentialSetId;
+          } else {
+            jobDetails.esxi_ssh_password = esxiSshPassword;
+          }
+        }
+
+        const { data, error } = await supabase
+          .from("jobs")
+          .insert({
+            job_type: jobTypeMap[updateType] as "rolling_cluster_update" | "esxi_upgrade" | "esxi_then_firmware" | "firmware_then_esxi",
+            created_by: user.id,
+            target_scope: targetScope,
+            details: jobDetails,
+            status: 'pending'
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        setJobId(data.id);
+        setCurrentStep(6);
         
-        if (firmwareSource === 'dell_online_catalog') {
-          jobDetails.dell_catalog_url = 'https://downloads.dell.com/catalog/Catalog.xml';
-          jobDetails.component_filter = componentFilter;
-          jobDetails.auto_select_latest = autoSelectLatest;
-        } else if (firmwareSource === 'local_repository') {
-          jobDetails.component_filter = componentFilter;
-          jobDetails.auto_select_latest = autoSelectLatest;
-        } else if (firmwareSource === 'manual') {
-          jobDetails.firmware_updates = firmwareUpdates;
+        toast({
+          title: "Update workflow started",
+          description: "The update has been initiated.",
+        });
+      } else {
+        // Create maintenance window instead of job
+        const maintenanceDetails: any = {
+          // Target info
+          target_type: targetType,
+          cluster_name: selectedCluster,
+          group_id: selectedGroup,
+          server_ids: selectedServerIds,
+          
+          // Configuration
+          backup_scp: backupScp,
+          min_healthy_hosts: minHealthyHosts,
+          max_parallel: maxParallel,
+          verify_after_each: verifyAfterEach,
+          continue_on_failure: continueOnFailure,
+        };
+
+        // Add firmware settings if applicable
+        if (updateType !== 'esxi_only') {
+          maintenanceDetails.firmware_source = firmwareSource;
+          maintenanceDetails.component_filter = componentFilter;
+          maintenanceDetails.auto_select_latest = autoSelectLatest;
+          if (firmwareSource === 'manual') {
+            maintenanceDetails.firmware_updates = firmwareUpdates;
+          }
         }
-      }
 
-      // Add ESXi details if applicable
-      if (updateType !== 'firmware_only') {
-        jobDetails.esxi_profile_id = selectedEsxiProfileId;
-        if (esxiCredentialMode === 'stored') {
-          jobDetails.esxi_credential_set_id = esxiCredentialSetId;
-        } else {
-          jobDetails.esxi_ssh_password = esxiSshPassword;
+        // Add ESXi settings if applicable
+        if (updateType !== 'firmware_only') {
+          maintenanceDetails.esxi_profile_id = selectedEsxiProfileId;
+          maintenanceDetails.esxi_credential_set_id = esxiCredentialSetId;
+          maintenanceDetails.esxi_credential_mode = esxiCredentialMode;
+          if (esxiCredentialMode === 'manual') {
+            maintenanceDetails.esxi_ssh_password = esxiSshPassword;
+          }
         }
+
+        // Add recurrence config if recurring
+        if (executionMode === 'recurring') {
+          maintenanceDetails.recurrence_config = { ...recurrenceConfig, enabled: true };
+        }
+
+        const { data, error } = await supabase
+          .from("maintenance_windows")
+          .insert({
+            title: `${updateType === 'firmware_only' ? 'Firmware' : updateType === 'esxi_only' ? 'ESXi' : 'Combined'} Update - ${targetInfo?.name || 'Selected Servers'}`,
+            description: `Scheduled update via Update Wizard`,
+            maintenance_type: updateType,
+            planned_start: scheduledStart.toISOString(),
+            planned_end: scheduledEnd.toISOString(),
+            recurrence_enabled: executionMode === 'recurring',
+            auto_execute: true,
+            details: maintenanceDetails,
+            cluster_ids: targetType === 'cluster' ? [selectedCluster] : null,
+            server_group_ids: targetType === 'group' ? [selectedGroup] : null,
+            created_by: user.id,
+            status: 'planned'
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        toast({
+          title: executionMode === 'scheduled' ? "Update scheduled" : "Recurring update scheduled",
+          description: executionMode === 'scheduled' 
+            ? `Update scheduled for ${format(scheduledStart, 'PPp')}`
+            : `Update will run ${getHumanReadableSchedule(recurrenceConfig)}`,
+        });
+
+        onOpenChange(false);
       }
-
-      const { data, error } = await supabase
-        .from("jobs")
-        .insert({
-          job_type: jobTypeMap[updateType] as "rolling_cluster_update" | "esxi_upgrade" | "esxi_then_firmware" | "firmware_then_esxi",
-          created_by: user.id,
-          target_scope: targetScope,
-          details: jobDetails,
-          status: 'pending'
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      setJobId(data.id);
-      setCurrentStep(5);
-      
-      toast({
-        title: "Update workflow started",
-        description: "The update has been initiated.",
-      });
     } catch (error: any) {
       toast({
         title: "Error starting update",
@@ -894,6 +987,224 @@ export const ClusterUpdateWizard = ({
         );
 
       case 4:
+        const presets = [
+          { label: 'Daily', interval: 1, unit: 'days' as const },
+          { label: 'Weekly', interval: 1, unit: 'weeks' as const },
+          { label: 'Monthly', interval: 1, unit: 'months' as const },
+          { label: 'Quarterly', interval: 3, unit: 'months' as const },
+          { label: 'Yearly', interval: 1, unit: 'years' as const },
+          { label: 'Every 2 Years', interval: 2, unit: 'years' as const },
+          { label: 'Every 5 Years', interval: 5, unit: 'years' as const },
+        ];
+        
+        return (
+          <div className="space-y-6">
+            <div>
+              <Label className="mb-3 block">When should this update run?</Label>
+              <RadioGroup value={executionMode} onValueChange={(v: any) => setExecutionMode(v)}>
+                <Card className={executionMode === 'immediate' ? 'border-primary' : ''}>
+                  <CardContent className="pt-6">
+                    <div className="flex items-start space-x-2">
+                      <RadioGroupItem value="immediate" id="immediate" className="mt-1" />
+                      <div className="flex-1">
+                        <Label htmlFor="immediate" className="cursor-pointer font-semibold">
+                          Run Immediately
+                        </Label>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Start the update as soon as you confirm
+                        </p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+                
+                <Card className={executionMode === 'scheduled' ? 'border-primary' : ''}>
+                  <CardContent className="pt-6 space-y-4">
+                    <div className="flex items-start space-x-2">
+                      <RadioGroupItem value="scheduled" id="scheduled" className="mt-1" />
+                      <div className="flex-1">
+                        <Label htmlFor="scheduled" className="cursor-pointer font-semibold">
+                          Schedule for Later
+                        </Label>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Pick a specific date and time
+                        </p>
+                      </div>
+                    </div>
+                    
+                    {executionMode === 'scheduled' && (
+                      <div className="ml-6 space-y-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-2">
+                            <Label htmlFor="start-date">Start Date & Time</Label>
+                            <Input
+                              id="start-date"
+                              type="datetime-local"
+                              value={format(scheduledStart, "yyyy-MM-dd'T'HH:mm")}
+                              onChange={(e) => setScheduledStart(new Date(e.target.value))}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="end-date">End Date & Time</Label>
+                            <Input
+                              id="end-date"
+                              type="datetime-local"
+                              value={format(scheduledEnd, "yyyy-MM-dd'T'HH:mm")}
+                              onChange={(e) => setScheduledEnd(new Date(e.target.value))}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+                
+                <Card className={executionMode === 'recurring' ? 'border-primary' : ''}>
+                  <CardContent className="pt-6 space-y-4">
+                    <div className="flex items-start space-x-2">
+                      <RadioGroupItem value="recurring" id="recurring" className="mt-1" />
+                      <div className="flex-1">
+                        <Label htmlFor="recurring" className="cursor-pointer font-semibold">
+                          Recurring Schedule
+                        </Label>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Run on a regular schedule (daily, weekly, monthly, yearly, etc.)
+                        </p>
+                      </div>
+                    </div>
+                    
+                    {executionMode === 'recurring' && (
+                      <div className="ml-6 space-y-4">
+                        <div>
+                          <Label className="mb-2 block text-sm">Quick Presets</Label>
+                          <div className="flex flex-wrap gap-2">
+                            {presets.map((preset) => (
+                              <Button
+                                key={preset.label}
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setRecurrenceConfig({ 
+                                  ...recurrenceConfig, 
+                                  interval: preset.interval, 
+                                  unit: preset.unit 
+                                })}
+                              >
+                                {preset.label}
+                              </Button>
+                            ))}
+                          </div>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-2">
+                            <Label htmlFor="interval">Interval</Label>
+                            <Input
+                              id="interval"
+                              type="number"
+                              min={1}
+                              max={recurrenceConfig.unit === 'years' ? 10 : recurrenceConfig.unit === 'months' ? 60 : 365}
+                              value={recurrenceConfig.interval}
+                              onChange={(e) => setRecurrenceConfig({ 
+                                ...recurrenceConfig, 
+                                interval: parseInt(e.target.value) || 1 
+                              })}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="unit">Unit</Label>
+                            <Select 
+                              value={recurrenceConfig.unit} 
+                              onValueChange={(v: any) => setRecurrenceConfig({ ...recurrenceConfig, unit: v })}
+                            >
+                              <SelectTrigger id="unit">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="hours">Hours</SelectItem>
+                                <SelectItem value="days">Days</SelectItem>
+                                <SelectItem value="weeks">Weeks</SelectItem>
+                                <SelectItem value="months">Months</SelectItem>
+                                <SelectItem value="years">Years</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-2">
+                            <Label htmlFor="hour">Hour (0-23)</Label>
+                            <Input
+                              id="hour"
+                              type="number"
+                              min={0}
+                              max={23}
+                              value={recurrenceConfig.hour}
+                              onChange={(e) => setRecurrenceConfig({ 
+                                ...recurrenceConfig, 
+                                hour: parseInt(e.target.value) || 0 
+                              })}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="minute">Minute (0-59)</Label>
+                            <Input
+                              id="minute"
+                              type="number"
+                              min={0}
+                              max={59}
+                              value={recurrenceConfig.minute}
+                              onChange={(e) => setRecurrenceConfig({ 
+                                ...recurrenceConfig, 
+                                minute: parseInt(e.target.value) || 0 
+                              })}
+                            />
+                          </div>
+                        </div>
+                        
+                        {(recurrenceConfig.unit === 'weeks' || recurrenceConfig.unit === 'months' || recurrenceConfig.unit === 'years') && (
+                          <div className="space-y-2">
+                            <Label htmlFor="dayOfMonth">Day of Month (1-31)</Label>
+                            <Input
+                              id="dayOfMonth"
+                              type="number"
+                              min={1}
+                              max={31}
+                              value={recurrenceConfig.dayOfMonth}
+                              onChange={(e) => setRecurrenceConfig({ 
+                                ...recurrenceConfig, 
+                                dayOfMonth: parseInt(e.target.value) || 1 
+                              })}
+                            />
+                          </div>
+                        )}
+                        
+                        <Card className="bg-muted/50">
+                          <CardHeader>
+                            <CardTitle className="text-sm">Schedule Preview</CardTitle>
+                          </CardHeader>
+                          <CardContent className="space-y-2">
+                            <p className="text-sm font-medium">
+                              {getHumanReadableSchedule({ ...recurrenceConfig, enabled: true })}
+                            </p>
+                            <div className="text-xs space-y-1 text-muted-foreground">
+                              <p className="font-semibold">Next 5 scheduled runs:</p>
+                              {getNextExecutionsFromConfig({ ...recurrenceConfig, enabled: true }, new Date(), 5).map((date, i) => (
+                                <p key={i}>• {format(date, 'PPp')}</p>
+                              ))}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </RadioGroup>
+            </div>
+          </div>
+        );
+
+      case 5:
         return (
           <div className="space-y-4">
             <Card>
@@ -988,6 +1299,52 @@ export const ClusterUpdateWizard = ({
               </CardContent>
             </Card>
 
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Calendar className="h-4 w-4" />
+                  Timing
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm space-y-2">
+                {executionMode === 'immediate' && (
+                  <p className="text-muted-foreground">This update will start as soon as you confirm</p>
+                )}
+                {executionMode === 'scheduled' && (
+                  <>
+                    <div className="flex justify-between">
+                      <span>Start Time:</span>
+                      <Badge variant="outline">{format(scheduledStart, 'PPp')}</Badge>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>End Time:</span>
+                      <Badge variant="outline">{format(scheduledEnd, 'PPp')}</Badge>
+                    </div>
+                  </>
+                )}
+                {executionMode === 'recurring' && (
+                  <>
+                    <div className="flex justify-between items-start">
+                      <span>Schedule:</span>
+                      <span className="text-right font-medium max-w-[60%]">
+                        {getHumanReadableSchedule({ ...recurrenceConfig, enabled: true })}
+                      </span>
+                    </div>
+                    <div className="pt-2">
+                      <span className="text-muted-foreground text-xs">Next runs:</span>
+                      <div className="mt-1 space-y-1">
+                        {getNextExecutionsFromConfig({ ...recurrenceConfig, enabled: true }, new Date(), 3).map((date, i) => (
+                          <div key={i} className="text-xs text-muted-foreground">
+                            • {format(date, 'PPp')}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
             <Alert>
               <AlertTriangle className="h-4 w-4" />
               <AlertTitle>Warning</AlertTitle>
@@ -1007,7 +1364,7 @@ export const ClusterUpdateWizard = ({
           </div>
         );
 
-      case 5:
+      case 6:
         return (
           <div className="space-y-4">
             {jobId && (
@@ -1064,24 +1421,24 @@ export const ClusterUpdateWizard = ({
           <Button
             variant="outline"
             onClick={handleBack}
-            disabled={currentStep === 1 || currentStep === 5}
+            disabled={currentStep === 1 || currentStep === 6}
           >
             Back
           </Button>
-          {currentStep < 4 ? (
+          {currentStep < 5 ? (
             <Button 
               onClick={handleNext}
               disabled={!canProceedToNextStep()}
             >
               Next
             </Button>
-          ) : currentStep === 4 ? (
+          ) : currentStep === 5 ? (
             <Button
               onClick={handleExecute}
               disabled={!canProceedToNextStep() || loading}
             >
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Start Update
+              {executionMode === 'immediate' ? 'Start Update' : 'Schedule Update'}
             </Button>
           ) : (
             <Button onClick={() => onOpenChange(false)}>
