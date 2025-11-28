@@ -114,62 +114,7 @@ export function DatastoresTable({ datastores, selectedDatastoreId, onDatastoreCl
   }
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Consolidated Toolbar: Filters + Actions */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b bg-muted/30">
-        {/* Filters */}
-        <div className="relative w-48">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Search datastores..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-9 h-9" />
-        </div>
-
-        <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="w-[120px] h-9"><SelectValue placeholder="Type" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Types</SelectItem>
-            {types.map((type) => (<SelectItem key={type} value={type}>{type}</SelectItem>))}
-          </SelectContent>
-        </Select>
-
-        <Select value={accessFilter} onValueChange={setAccessFilter}>
-          <SelectTrigger className="w-[120px] h-9"><SelectValue placeholder="Access" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All</SelectItem>
-            <SelectItem value="accessible">Accessible</SelectItem>
-            <SelectItem value="inaccessible">Inaccessible</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <Select value={capacityFilter} onValueChange={setCapacityFilter}>
-          <SelectTrigger className="w-[120px] h-9"><SelectValue placeholder="Capacity" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All</SelectItem>
-            <SelectItem value="warning">≥80%</SelectItem>
-            <SelectItem value="critical">≥90%</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <div className="w-px h-6 bg-border mx-1" />
-
-        {/* Actions */}
-        <Checkbox checked={selectedDatastores.size === filteredDatastores.length && filteredDatastores.length > 0} onCheckedChange={toggleAllDatastores} />
-        <span className="text-xs text-muted-foreground">{selectedDatastores.size > 0 ? `${selectedDatastores.size} selected` : "Select all"}</span>
-
-        <div className="flex-1" />
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild><Button variant="outline" size="sm"><Columns3 className="mr-1 h-4 w-4" />Columns</Button></DropdownMenuTrigger>
-          <DropdownMenuContent className="w-56 bg-background" align="end">
-            <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel><DropdownMenuSeparator />
-            {["name", "type", "capacity", "free", "usage", "hosts", "vms", "status"].map((col) => (
-              <DropdownMenuCheckboxItem key={col} checked={isColumnVisible(col)} onCheckedChange={() => toggleColumn(col)}>{col.charAt(0).toUpperCase() + col.slice(1)}</DropdownMenuCheckboxItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <Button variant="outline" size="sm" onClick={handleExportCSV}><Download className="mr-1 h-4 w-4" />Export</Button>
-      </div>
-
+    <div className="flex flex-col h-full bg-background">
       <div className="overflow-hidden flex flex-col flex-1">
         <div className="overflow-auto flex-1">
           <Table>
