@@ -153,6 +153,11 @@ export const ClusterUpdateWizard = ({
     }
   }, [targetType, selectedCluster, selectedGroup, selectedServerIds]);
 
+  // Reset safety check when target selection changes
+  useEffect(() => {
+    setSafetyCheckPassed(false);
+  }, [targetType, selectedCluster, selectedGroup, selectedServerIds]);
+
   const fetchTargets = async () => {
     if (targetType === 'cluster') {
       const { data } = await supabase
