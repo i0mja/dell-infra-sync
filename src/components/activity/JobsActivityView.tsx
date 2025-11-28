@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useJobsWithProgress } from "@/hooks/useJobsWithProgress";
 import { JobsTable } from "./JobsTable";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface Job {
   id: string;
@@ -22,7 +23,12 @@ interface Job {
   averageProgress?: number;
 }
 
-export function JobsActivityView() {
+interface JobsActivityViewProps {
+  activeJobs: Job[];
+  realtimeStatus: 'connected' | 'disconnected' | 'connecting';
+}
+
+export function JobsActivityView({ activeJobs, realtimeStatus }: JobsActivityViewProps) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -102,18 +108,54 @@ export function JobsActivityView() {
   }
 
   return (
-    <JobsTable
-      jobs={filteredJobs}
-      searchTerm={searchTerm}
-      onSearchChange={setSearchTerm}
-      statusFilter={statusFilter}
-      onStatusFilterChange={setStatusFilter}
-      jobTypeFilter={jobTypeFilter}
-      onJobTypeFilterChange={setJobTypeFilter}
-      timeRangeFilter={timeRangeFilter}
-      onTimeRangeFilterChange={setTimeRangeFilter}
-      onJobClick={handleJobClick}
-      expandedJobId={expandedJobId}
-    />
+    <div className="flex flex-col h-full border rounded-lg shadow-sm">
+      {/* Toolbar row with tabs, active jobs badge, filters, and live status */}
+      <div className="flex items-center gap-2 px-4 py-2 border-b flex-wrap">
+        <TabsList>
+          <TabsTrigger value="operations">Operations</TabsTrigger>
+          <TabsTrigger value="api-log">API Log</TabsTrigger>
+        </TabsList>
+
+        {activeJobs.length > 0 && (
+          <>
+            <div className="w-px h-6 bg-border mx-1" />
+            <div className="inline-flex items-center gap-2 px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 text-xs">
+              <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
+              {activeJobs.length} running
+            </div>
+          </>
+        )}
+
+        <div className="flex-1" />
+
+        <div
+          className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${
+            realtimeStatus === 'connected'
+              ? 'bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/30'
+              : 'bg-amber-500/10 text-amber-700 ring-1 ring-amber-500/30'
+          }`}
+        >
+          <span className="h-2 w-2 rounded-full bg-current" />
+          {realtimeStatus === 'connected' ? 'Live' : 'Paused'}
+        </div>
+      </div>
+
+      {/* Jobs table fills remaining space */}
+      <div className="flex-1 overflow-hidden">
+        <JobsTable
+          jobs={filteredJobs}
+          searchTerm={searchTerm}
+          onSearchChange={setSearchTerm}
+          statusFilter={statusFilter}
+          onStatusFilterChange={setStatusFilter}
+          jobTypeFilter={jobTypeFilter}
+          onJobTypeFilterChange={setJobTypeFilter}
+          timeRangeFilter={timeRangeFilter}
+          onTimeRangeFilterChange={setTimeRangeFilter}
+          onJobClick={handleJobClick}
+          expandedJobId={expandedJobId}
+        />
+      </div>
+    </div>
   );
 }

@@ -346,67 +346,32 @@ export default function ActivityMonitor() {
         onExportJSON={handleExportJSON}
       />
 
-      <ActiveJobsBanner />
-
       <div className="flex-1 overflow-hidden">
-        <Tabs defaultValue="operations" className="flex flex-col h-full">
-          {/* Tabs selector */}
-          <div className="px-4 py-2 flex items-center gap-3">
-            <TabsList>
-              <TabsTrigger value="operations">Operations</TabsTrigger>
-              <TabsTrigger value="api-log">API Log</TabsTrigger>
-            </TabsList>
-            
-            <div className="flex-1" />
-            
-            <div
-              className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${
-                realtimeStatus === 'connected'
-                  ? 'bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/30'
-                  : 'bg-amber-500/10 text-amber-700 ring-1 ring-amber-500/30'
-              }`}
-            >
-              <span className="h-2 w-2 rounded-full bg-current" />
-              {realtimeStatus === 'connected' ? 'Live' : 'Paused'}
-            </div>
-          </div>
-
-          {/* Content area */}
-          <TabsContent value="operations" className="flex-1 overflow-hidden mt-0">
-            <JobsActivityView />
+        <Tabs defaultValue="operations" className="h-full">
+          <TabsContent value="operations" className="h-full mt-0">
+            <JobsActivityView 
+              activeJobs={activeJobs}
+              realtimeStatus={realtimeStatus}
+            />
           </TabsContent>
 
-          <TabsContent value="api-log" className="flex-1 overflow-hidden mt-0">
-            <div className="h-full flex flex-col border rounded-lg shadow-sm bg-card">
-              {/* Integrated filter toolbar */}
-              <div className="px-4 py-3 border-b">
-                <FilterToolbar
-                  searchTerm={searchTerm}
-                  onSearchChange={setSearchTerm}
-                  operationType={operationTypeFilter}
-                  onOperationTypeChange={setOperationTypeFilter}
-                  selectedServer={serverFilter}
-                  onServerChange={setServerFilter}
-                  commandType={commandTypeFilter}
-                  onCommandTypeChange={setCommandTypeFilter}
-                  status={statusFilter}
-                  onStatusChange={setStatusFilter}
-                  source={commandSource}
-                  onSourceChange={setCommandSource}
-                  timeRange={timeRangeFilter}
-                  onTimeRangeChange={setTimeRangeFilter}
-                  servers={servers || []}
-                />
+          <TabsContent value="api-log" className="h-full mt-0">
+            <div className="flex flex-col h-full border rounded-lg shadow-sm">
+              <div className="flex items-center gap-2 px-4 py-2 border-b flex-wrap">
+                <TabsList>
+                  <TabsTrigger value="operations">Operations</TabsTrigger>
+                  <TabsTrigger value="api-log">API Log</TabsTrigger>
+                </TabsList>
+                <div className="flex-1" />
+                <div className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${
+                  realtimeStatus === 'connected' ? 'bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/30' : 'bg-amber-500/10 text-amber-700 ring-1 ring-amber-500/30'
+                }`}>
+                  <span className="h-2 w-2 rounded-full bg-current" />
+                  {realtimeStatus === 'connected' ? 'Live' : 'Paused'}
+                </div>
               </div>
-
-              {/* Commands table - fills remaining space */}
-              <div className="flex-1 overflow-auto p-4">
-                <CommandsTable
-                  commands={filteredCommands}
-                  selectedId={selectedCommand?.id}
-                  onRowClick={handleRowClick}
-                  isLive={realtimeStatus === 'connected'}
-                />
+              <div className="flex-1 overflow-auto">
+                <CommandsTable commands={filteredCommands} selectedId={selectedCommand?.id} onRowClick={handleRowClick} isLive={realtimeStatus === 'connected'} className="border-0 rounded-none" />
               </div>
             </div>
           </TabsContent>
