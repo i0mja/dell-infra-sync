@@ -2703,7 +2703,21 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
         # Use provided settings or fall back to environment variables
         host = settings.get('host') if settings else VCENTER_HOST
         user = settings.get('username') if settings else VCENTER_USER
-        pwd = settings.get('password') if settings else VCENTER_PASSWORD
+        
+        # Handle encrypted passwords from database
+        pwd = None
+        if settings:
+            # First try plain password (for backward compatibility)
+            pwd = settings.get('password')
+            # If no plain password, decrypt encrypted password
+            if not pwd and settings.get('password_encrypted'):
+                self.log("Decrypting vCenter password...")
+                pwd = self.decrypt_password(settings.get('password_encrypted'))
+                if not pwd:
+                    raise Exception("Failed to decrypt vCenter password")
+        else:
+            pwd = VCENTER_PASSWORD
+        
         verify_ssl = settings.get('verify_ssl', VERIFY_SSL) if settings else VERIFY_SSL
         
         # Log connection attempt BEFORE trying to connect
