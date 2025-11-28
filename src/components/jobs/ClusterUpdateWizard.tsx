@@ -547,7 +547,7 @@ export const ClusterUpdateWizard = ({
           title: executionMode === 'scheduled' ? "Update scheduled" : "Recurring update scheduled",
           description: executionMode === 'scheduled' 
             ? `Update scheduled for ${format(scheduledStart, 'PPp')}`
-            : `Update will run ${getHumanReadableSchedule(recurrenceConfig)}`,
+            : `Update will run ${getHumanReadableSchedule({ ...recurrenceConfig, enabled: true })}`,
         });
 
         onOpenChange(false);
