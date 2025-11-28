@@ -2156,6 +2156,64 @@ export type Database = {
           },
         ]
       }
+      vcenter_datastore_hosts: {
+        Row: {
+          accessible: boolean | null
+          created_at: string | null
+          datastore_id: string
+          host_id: string
+          id: string
+          last_sync: string | null
+          mount_path: string | null
+          read_only: boolean | null
+          source_vcenter_id: string | null
+        }
+        Insert: {
+          accessible?: boolean | null
+          created_at?: string | null
+          datastore_id: string
+          host_id: string
+          id?: string
+          last_sync?: string | null
+          mount_path?: string | null
+          read_only?: boolean | null
+          source_vcenter_id?: string | null
+        }
+        Update: {
+          accessible?: boolean | null
+          created_at?: string | null
+          datastore_id?: string
+          host_id?: string
+          id?: string
+          last_sync?: string | null
+          mount_path?: string | null
+          read_only?: boolean | null
+          source_vcenter_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vcenter_datastore_hosts_datastore_id_fkey"
+            columns: ["datastore_id"]
+            isOneToOne: false
+            referencedRelation: "vcenter_datastores"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vcenter_datastore_hosts_host_id_fkey"
+            columns: ["host_id"]
+            isOneToOne: false
+            referencedRelation: "vcenter_hosts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vcenter_datastore_hosts_source_vcenter_id_fkey"
+            columns: ["source_vcenter_id"]
+            isOneToOne: false
+            referencedRelation: "vcenters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vcenter_datastores: {
         Row: {
           accessible: boolean | null

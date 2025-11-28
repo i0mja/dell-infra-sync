@@ -4,9 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Loader2, FolderOpen, FileArchive } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Loader2, FolderOpen, FileArchive, Filter, AlertTriangle } from "lucide-react";
 import { useVCenters } from "@/hooks/useVCenters";
-import { useVCenterData } from "@/hooks/useVCenterData";
+import { useAccessibleDatastores } from "@/hooks/useAccessibleDatastores";
 import { useDatastoreBrowser, DatastoreFile } from "@/hooks/useDatastoreBrowser";
 import { formatBytes } from "@/lib/utils";
 
@@ -15,6 +16,7 @@ interface DatastoreBrowserDialogProps {
   onOpenChange: (open: boolean) => void;
   onFileSelect: (file: DatastoreFile, datastoreName: string) => void;
   filePatterns?: string[];
+  targetCluster?: string;
 }
 
 export function DatastoreBrowserDialog({
@@ -22,14 +24,22 @@ export function DatastoreBrowserDialog({
   onOpenChange,
   onFileSelect,
   filePatterns = ["*.zip", "*.iso"],
+  targetCluster,
 }: DatastoreBrowserDialogProps) {
   const { vcenters } = useVCenters();
   const [selectedVCenterId, setSelectedVCenterId] = useState<string>("");
   const [selectedDatastoreName, setSelectedDatastoreName] = useState<string>("");
   const [selectedFile, setSelectedFile] = useState<DatastoreFile | null>(null);
 
-  const { datastores } = useVCenterData(selectedVCenterId);
+  const { data: datastores = [], isLoading: loadingDatastores } = useAccessibleDatastores(
+    selectedVCenterId,
+    targetCluster
+  );
   const { browsing, files, browseDatastore } = useDatastoreBrowser();
+
+  const noAccessibleDatastores = targetCluster && 
+    datastores.length === 0 && 
+    !loadingDatastores;
 
   // Auto-select first vCenter if only one
   useEffect(() => {
@@ -60,6 +70,26 @@ export function DatastoreBrowserDialog({
         </DialogHeader>
 
         <div className="space-y-4">
+          {/* Cluster Filter Indicator */}
+          {targetCluster && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 p-2 rounded-lg">
+              <Filter className="h-4 w-4" />
+              <span>
+                Showing datastores accessible by all hosts in: <strong>{targetCluster}</strong>
+              </span>
+            </div>
+          )}
+
+          {/* Warning if no accessible datastores */}
+          {noAccessibleDatastores && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertDescription>
+                No datastores are accessible by all hosts in cluster "{targetCluster}". 
+                You may need to upload the ESXi bundle to a shared datastore or use HTTP delivery.
+              </AlertDescription>
+            </Alert>
+          )}
           {/* vCenter Selection */}
           {vcenters.length > 1 && (
             <div className="space-y-2">

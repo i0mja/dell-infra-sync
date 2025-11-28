@@ -3340,7 +3340,15 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             total_datastores = len(container.view)
             self.log(f"Found {total_datastores} datastores in vCenter")
             
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
             synced = 0
+            host_mount_synced = 0
+            
             for ds in container.view:
                 try:
                     summary = ds.summary
@@ -3362,25 +3370,77 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     # Upsert datastore
                     response = requests.post(
                         f"{DSM_URL}/rest/v1/vcenter_datastores?on_conflict=vcenter_id",
-                        headers={
-                            'apikey': SERVICE_ROLE_KEY,
-                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
-                            'Content-Type': 'application/json',
-                            'Prefer': 'resolution=merge-duplicates'
-                        },
+                        headers={**headers, 'Prefer': 'resolution=merge-duplicates'},
                         json=datastore_data,
-                        verify=VERIFY_SSL
+                        verify=VERIFY_SSL,
+                        timeout=10
                     )
                     
                     if response.status_code in [200, 201]:
                         synced += 1
+                        
+                        # Get datastore ID from response or DB
+                        ds_resp = requests.get(
+                            f"{DSM_URL}/rest/v1/vcenter_datastores?vcenter_id=eq.{ds._moId}&select=id",
+                            headers=headers,
+                            verify=VERIFY_SSL,
+                            timeout=10
+                        )
+                        
+                        if ds_resp.status_code == 200 and ds_resp.json():
+                            datastore_db_id = ds_resp.json()[0]['id']
+                            
+                            # Sync host-datastore relationships
+                            if hasattr(ds, 'host') and ds.host:
+                                for mount_info in ds.host:
+                                    try:
+                                        host = mount_info.key
+                                        mount = mount_info.mountInfo
+                                        host_vcenter_id = str(host._moId)
+                                        
+                                        # Find matching host in DB
+                                        host_resp = requests.get(
+                                            f"{DSM_URL}/rest/v1/vcenter_hosts?vcenter_id=eq.{host_vcenter_id}&select=id",
+                                            headers=headers,
+                                            verify=VERIFY_SSL,
+                                            timeout=10
+                                        )
+                                        
+                                        if host_resp.status_code == 200 and host_resp.json():
+                                            host_db_id = host_resp.json()[0]['id']
+                                            
+                                            mount_data = {
+                                                'datastore_id': datastore_db_id,
+                                                'host_id': host_db_id,
+                                                'source_vcenter_id': source_vcenter_id,
+                                                'mount_path': mount.path if hasattr(mount, 'path') else None,
+                                                'accessible': mount.accessible if hasattr(mount, 'accessible') else True,
+                                                'read_only': mount.accessMode != 'readWrite' if hasattr(mount, 'accessMode') else False,
+                                                'last_sync': datetime.now().isoformat()
+                                            }
+                                            
+                                            # Upsert host-datastore relationship
+                                            mount_resp = requests.post(
+                                                f"{DSM_URL}/rest/v1/vcenter_datastore_hosts?on_conflict=datastore_id,host_id",
+                                                headers={**headers, 'Prefer': 'resolution=merge-duplicates'},
+                                                json=mount_data,
+                                                verify=VERIFY_SSL,
+                                                timeout=10
+                                            )
+                                            
+                                            if mount_resp.status_code in [200, 201]:
+                                                host_mount_synced += 1
+                                    
+                                    except Exception as e:
+                                        self.log(f"    Error syncing host mount: {e}", "WARNING")
                     
                 except Exception as e:
                     self.log(f"  Error syncing datastore {ds.name}: {e}", "WARNING")
             
             container.Destroy()
             self.log(f"  Synced {synced}/{total_datastores} datastores")
-            return {'synced': synced, 'total': total_datastores}
+            self.log(f"  Synced {host_mount_synced} host-datastore relationships")
+            return {'synced': synced, 'total': total_datastores, 'host_mounts': host_mount_synced}
             
         except Exception as e:
             self.log(f"Failed to sync datastores: {e}", "ERROR")
