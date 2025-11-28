@@ -5,8 +5,6 @@ import { useActiveJobs } from "@/hooks/useActiveJobs";
 import { useOptimalWindows } from "@/hooks/useOptimalWindows";
 import { CompactStatsBar } from "@/components/maintenance/CompactStatsBar";
 import { OperationsTable } from "@/components/maintenance/OperationsTable";
-import { OptimalWindowBanner } from "@/components/maintenance/OptimalWindowBanner";
-import { QuickActionsPanel } from "@/components/maintenance/QuickActionsPanel";
 import { ClusterSafetyTrendChart } from "@/components/maintenance/ClusterSafetyTrendChart";
 import { ScheduleMaintenanceDialog } from "@/components/maintenance/dialogs/ScheduleMaintenanceDialog";
 
@@ -242,6 +240,54 @@ export default function MaintenancePlanner() {
 
   const failedJobs = jobs.filter(j => j.status === 'failed').length;
 
+  // Quick action handlers for OperationsTable
+  const runSafetyCheck = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+
+      const { error } = await supabase.functions.invoke('create-job', {
+        body: {
+          job_type: 'cluster_safety_check',
+          created_by: user.id,
+          target_scope: { type: 'all_clusters', clusters }
+        }
+      });
+
+      if (error) throw error;
+      toast({ title: "Safety check started", description: "Checking all clusters..." });
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
+  const syncVCenters = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+
+      const { error } = await supabase.functions.invoke('create-job', {
+        body: {
+          job_type: 'vcenter_sync',
+          created_by: user.id,
+          target_scope: { type: 'all' }
+        }
+      });
+
+      if (error) throw error;
+      toast({ title: "vCenter sync started" });
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
+  const runDiscovery = async () => {
+    toast({ 
+      title: "Discovery scan", 
+      description: "Please configure discovery settings in the Servers page" 
+    });
+  };
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Compact Stats Bar */}
@@ -256,37 +302,24 @@ export default function MaintenancePlanner() {
         onUpdateWizard={() => setUpdateWizardOpen(true)}
       />
 
-      {/* Main Content: Single Column Layout */}
-      <div className="flex-1 overflow-auto px-4 pb-6 pt-4">
-        <div className="flex flex-col gap-4 max-w-[1600px] mx-auto">
-          {/* Optimal Window Banner */}
-          {optimalWindows.length > 0 && (
-            <OptimalWindowBanner 
-              window={optimalWindows[0]} 
-              onSchedule={() => handleScheduleOptimal(optimalWindows[0])}
-            />
-          )}
-
-          {/* Quick Actions Panel */}
-          <QuickActionsPanel 
-            clusters={clusters}
-            onUpdateWizard={() => setUpdateWizardOpen(true)}
-          />
-
-          {/* Operations Table - Full Width */}
-          <div className="rounded-xl border bg-card shadow-sm">
-            <OperationsTable
-              operations={operations}
-              clusters={clusters}
-              serverGroups={serverGroups}
-              onRowClick={handleOperationClick}
-              onCancel={handleCancelJob}
-              onRetry={handleRetryJob}
-              onDelete={handleDeleteWindow}
-              canManage={canManage}
-            />
-          </div>
-        </div>
+      {/* Main Content: Full-height Table */}
+      <div className="flex-1 overflow-hidden">
+        <OperationsTable
+          operations={operations}
+          clusters={clusters}
+          serverGroups={serverGroups}
+          onRowClick={handleOperationClick}
+          onCancel={handleCancelJob}
+          onRetry={handleRetryJob}
+          onDelete={handleDeleteWindow}
+          canManage={canManage}
+          optimalWindow={optimalWindows[0] || null}
+          onScheduleOptimal={() => optimalWindows[0] && handleScheduleOptimal(optimalWindows[0])}
+          onRunSafetyCheck={runSafetyCheck}
+          onSyncVCenters={syncVCenters}
+          onRunDiscovery={runDiscovery}
+          onUpdateWizard={() => setUpdateWizardOpen(true)}
+        />
       </div>
 
       {/* Bottom: Collapsible Trend Chart */}

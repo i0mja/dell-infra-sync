@@ -20,7 +20,11 @@ import {
   ChevronDown,
   ChevronRight,
   Server,
-  HardDrive
+  HardDrive,
+  Sparkles,
+  Shield,
+  RefreshCw,
+  Search
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -104,6 +108,15 @@ interface Operation {
   data: Job | MaintenanceWindow;
 }
 
+interface OptimalWindow {
+  start: string;
+  end: string;
+  duration_hours: number;
+  confidence: 'high' | 'medium' | 'low';
+  affected_clusters: string[];
+  all_clusters_safe: boolean;
+}
+
 interface OperationsTableProps {
   operations: Operation[];
   clusters: string[];
@@ -113,6 +126,12 @@ interface OperationsTableProps {
   onRetry?: (job: Job) => void;
   onDelete?: (windowId: string) => void;
   canManage: boolean;
+  optimalWindow?: OptimalWindow | null;
+  onScheduleOptimal?: () => void;
+  onRunSafetyCheck?: () => void;
+  onSyncVCenters?: () => void;
+  onRunDiscovery?: () => void;
+  onUpdateWizard?: () => void;
 }
 
 export function OperationsTable({ 
@@ -123,13 +142,20 @@ export function OperationsTable({
   onCancel,
   onRetry,
   onDelete,
-  canManage 
+  canManage,
+  optimalWindow,
+  onScheduleOptimal,
+  onRunSafetyCheck,
+  onSyncVCenters,
+  onRunDiscovery,
+  onUpdateWizard
 }: OperationsTableProps) {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [clusterFilter, setClusterFilter] = useState<string>('all');
   const [dateRange, setDateRange] = useState<string>('all');
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [bannerDismissed, setBannerDismissed] = useState(false);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -199,11 +225,78 @@ export function OperationsTable({
     return true;
   });
 
+  const confidenceColors = {
+    high: "text-success",
+    medium: "text-warning",
+    low: "text-muted-foreground"
+  };
+
   return (
-    <div className="flex flex-col flex-1 border rounded-lg bg-background overflow-hidden">
+    <div className="flex flex-col h-full border rounded-lg shadow-sm bg-card overflow-hidden">
+      {/* Optional Window Banner */}
+      {optimalWindow && !bannerDismissed && (
+        <div className="px-4 py-2 border-b bg-primary/5 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <Sparkles className="h-4 w-4 text-primary flex-shrink-0" />
+            <span className="text-sm">
+              <span className="font-semibold">Recommended:</span>{" "}
+              {format(new Date(optimalWindow.start), "MMM dd, HH:mm")} - {format(new Date(optimalWindow.end), "HH:mm")}
+              {" "}
+              <span className={confidenceColors[optimalWindow.confidence]}>
+                ({optimalWindow.confidence})
+              </span>
+              {" · "}
+              {optimalWindow.all_clusters_safe ? (
+                <span className="text-success">All safe</span>
+              ) : (
+                <span>{optimalWindow.affected_clusters.length} clusters</span>
+              )}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <Button size="sm" onClick={onScheduleOptimal}>
+              <Calendar className="mr-2 h-4 w-4" />
+              Schedule
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 w-8 p-0"
+              onClick={() => setBannerDismissed(true)}
+            >
+              <XCircle className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Toolbar with Quick Actions + Filters */}
       <div className="border-b px-4 py-3 bg-muted/30">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h3 className="font-semibold">Operations & Maintenance</h3>
+        <div className="flex flex-col gap-3">
+          {/* Title + Quick Actions */}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <h3 className="font-semibold">Operations & Maintenance</h3>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" size="sm" onClick={onRunSafetyCheck}>
+                <Shield className="mr-2 h-4 w-4" />
+                Safety Check
+              </Button>
+              <Button variant="outline" size="sm" onClick={onUpdateWizard}>
+                <Zap className="mr-2 h-4 w-4" />
+                Update Wizard
+              </Button>
+              <Button variant="outline" size="sm" onClick={onSyncVCenters}>
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Sync vCenters
+              </Button>
+              <Button variant="outline" size="sm" onClick={onRunDiscovery}>
+                <Search className="mr-2 h-4 w-4" />
+                Discovery
+              </Button>
+            </div>
+          </div>
+
+          {/* Filters */}
           <div className="flex flex-wrap items-center gap-2">
             <Filter className="h-4 w-4 text-muted-foreground" />
             
