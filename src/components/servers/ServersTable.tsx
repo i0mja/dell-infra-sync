@@ -355,9 +355,9 @@ export function ServersTable({
   }
 
   return (
-    <div className="flex flex-col h-full border rounded-lg shadow-sm">
+    <div className="flex flex-col h-full border rounded-lg shadow-sm bg-card overflow-hidden">
       {/* Unified Toolbar */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b flex-wrap">
+      <div className="flex items-center gap-2 px-4 py-2 border-b flex-wrap bg-card">
         {/* Left: Selection */}
         <Checkbox
           checked={selectedServers.size === allServers.length && allServers.length > 0}
