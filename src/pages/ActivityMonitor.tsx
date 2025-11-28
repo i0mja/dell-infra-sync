@@ -8,7 +8,9 @@ import { CommandsTable } from "@/components/activity/CommandsTable";
 import { CommandDetailsSidebar } from "@/components/activity/CommandDetailsSidebar";
 import { CommandDetailDialog } from "@/components/activity/CommandDetailDialog";
 import { ActiveJobsBanner } from "@/components/activity/ActiveJobsBanner";
+import { JobsActivityView } from "@/components/activity/JobsActivityView";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useActiveJobs } from "@/hooks/useActiveJobs";
 
@@ -347,82 +349,99 @@ export default function ActivityMonitor() {
       <div className="space-y-4 px-4 pt-4 sm:px-6 lg:px-8">
         <ActiveJobsBanner />
 
-        <div className="rounded-xl border bg-card shadow-sm">
-          <div className="flex flex-col gap-2 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-            <div className="space-y-1">
-              <h2 className="text-base font-semibold">Filter and search activity</h2>
-              <p className="text-sm text-muted-foreground">
-                Narrow the feed by source, timeframe, and status to focus on the events that matter.
-              </p>
+        <Tabs defaultValue="operations" className="w-full">
+          <div className="rounded-xl border bg-card shadow-sm">
+            <div className="border-b px-4 py-3">
+              <TabsList className="grid w-full max-w-md grid-cols-2">
+                <TabsTrigger value="operations">Operations</TabsTrigger>
+                <TabsTrigger value="api-log">API Log</TabsTrigger>
+              </TabsList>
             </div>
-            <div
-              className={`inline-flex items-center gap-2 self-start rounded-full px-3 py-1 text-xs font-medium ${
-                realtimeStatus === 'connected'
-                  ? 'bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/30'
-                  : 'bg-amber-500/10 text-amber-700 ring-1 ring-amber-500/30'
-              }`}
-            >
-              <span className="h-2 w-2 rounded-full bg-current" />
-              {realtimeStatus === 'connected' ? 'Live updates' : 'Realtime paused'}
-            </div>
-          </div>
-          <div className="px-4 pb-5 pt-3 sm:px-6">
-            <FilterToolbar
-              searchTerm={searchTerm}
-              onSearchChange={setSearchTerm}
-              operationType={operationTypeFilter}
-              onOperationTypeChange={setOperationTypeFilter}
-              selectedServer={serverFilter}
-              onServerChange={setServerFilter}
-              commandType={commandTypeFilter}
-              onCommandTypeChange={setCommandTypeFilter}
-              status={statusFilter}
-              onStatusChange={setStatusFilter}
-              source={commandSource}
-              onSourceChange={setCommandSource}
-              timeRange={timeRangeFilter}
-              onTimeRangeChange={setTimeRangeFilter}
-              servers={servers || []}
-            />
-          </div>
-        </div>
 
-        <div className="space-y-3">
-          <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-4 sm:px-6">
-              <div className="space-y-1">
-                <h3 className="text-lg font-semibold">Recent activity</h3>
-                <p className="text-sm text-muted-foreground">
-                  Newest commands appear first. Click any row to inspect the request and response.
-                </p>
+            <TabsContent value="operations" className="mt-0 pt-4">
+              <JobsActivityView />
+            </TabsContent>
+
+            <TabsContent value="api-log" className="mt-0 pt-4">
+              <div className="space-y-4 px-4 pb-4 sm:px-6">
+                <div className="rounded-xl border bg-card shadow-sm">
+                  <div className="flex flex-col gap-2 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                    <div className="space-y-1">
+                      <h2 className="text-base font-semibold">Filter and search activity</h2>
+                      <p className="text-sm text-muted-foreground">
+                        Narrow the feed by source, timeframe, and status to focus on the events that matter.
+                      </p>
+                    </div>
+                    <div
+                      className={`inline-flex items-center gap-2 self-start rounded-full px-3 py-1 text-xs font-medium ${
+                        realtimeStatus === 'connected'
+                          ? 'bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/30'
+                          : 'bg-amber-500/10 text-amber-700 ring-1 ring-amber-500/30'
+                      }`}
+                    >
+                      <span className="h-2 w-2 rounded-full bg-current" />
+                      {realtimeStatus === 'connected' ? 'Live updates' : 'Realtime paused'}
+                    </div>
+                  </div>
+                  <div className="px-4 pb-5 pt-3 sm:px-6">
+                    <FilterToolbar
+                      searchTerm={searchTerm}
+                      onSearchChange={setSearchTerm}
+                      operationType={operationTypeFilter}
+                      onOperationTypeChange={setOperationTypeFilter}
+                      selectedServer={serverFilter}
+                      onServerChange={setServerFilter}
+                      commandType={commandTypeFilter}
+                      onCommandTypeChange={setCommandTypeFilter}
+                      status={statusFilter}
+                      onStatusChange={setStatusFilter}
+                      source={commandSource}
+                      onSourceChange={setCommandSource}
+                      timeRange={timeRangeFilter}
+                      onTimeRangeChange={setTimeRangeFilter}
+                      servers={servers || []}
+                    />
+                  </div>
+                </div>
+
+                <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+                  <div className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-4 sm:px-6">
+                    <div className="space-y-1">
+                      <h3 className="text-lg font-semibold">Recent activity</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Newest commands appear first. Click any row to inspect the request and response.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <span className="rounded-full bg-muted px-3 py-1 font-medium text-foreground">
+                        {filteredCommands.length} shown
+                      </span>
+                      <span
+                        className={`inline-flex items-center gap-2 rounded-full px-3 py-1 font-medium ${
+                          realtimeStatus === 'connected'
+                            ? 'bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/30'
+                            : 'bg-amber-500/10 text-amber-700 ring-1 ring-amber-500/30'
+                        }`}
+                      >
+                        <span className="h-2 w-2 rounded-full bg-current" />
+                        {realtimeStatus === 'connected' ? 'Live' : 'Paused'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="px-2 pb-2 pt-1 sm:px-3">
+                    <CommandsTable
+                      commands={filteredCommands}
+                      selectedId={selectedCommand?.id}
+                      onRowClick={handleRowClick}
+                      isLive={realtimeStatus === 'connected'}
+                      className="border-0 bg-transparent shadow-none"
+                    />
+                  </div>
+                </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span className="rounded-full bg-muted px-3 py-1 font-medium text-foreground">
-                  {filteredCommands.length} shown
-                </span>
-                <span
-                  className={`inline-flex items-center gap-2 rounded-full px-3 py-1 font-medium ${
-                    realtimeStatus === 'connected'
-                      ? 'bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/30'
-                      : 'bg-amber-500/10 text-amber-700 ring-1 ring-amber-500/30'
-                  }`}
-                >
-                  <span className="h-2 w-2 rounded-full bg-current" />
-                  {realtimeStatus === 'connected' ? 'Live' : 'Paused'}
-                </span>
-              </div>
-            </div>
-            <div className="px-2 pb-2 pt-1 sm:px-3">
-              <CommandsTable
-                commands={filteredCommands}
-                selectedId={selectedCommand?.id}
-                onRowClick={handleRowClick}
-                isLive={realtimeStatus === 'connected'}
-                className="border-0 bg-transparent shadow-none"
-              />
-            </div>
+            </TabsContent>
           </div>
-        </div>
+        </Tabs>
       </div>
 
       <Sheet
