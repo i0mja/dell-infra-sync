@@ -98,6 +98,9 @@ from job_executor.connectivity import ConnectivityMixin
 from job_executor.scp import ScpMixin
 from job_executor.utils import UNICODE_FALLBACKS, _normalize_unicode, _safe_json_parse, _safe_to_stdout
 from job_executor.dell_redfish.adapter import DellRedfishAdapter
+
+# Job types that should bypass the normal queue for instant execution
+INSTANT_JOB_TYPES = ['console_launch', 'browse_datastore', 'connectivity_test', 'power_control']
 from job_executor.dell_redfish.operations import DellOperations
 from job_executor.esxi.orchestrator import EsxiOrchestrator
 from job_executor.media_server import MediaServer
@@ -781,8 +784,13 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self.log(f"Error resolving credentials for server {server_id}: {str(e)}", "ERROR")
             return (None, None)
 
-    def get_pending_jobs(self) -> List[Dict]:
-        """Fetch pending jobs from the cloud"""
+    def get_pending_jobs(self, instant_only=False, exclude_instant=False) -> List[Dict]:
+        """Fetch pending jobs from the cloud
+        
+        Args:
+            instant_only: Only return instant job types (console_launch, browse_datastore, etc.)
+            exclude_instant: Exclude instant job types from results
+        """
         try:
             url = f"{DSM_URL}/rest/v1/jobs"
             headers = {
@@ -799,11 +807,22 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self._handle_supabase_auth_error(response, "fetching pending jobs")
             if response.status_code == 200:
                 jobs = _safe_json_parse(response)
-                # Filter by schedule_at if set
+                # Filter by schedule_at and instant status
                 ready_jobs = []
                 for job in jobs:
-                    if not job['schedule_at'] or datetime.fromisoformat(job['schedule_at'].replace('Z', '+00:00')) <= datetime.now():
-                        ready_jobs.append(job)
+                    # Check if scheduled time has passed
+                    if job['schedule_at'] and datetime.fromisoformat(job['schedule_at'].replace('Z', '+00:00')) > datetime.now():
+                        continue
+                    
+                    # Filter by instant job type
+                    is_instant = job['job_type'] in INSTANT_JOB_TYPES
+                    
+                    if instant_only and not is_instant:
+                        continue
+                    if exclude_instant and is_instant:
+                        continue
+                    
+                    ready_jobs.append(job)
                 return ready_jobs
             else:
                 self.log(f"Error fetching jobs: {response.status_code}", "ERROR")
@@ -9794,14 +9813,20 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
         try:
             while self.running:
                 try:
-                    # Get pending jobs
-                    jobs = self.get_pending_jobs()
-                    
-                    if jobs:
-                        self.log(f"Found {len(jobs)} pending job(s)")
-                        for job in jobs:
-                            self.log(f"Executing job {job['id']} ({job['job_type']})")
+                    # FAST-TRACK: Process instant jobs immediately (console, datastore browsing, etc.)
+                    instant_jobs = self.get_pending_jobs(instant_only=True)
+                    if instant_jobs:
+                        self.log(f"[FAST-TRACK] Found {len(instant_jobs)} instant job(s)")
+                        for job in instant_jobs:
+                            self.log(f"[FAST-TRACK] Executing instant job {job['id']} ({job['job_type']})")
                             self.execute_job(job)
+                    
+                    # Regular jobs - process one at a time to avoid overwhelming the system
+                    regular_jobs = self.get_pending_jobs(exclude_instant=True)
+                    if regular_jobs:
+                        job = regular_jobs[0]  # Process one regular job per cycle
+                        self.log(f"Executing job {job['id']} ({job['job_type']})")
+                        self.execute_job(job)
                     
                     # Wait before next poll
                     time.sleep(POLL_INTERVAL)
