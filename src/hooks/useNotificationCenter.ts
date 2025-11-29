@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
 import { toast } from 'sonner';
+import { useAuth } from '@/hooks/useAuth';
 
 type Job = Database['public']['Tables']['jobs']['Row'];
 type JobTask = Database['public']['Tables']['job_tasks']['Row'];
@@ -74,6 +75,7 @@ const showJobStateToast = (job: Job, previousStatus: string) => {
 };
 
 export const useNotificationCenter = () => {
+  const { session } = useAuth();
   const [activeJobs, setActiveJobs] = useState<Job[]>([]);
   const [recentCommands, setRecentCommands] = useState<IdracCommand[]>([]);
   const [jobProgress, setJobProgress] = useState<Map<string, JobProgress>>(new Map());
@@ -199,7 +201,7 @@ export const useNotificationCenter = () => {
 
   // Subscribe to job changes
   useEffect(() => {
-    if (!settings.enabled) return;
+    if (!settings.enabled || !session) return;
 
     fetchActiveJobs();
     
@@ -248,11 +250,11 @@ export const useNotificationCenter = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [settings.enabled, fetchActiveJobs]);
+  }, [settings.enabled, session, fetchActiveJobs]);
 
   // Subscribe to command changes
   useEffect(() => {
-    if (!settings.enabled) return;
+    if (!settings.enabled || !session) return;
 
     fetchRecentCommands();
     
@@ -280,7 +282,7 @@ export const useNotificationCenter = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [settings.enabled, fetchRecentCommands]);
+  }, [settings.enabled, session, fetchRecentCommands]);
 
   // Poll job progress
   useEffect(() => {

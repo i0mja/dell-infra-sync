@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 
 interface Job {
   id: string;
@@ -16,6 +17,7 @@ interface Job {
 }
 
 export function useActiveJobs() {
+  const { session } = useAuth();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -39,6 +41,8 @@ export function useActiveJobs() {
   };
 
   useEffect(() => {
+    if (!session) return;
+
     fetchJobs();
 
     const channel = supabase
@@ -59,7 +63,7 @@ export function useActiveJobs() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [session]);
 
   const activeJobs = jobs.filter(j => j.status === 'pending' || j.status === 'running');
   const completedJobs = jobs.filter(j => j.status === 'completed');
