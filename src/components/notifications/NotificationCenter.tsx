@@ -6,7 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useNotificationCenter } from '@/hooks/useNotificationCenter';
+import { useNotification } from '@/contexts/NotificationContext';
 import { ActiveJobCard } from './ActiveJobCard';
 import { RecentActivityItem } from './RecentActivityItem';
 import { LiveConsoleView } from './LiveConsoleView';
@@ -33,7 +33,7 @@ export function NotificationCenter() {
     jobProgress,
     unreadCount,
     settings,
-  } = useNotificationCenter();
+  } = useNotification();
 
   if (!settings.enabled) return null;
 
