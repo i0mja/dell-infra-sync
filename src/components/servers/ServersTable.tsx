@@ -59,6 +59,8 @@ import {
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { useSavedViews } from "@/hooks/useSavedViews";
+import { usePagination } from "@/hooks/usePagination";
+import { TablePagination } from "@/components/ui/table-pagination";
 
 interface GroupData {
   id: string;
@@ -195,6 +197,9 @@ export function ServersTable({
 
   const displayGroups = sortedGroupedData;
   const displayServers = sortedServers;
+
+  // Apply pagination  
+  const pagination = usePagination(displayServers, "servers-pagination", 50);
 
   const toggleGroup = (groupId: string) => {
     const newCollapsed = new Set(collapsedGroups);
@@ -588,8 +593,8 @@ export function ServersTable({
           </TableHeader>
           <TableBody>
             {!displayGroups
-              ? // Flat view
-                displayServers.map((server) => (
+              ? // Flat view - use paginated items
+                pagination.paginatedItems.map((server) => (
                   <ContextMenu key={server.id}>
                     <ContextMenuTrigger asChild>
                       <TableRow
@@ -854,6 +859,23 @@ export function ServersTable({
           </TableBody>
         </Table>
       </div>
+
+      <TablePagination
+        currentPage={pagination.currentPage}
+        totalPages={pagination.totalPages}
+        totalItems={displayServers.length}
+        pageSize={pagination.pageSize}
+        startIndex={pagination.startIndex}
+        endIndex={pagination.endIndex}
+        onPageChange={pagination.setPage}
+        onPageSizeChange={pagination.setPageSize}
+        onFirstPage={pagination.goToFirstPage}
+        onLastPage={pagination.goToLastPage}
+        onNextPage={pagination.goToNextPage}
+        onPrevPage={pagination.goToPrevPage}
+        canGoNext={pagination.canGoNext}
+        canGoPrev={pagination.canGoPrev}
+      />
 
       {/* Save View Dialog */}
       <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>

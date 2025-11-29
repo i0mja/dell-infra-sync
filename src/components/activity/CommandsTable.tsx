@@ -8,6 +8,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { usePagination } from "@/hooks/usePagination";
+import { TablePagination } from "@/components/ui/table-pagination";
 
 interface Command {
   id: string;
@@ -97,6 +99,9 @@ export const CommandsTable = ({
     return endpoint;
   };
 
+  // Apply pagination
+  const pagination = usePagination(commands, "commands-pagination", 50);
+
   return (
     <div
       className={cn(
@@ -118,14 +123,14 @@ export const CommandsTable = ({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {commands.length === 0 ? (
+              {pagination.paginatedItems.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
                     No commands found
                   </TableCell>
                 </TableRow>
               ) : (
-                commands.map((command) => (
+                pagination.paginatedItems.map((command) => (
                   <TableRow
                     key={command.id}
                     onClick={() => onRowClick(command)}
@@ -163,6 +168,23 @@ export const CommandsTable = ({
             </TableBody>
           </Table>
       </div>
+      
+      <TablePagination
+        currentPage={pagination.currentPage}
+        totalPages={pagination.totalPages}
+        totalItems={commands.length}
+        pageSize={pagination.pageSize}
+        startIndex={pagination.startIndex}
+        endIndex={pagination.endIndex}
+        onPageChange={pagination.setPage}
+        onPageSizeChange={pagination.setPageSize}
+        onFirstPage={pagination.goToFirstPage}
+        onLastPage={pagination.goToLastPage}
+        onNextPage={pagination.goToNextPage}
+        onPrevPage={pagination.goToPrevPage}
+        canGoNext={pagination.canGoNext}
+        canGoPrev={pagination.canGoPrev}
+      />
     </div>
   );
 };
