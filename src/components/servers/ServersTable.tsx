@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, Fragment } from "react";
 import { Server } from "@/hooks/useServers";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -716,7 +716,7 @@ export function ServersTable({
                   const isGroupSelected = selectedGroupId === group.id;
 
                   return (
-                    <>
+                    <Fragment key={group.id}>
                       {/* Group Header Row */}
                       <TableRow
                         key={`group-${group.id}`}
@@ -853,7 +853,7 @@ export function ServersTable({
                             </ContextMenuContent>
                           </ContextMenu>
                         ))}
-                    </>
+                    </Fragment>
                   );
                 })}
           </TableBody>
