@@ -3196,13 +3196,40 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             total_vms = len(container.view)
             self.log(f"Found {total_vms} VMs in vCenter")
             
+            # Create job task for VM sync if job_id provided
+            task_id = None
+            if job_id:
+                task_response = requests.post(
+                    f"{DSM_URL}/rest/v1/job_tasks",
+                    headers={
+                        'apikey': SERVICE_ROLE_KEY,
+                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=representation'
+                    },
+                    json={
+                        'job_id': job_id,
+                        'status': 'running',
+                        'started_at': datetime.now().isoformat(),
+                        'progress': 0,
+                        'log': f'Starting VM sync ({total_vms} VMs)'
+                    },
+                    verify=VERIFY_SSL
+                )
+                if task_response.status_code in [200, 201]:
+                    task_data = _safe_json_parse(task_response)
+                    if task_data:
+                        task_id = task_data[0]['id']
+                        self.log(f"✓ Created task {task_id} for VM sync")
+            
             synced = 0
             batch = []
             batch_size = 50
             os_counts = {}
             
             for i, vm in enumerate(container.view):
-                if i % 100 == 0:
+                # Update progress more frequently (every 50 VMs)
+                if i % 50 == 0:
                     self.log(f"  Processing VM {i+1}/{total_vms}...")
                     
                     # Update job progress if job_id provided
@@ -3211,11 +3238,26 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                             job_id,
                             'running',
                             details={
-                                "current_step": f"Syncing VMs ({i}/{total_vms})",
-                                "vms_processed": i,
-                                "vms_total": total_vms
+                                "current_step": f"Syncing VMs ({i+1}/{total_vms})",
+                                "vms_processed": i + 1,  # Fixed: Use i+1 for accurate count
+                                "vms_total": total_vms,
+                                "synced": synced
                             }
                         )
+                        
+                        # Log progress to activity monitor
+                        if i % 100 == 0:
+                            self.log_vcenter_activity(
+                                operation="vcenter_vm_sync_progress",
+                                endpoint="vCenter VM Inventory",
+                                success=True,
+                                response_time_ms=0,
+                                details={
+                                    "progress": f"{i+1}/{total_vms}",
+                                    "synced": synced,
+                                    "job_id": job_id
+                                }
+                            )
                 try:
                     config = vm.summary.config if hasattr(vm.summary, 'config') else None
                     runtime = vm.summary.runtime if hasattr(vm.summary, 'runtime') else None
@@ -3279,8 +3321,42 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             
             # Process remaining VMs in batch
             if batch:
+                self.log(f"  Processing final batch of {len(batch)} VMs...")
                 success_count = self._upsert_vm_batch(batch)
                 synced += success_count
+            
+            # Final progress update
+            if job_id:
+                self.update_job_status(
+                    job_id,
+                    'running',
+                    details={
+                        "current_step": f"Completed VM sync ({total_vms}/{total_vms})",
+                        "vms_processed": total_vms,
+                        "vms_total": total_vms,
+                        "synced": synced,
+                        "progress_percent": 100
+                    }
+                )
+                
+                # Mark task as completed
+                if task_id:
+                    requests.patch(
+                        f"{DSM_URL}/rest/v1/job_tasks?id=eq.{task_id}",
+                        headers={
+                            'apikey': SERVICE_ROLE_KEY,
+                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=minimal'
+                        },
+                        json={
+                            'status': 'completed',
+                            'completed_at': datetime.now().isoformat(),
+                            'progress': 100,
+                            'log': f'Completed: {synced}/{total_vms} VMs synced'
+                        },
+                        verify=VERIFY_SSL
+                    )
             
             container.Destroy()
             self.log(f"  Synced {synced}/{total_vms} VMs")
@@ -3301,6 +3377,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
     def _upsert_vm_batch(self, batch: List[Dict]) -> int:
         """Upsert a batch of VM records"""
         try:
+            self.log(f"  Upserting batch of {len(batch)} VMs...")
             # Use bulk upsert with on_conflict
             response = requests.post(
                 f"{DSM_URL}/rest/v1/vcenter_vms",
@@ -3316,9 +3393,10 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             )
             
             if response.status_code in [200, 201, 204]:
+                self.log(f"  ✓ Batch upsert successful ({len(batch)} VMs)")
                 return len(batch)
             else:
-                self.log(f"  Batch upsert failed: HTTP {response.status_code}", "WARNING")
+                self.log(f"  Batch upsert failed: HTTP {response.status_code} - {response.text}", "WARNING")
                 # Fall back to individual inserts
                 success_count = 0
                 for vm_data in batch:
@@ -3336,12 +3414,15 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                         )
                         if resp.status_code in [200, 201]:
                             success_count += 1
-                    except:
-                        pass
+                 except Exception as single_err:
+                        self.log(f"    Failed to upsert VM individually: {single_err}", "WARNING")
+                self.log(f"  ⚠️  Fallback: {success_count}/{len(batch)} VMs inserted individually")
                 return success_count
                 
         except Exception as e:
-            self.log(f"  Error in batch upsert: {e}", "WARNING")
+            self.log(f"  Error in batch upsert: {e}", "ERROR")
+            import traceback
+            self.log(f"  Traceback: {traceback.format_exc()}", "ERROR")
             return 0
 
     def sync_vcenter_datastores(self, content, source_vcenter_id: str) -> Dict:
