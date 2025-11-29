@@ -12,7 +12,9 @@ interface CreateJobRequest {
             'test_credentials' | 'power_action' | 'health_check' | 'fetch_event_logs' |
             'boot_configuration' | 'virtual_media_mount' | 'virtual_media_unmount' |
             'bios_config_read' | 'bios_config_write' | 'scp_export' | 'scp_import' |
-            'vcenter_connectivity_test' | 'openmanage_sync' | 'console_launch' | 'esxi_preflight_check';
+            'vcenter_connectivity_test' | 'openmanage_sync' | 'console_launch' | 'esxi_preflight_check' |
+            'cluster_safety_check' | 'server_group_safety_check' | 'iso_upload' |
+            'scan_local_isos' | 'register_iso_url' | 'browse_datastore';
   target_scope: any;
   details?: any;
   schedule_at?: string;
@@ -52,7 +54,13 @@ function validateJobRequest(request: CreateJobRequest): { valid: boolean; error?
     'vcenter_connectivity_test',
     'openmanage_sync',
     'console_launch',
-    'esxi_preflight_check'
+    'esxi_preflight_check',
+    'cluster_safety_check',
+    'server_group_safety_check',
+    'iso_upload',
+    'scan_local_isos',
+    'register_iso_url',
+    'browse_datastore'
   ];
   if (!request.job_type || !validTypes.includes(request.job_type)) {
     return { valid: false, error: 'Invalid job_type. Must be one of: ' + validTypes.join(', ') };
