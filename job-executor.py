@@ -2651,9 +2651,8 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             
             # Otherwise, proceed with IP range discovery
             ip_range = target_scope.get('ip_range', '')
+            ip_list = target_scope.get('ip_list', [])  # Handle IP list from UI
             credential_set_ids = job.get('credential_set_ids', [])
-            
-            self.log(f"Scanning IP range: {ip_range}")
             
             # Fetch credential sets from database
             credential_sets = self.get_credential_sets(credential_set_ids)
@@ -2670,21 +2669,40 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             
             self.log(f"Using {len(credential_sets)} credential set(s) for discovery")
             
-            # Parse IP range
+            # Parse IPs to scan
             ips_to_scan = []
-            if '/' in ip_range:  # CIDR notation
-                network = ipaddress.ip_network(ip_range, strict=False)
-                ips_to_scan = [str(ip) for ip in network.hosts()]
-            elif '-' in ip_range:  # Range notation
-                start, end = ip_range.split('-')
-                start_ip = ipaddress.ip_address(start.strip())
-                end_ip = ipaddress.ip_address(end.strip())
-                current = start_ip
-                while current <= end_ip:
-                    ips_to_scan.append(str(current))
-                    current += 1
-            else:
-                raise ValueError(f"Invalid IP range format: {ip_range}")
+            
+            # Handle IP list first (multiple individual IPs from UI)
+            if ip_list and len(ip_list) > 0:
+                ips_to_scan = ip_list
+                self.log(f"Scanning {len(ips_to_scan)} IPs from provided list...")
+            
+            # Handle IP range
+            elif ip_range:
+                if '/' in ip_range:  # CIDR notation
+                    network = ipaddress.ip_network(ip_range, strict=False)
+                    ips_to_scan = [str(ip) for ip in network.hosts()]
+                    self.log(f"Scanning CIDR range {ip_range}: {len(ips_to_scan)} IPs")
+                elif '-' in ip_range:  # Range notation
+                    start, end = ip_range.split('-')
+                    start_ip = ipaddress.ip_address(start.strip())
+                    end_ip = ipaddress.ip_address(end.strip())
+                    current = start_ip
+                    while current <= end_ip:
+                        ips_to_scan.append(str(current))
+                        current += 1
+                    self.log(f"Scanning IP range {ip_range}: {len(ips_to_scan)} IPs")
+                else:
+                    # Treat as single IP address
+                    try:
+                        ipaddress.ip_address(ip_range.strip())  # Validate it's a valid IP
+                        ips_to_scan = [ip_range.strip()]
+                        self.log(f"Scanning single IP: {ip_range}")
+                    except ValueError:
+                        raise ValueError(f"Invalid IP format: {ip_range}")
+            
+            if not ips_to_scan:
+                raise ValueError("No IPs to scan - provide ip_range or ip_list")
             
             self.log(f"Scanning {len(ips_to_scan)} IPs with 3-stage optimization...")
             self.log(f"  Stage 1: TCP port check (443)")
