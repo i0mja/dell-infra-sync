@@ -8,7 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { ServerStatsBar } from "@/components/servers/ServerStatsBar";
 import { ServersTable } from "@/components/servers/ServersTable";
-import { ServerDetailDialog } from "@/components/servers/ServerDetailDialog";
+import { ServerQuickView } from "@/components/servers/ServerQuickView";
 import { AddServerDialog } from "@/components/servers/AddServerDialog";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { EditServerDialog } from "@/components/servers/EditServerDialog";
@@ -241,9 +241,10 @@ export default function Servers() {
         bulkRefreshing={bulkRefreshing}
       />
 
-      {/* Main: Full-Width Table */}
-      <div className="flex-1 overflow-hidden">
-        <ServersTable
+      {/* Main: Table + Sidebar Layout */}
+      <div className="flex-1 overflow-hidden flex">
+        <div className="flex-1 overflow-hidden">
+          <ServersTable
           servers={filteredServers}
           groupedData={groupedData ? groupedData.map(g => ({
             id: g.group?.id || g.cluster || 'ungrouped',
@@ -289,54 +290,29 @@ export default function Servers() {
           vCenterClusters={uniqueVCenterClusters}
           onBulkAutoLink={handleBulkAutoLink}
           bulkLinking={isLinking}
-        />
-      </div>
+          />
+        </div>
 
-      {/* Server Detail Dialog/Sheet */}
-      <ServerDetailDialog
-        open={!!selectedServer}
-        onOpenChange={(open) => {
-          if (!open) setSelectedServer(null);
-        }}
-        server={selectedServer}
-        onRefresh={() => {
-          if (selectedServer) {
-            handleRefreshInfo(selectedServer);
-          }
-        }}
-        onPowerControl={() => {
-          setPowerControlDialogOpen(true);
-        }}
-        onBiosConfig={() => {
-          setBiosConfigDialogOpen(true);
-        }}
-        onBootConfig={() => {
-          setBootConfigDialogOpen(true);
-        }}
-        onScpBackup={() => {
-          setScpBackupDialogOpen(true);
-        }}
-        onVirtualMedia={() => {
-          setVirtualMediaDialogOpen(true);
-        }}
-        onEventLog={() => {
-          setEventLogDialogOpen(true);
-        }}
-        onHealthCheck={() => {
-          setHealthDialogOpen(true);
-        }}
-        onLinkVCenter={() => {
-          setLinkDialogOpen(true);
-        }}
-        onAudit={() => {
-          setAuditDialogOpen(true);
-        }}
-        onConsoleLaunch={() => {
-          if (selectedServer) {
-            handleLaunchConsole(selectedServer);
-          }
-        }}
-      />
+        {/* Server Quick View Sidebar */}
+        {selectedServer && (
+          <ServerQuickView
+            server={selectedServer}
+            onClose={() => setSelectedServer(null)}
+            onRefresh={() => handleRefreshInfo(selectedServer)}
+            onPowerControl={() => setPowerControlDialogOpen(true)}
+            onBiosConfig={() => setBiosConfigDialogOpen(true)}
+            onBootConfig={() => setBootConfigDialogOpen(true)}
+            onScpBackup={() => setScpBackupDialogOpen(true)}
+            onVirtualMedia={() => setVirtualMediaDialogOpen(true)}
+            onEventLog={() => setEventLogDialogOpen(true)}
+            onHealthCheck={() => setHealthDialogOpen(true)}
+            onConsoleLaunch={() => handleLaunchConsole(selectedServer)}
+            onLinkVCenter={() => setLinkDialogOpen(true)}
+            onAudit={() => setAuditDialogOpen(true)}
+            refreshing={refreshing === selectedServer.id}
+          />
+        )}
+      </div>
 
       {/* Dialogs */}
       <AddServerDialog
