@@ -271,10 +271,8 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
   }
 
   return (
-    <div className="flex flex-col h-full bg-background">
-      {/* Table */}
-      <div className="overflow-hidden flex flex-col flex-1">
-        {filteredVms.length === 0 ? (
+    <div className="flex flex-col h-full bg-background overflow-hidden">
+      {filteredVms.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-4">
             <div className="text-center text-muted-foreground">
               <HardDrive className="h-12 w-12 mx-auto mb-3 opacity-50" />
@@ -287,8 +285,8 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
             </div>
           </div>
         ) : (
-          <>
-            <div className="overflow-auto flex-1">
+        <>
+          <div className="overflow-auto flex-1">
               <Table>
                 <TableHeader className="sticky top-0 bg-muted z-10">
                   <TableRow>
@@ -391,9 +389,8 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
               canGoNext={pagination.canGoNext}
               canGoPrev={pagination.canGoPrev}
             />
-          </>
-        )}
-      </div>
+        </>
+      )}
 
       {/* Save View Dialog */}
       <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>

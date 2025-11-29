@@ -508,7 +508,7 @@ export default function VCenter() {
             )}
           </div>
 
-          <TabsContent value="hosts" className="flex-1 mt-0">
+          <TabsContent value="hosts" className="flex-1 mt-0 overflow-hidden">
             <HostsTable
               clusterGroups={clusterGroups}
               selectedHostId={selectedHostId}
@@ -526,7 +526,7 @@ export default function VCenter() {
             />
           </TabsContent>
 
-          <TabsContent value="vms" className="flex-1 mt-0">
+          <TabsContent value="vms" className="flex-1 mt-0 overflow-hidden">
             <VMsTable
               vms={vms}
               selectedVmId={selectedVmId}
@@ -535,7 +535,7 @@ export default function VCenter() {
             />
           </TabsContent>
 
-          <TabsContent value="clusters" className="flex-1 mt-0">
+          <TabsContent value="clusters" className="flex-1 mt-0 overflow-hidden">
             <ClustersPanel
               clusters={clusters}
               selectedClusterId={selectedClusterId}
@@ -544,7 +544,7 @@ export default function VCenter() {
             />
           </TabsContent>
 
-          <TabsContent value="datastores" className="flex-1 mt-0">
+          <TabsContent value="datastores" className="flex-1 mt-0 overflow-hidden">
             <DatastoresTable
               datastores={datastores}
               selectedDatastoreId={selectedDatastoreId}
