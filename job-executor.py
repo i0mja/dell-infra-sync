@@ -7645,10 +7645,18 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
             
             details = job.get('details', {})
+            target_scope = job.get('target_scope', {})
+            
+            # Get server_id from multiple possible sources
             server_id = details.get('server_id')
+            if not server_id:
+                # Try target_scope.server_ids (matches how other job types work)
+                server_ids = target_scope.get('server_ids', [])
+                if server_ids:
+                    server_id = server_ids[0]
             
             if not server_id:
-                raise Exception("No server_id provided in job details")
+                raise Exception("No server_id provided in job details or target_scope")
             
             # Get server and credentials
             server = self.get_server_by_id(server_id)
