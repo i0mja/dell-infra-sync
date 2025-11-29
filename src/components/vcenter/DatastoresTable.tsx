@@ -119,9 +119,8 @@ export function DatastoresTable({ datastores, selectedDatastoreId, onDatastoreCl
   }
 
   return (
-    <div className="flex flex-col h-full bg-background">
-      <div className="overflow-hidden flex flex-col flex-1">
-        <div className="overflow-auto flex-1">
+    <div className="flex flex-col h-full bg-background overflow-hidden">
+      <div className="overflow-auto flex-1">
           <Table>
             <TableHeader className="sticky top-0 bg-muted z-10">
               <TableRow>
@@ -161,7 +160,7 @@ export function DatastoresTable({ datastores, selectedDatastoreId, onDatastoreCl
             </TableBody>
           </Table>
         </div>
-        <TablePagination
+      <TablePagination
           currentPage={pagination.currentPage}
           totalPages={pagination.totalPages}
           totalItems={filteredDatastores.length}
@@ -177,7 +176,6 @@ export function DatastoresTable({ datastores, selectedDatastoreId, onDatastoreCl
           canGoNext={pagination.canGoNext}
           canGoPrev={pagination.canGoPrev}
         />
-      </div>
     </div>
   );
 }
