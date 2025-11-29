@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { ThemeProvider } from "next-themes";
 import { AuthProvider } from "@/hooks/useAuth";
+import { NotificationProvider } from "@/contexts/NotificationContext";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Layout from "@/components/Layout";
 import Dashboard from "./pages/Dashboard";
@@ -27,7 +28,8 @@ const App = () => (
           <Sonner />
           <BrowserRouter>
             <AuthProvider>
-              <Routes>
+              <NotificationProvider>
+                <Routes>
                 <Route path="/auth" element={<Auth />} />
                 <Route path="/" element={<Layout />}>
                   <Route index element={<Dashboard />} />
@@ -38,7 +40,8 @@ const App = () => (
           <Route path="settings" element={<Settings />} />
                 </Route>
                 <Route path="*" element={<NotFound />} />
-              </Routes>
+                </Routes>
+              </NotificationProvider>
             </AuthProvider>
           </BrowserRouter>
         </TooltipProvider>
