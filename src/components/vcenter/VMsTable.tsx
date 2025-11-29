@@ -314,7 +314,20 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
                         </div>
                       </TableHead>
                     )}
-                    {isColumnVisible("resources") && <TableHead className="w-[100px]">CPU/RAM</TableHead>}
+                    {isColumnVisible("resources") && (
+                      <TableHead className="w-[60px] cursor-pointer" onClick={() => handleSort("cpu_count")}>
+                        <div className="flex items-center">
+                          CPU {getSortIcon("cpu_count")}
+                        </div>
+                      </TableHead>
+                    )}
+                    {isColumnVisible("resources") && (
+                      <TableHead className="w-[70px] cursor-pointer" onClick={() => handleSort("memory_mb")}>
+                        <div className="flex items-center">
+                          RAM {getSortIcon("memory_mb")}
+                        </div>
+                      </TableHead>
+                    )}
                     {isColumnVisible("disk") && (
                       <TableHead className="w-[80px] cursor-pointer" onClick={() => handleSort("disk_gb")}>
                         <div className="flex items-center">
@@ -322,7 +335,13 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
                         </div>
                       </TableHead>
                     )}
-                    {isColumnVisible("os") && <TableHead className="w-[180px]">Guest OS</TableHead>}
+                    {isColumnVisible("os") && (
+                      <TableHead className="w-[180px] cursor-pointer" onClick={() => handleSort("guest_os")}>
+                        <div className="flex items-center">
+                          Guest OS {getSortIcon("guest_os")}
+                        </div>
+                      </TableHead>
+                    )}
                     {isColumnVisible("tools") && (
                       <TableHead className="w-[120px] cursor-pointer" onClick={() => handleSort("tools_status")}>
                         <div className="flex items-center">
@@ -330,7 +349,13 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
                         </div>
                       </TableHead>
                     )}
-                    {isColumnVisible("cluster") && <TableHead className="w-[140px]">Cluster</TableHead>}
+                    {isColumnVisible("cluster") && (
+                      <TableHead className="w-[140px] cursor-pointer" onClick={() => handleSort("cluster_name")}>
+                        <div className="flex items-center">
+                          Cluster {getSortIcon("cluster_name")}
+                        </div>
+                      </TableHead>
+                    )}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -355,9 +380,10 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
                         <TableCell className="text-sm font-mono text-xs">{vm.ip_address || "N/A"}</TableCell>
                       )}
                       {isColumnVisible("resources") && (
-                        <TableCell className="text-sm">
-                          {vm.cpu_count || 0} / {vm.memory_mb ? Math.round(vm.memory_mb / 1024) : 0}GB
-                        </TableCell>
+                        <TableCell className="text-sm">{vm.cpu_count || 0}</TableCell>
+                      )}
+                      {isColumnVisible("resources") && (
+                        <TableCell className="text-sm">{vm.memory_mb ? Math.round(vm.memory_mb / 1024) : 0}GB</TableCell>
                       )}
                       {isColumnVisible("disk") && (
                         <TableCell className="text-sm">{vm.disk_gb ? vm.disk_gb.toFixed(0) : "0"}</TableCell>
