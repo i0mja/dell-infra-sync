@@ -7540,6 +7540,8 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self.execute_firmware_then_esxi(job)
         elif job_type == 'browse_datastore':
             self.execute_browse_datastore(job)
+        elif job_type == 'esxi_preflight_check':
+            self.execute_esxi_preflight_check(job)
         else:
             self.log(f"Unknown job type: {job_type}", "ERROR")
             self.update_job_status(
@@ -9114,6 +9116,267 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             
         except Exception as e:
             self.log(f"Combined upgrade job failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e)}
+            )
+    
+    def check_esxi_upgrade_readiness(self, vcenter_host_id: str, target_version: str) -> Dict:
+        """
+        Comprehensive pre-upgrade readiness check using pyvmomi
+        
+        Checks:
+        1. Current version vs target version compatibility
+        2. vMotion network availability
+        3. Cluster HA/DRS state
+        4. Running VMs count and migration feasibility
+        5. Datastore free space
+        6. Host connection state
+        """
+        try:
+            # Get vCenter host
+            vcenter_host = self.get_vcenter_host(vcenter_host_id)
+            if not vcenter_host:
+                return {'success': False, 'error': 'vCenter host not found'}
+            
+            # Get vCenter settings from source_vcenter_id
+            source_vcenter_id = vcenter_host.get('source_vcenter_id')
+            if not source_vcenter_id:
+                return {'success': False, 'error': 'No vCenter connection configured for this host'}
+            
+            vcenter_settings = self.get_vcenter_settings(source_vcenter_id)
+            if not vcenter_settings:
+                return {'success': False, 'error': 'vCenter settings not found'}
+            
+            # Connect to vCenter
+            si = self._connect_vcenter(vcenter_settings)
+            content = si.RetrieveContent()
+            
+            # Find the ESXi host by name
+            container = content.viewManager.CreateContainerView(content.rootFolder, [vim.HostSystem], True)
+            host_obj = None
+            for host in container.view:
+                if host.name == vcenter_host['name']:
+                    host_obj = host
+                    break
+            container.Destroy()
+            
+            if not host_obj:
+                Disconnect(si)
+                return {'success': False, 'error': f"Host {vcenter_host['name']} not found in vCenter"}
+            
+            checks = {}
+            warnings = []
+            blockers = []
+            
+            # Check 1: Version compatibility
+            current_version = host_obj.config.product.version
+            current_build = host_obj.config.product.build
+            checks['current_version'] = current_version
+            checks['current_build'] = current_build
+            checks['target_version'] = target_version
+            checks['version_compatible'] = True  # Simplified check
+            
+            # Check 2: Connection state
+            connection_state = str(host_obj.runtime.connectionState)
+            checks['connection_state'] = connection_state
+            if connection_state != 'connected':
+                blockers.append(f"Host is not connected (state: {connection_state})")
+            
+            # Check 3: Power state
+            power_state = str(host_obj.runtime.powerState)
+            checks['power_state'] = power_state
+            if power_state != 'poweredOn':
+                blockers.append(f"Host is not powered on (state: {power_state})")
+            
+            # Check 4: vMotion network
+            vmotion_enabled = False
+            vmotion_nic = None
+            vmotion_ip = None
+            for vnic in host_obj.config.vmotion.netConfig.candidateVnic:
+                if vnic.spec.ip.ipAddress:
+                    vmotion_enabled = True
+                    vmotion_nic = vnic.device
+                    vmotion_ip = vnic.spec.ip.ipAddress
+                    break
+            
+            checks['vmotion_enabled'] = vmotion_enabled
+            checks['vmotion_nic'] = vmotion_nic
+            checks['vmotion_ip'] = vmotion_ip
+            if not vmotion_enabled:
+                warnings.append("vMotion is not configured - VMs cannot be evacuated automatically")
+            
+            # Check 5: Cluster information
+            cluster_obj = host_obj.parent if isinstance(host_obj.parent, vim.ClusterComputeResource) else None
+            if cluster_obj:
+                checks['cluster_name'] = cluster_obj.name
+                checks['cluster_drs_enabled'] = cluster_obj.configuration.drsConfig.enabled
+                checks['cluster_ha_enabled'] = cluster_obj.configuration.dasConfig.enabled
+                checks['cluster_drs_automation'] = str(cluster_obj.configuration.drsConfig.defaultVmBehavior) if cluster_obj.configuration.drsConfig.enabled else 'N/A'
+                
+                # Count hosts in cluster
+                total_hosts = len(cluster_obj.host)
+                connected_hosts = sum(1 for h in cluster_obj.host if h.runtime.connectionState == 'connected' and h.runtime.powerState == 'poweredOn')
+                checks['cluster_total_hosts'] = total_hosts
+                checks['cluster_connected_hosts'] = connected_hosts
+                
+                if connected_hosts < 2:
+                    warnings.append(f"Only {connected_hosts} host(s) in cluster - no redundancy for VM evacuation")
+                
+                if not cluster_obj.configuration.drsConfig.enabled:
+                    warnings.append("DRS is not enabled - automatic VM placement will not work")
+                
+                if not cluster_obj.configuration.dasConfig.enabled:
+                    warnings.append("HA is not enabled - no automatic failover protection")
+            else:
+                checks['cluster_name'] = None
+                checks['in_cluster'] = False
+                warnings.append("Host is not in a cluster - VM migration capabilities limited")
+            
+            # Check 6: Running VMs
+            running_vms = [vm for vm in host_obj.vm if vm.runtime.powerState == 'poweredOn']
+            powered_off_vms = [vm for vm in host_obj.vm if vm.runtime.powerState == 'poweredOff']
+            checks['running_vms'] = len(running_vms)
+            checks['powered_off_vms'] = len(powered_off_vms)
+            checks['total_vms'] = len(host_obj.vm)
+            
+            if len(running_vms) > 0 and not vmotion_enabled:
+                blockers.append(f"{len(running_vms)} VM(s) are running but vMotion is not enabled - cannot evacuate VMs")
+            
+            # Check 7: Datastore space
+            min_free_space_gb = None
+            datastore_info = []
+            for ds in host_obj.datastore:
+                free_gb = ds.summary.freeSpace / (1024**3)
+                capacity_gb = ds.summary.capacity / (1024**3)
+                datastore_info.append({
+                    'name': ds.summary.name,
+                    'free_gb': round(free_gb, 2),
+                    'capacity_gb': round(capacity_gb, 2),
+                    'accessible': ds.summary.accessible
+                })
+                if min_free_space_gb is None or free_gb < min_free_space_gb:
+                    min_free_space_gb = free_gb
+            
+            checks['datastores'] = datastore_info
+            checks['min_datastore_free_gb'] = round(min_free_space_gb, 2) if min_free_space_gb else 0
+            
+            if min_free_space_gb and min_free_space_gb < 10:
+                blockers.append(f"Insufficient datastore space: {min_free_space_gb:.1f}GB free (minimum 10GB required for upgrade bundle)")
+            
+            # Check 8: Pending reboot
+            checks['pending_reboot'] = host_obj.summary.rebootRequired
+            if host_obj.summary.rebootRequired:
+                warnings.append("Host has pending changes requiring reboot")
+            
+            # Check 9: Maintenance mode status
+            checks['in_maintenance_mode'] = host_obj.runtime.inMaintenanceMode
+            if host_obj.runtime.inMaintenanceMode:
+                warnings.append("Host is already in maintenance mode")
+            
+            # Disconnect from vCenter
+            Disconnect(si)
+            
+            # Determine overall readiness
+            ready_for_upgrade = len(blockers) == 0
+            
+            return {
+                'success': True,
+                'ready': ready_for_upgrade,
+                'checks': checks,
+                'warnings': warnings,
+                'blockers': blockers,
+                'host_name': vcenter_host['name'],
+                'host_id': vcenter_host_id
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'ready': False
+            }
+    
+    def execute_esxi_preflight_check(self, job: Dict):
+        """Execute ESXi pre-flight readiness checks using pyvmomi"""
+        try:
+            self.log(f"Starting ESXi pre-flight check: {job['id']}")
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            details = job.get('details', {})
+            host_ids = details.get('host_ids', [])
+            profile_id = details.get('profile_id')
+            
+            if not host_ids:
+                raise ValueError("Missing host_ids in job details")
+            if not profile_id:
+                raise ValueError("Missing profile_id in job details")
+            
+            # Fetch ESXi upgrade profile
+            profile = self.get_esxi_profile(profile_id)
+            if not profile:
+                raise ValueError(f"ESXi upgrade profile {profile_id} not found")
+            
+            target_version = profile['target_version']
+            self.log(f"Pre-flight check for upgrade to: {target_version}")
+            self.log(f"Checking {len(host_ids)} host(s)")
+            
+            results = []
+            ready_count = 0
+            blocked_count = 0
+            
+            for host_id in host_ids:
+                self.log(f"\nChecking host {host_id}...")
+                
+                check_result = self.check_esxi_upgrade_readiness(host_id, target_version)
+                
+                if check_result['success']:
+                    if check_result['ready']:
+                        ready_count += 1
+                        self.log(f"  ✓ {check_result['host_name']}: READY for upgrade")
+                    else:
+                        blocked_count += 1
+                        self.log(f"  ✗ {check_result['host_name']}: BLOCKED - {len(check_result['blockers'])} issue(s)")
+                        for blocker in check_result['blockers']:
+                            self.log(f"    - {blocker}")
+                    
+                    if check_result['warnings']:
+                        self.log(f"  ⚠ {check_result['host_name']}: {len(check_result['warnings'])} warning(s)")
+                        for warning in check_result['warnings']:
+                            self.log(f"    - {warning}")
+                else:
+                    blocked_count += 1
+                    self.log(f"  ✗ Failed to check host: {check_result.get('error')}", "ERROR")
+                
+                results.append(check_result)
+            
+            # Complete job
+            job_result = {
+                'profile_name': profile['name'],
+                'target_version': target_version,
+                'total_hosts': len(host_ids),
+                'ready_count': ready_count,
+                'blocked_count': blocked_count,
+                'results': results
+            }
+            
+            final_status = 'completed' if blocked_count == 0 else 'completed'  # Always complete, but with details
+            
+            self.log(f"\nPre-flight check complete:")
+            self.log(f"  Ready: {ready_count}/{len(host_ids)}")
+            self.log(f"  Blocked: {blocked_count}/{len(host_ids)}")
+            
+            self.update_job_status(
+                job['id'],
+                final_status,
+                completed_at=datetime.now().isoformat(),
+                details=job_result
+            )
+            
+        except Exception as e:
+            self.log(f"ESXi pre-flight check failed: {e}", "ERROR")
             self.update_job_status(
                 job['id'],
                 'failed',

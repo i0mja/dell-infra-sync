@@ -17,7 +17,8 @@ import {
   MultiServerResults,
   GenericResults,
   JobTimingCard,
-  EsxiUpgradeResults
+  EsxiUpgradeResults,
+  EsxiPreflightResults
 } from "./results";
 
 interface Job {
@@ -219,6 +220,8 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
       case 'esxi_then_firmware':
       case 'firmware_then_esxi':
         return <EsxiUpgradeResults details={job.details} jobType={job.job_type} />;
+      case 'esxi_preflight_check':
+        return <EsxiPreflightResults details={job.details} />;
       default:
         return <GenericResults details={job.details} />;
     }
