@@ -8719,7 +8719,29 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self.log(f"Error fetching vCenter host: {e}", "ERROR")
             return None
     
-    def record_esxi_upgrade_history(self, host_id: str, server_id: Optional[str], 
+    def get_vcenter_settings(self, vcenter_id: str) -> Optional[Dict]:
+        """Fetch vCenter connection settings from database"""
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            url = f"{DSM_URL}/rest/v1/vcenters?id=eq.{vcenter_id}"
+            response = requests.get(url, headers=headers, verify=VERIFY_SSL)
+            
+            if response.status_code == 200:
+                settings = _safe_json_parse(response)
+                if settings and len(settings) > 0:
+                    return settings[0]
+            
+            return None
+        except Exception as e:
+            self.log(f"Error fetching vCenter settings: {e}", "ERROR")
+            return None
+    
+    def record_esxi_upgrade_history(self, host_id: str, server_id: Optional[str],
                                    job_id: str, profile_id: str, 
                                    version_before: str, version_after: Optional[str],
                                    status: str, error_message: Optional[str] = None,
