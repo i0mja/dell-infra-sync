@@ -248,7 +248,7 @@ export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) =>
   const getJobTypeLabel = (type: string) => {
     const labels: Record<string, string> = {
       firmware_update: "Firmware Update",
-      discovery_scan: "Discovery Scan",
+      discovery_scan: "Initial Server Sync",
       vcenter_sync: "vCenter Sync",
       full_server_update: "Full Server Update",
     };
@@ -390,7 +390,7 @@ export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) =>
               <Button variant="outline" asChild>
                 <Link to="/servers">
                   <Search className="mr-2 h-4 w-4" />
-                  Discovery Scan
+                  Initial Server Sync
                 </Link>
               </Button>
               <Button variant="outline" asChild>

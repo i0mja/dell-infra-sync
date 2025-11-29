@@ -48,7 +48,7 @@ export const ActiveJobsBanner = () => {
   const getJobTypeLabel = (type: string) => {
     const labels: Record<string, string> = {
       firmware_update: "Firmware Update",
-      discovery_scan: "Discovery Scan",
+      discovery_scan: "Initial Server Sync",
       vcenter_sync: "vCenter Sync",
       full_server_update: "Full Server Update",
       test_credentials: "Test Credentials",

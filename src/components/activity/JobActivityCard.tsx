@@ -100,7 +100,7 @@ export function JobActivityCard({ job }: JobActivityCardProps) {
     const details = job.details;
     if (!details) return null;
 
-    // Discovery scan stage info
+    // Initial server sync stage info
     if (job.job_type === 'discovery_scan' && details.stage) {
       const stageLabels: Record<string, string> = {
         port_scan: 'Stage 1: Port Scan',
