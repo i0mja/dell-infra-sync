@@ -269,13 +269,77 @@ export default function MaintenancePlanner() {
   };
 
   const confirmBulkDelete = async () => {
-    const jobsToDelete = operations.filter(op => 'job' in op && operationsToDelete.includes(op.id)).map(op => op.id);
-    const windowsToDelete = operations.filter(op => 'maintenance' in op && operationsToDelete.includes(op.id)).map(op => op.id);
-    if (jobsToDelete.length > 0) await supabase.from("jobs").delete().in("id", jobsToDelete);
-    if (windowsToDelete.length > 0) await supabase.from("maintenance_windows").delete().in("id", windowsToDelete);
-    toast({ title: "Operations deleted", description: `${operationsToDelete.length} operation(s) deleted` });
-    setBulkDeleteDialogOpen(false);
-    setOperationsToDelete([]);
+    try {
+      const jobsToDelete = operations
+        .filter(op => op.type === 'job' && operationsToDelete.includes(op.id))
+        .map(op => op.data as Job);
+      
+      const windowsToDelete = operations
+        .filter(op => op.type === 'maintenance' && operationsToDelete.includes(op.id))
+        .map(op => op.id);
+      
+      // Step 1: Cancel any running/pending jobs first
+      const activeJobs = jobsToDelete.filter(j => 
+        j.status === 'running' || j.status === 'pending'
+      );
+      
+      if (activeJobs.length > 0) {
+        const { error: cancelError } = await supabase
+          .from("jobs")
+          .update({ status: "cancelled", completed_at: new Date().toISOString() })
+          .in("id", activeJobs.map(j => j.id));
+        
+        if (cancelError) throw cancelError;
+      }
+      
+      // Step 2: Delete associated job_tasks first
+      const jobIds = jobsToDelete.map(j => j.id);
+      if (jobIds.length > 0) {
+        const { error: tasksError } = await supabase
+          .from("job_tasks")
+          .delete()
+          .in("job_id", jobIds);
+        
+        if (tasksError) throw tasksError;
+      }
+      
+      // Step 3: Delete the jobs
+      if (jobIds.length > 0) {
+        const { error: jobsError } = await supabase
+          .from("jobs")
+          .delete()
+          .in("id", jobIds);
+        
+        if (jobsError) throw jobsError;
+      }
+      
+      // Step 4: Delete maintenance windows
+      if (windowsToDelete.length > 0) {
+        const { error: windowsError } = await supabase
+          .from("maintenance_windows")
+          .delete()
+          .in("id", windowsToDelete);
+        
+        if (windowsError) throw windowsError;
+      }
+      
+      // Success message with details
+      const cancelledCount = activeJobs.length;
+      const message = cancelledCount > 0 
+        ? `${cancelledCount} job(s) cancelled and ${operationsToDelete.length} operation(s) deleted`
+        : `${operationsToDelete.length} operation(s) deleted`;
+      
+      toast({ title: "Operations deleted", description: message });
+      setBulkDeleteDialogOpen(false);
+      setOperationsToDelete([]);
+      
+    } catch (error: any) {
+      toast({ 
+        title: "Delete failed", 
+        description: error.message || "Failed to delete operations",
+        variant: "destructive" 
+      });
+    }
   };
 
   const failedJobs = jobs.filter(j => j.status === 'failed').length;
@@ -452,7 +516,25 @@ export default function MaintenancePlanner() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {operationsToDelete.length} Operation{operationsToDelete.length > 1 ? 's' : ''}?</AlertDialogTitle>
-            <AlertDialogDescription>This action cannot be undone.</AlertDialogDescription>
+            <AlertDialogDescription>
+              {(() => {
+                const jobsToDelete = operations
+                  .filter(op => op.type === 'job' && operationsToDelete.includes(op.id))
+                  .map(op => op.data as Job);
+                const activeJobs = jobsToDelete.filter(j => j.status === 'running' || j.status === 'pending');
+                
+                if (activeJobs.length > 0) {
+                  return (
+                    <>
+                      This action cannot be undone.
+                      <br />
+                      <strong className="text-warning">{activeJobs.length} active job{activeJobs.length > 1 ? 's' : ''} will be cancelled before deletion.</strong>
+                    </>
+                  );
+                }
+                return "This action cannot be undone.";
+              })()}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
