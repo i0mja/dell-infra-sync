@@ -73,16 +73,20 @@ export function useVCenterData(selectedVCenterId?: string | null) {
   const [datastores, setDatastores] = useState<VCenterDatastore[]>([]);
   const [alarms, setAlarms] = useState<VCenterAlarm[]>([]);
   const [loading, setLoading] = useState(true);
+  const [vmCount, setVmCount] = useState<number>(0);
+  const [clusterCount, setClusterCount] = useState<number>(0);
+  const [datastoreCount, setDatastoreCount] = useState<number>(0);
+  const [alarmCount, setAlarmCount] = useState<number>(0);
 
   const fetchData = async () => {
     try {
       setLoading(true);
       
-      // Build queries with optional vCenter filtering
-      let vmsQuery = supabase.from("vcenter_vms").select("*");
-      let clustersQuery = supabase.from("vcenter_clusters").select("*");
-      let datastoresQuery = supabase.from("vcenter_datastores").select("*");
-      let alarmsQuery = supabase.from("vcenter_alarms").select("*");
+      // Build queries with optional vCenter filtering and explicit ranges
+      let vmsQuery = supabase.from("vcenter_vms").select("*", { count: "exact" });
+      let clustersQuery = supabase.from("vcenter_clusters").select("*", { count: "exact" });
+      let datastoresQuery = supabase.from("vcenter_datastores").select("*", { count: "exact" });
+      let alarmsQuery = supabase.from("vcenter_alarms").select("*", { count: "exact" });
 
       // Apply filter if a specific vCenter is selected
       if (selectedVCenterId && selectedVCenterId !== "all") {
@@ -93,10 +97,10 @@ export function useVCenterData(selectedVCenterId?: string | null) {
       }
 
       const [vmsResult, clustersResult, datastoresResult, alarmsResult] = await Promise.all([
-        vmsQuery.order("name"),
-        clustersQuery.order("cluster_name"),
-        datastoresQuery.order("name"),
-        alarmsQuery.order("triggered_at", { ascending: false }),
+        vmsQuery.range(0, 9999).order("name"),
+        clustersQuery.range(0, 9999).order("cluster_name"),
+        datastoresQuery.range(0, 9999).order("name"),
+        alarmsQuery.range(0, 9999).order("triggered_at", { ascending: false }),
       ]);
 
       if (vmsResult.error) throw vmsResult.error;
@@ -108,6 +112,10 @@ export function useVCenterData(selectedVCenterId?: string | null) {
       setClusters(clustersResult.data || []);
       setDatastores(datastoresResult.data || []);
       setAlarms(alarmsResult.data || []);
+      setVmCount(vmsResult.count || 0);
+      setClusterCount(clustersResult.count || 0);
+      setDatastoreCount(datastoresResult.count || 0);
+      setAlarmCount(alarmsResult.count || 0);
     } catch (error) {
       console.error("Error fetching vCenter data:", error);
     } finally {
@@ -153,6 +161,10 @@ export function useVCenterData(selectedVCenterId?: string | null) {
     datastores,
     alarms,
     loading,
+    vmCount,
+    clusterCount,
+    datastoreCount,
+    alarmCount,
     refetch: fetchData,
   };
 }
