@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useEffect } from "react";
+import { useAuth } from "@/hooks/useAuth";
 
 export interface JobProgress {
   totalTasks: number;
@@ -12,6 +13,7 @@ export interface JobProgress {
 }
 
 export function useJobProgress(jobId: string | null, enabled: boolean = true) {
+  const { session } = useAuth();
   const query = useQuery({
     queryKey: ['job-progress', jobId],
     queryFn: async () => {
@@ -69,7 +71,7 @@ export function useJobProgress(jobId: string | null, enabled: boolean = true) {
   
   // Subscribe to real-time updates
   useEffect(() => {
-    if (!jobId || !enabled) return;
+    if (!session || !jobId || !enabled) return;
     
     const channel = supabase
       .channel(`job-progress-${jobId}`)
@@ -102,7 +104,7 @@ export function useJobProgress(jobId: string | null, enabled: boolean = true) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [jobId, enabled]);
+  }, [session, jobId, enabled]);
   
   return query;
 }

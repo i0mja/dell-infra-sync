@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
 
 export interface ApiCall {
   id: string;
@@ -19,12 +20,13 @@ export interface ApiCall {
 }
 
 export const useJobApiStream = (jobId: string | null) => {
+  const { session } = useAuth();
   const [apiCalls, setApiCalls] = useState<ApiCall[]>([]);
   const [loading, setLoading] = useState(true);
   const [isLive, setIsLive] = useState(true);
 
   useEffect(() => {
-    if (!jobId) return;
+    if (!session || !jobId) return;
 
     const fetchInitialCalls = async () => {
       setLoading(true);
@@ -68,7 +70,7 @@ export const useJobApiStream = (jobId: string | null) => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [jobId, isLive]);
+  }, [session, jobId, isLive]);
 
   const toggleLive = () => setIsLive(!isLive);
   

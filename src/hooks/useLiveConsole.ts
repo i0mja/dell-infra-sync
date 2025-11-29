@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
+import { useAuth } from '@/hooks/useAuth';
 
 type Job = Database['public']['Tables']['jobs']['Row'];
 type JobTask = Database['public']['Tables']['job_tasks']['Row'];
@@ -17,6 +18,7 @@ interface ConsoleLogEntry {
 }
 
 export const useLiveConsole = () => {
+  const { session } = useAuth();
   const [logs, setLogs] = useState<ConsoleLogEntry[]>([]);
   const [activeJobs, setActiveJobs] = useState<Job[]>([]);
   const [isPaused, setIsPaused] = useState(false);
@@ -90,6 +92,8 @@ export const useLiveConsole = () => {
 
   // Fetch active jobs and subscribe to changes
   useEffect(() => {
+    if (!session) return;
+    
     fetchActiveJobs();
     
     const channel = supabase
@@ -106,11 +110,11 @@ export const useLiveConsole = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [session]);
 
   // Subscribe to task log updates
   useEffect(() => {
-    if (isPaused || activeJobs.length === 0) return;
+    if (!session || isPaused || activeJobs.length === 0) return;
     
     const channel = supabase
       .channel('live-console-tasks')
@@ -126,7 +130,7 @@ export const useLiveConsole = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [isPaused, activeJobs]);
+  }, [session, isPaused, activeJobs]);
 
   const togglePause = () => setIsPaused(prev => !prev);
   
