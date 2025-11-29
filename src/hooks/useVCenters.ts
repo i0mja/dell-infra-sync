@@ -64,22 +64,38 @@ export function useVCenters() {
 
   const addVCenter = async (data: VCenterFormData) => {
     try {
-      const { error } = await supabase.from("vcenters").insert([
+      // Insert without password first
+      const { data: newVCenter, error } = await supabase.from("vcenters").insert([
         {
           name: data.name,
           datacenter_location: data.datacenter_location || null,
           host: data.host,
           username: data.username,
-          password_encrypted: data.password, // Will be encrypted by trigger
+          password_encrypted: null,
           port: data.port,
           verify_ssl: data.verify_ssl,
           sync_enabled: data.sync_enabled,
           color: data.color || "#6366f1",
           is_primary: data.is_primary || false,
         },
-      ]);
+      ]).select().single();
 
       if (error) throw error;
+
+      // Encrypt password via edge function
+      const { error: encryptError } = await supabase.functions.invoke('encrypt-credentials', {
+        body: {
+          type: 'vcenter',
+          vcenter_id: newVCenter.id,
+          password: data.password,
+        }
+      });
+
+      if (encryptError) {
+        // Clean up if encryption fails
+        await supabase.from("vcenters").delete().eq('id', newVCenter.id);
+        throw new Error('Failed to encrypt credentials: ' + encryptError.message);
+      }
 
       toast({
         title: "vCenter added",
@@ -102,19 +118,30 @@ export function useVCenters() {
   const updateVCenter = async (id: string, data: Partial<VCenterFormData>) => {
     try {
       const updateData: any = { ...data };
+      delete updateData.password; // Remove password from direct update
       
-      // Only include password if provided
-      if (data.password) {
-        updateData.password_encrypted = data.password;
-        delete updateData.password;
-      }
-
+      // Update non-password fields first
       const { error } = await supabase
         .from("vcenters")
         .update(updateData)
         .eq("id", id);
 
       if (error) throw error;
+
+      // Encrypt password via edge function if provided
+      if (data.password) {
+        const { error: encryptError } = await supabase.functions.invoke('encrypt-credentials', {
+          body: {
+            type: 'vcenter',
+            vcenter_id: id,
+            password: data.password,
+          }
+        });
+
+        if (encryptError) {
+          throw new Error('Failed to encrypt credentials: ' + encryptError.message);
+        }
+      }
 
       toast({
         title: "vCenter updated",

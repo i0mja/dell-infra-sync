@@ -10,6 +10,7 @@ const corsHeaders = {
 interface EncryptCredentialsRequest {
   credential_set_id?: string;
   server_id?: string;
+  vcenter_id?: string;
   vcenter_settings_id?: string;
   openmanage_settings_id?: string;
   username?: string;
@@ -145,16 +146,24 @@ serve(async (req) => {
         break;
 
       case 'vcenter':
-        if (!request.vcenter_settings_id) {
+        // Support both new vcenters table and legacy vcenter_settings
+        if (request.vcenter_id) {
+          updateResult = await supabaseAdmin
+            .from('vcenters')
+            .update({ password_encrypted: encryptedData })
+            .eq('id', request.vcenter_id);
+        } else if (request.vcenter_settings_id) {
+          // Legacy support
+          updateResult = await supabaseAdmin
+            .from('vcenter_settings')
+            .update({ password: encryptedData })
+            .eq('id', request.vcenter_settings_id);
+        } else {
           return new Response(
-            JSON.stringify({ error: 'vcenter_settings_id required for vcenter type' }),
+            JSON.stringify({ error: 'vcenter_id or vcenter_settings_id required for vcenter type' }),
             { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         }
-        updateResult = await supabaseAdmin
-          .from('vcenter_settings')
-          .update({ password: encryptedData })
-          .eq('id', request.vcenter_settings_id);
         break;
 
       case 'openmanage':

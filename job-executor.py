@@ -415,6 +415,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
         operation: str,
         endpoint: str,
         success: bool,
+        status_code: int = None,
         response_time_ms: int = 0,
         error: str = None,
         details: Dict = None
@@ -430,7 +431,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 'full_url': f"vcenter://{endpoint}",
                 'request_headers': None,
                 'request_body': details,
-                'status_code': 200 if success else 500,
+                'status_code': status_code if status_code is not None else (200 if success else 500),
                 'response_time_ms': response_time_ms,
                 'response_body': details if success else None,
                 'success': success,
