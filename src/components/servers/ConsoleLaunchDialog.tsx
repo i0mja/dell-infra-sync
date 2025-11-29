@@ -1,7 +1,8 @@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Loader2, Monitor, ExternalLink, CheckCircle2 } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import { Loader2, Monitor, ExternalLink, CheckCircle2, X } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -23,6 +24,8 @@ export function ConsoleLaunchDialog({ open, onOpenChange, jobId }: ConsoleLaunch
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [consoleUrl, setConsoleUrl] = useState<string>('');
   const [error, setError] = useState<string>('');
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const TIMEOUT_SECONDS = 30;
 
   useEffect(() => {
     if (!open || !jobId) return;
@@ -30,9 +33,23 @@ export function ConsoleLaunchDialog({ open, onOpenChange, jobId }: ConsoleLaunch
     setStatus('loading');
     setError('');
     setConsoleUrl('');
+    setElapsedSeconds(0);
 
     // Poll for job completion
     const pollInterval = setInterval(async () => {
+      setElapsedSeconds(prev => {
+        const newElapsed = prev + 1;
+        
+        // Check for timeout
+        if (newElapsed >= TIMEOUT_SECONDS) {
+          setStatus('error');
+          setError('Request timed out after 30 seconds. The Job Executor service may not be running. Please ensure the Job Executor is active and try again.');
+          clearInterval(pollInterval);
+          return newElapsed;
+        }
+        
+        return newElapsed;
+      });
       const { data: job, error: jobError } = await supabase
         .from('jobs')
         .select('status, details')
@@ -71,7 +88,7 @@ export function ConsoleLaunchDialog({ open, onOpenChange, jobId }: ConsoleLaunch
     }, 1000);
 
     return () => clearInterval(pollInterval);
-  }, [open, jobId]);
+  }, [open, jobId, TIMEOUT_SECONDS]);
 
   const handleOpenConsole = () => {
     if (consoleUrl) {
@@ -80,6 +97,13 @@ export function ConsoleLaunchDialog({ open, onOpenChange, jobId }: ConsoleLaunch
       onOpenChange(false);
     }
   };
+
+  const handleCancel = () => {
+    toast.info('Console launch cancelled');
+    onOpenChange(false);
+  };
+
+  const progressPercentage = (elapsedSeconds / TIMEOUT_SECONDS) * 100;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -96,11 +120,25 @@ export function ConsoleLaunchDialog({ open, onOpenChange, jobId }: ConsoleLaunch
 
         <div className="space-y-4 py-4">
           {status === 'loading' && (
-            <div className="flex flex-col items-center gap-3 py-6">
+            <div className="flex flex-col items-center gap-4 py-6">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              <p className="text-sm text-muted-foreground">
-                Requesting console access from iDRAC...
-              </p>
+              <div className="w-full space-y-2">
+                <p className="text-sm text-muted-foreground text-center">
+                  Requesting console access from iDRAC... ({elapsedSeconds}s)
+                </p>
+                <Progress value={progressPercentage} className="h-2" />
+                <p className="text-xs text-muted-foreground text-center">
+                  Timeout in {TIMEOUT_SECONDS - elapsedSeconds}s
+                </p>
+              </div>
+              <Button 
+                onClick={handleCancel}
+                variant="outline"
+                size="sm"
+              >
+                <X className="mr-2 h-4 w-4" />
+                Cancel
+              </Button>
             </div>
           )}
 
