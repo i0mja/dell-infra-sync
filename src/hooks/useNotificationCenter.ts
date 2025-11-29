@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
 import { toast } from 'sonner';
@@ -86,6 +86,14 @@ export const useNotificationCenter = () => {
     browserNotifications: false,
     maxRecentItems: 10,
   });
+
+  // Use ref to avoid stale closures in subscription callbacks
+  const previousJobStatusesRef = useRef<Map<string, string>>(new Map());
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    previousJobStatusesRef.current = previousJobStatuses;
+  }, [previousJobStatuses]);
 
   // Fetch active jobs
   const fetchActiveJobs = useCallback(async () => {
@@ -212,7 +220,8 @@ export const useNotificationCenter = () => {
           
           // Detect state transitions and show toasts
           if (payload.eventType === 'UPDATE' && oldJob && newJob) {
-            const previousStatus = previousJobStatuses.get(newJob.id) || oldJob.status;
+            // Use ref to get current status map (avoids stale closure)
+            const previousStatus = previousJobStatusesRef.current.get(newJob.id) || oldJob.status;
             if (previousStatus !== newJob.status) {
               showJobStateToast(newJob, previousStatus);
               setPreviousJobStatuses(prev => new Map(prev).set(newJob.id, newJob.status));
@@ -229,14 +238,17 @@ export const useNotificationCenter = () => {
           fetchActiveJobs();
         }
       )
-      .subscribe((status) => {
+      .subscribe((status, err) => {
         console.log('Jobs subscription status:', status);
+        if (err) {
+          console.error('Jobs subscription error:', err);
+        }
       });
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [settings.enabled]);
+  }, [settings.enabled, fetchActiveJobs]);
 
   // Subscribe to command changes
   useEffect(() => {
@@ -258,14 +270,17 @@ export const useNotificationCenter = () => {
           fetchRecentCommands();
         }
       )
-      .subscribe((status) => {
+      .subscribe((status, err) => {
         console.log('Commands subscription status:', status);
+        if (err) {
+          console.error('Commands subscription error:', err);
+        }
       });
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [settings.enabled]);
+  }, [settings.enabled, fetchRecentCommands]);
 
   // Poll job progress
   useEffect(() => {
