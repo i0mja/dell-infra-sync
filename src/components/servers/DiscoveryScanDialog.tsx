@@ -123,7 +123,7 @@ export const DiscoveryScanDialog = ({
       if (!result?.success) throw new Error(result?.error || 'Failed to create discovery job');
 
       toast({
-        title: "Discovery Scan Started",
+        title: "Initial Server Sync Started",
         description: `Scanning ${scanRange}. The job executor will process this scan.`,
       });
 
@@ -146,7 +146,7 @@ export const DiscoveryScanDialog = ({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Search className="h-5 w-5" />
-            IP Discovery Scan
+            Initial Server Sync
           </DialogTitle>
           <DialogDescription>
             Scan your network to discover Dell servers with iDRAC interfaces. The job executor will attempt to connect using your configured credential sets.
@@ -252,7 +252,7 @@ export const DiscoveryScanDialog = ({
               Cancel
             </Button>
             <Button type="submit" disabled={loading}>
-              {loading ? "Starting Scan..." : "Start Discovery Scan"}
+              {loading ? "Starting Sync..." : "Start Initial Sync"}
             </Button>
           </div>
         </form>

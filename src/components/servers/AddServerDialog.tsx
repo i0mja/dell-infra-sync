@@ -233,7 +233,7 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
 
         toast({
           title: "Server Added Successfully",
-          description: "Discovery job created - check Activity Monitor for progress",
+          description: "Initial sync job created - check Activity Monitor for progress",
         });
       } else {
         toast({

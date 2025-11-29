@@ -41,7 +41,7 @@ const NotificationContext = createContext<NotificationContextType | undefined>(u
 // Helper to format job type for display
 const formatJobType = (type: string): string => {
   const typeMap: Record<string, string> = {
-    'discovery_scan': 'Discovery Scan',
+    'discovery_scan': 'Initial Server Sync',
     'test_credentials': 'Credential Test',
     'refresh_existing_servers': 'Server Refresh',
     'scp_export': 'SCP Backup',

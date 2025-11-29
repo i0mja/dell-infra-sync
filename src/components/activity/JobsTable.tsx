@@ -297,7 +297,7 @@ export function JobsTable({
           </SelectTrigger>
             <SelectContent>
             <SelectItem value="all">All Types</SelectItem>
-            <SelectItem value="discovery_scan">Discovery Scan</SelectItem>
+            <SelectItem value="discovery_scan">Initial Server Sync</SelectItem>
             <SelectItem value="vcenter_sync">vCenter Sync</SelectItem>
             <SelectItem value="scp_export">SCP Export</SelectItem>
             <SelectItem value="scp_import">SCP Import</SelectItem>

@@ -28,6 +28,7 @@ import requests
 import sys
 import time
 import ipaddress
+import hashlib
 import concurrent.futures
 from typing import List, Dict, Optional
 from pyVim.connect import SmartConnect, Disconnect
@@ -1703,6 +1704,108 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
         except Exception as e:
             self.log(f"  Failed to create SCP backup: {e}", "WARN")
 
+    def _execute_inline_scp_export(self, server_id: str, ip: str, username: str, password: str, backup_name: str, job_id: str) -> bool:
+        """Execute SCP export inline without creating a separate job"""
+        try:
+            # Use simpler SCP export for initial sync
+            export_url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ExportSystemConfiguration"
+            
+            # Export all components in XML format
+            payload = {
+                "ExportFormat": "XML",
+                "ShareParameters": {
+                    "Target": "BIOS,IDRAC,NIC,RAID"
+                },
+                "ExportUse": "Clone",
+                "IncludeInExport": "Default"
+            }
+            
+            start_time = time.time()
+            response = requests.post(
+                export_url,
+                auth=(username, password),
+                json=payload,
+                verify=False,
+                timeout=30
+            )
+            response_time_ms = int((time.time() - start_time) * 1000)
+            
+            # Log the command
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                task_id=None,
+                command_type='POST',
+                endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ExportSystemConfiguration',
+                full_url=export_url,
+                request_headers={'Authorization': '[REDACTED]'},
+                request_body=payload,
+                response_body=_safe_json_parse(response),
+                status_code=response.status_code,
+                response_time_ms=response_time_ms,
+                success=response.status_code in [200, 202],
+                operation_type='idrac_api'
+            )
+            
+            if response.status_code not in [200, 202]:
+                self.log(f"    SCP export failed: {response.status_code}", "WARN")
+                return False
+            
+            # Wait for export to complete and get content
+            if response.status_code == 202:
+                scp_content = self._wait_for_scp_export(
+                    ip,
+                    username,
+                    password,
+                    response.headers,
+                    _safe_json_parse(response),
+                    {'id': job_id},  # Minimal job dict
+                    server_id
+                )
+            else:
+                export_data = _safe_json_parse(response)
+                scp_content = self._extract_scp_content(export_data) or export_data
+            
+            if not scp_content:
+                self.log(f"    SCP export returned no content", "WARN")
+                return False
+            
+            # Save to database
+            if isinstance(scp_content, (dict, list)):
+                serialized_content = json.dumps(scp_content, indent=2)
+                checksum_content = json.dumps(scp_content, separators=(',', ':'))
+            else:
+                serialized_content = str(scp_content)
+                checksum_content = serialized_content
+            
+            file_size = len(serialized_content.encode('utf-8'))
+            checksum = hashlib.sha256(checksum_content.encode()).hexdigest()
+            
+            headers = {"apikey": SERVICE_ROLE_KEY, "Authorization": f"Bearer {SERVICE_ROLE_KEY}"}
+            backup_data = {
+                'server_id': server_id,
+                'export_job_id': job_id,
+                'backup_name': backup_name,
+                'description': 'Automatic backup during initial server sync',
+                'scp_content': scp_content,
+                'scp_file_size_bytes': file_size,
+                'include_bios': True,
+                'include_idrac': True,
+                'include_nic': True,
+                'include_raid': True,
+                'scp_checksum': checksum,
+                'is_valid': True
+            }
+            
+            insert_url = f"{DSM_URL}/rest/v1/scp_backups"
+            backup_response = requests.post(insert_url, headers=headers, json=backup_data, verify=VERIFY_SSL)
+            
+            return backup_response.status_code in [200, 201]
+            
+        except Exception as e:
+            self.log(f"    Inline SCP export error: {e}", "WARN")
+            return False
+
     def test_idrac_connection(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None) -> Optional[Dict]:
         """Test iDRAC connection and get basic info (lightweight version using throttler)"""
         url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
@@ -2131,8 +2234,24 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                             }
                         )
                         
-                        # Create automatic SCP backup for all refreshed servers
-                        self._create_automatic_scp_backup(server['id'], job['id'])
+                        # Create inline SCP backup for newly synced servers
+                        self.log(f"  📦 Creating initial SCP backup for {ip}...")
+                        try:
+                            scp_success = self._execute_inline_scp_export(
+                                server_id=server['id'],
+                                ip=ip,
+                                username=username,
+                                password=password,
+                                backup_name=f'Initial-{datetime.now().strftime("%Y%m%d-%H%M%S")}',
+                                job_id=job['id']
+                            )
+                            if scp_success:
+                                self.log(f"  ✓ SCP backup created for {ip}")
+                                refreshed_count += 1
+                            else:
+                                self.log(f"  ⚠ SCP backup skipped for {ip}", "WARN")
+                        except Exception as scp_err:
+                            self.log(f"  ⚠ SCP backup failed for {ip}: {scp_err}", "WARN")
                     else:
                         error_detail = {
                             'ip': ip,
@@ -2180,14 +2299,15 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                     failed_count += 1
             
             # Complete the job
-            summary = f"Refreshed {refreshed_count} server(s)"
+            summary = f"Synced {refreshed_count} server(s)"
             if failed_count > 0:
                 summary += f", {failed_count} failed"
             
             job_details = {
                 'summary': summary,
-                'refreshed': refreshed_count,
-                'failed': failed_count
+                'synced': refreshed_count,
+                'failed': failed_count,
+                'scp_backups_created': refreshed_count  # All successful syncs include SCP backup
             }
             if update_errors:
                 job_details['update_errors'] = update_errors

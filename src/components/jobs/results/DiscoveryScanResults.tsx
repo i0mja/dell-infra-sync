@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Server, Network, KeyRound, Clock } from "lucide-react";
+import { Server, Network, KeyRound, Clock, Archive } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
 interface DiscoveryScanResultsProps {
@@ -7,24 +7,38 @@ interface DiscoveryScanResultsProps {
 }
 
 export const DiscoveryScanResults = ({ details }: DiscoveryScanResultsProps) => {
-  const discovered = details?.discovered_count || details?.total_discovered || 0;
+  const discovered = details?.discovered_count || details?.total_discovered || details?.synced || 0;
   const scanned = details?.scanned_ips || details?.ip_count || 0;
-  const authFailures = details?.auth_failures || details?.failed_count || 0;
+  const authFailures = details?.auth_failures || details?.failed_count || details?.failed || 0;
   const duration = details?.scan_duration_seconds || 0;
+  const scpBackups = details?.scp_backups_created || 0;
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <Server className="h-4 w-4" />
-              Discovered
+              Synced
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-success">{discovered}</div>
-            <p className="text-xs text-muted-foreground mt-1">New servers found</p>
+            <p className="text-xs text-muted-foreground mt-1">Servers synced</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+              <Archive className="h-4 w-4" />
+              SCP Backups
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-primary">{scpBackups}</div>
+            <p className="text-xs text-muted-foreground mt-1">Config backups</p>
           </CardContent>
         </Card>
 
@@ -63,7 +77,7 @@ export const DiscoveryScanResults = ({ details }: DiscoveryScanResultsProps) => 
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{duration}s</div>
-            <p className="text-xs text-muted-foreground mt-1">Scan time</p>
+            <p className="text-xs text-muted-foreground mt-1">Sync time</p>
           </CardContent>
         </Card>
       </div>
