@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import { useServers } from "@/hooks/useServers";
 import { useServerActions } from "@/hooks/useServerActions";
 import { useAutoLinkVCenter } from "@/hooks/useAutoLinkVCenter";
@@ -242,7 +243,7 @@ export default function Servers() {
       />
 
       {/* Main: Table + Sidebar Layout */}
-      <div className="flex-1 overflow-y-auto flex">
+      <div className={cn("flex-1 overflow-y-auto", selectedServer && "pr-80")}>
         <div className="flex-1 min-h-0">
           <ServersTable
           servers={filteredServers}
