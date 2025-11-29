@@ -242,8 +242,8 @@ export default function Servers() {
       />
 
       {/* Main: Table + Sidebar Layout */}
-      <div className="flex-1 overflow-hidden flex">
-        <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-y-auto flex">
+        <div className="flex-1 min-h-0">
           <ServersTable
           servers={filteredServers}
           groupedData={groupedData ? groupedData.map(g => ({
