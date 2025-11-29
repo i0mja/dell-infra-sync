@@ -2778,6 +2778,7 @@ export type Database = {
         | "esxi_then_firmware"
         | "firmware_then_esxi"
         | "browse_datastore"
+        | "esxi_preflight_check"
       operation_type: "idrac_api" | "vcenter_api" | "openmanage_api"
     }
     CompositeTypes: {
@@ -2942,6 +2943,7 @@ export const Constants = {
         "esxi_then_firmware",
         "firmware_then_esxi",
         "browse_datastore",
+        "esxi_preflight_check",
       ],
       operation_type: ["idrac_api", "vcenter_api", "openmanage_api"],
     },

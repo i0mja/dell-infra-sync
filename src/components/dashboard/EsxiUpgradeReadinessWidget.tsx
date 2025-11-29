@@ -1,13 +1,25 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { UploadCloud, CheckCircle2, AlertCircle } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { UploadCloud, CheckCircle2, AlertCircle, PlayCircle } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useState } from "react";
 
 export const EsxiUpgradeReadinessWidget = () => {
+  const queryClient = useQueryClient();
+  const [selectedProfile, setSelectedProfile] = useState<string>("");
+
   const { data: hosts, isLoading: hostsLoading } = useQuery({
     queryKey: ['vcenter-hosts-version'],
     queryFn: async () => {
@@ -53,6 +65,41 @@ export const EsxiUpgradeReadinessWidget = () => {
 
   const recentSuccessful = history?.filter(h => h.status === 'completed').length || 0;
   const recentFailed = history?.filter(h => h.status === 'failed').length || 0;
+
+  const runPreflightCheck = useMutation({
+    mutationFn: async () => {
+      if (!selectedProfile) {
+        throw new Error("Please select an upgrade profile");
+      }
+      if (eligibleForUpgrade.length === 0) {
+        throw new Error("No eligible hosts found");
+      }
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+
+      const hostIds = eligibleForUpgrade.map(h => h.id);
+
+      const { error } = await supabase.from('jobs').insert({
+        job_type: 'esxi_preflight_check',
+        created_by: user.id,
+        status: 'pending',
+        details: {
+          profile_id: selectedProfile,
+          host_ids: hostIds
+        }
+      });
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Pre-flight check started");
+      queryClient.invalidateQueries({ queryKey: ['jobs'] });
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to start pre-flight check: ${error.message}`);
+    }
+  });
 
   return (
     <Card>
@@ -111,6 +158,33 @@ export const EsxiUpgradeReadinessWidget = () => {
                     <span>{recentFailed} failed</span>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {profiles && profiles.length > 0 && eligibleForUpgrade.length > 0 && (
+              <div className="space-y-2 p-3 border border-border/50 rounded-lg bg-muted/20">
+                <div className="text-sm font-medium">Pre-flight Check</div>
+                <Select value={selectedProfile} onValueChange={setSelectedProfile}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select profile..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {profiles.map(profile => (
+                      <SelectItem key={profile.id} value={profile.id}>
+                        {profile.name} ({profile.target_version})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button 
+                  onClick={() => runPreflightCheck.mutate()} 
+                  disabled={!selectedProfile || runPreflightCheck.isPending}
+                  size="sm"
+                  className="w-full"
+                >
+                  <PlayCircle className="w-4 h-4 mr-2" />
+                  {runPreflightCheck.isPending ? "Running..." : "Run Pre-flight Check"}
+                </Button>
               </div>
             )}
 
