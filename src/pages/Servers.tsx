@@ -243,8 +243,9 @@ export default function Servers() {
       />
 
       {/* Main: Table + Sidebar Layout */}
-      <div className={cn("flex-1 overflow-y-auto", selectedServer && "pr-80")}>
-        <div className="flex-1 min-h-0">
+      <div className="flex-1 flex overflow-hidden">
+        {/* Scrollable table area */}
+        <div className="flex-1 overflow-y-auto">
           <ServersTable
           servers={filteredServers}
           groupedData={groupedData ? groupedData.map(g => ({
@@ -294,7 +295,7 @@ export default function Servers() {
           />
         </div>
 
-        {/* Server Quick View Sidebar */}
+        {/* Server Quick View Sidebar - normal flex child */}
         {selectedServer && (
           <ServerQuickView
             server={selectedServer}
