@@ -172,7 +172,7 @@ export function OperationsTimeline({
     fetchStaleThresholds();
 
     const jobsChannel = supabase
-      .channel('jobs-changes')
+      .channel('operations-timeline-jobs')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, fetchData)
       .subscribe();
 

@@ -103,7 +103,7 @@ export default function MaintenancePlanner() {
     fetchJobs();
 
     const channel = supabase
-      .channel('jobs-changes')
+      .channel('maintenance-planner-jobs')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, fetchJobs)
       .subscribe();
 
