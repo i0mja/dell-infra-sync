@@ -3414,7 +3414,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                         )
                         if resp.status_code in [200, 201]:
                             success_count += 1
-                 except Exception as single_err:
+                    except Exception as single_err:
                         self.log(f"    Failed to upsert VM individually: {single_err}", "WARNING")
                 self.log(f"  ⚠️  Fallback: {success_count}/{len(batch)} VMs inserted individually")
                 return success_count
