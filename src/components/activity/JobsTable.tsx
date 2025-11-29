@@ -210,6 +210,15 @@ export function JobsTable({
   };
 
   const getTarget = (job: Job) => {
+    // vCenter sync jobs
+    if (job.job_type === 'vcenter_sync') {
+      const vmsTotal = job.details?.vms_total;
+      const hostsTotal = job.details?.hosts_total;
+      if (vmsTotal) return `${vmsTotal} VMs`;
+      if (hostsTotal) return `${hostsTotal} hosts`;
+      return 'vCenter';
+    }
+    
     if (job.target_scope?.server_ids?.length) {
       return `${job.target_scope.server_ids.length} ${job.target_scope.server_ids.length === 1 ? "server" : "servers"}`;
     }
@@ -281,14 +290,17 @@ export function JobsTable({
           <SelectTrigger className="w-[160px] h-8 text-sm">
             <SelectValue placeholder="Job Type" />
           </SelectTrigger>
-          <SelectContent>
+            <SelectContent>
             <SelectItem value="all">All Types</SelectItem>
             <SelectItem value="discovery_scan">Discovery Scan</SelectItem>
+            <SelectItem value="vcenter_sync">vCenter Sync</SelectItem>
             <SelectItem value="scp_export">SCP Export</SelectItem>
             <SelectItem value="scp_import">SCP Import</SelectItem>
             <SelectItem value="firmware_update">Firmware Update</SelectItem>
             <SelectItem value="power_control">Power Control</SelectItem>
             <SelectItem value="console_launch">Console Launch</SelectItem>
+            <SelectItem value="esxi_upgrade">ESXi Upgrade</SelectItem>
+            <SelectItem value="esxi_preflight_check">ESXi Preflight</SelectItem>
           </SelectContent>
         </Select>
 
@@ -432,11 +444,22 @@ export function JobsTable({
                 )}
                 {isColumnVisible("progress") && (
                   <TableCell>
-                    {job.status === "running" && job.averageProgress !== undefined ? (
-                      <div className="flex items-center gap-2">
-                        <Progress value={job.averageProgress} className="w-24 h-2" />
-                        <span className="text-xs text-muted-foreground">{Math.round(job.averageProgress)}%</span>
-                      </div>
+                    {job.status === "running" ? (
+                      job.details?.progress_percent !== undefined ? (
+                        <div className="flex items-center gap-2">
+                          <Progress value={job.details.progress_percent} className="w-24 h-2" />
+                          <span className="text-xs text-muted-foreground">{job.details.progress_percent}%</span>
+                        </div>
+                      ) : job.averageProgress !== undefined ? (
+                        <div className="flex items-center gap-2">
+                          <Progress value={job.averageProgress} className="w-24 h-2" />
+                          <span className="text-xs text-muted-foreground">{Math.round(job.averageProgress)}%</span>
+                        </div>
+                      ) : job.details?.current_step ? (
+                        <span className="text-xs text-muted-foreground">{job.details.current_step}</span>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">—</span>
+                      )
                     ) : (
                       <span className="text-sm text-muted-foreground">—</span>
                     )}

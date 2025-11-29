@@ -62,13 +62,16 @@ serve(async (req) => {
       throw new Error('Insufficient permissions');
     }
 
-    const { hosts }: SyncRequest = await req.json();
+    const body = await req.json();
+    const hosts = body.hosts || [];
+    const jobId = body.job_id; // Accept job_id from request
+    const vcenterId = body.vcenter_id; // Accept vcenter_id for logging
 
     if (!hosts || !Array.isArray(hosts)) {
       throw new Error('Invalid request: hosts array required');
     }
 
-    console.log(`Processing ${hosts.length} vCenter hosts`);
+    console.log(`Processing ${hosts.length} vCenter hosts (Job: ${jobId || 'N/A'})`);
     
     const startTime = Date.now();
 
@@ -77,9 +80,63 @@ serve(async (req) => {
     let updatedHosts = 0;
     let linkedServers = 0;
     const errors: string[] = [];
+    let hostIndex = 0;
+
+    // Create job tasks if job_id provided
+    const hostTasks: string[] = [];
+    if (jobId) {
+      for (const host of hosts) {
+        const { data: task } = await supabase
+          .from('job_tasks')
+          .insert({
+            job_id: jobId,
+            status: 'pending',
+            progress: 0,
+            log: `Waiting to process ${host.name}`,
+          })
+          .select('id')
+          .single();
+        
+        if (task) {
+          hostTasks.push(task.id);
+        }
+      }
+    }
 
     // Process each host
     for (const host of hosts) {
+      hostIndex++;
+      const taskId = hostTasks[hostIndex - 1];
+      
+      // Update job details with progress
+      if (jobId) {
+        await supabase
+          .from('jobs')
+          .update({
+            details: {
+              current_step: `Processing host ${hostIndex}/${hosts.length}: ${host.name}`,
+              hosts_processed: hostIndex,
+              hosts_total: hosts.length,
+              new_hosts: newHosts,
+              updated_hosts: updatedHosts,
+              linked_servers: linkedServers,
+            }
+          })
+          .eq('id', jobId);
+
+        // Update task to running
+        if (taskId) {
+          await supabase
+            .from('job_tasks')
+            .update({
+              status: 'running',
+              started_at: new Date().toISOString(),
+              progress: 0,
+              log: `Processing ${host.name}`,
+            })
+            .eq('id', taskId);
+        }
+      }
       try {
         // Check if host already exists
         const { data: existingHost, error: fetchError } = await supabase
@@ -115,6 +172,17 @@ serve(async (req) => {
           hostId = existingHost.id;
           updatedHosts++;
           console.log(`Updated host: ${host.name}`);
+          
+          // Update task progress
+          if (taskId) {
+            await supabase
+              .from('job_tasks')
+              .update({
+                progress: 50,
+                log: `Updated existing host: ${host.name}`,
+              })
+              .eq('id', taskId);
+          }
         } else {
           // Insert new host
           const { data: newHost, error: insertError } = await supabase
@@ -128,6 +196,17 @@ serve(async (req) => {
           hostId = newHost.id;
           newHosts++;
           console.log(`Created new host: ${host.name}`);
+          
+          // Update task progress
+          if (taskId) {
+            await supabase
+              .from('job_tasks')
+              .update({
+                progress: 50,
+                log: `Created new host: ${host.name}`,
+              })
+              .eq('id', taskId);
+          }
         }
 
         // Auto-link: Try to find a matching server by serial number (Service Tag)
@@ -157,26 +236,82 @@ serve(async (req) => {
 
             if (reverseLinkError) throw reverseLinkError;
 
-            linkedServers++;
-            console.log(`Auto-linked: ${host.name} <-> Server ${matchingServer.id}`);
+              linkedServers++;
+              console.log(`Auto-linked: ${host.name} <-> Server ${matchingServer.id}`);
 
-            // Log the auto-link event
-            await supabase.from('audit_logs').insert([{
-              user_id: user.id,
-              action: 'auto_link_server',
-              details: {
-                vcenter_host: host.name,
-                server_id: matchingServer.id,
-                service_tag: host.serial_number,
-              },
-            }]);
+              // Log the auto-link event
+              await supabase.from('audit_logs').insert([{
+                user_id: user.id,
+                action: 'auto_link_server',
+                details: {
+                  vcenter_host: host.name,
+                  server_id: matchingServer.id,
+                  service_tag: host.serial_number,
+                },
+              }]);
+              
+              // Update task progress
+              if (taskId) {
+                await supabase
+                  .from('job_tasks')
+                  .update({
+                    progress: 75,
+                    log: `Auto-linked to server ${matchingServer.id}`,
+                  })
+                  .eq('id', taskId);
+              }
+            }
+          }
+          
+          // Mark task as completed
+          if (taskId) {
+            await supabase
+              .from('job_tasks')
+              .update({
+                status: 'completed',
+                completed_at: new Date().toISOString(),
+                progress: 100,
+                log: `Completed processing ${host.name}`,
+              })
+              .eq('id', taskId);
+          }
+        } catch (err) {
+          console.error(`Error processing host ${host.name}:`, err);
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          errors.push(`${host.name}: ${errorMessage}`);
+          
+          // Mark task as failed
+          if (taskId) {
+            await supabase
+              .from('job_tasks')
+              .update({
+                status: 'failed',
+                completed_at: new Date().toISOString(),
+                progress: 0,
+                log: `Failed: ${errorMessage}`,
+              })
+              .eq('id', taskId);
           }
         }
-      } catch (err) {
-        console.error(`Error processing host ${host.name}:`, err);
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        errors.push(`${host.name}: ${errorMessage}`);
       }
+
+    // Update job with final status
+    if (jobId) {
+      const finalStatus = errors.length === 0 ? 'completed' : 'failed';
+      await supabase
+        .from('jobs')
+        .update({
+          status: finalStatus,
+          completed_at: new Date().toISOString(),
+          details: {
+            hosts_synced: updatedHosts,
+            hosts_new: newHosts,
+            auto_linked: linkedServers,
+            errors: errors.length,
+            error_messages: errors.length > 0 ? errors : undefined,
+          }
+        })
+        .eq('id', jobId);
     }
 
     // Log the sync event
@@ -189,6 +324,7 @@ serve(async (req) => {
         updated_hosts: updatedHosts,
         linked_servers: linkedServers,
         errors: errors.length,
+        job_id: jobId,
       },
     }]);
     
@@ -196,18 +332,18 @@ serve(async (req) => {
     const syncTime = Date.now() - startTime;
     await logIdracCommand({
       supabase: supabase as any,
-      jobId: undefined,
+      jobId: jobId,
       serverId: undefined,
       taskId: undefined,
       commandType: 'VCENTER_SYNC',
       endpoint: '/vcenter-sync',
       fullUrl: 'vcenter-sync-edge-function',
-      requestBody: { host_count: hosts.length },
+      requestBody: { host_count: hosts.length, vcenter_id: vcenterId },
       statusCode: 200,
       responseTimeMs: syncTime,
       responseBody: { new: newHosts, updated: updatedHosts, linked: linkedServers, errors: errors.length },
       success: errors.length === 0,
-      errorMessage: errors.length > 0 ? errors.join(', ') : undefined,
+      errorMessage: errors.length > 0 ? errors.slice(0, 3).join('; ') : undefined,
       initiatedBy: user.id,
       source: 'vcenter_sync_edge',
       operationType: 'vcenter_api',

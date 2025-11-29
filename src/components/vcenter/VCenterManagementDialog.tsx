@@ -120,11 +120,14 @@ export function VCenterManagementDialog({
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
-      const { error } = await supabase.functions.invoke("create-job", {
+      const { data: jobData, error } = await supabase.functions.invoke("create-job", {
         body: {
           job_type: "vcenter_sync",
           target_scope: { vcenter_ids: [vcenter.id] },
-          details: { vcenter_id: vcenter.id },
+          details: { 
+            vcenter_id: vcenter.id,
+            vcenter_name: vcenter.name,
+          },
         },
       });
 
