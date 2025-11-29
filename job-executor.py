@@ -2953,6 +2953,40 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 details={"current_step": "Initializing"}
             )
             
+            # Create tasks for each sync phase
+            sync_phases = [
+                {'name': 'connect', 'label': 'Connecting to vCenter'},
+                {'name': 'clusters', 'label': 'Syncing clusters'},
+                {'name': 'datastores', 'label': 'Syncing datastores'},
+                {'name': 'vms', 'label': 'Syncing VMs'},
+                {'name': 'alarms', 'label': 'Syncing alarms'},
+                {'name': 'hosts', 'label': 'Syncing ESXi hosts'}
+            ]
+            
+            phase_tasks = {}
+            for phase in sync_phases:
+                task_response = requests.post(
+                    f"{DSM_URL}/rest/v1/job_tasks",
+                    headers={
+                        'apikey': SERVICE_ROLE_KEY,
+                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=representation'
+                    },
+                    json={
+                        'job_id': job['id'],
+                        'status': 'pending',
+                        'progress': 0,
+                        'log': phase['label']
+                    },
+                    verify=VERIFY_SSL
+                )
+                
+                if task_response.status_code in [200, 201]:
+                    task_data = _safe_json_parse(task_response)
+                    if task_data:
+                        phase_tasks[phase['name']] = task_data[0]['id']
+            
             # Fetch vCenter from new vcenters table
             self.log("📋 Fetching vCenter configuration...")
             self.update_job_status(
@@ -3002,11 +3036,27 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             if not vc:
                 raise Exception("Failed to connect to vCenter - check credentials and network connectivity")
             
+            # Mark connect phase complete
+            if 'connect' in phase_tasks:
+                self.update_task_status(
+                    phase_tasks['connect'],
+                    'completed',
+                    log='✓ Connected to vCenter',
+                    progress=100
+                )
+            
             # Get vCenter content for all syncs
             content = vc.RetrieveContent()
             
             # Sync all vCenter entities with progress updates and connection checks
             self.log("📊 Syncing clusters...")
+            if 'clusters' in phase_tasks:
+                self.update_task_status(
+                    phase_tasks['clusters'],
+                    'running',
+                    log='Syncing clusters...',
+                    progress=0
+                )
             self.update_job_status(
                 job['id'], 
                 'running',
@@ -3016,10 +3066,24 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 raise Exception("vCenter connection lost before cluster sync")
             clusters_result = self.sync_vcenter_clusters(content, source_vcenter_id)
             self.log(f"✓ Clusters synced: {clusters_result.get('synced', 0)}")
+            if 'clusters' in phase_tasks:
+                self.update_task_status(
+                    phase_tasks['clusters'],
+                    'completed',
+                    log=f'✓ Synced {clusters_result.get("synced", 0)} clusters',
+                    progress=100
+                )
             if clusters_result.get('error'):
                 sync_errors.append(f"Clusters: {clusters_result.get('error')}")
             
             self.log("💾 Syncing datastores...")
+            if 'datastores' in phase_tasks:
+                self.update_task_status(
+                    phase_tasks['datastores'],
+                    'running',
+                    log='Syncing datastores...',
+                    progress=0
+                )
             self.update_job_status(
                 job['id'], 
                 'running',
@@ -3029,10 +3093,24 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 raise Exception("vCenter connection lost before datastore sync")
             datastores_result = self.sync_vcenter_datastores(content, source_vcenter_id)
             self.log(f"✓ Datastores synced: {datastores_result.get('synced', 0)}")
+            if 'datastores' in phase_tasks:
+                self.update_task_status(
+                    phase_tasks['datastores'],
+                    'completed',
+                    log=f'✓ Synced {datastores_result.get("synced", 0)} datastores',
+                    progress=100
+                )
             if datastores_result.get('error'):
                 sync_errors.append(f"Datastores: {datastores_result.get('error')}")
             
             self.log("🖥️  Syncing VMs...")
+            if 'vms' in phase_tasks:
+                self.update_task_status(
+                    phase_tasks['vms'],
+                    'running',
+                    log='Syncing VMs...',
+                    progress=0
+                )
             self.update_job_status(
                 job['id'], 
                 'running',
@@ -3042,12 +3120,26 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 raise Exception("vCenter connection lost before VM sync")
             vms_result = self.sync_vcenter_vms(content, source_vcenter_id, job['id'])
             self.log(f"✓ VMs synced: {vms_result.get('synced', 0)}")
+            if 'vms' in phase_tasks:
+                self.update_task_status(
+                    phase_tasks['vms'],
+                    'completed',
+                    log=f'✓ Synced {vms_result.get("synced", 0)} VMs',
+                    progress=100
+                )
             if vms_result.get('error'):
                 sync_errors.append(f"VMs: {vms_result.get('error')}")
             if vms_result.get('os_distribution'):
                 self.log(f"VM OS distribution: {vms_result.get('os_distribution')}")
             
             self.log("⚠️  Syncing alarms...")
+            if 'alarms' in phase_tasks:
+                self.update_task_status(
+                    phase_tasks['alarms'],
+                    'running',
+                    log='Syncing alarms...',
+                    progress=0
+                )
             self.update_job_status(
                 job['id'], 
                 'running',
@@ -3057,11 +3149,25 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 raise Exception("vCenter connection lost before alarm sync")
             alarms_result = self.sync_vcenter_alarms(content, source_vcenter_id)
             self.log(f"✓ Alarms synced: {alarms_result.get('synced', 0)}")
+            if 'alarms' in phase_tasks:
+                self.update_task_status(
+                    phase_tasks['alarms'],
+                    'completed',
+                    log=f'✓ Synced {alarms_result.get("synced", 0)} alarms',
+                    progress=100
+                )
             if alarms_result.get('error'):
                 sync_errors.append(f"Alarms: {alarms_result.get('error')}")
             
             # Get all ESXi hosts
             self.log("🖧  Discovering ESXi hosts...")
+            if 'hosts' in phase_tasks:
+                self.update_task_status(
+                    phase_tasks['hosts'],
+                    'running',
+                    log='Discovering ESXi hosts...',
+                    progress=0
+                )
             self.update_job_status(
                 job['id'], 
                 'running',
@@ -3085,7 +3191,17 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                 details={"current_step": f"Syncing {total_hosts} ESXi hosts", "hosts_total": total_hosts}
             )
             
-            for host in container.view:
+            for index, host in enumerate(container.view):
+                try:
+                    # Update per-host progress
+                    if 'hosts' in phase_tasks and total_hosts > 0:
+                        progress = int((index / total_hosts) * 100)
+                        self.update_task_status(
+                            phase_tasks['hosts'],
+                            'running',
+                            log=f'Processing host {index+1}/{total_hosts}: {host.name}',
+                            progress=progress
+                        )
                 try:
                     # Get host details
                     host_name = host.name
@@ -3225,6 +3341,15 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             
             container.Destroy()
             
+            # Mark hosts phase complete
+            if 'hosts' in phase_tasks:
+                self.update_task_status(
+                    phase_tasks['hosts'],
+                    'completed',
+                    log=f'✓ Synced {hosts_synced} hosts ({hosts_new} new, {hosts_updated} updated, {hosts_linked} linked)',
+                    progress=100
+                )
+            
             # Update job as completed
             result_details = {
                 'hosts_synced': hosts_synced,
@@ -3263,6 +3388,19 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
 
         except Exception as e:
             self.log(f"vCenter sync failed: {e}", "ERROR")
+            
+            # Mark any running/pending tasks as failed
+            try:
+                if 'phase_tasks' in locals():
+                    for task_id in phase_tasks.values():
+                        self.update_task_status(
+                            task_id,
+                            'failed',
+                            log=f'Failed: {str(e)}'
+                        )
+            except:
+                pass  # Don't let task cleanup failure prevent error reporting
+            
             self.log_vcenter_activity(
                 operation="vcenter_sync",
                 endpoint=vcenter_host or "unknown",
