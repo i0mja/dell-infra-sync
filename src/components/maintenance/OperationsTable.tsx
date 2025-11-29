@@ -485,7 +485,7 @@ export function OperationsTable({
                             {job?.status === 'running' && <JobProgressIndicator job={job} />}
                           </div>
                         </TableCell>
-                        <TableCell>
+                        <TableCell onClick={(e) => e.stopPropagation()}>
                           {canManage && (
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
@@ -528,6 +528,21 @@ export function OperationsTable({
                                     </DropdownMenuItem>
                                   </>
                                 )}
+                                {job && ['completed', 'failed', 'cancelled'].includes(job.status) && onBulkDelete && (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem 
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onBulkDelete([op.id]);
+                                      }}
+                                      className="text-destructive"
+                                    >
+                                      <Trash2 className="mr-2 h-4 w-4" />
+                                      Delete
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
                                 {window && onDelete && (
                                   <>
                                     <DropdownMenuSeparator />
@@ -565,6 +580,18 @@ export function OperationsTable({
                           <RotateCcw className="mr-2 h-4 w-4" />
                           Retry Job
                         </ContextMenuItem>
+                      )}
+                      {job && ['completed', 'failed', 'cancelled'].includes(job.status) && canManage && onBulkDelete && (
+                        <>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem 
+                            className="text-destructive"
+                            onClick={() => onBulkDelete([op.id])}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete Job
+                          </ContextMenuItem>
+                        </>
                       )}
                       {window && canManage && onDelete && (
                         <>
