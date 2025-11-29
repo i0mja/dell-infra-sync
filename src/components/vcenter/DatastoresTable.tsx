@@ -11,6 +11,8 @@ import { Search, HardDrive, Server, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDo
 import type { VCenterDatastore } from "@/hooks/useVCenterData";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
+import { usePagination } from "@/hooks/usePagination";
+import { TablePagination } from "@/components/ui/table-pagination";
 import { toast } from "sonner";
 
 interface DatastoresTableProps {
@@ -54,6 +56,9 @@ export function DatastoresTable({ datastores, selectedDatastoreId, onDatastoreCl
       return sortDirection === "asc" ? comparison : -comparison;
     });
   }
+
+  // Apply pagination
+  const pagination = usePagination(filteredDatastores, "vcenter-datastores-pagination", 50);
 
   const handleSort = (field: string) => {
     if (sortField === field) {
@@ -132,10 +137,10 @@ export function DatastoresTable({ datastores, selectedDatastoreId, onDatastoreCl
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredDatastores.length === 0 ? (
+              {pagination.paginatedItems.length === 0 ? (
                 <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No datastores found</TableCell></TableRow>
               ) : (
-                filteredDatastores.map((ds) => {
+                pagination.paginatedItems.map((ds) => {
                   const usagePercent = getUsagePercent(ds.capacity_bytes, ds.free_bytes);
                   const isLowSpace = usagePercent >= 80;
                   return (
@@ -156,7 +161,22 @@ export function DatastoresTable({ datastores, selectedDatastoreId, onDatastoreCl
             </TableBody>
           </Table>
         </div>
-        <div className="border-t px-4 py-2 bg-muted/50 text-xs text-muted-foreground">Showing {filteredDatastores.length} of {datastores.length} datastores</div>
+        <TablePagination
+          currentPage={pagination.currentPage}
+          totalPages={pagination.totalPages}
+          totalItems={filteredDatastores.length}
+          pageSize={pagination.pageSize}
+          startIndex={pagination.startIndex}
+          endIndex={pagination.endIndex}
+          onPageChange={pagination.setPage}
+          onPageSizeChange={pagination.setPageSize}
+          onFirstPage={pagination.goToFirstPage}
+          onLastPage={pagination.goToLastPage}
+          onNextPage={pagination.goToNextPage}
+          onPrevPage={pagination.goToPrevPage}
+          canGoNext={pagination.canGoNext}
+          canGoPrev={pagination.canGoPrev}
+        />
       </div>
     </div>
   );

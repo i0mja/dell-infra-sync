@@ -54,6 +54,8 @@ import { formatDistanceToNow } from "date-fns";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { useSavedViews } from "@/hooks/useSavedViews";
+import { usePagination } from "@/hooks/usePagination";
+import { TablePagination } from "@/components/ui/table-pagination";
 
 interface VCenterHost {
   id: string;
@@ -155,6 +157,9 @@ export function HostsTable({
   }, []);
 
   const displayGroups = sortField ? sortedClusterGroups : clusterGroups;
+
+  // Apply pagination to all hosts
+  const pagination = usePagination(allHosts, "vcenter-hosts-pagination", 50);
 
   const toggleCluster = (clusterName: string) => {
     const newCollapsed = new Set(collapsedClusters);
@@ -395,209 +400,137 @@ export function HostsTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {displayGroups.map((cluster) => {
-              const isCollapsed = collapsedClusters.has(cluster.name);
-              const linkedCount = cluster.hosts.filter((h) => h.server_id).length;
-              const connectedCount = cluster.hosts.filter((h) => h.status === "connected").length;
-              const isClusterSelected = selectedCluster === cluster.name;
-
+            {pagination.paginatedItems.map((host) => {
+              const isHostSelected = selectedHostId === host.id;
               return (
-                <>
-                  {/* Cluster Header Row */}
-                  <TableRow
-                    key={`cluster-${cluster.name}`}
-                    className={`cursor-pointer hover:bg-accent/50 font-medium ${
-                      isClusterSelected ? "bg-accent" : "bg-muted/30"
-                    }`}
-                    onClick={() => {
-                      toggleCluster(cluster.name);
-                      onClusterClick(cluster.name);
-                    }}
-                  >
-                    <TableCell colSpan={7} className="py-2">
-                      <div className="flex items-center gap-2">
-                        {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                        <span className="font-semibold">{cluster.name}</span>
-                        <span className="text-xs text-muted-foreground">
-                          ({cluster.hosts.length} hosts, {linkedCount} linked, {connectedCount} connected)
-                        </span>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-
-                  {/* Host Rows */}
-                  {!isCollapsed &&
-                    cluster.hosts.map((host) => (
-                      <ContextMenu key={host.id}>
-                        <ContextMenuTrigger asChild>
-                          <TableRow
-                            className={`cursor-pointer ${
-                              selectedHostId === host.id ? "bg-accent" : "hover:bg-accent/50"
-                            } group`}
-                            onClick={() => onHostClick(host)}
-                          >
-                            <TableCell>
-                              <Checkbox
-                                checked={selectedHosts.has(host.id)}
-                                onCheckedChange={() => toggleHostSelection(host.id)}
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                            </TableCell>
-                            {isColumnVisible("name") && (
-                              <TableCell className="font-medium pl-8">
-                                <div className="flex items-center gap-2">
-                                  {host.name}
-                                  <div className="opacity-0 group-hover:opacity-100 flex gap-1">
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-6 w-6"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        onHostSync?.(host);
-                                      }}
-                                    >
-                                      <RefreshCcw className="h-3 w-3" />
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-6 w-6"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        copyToClipboard(host.serial_number, "Serial");
-                                      }}
-                                    >
-                                      <ClipboardCopy className="h-3 w-3" />
-                                    </Button>
-                                  </div>
-                                </div>
-                              </TableCell>
-                            )}
-                            {isColumnVisible("status") && <TableCell>{getStatusBadge(host)}</TableCell>}
-                            {isColumnVisible("esxi") && (
-                              <TableCell className="text-sm">{host.esxi_version || "N/A"}</TableCell>
-                            )}
-                            {isColumnVisible("serial") && (
-                              <TableCell className="text-sm font-mono text-xs">
-                                {host.serial_number || "N/A"}
-                              </TableCell>
-                            )}
-                            {isColumnVisible("linked") && (
-                              <TableCell>
-                                {host.server_id ? (
-                                  <Badge variant="secondary" className="text-xs">
-                                    ✓ Yes
-                                  </Badge>
-                                ) : (
-                                  <Badge variant="outline" className="text-xs">
-                                    ✗ No
-                                  </Badge>
-                                )}
-                              </TableCell>
-                            )}
-                            {isColumnVisible("sync") && (
-                              <TableCell className="text-sm text-muted-foreground">
-                                {host.last_sync
-                                  ? formatDistanceToNow(new Date(host.last_sync), { addSuffix: true })
-                                  : "Never"}
-                              </TableCell>
-                            )}
-                          </TableRow>
-                        </ContextMenuTrigger>
-                        <ContextMenuContent className="w-72">
-                          <ContextMenuItem onClick={() => onHostClick(host)}>
-                            <Server className="mr-2 h-4 w-4" />
-                            Open host details
-                          </ContextMenuItem>
-                          <ContextMenuSeparator />
-                          <ContextMenuSub>
-                            <ContextMenuSubTrigger>
-                              <Server className="mr-2 h-4 w-4" />
-                              Server mapping
-                            </ContextMenuSubTrigger>
-                            <ContextMenuSubContent>
-                              <ContextMenuItem
-                                disabled={!host.server_id}
-                                onClick={() => onViewLinkedServer?.(host)}
+                <ContextMenu key={host.id}>
+                  <ContextMenuTrigger asChild>
+                    <TableRow
+                      className={`cursor-pointer ${
+                        isHostSelected ? "bg-accent" : "hover:bg-accent/50"
+                      } group`}
+                      onClick={() => onHostClick(host)}
+                    >
+                      <TableCell>
+                        <Checkbox
+                          checked={selectedHosts.has(host.id)}
+                          onCheckedChange={() => toggleHostSelection(host.id)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </TableCell>
+                      {isColumnVisible("name") && (
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2">
+                            {host.name}
+                            <div className="opacity-0 group-hover:opacity-100 flex gap-1">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onHostSync?.(host);
+                                }}
                               >
-                                <Link2 className="mr-2 h-4 w-4" />
-                                {host.server_id ? "Open linked server" : "No linked server"}
-                              </ContextMenuItem>
-                              <ContextMenuItem onClick={() => onLinkToServer?.(host)}>
-                                <Layers className="mr-2 h-4 w-4" />
-                                Link or match server
-                              </ContextMenuItem>
-                              <ContextMenuSeparator />
-                              <ContextMenuItem onClick={() => copyToClipboard(host.serial_number, "Serial number")}>
-                                <ClipboardCopy className="mr-2 h-4 w-4" />
-                                Copy serial number
-                              </ContextMenuItem>
-                            </ContextMenuSubContent>
-                          </ContextMenuSub>
-                          <ContextMenuSub>
-                            <ContextMenuSubTrigger>
-                              <Layers className="mr-2 h-4 w-4" />
-                              Cluster actions
-                            </ContextMenuSubTrigger>
-                            <ContextMenuSubContent>
-                              <ContextMenuItem onClick={() => onClusterClick(host.cluster || "Unclustered")}>
-                                <ChevronRight className="mr-2 h-4 w-4" />
-                                View cluster summary
-                              </ContextMenuItem>
-                              <ContextMenuItem onClick={() => onClusterUpdate?.(host.cluster || undefined)}>
-                                <RefreshCcw className="mr-2 h-4 w-4" />
-                                Open cluster update wizard
-                              </ContextMenuItem>
-                            </ContextMenuSubContent>
-                          </ContextMenuSub>
-                          <ContextMenuSub>
-                            <ContextMenuSubTrigger>
-                              <RefreshCcw className="mr-2 h-4 w-4" />
-                              vCenter actions
-                            </ContextMenuSubTrigger>
-                            <ContextMenuSubContent>
-                              <ContextMenuItem onClick={() => onHostSync?.(host)}>
-                                <RefreshCcw className="mr-2 h-4 w-4" />
-                                Sync this host
-                              </ContextMenuItem>
-                              <ContextMenuItem onClick={() => copyToClipboard(host.vcenter_id, "vCenter host ID")}>
-                                <ClipboardCopy className="mr-2 h-4 w-4" />
-                                Copy vCenter host ID
-                              </ContextMenuItem>
-                              <ContextMenuItem onClick={() => copyToClipboard(host.name, "Hostname")}>
-                                <ClipboardCopy className="mr-2 h-4 w-4" />
-                                Copy hostname
-                              </ContextMenuItem>
-                            </ContextMenuSubContent>
-                          </ContextMenuSub>
-                          {onHostDelete && (
-                            <>
-                              <ContextMenuSeparator />
-                              <ContextMenuItem 
-                                className="text-destructive focus:text-destructive"
-                                onClick={() => onHostDelete(host)}
+                                <RefreshCcw className="h-3 w-3" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  copyToClipboard(host.serial_number, "Serial");
+                                }}
                               >
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                Remove from sync
-                              </ContextMenuItem>
-                            </>
+                                <ClipboardCopy className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          </div>
+                        </TableCell>
+                      )}
+                      {isColumnVisible("status") && <TableCell>{getStatusBadge(host)}</TableCell>}
+                      {isColumnVisible("esxi") && (
+                        <TableCell className="text-sm">{host.esxi_version || "N/A"}</TableCell>
+                      )}
+                      {isColumnVisible("serial") && (
+                        <TableCell className="text-sm font-mono text-xs">
+                          {host.serial_number || "N/A"}
+                        </TableCell>
+                      )}
+                      {isColumnVisible("linked") && (
+                        <TableCell>
+                          {host.server_id ? (
+                            <Badge variant="default" className="bg-success text-success-foreground text-xs">
+                              <Link2 className="mr-1 h-3 w-3" />
+                              Linked
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-xs">Not Linked</Badge>
                           )}
-                        </ContextMenuContent>
-                      </ContextMenu>
-                    ))}
-                </>
+                        </TableCell>
+                      )}
+                      {isColumnVisible("sync") && (
+                        <TableCell className="text-xs text-muted-foreground">
+                          {host.last_sync ? formatDistanceToNow(new Date(host.last_sync), { addSuffix: true }) : "Never"}
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  </ContextMenuTrigger>
+                  <ContextMenuContent>
+                    <ContextMenuItem onClick={() => onHostClick(host)}>
+                      <Layers className="mr-2 h-4 w-4" />
+                      View Details
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => onHostSync?.(host)}>
+                      <RefreshCcw className="mr-2 h-4 w-4" />
+                      Sync Host
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                    {host.server_id ? (
+                      <ContextMenuItem onClick={() => onViewLinkedServer?.(host)}>
+                        <Server className="mr-2 h-4 w-4" />
+                        View Linked Server
+                      </ContextMenuItem>
+                    ) : (
+                      <ContextMenuItem onClick={() => onLinkToServer?.(host)}>
+                        <Link2 className="mr-2 h-4 w-4" />
+                        Link to Server
+                      </ContextMenuItem>
+                    )}
+                    <ContextMenuSeparator />
+                    <ContextMenuItem onClick={() => copyToClipboard(host.name, "Hostname")}>
+                      <ClipboardCopy className="mr-2 h-4 w-4" />
+                      Copy Hostname
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => copyToClipboard(host.serial_number, "Serial Number")}>
+                      <ClipboardCopy className="mr-2 h-4 w-4" />
+                      Copy Serial
+                    </ContextMenuItem>
+                  </ContextMenuContent>
+                </ContextMenu>
               );
             })}
           </TableBody>
         </Table>
       </div>
 
-      {/* Footer */}
-      <div className="border-t px-4 py-2 bg-muted/50 text-xs text-muted-foreground">
-        Showing {displayGroups.reduce((acc, g) => acc + g.hosts.length, 0)} hosts in {displayGroups.length} cluster
-        {displayGroups.length !== 1 ? "s" : ""}
-      </div>
+      <TablePagination
+        currentPage={pagination.currentPage}
+        totalPages={pagination.totalPages}
+        totalItems={allHosts.length}
+        pageSize={pagination.pageSize}
+        startIndex={pagination.startIndex}
+        endIndex={pagination.endIndex}
+        onPageChange={pagination.setPage}
+        onPageSizeChange={pagination.setPageSize}
+        onFirstPage={pagination.goToFirstPage}
+        onLastPage={pagination.goToLastPage}
+        onNextPage={pagination.goToNextPage}
+        onPrevPage={pagination.goToPrevPage}
+        canGoNext={pagination.canGoNext}
+        canGoPrev={pagination.canGoPrev}
+      />
 
       {/* Save View Dialog */}
       <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>

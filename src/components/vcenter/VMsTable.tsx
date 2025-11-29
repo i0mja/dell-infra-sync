@@ -36,6 +36,8 @@ import type { VCenterVM } from "@/hooks/useVCenterData";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { useSavedViews } from "@/hooks/useSavedViews";
+import { usePagination } from "@/hooks/usePagination";
+import { TablePagination } from "@/components/ui/table-pagination";
 import { toast } from "sonner";
 
 interface VMsTableProps {
@@ -113,6 +115,9 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
       return sortDirection === "asc" ? comparison : -comparison;
     });
   }
+
+  // Apply pagination
+  const pagination = usePagination(filteredVms, "vcenter-vms-pagination", 50);
 
   const handleSort = (field: string) => {
     if (sortField === field) {
@@ -331,7 +336,7 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredVms.map((vm) => (
+                  {pagination.paginatedItems.map((vm) => (
                     <TableRow
                       key={vm.id}
                       className={`cursor-pointer ${
@@ -370,9 +375,22 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
               </Table>
             </div>
 
-            <div className="border-t px-4 py-2 bg-muted/50 text-xs text-muted-foreground">
-              Showing {filteredVms.length} of {vms.length} VMs
-            </div>
+            <TablePagination
+              currentPage={pagination.currentPage}
+              totalPages={pagination.totalPages}
+              totalItems={filteredVms.length}
+              pageSize={pagination.pageSize}
+              startIndex={pagination.startIndex}
+              endIndex={pagination.endIndex}
+              onPageChange={pagination.setPage}
+              onPageSizeChange={pagination.setPageSize}
+              onFirstPage={pagination.goToFirstPage}
+              onLastPage={pagination.goToLastPage}
+              onNextPage={pagination.goToNextPage}
+              onPrevPage={pagination.goToPrevPage}
+              canGoNext={pagination.canGoNext}
+              canGoPrev={pagination.canGoPrev}
+            />
           </>
         )}
       </div>

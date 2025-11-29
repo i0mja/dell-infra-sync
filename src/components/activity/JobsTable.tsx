@@ -32,6 +32,8 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
+import { usePagination } from "@/hooks/usePagination";
+import { TablePagination } from "@/components/ui/table-pagination";
 
 interface Job {
   id: string;
@@ -152,6 +154,9 @@ export function JobsTable({
         return sortDirection === "asc" ? comparison : -comparison;
       })
     : jobs;
+
+  // Apply pagination
+  const pagination = usePagination(sortedJobs, "jobs-pagination", 50);
 
   const formatJobType = (type: string) => {
     return type
@@ -409,7 +414,7 @@ export function JobsTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {sortedJobs.map((job) => (
+            {pagination.paginatedItems.map((job) => (
               <TableRow
                 key={job.id}
                 className="cursor-pointer hover:bg-muted/50"
@@ -470,6 +475,23 @@ export function JobsTable({
           </TableBody>
         </Table>
       </div>
+      
+      <TablePagination
+        currentPage={pagination.currentPage}
+        totalPages={pagination.totalPages}
+        totalItems={sortedJobs.length}
+        pageSize={pagination.pageSize}
+        startIndex={pagination.startIndex}
+        endIndex={pagination.endIndex}
+        onPageChange={pagination.setPage}
+        onPageSizeChange={pagination.setPageSize}
+        onFirstPage={pagination.goToFirstPage}
+        onLastPage={pagination.goToLastPage}
+        onNextPage={pagination.goToNextPage}
+        onPrevPage={pagination.goToPrevPage}
+        canGoNext={pagination.canGoNext}
+        canGoPrev={pagination.canGoPrev}
+      />
     </div>
   );
 }
