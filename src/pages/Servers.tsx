@@ -202,8 +202,12 @@ export default function Servers() {
       });
 
       if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Failed to create job");
 
-      setConsoleJobId(data.id);
+      const jobId = data.job?.id;
+      if (!jobId) throw new Error("No job ID returned");
+
+      setConsoleJobId(jobId);
       setConsoleLaunchDialogOpen(true);
     } catch (error: any) {
       toast({
