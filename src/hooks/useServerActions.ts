@@ -18,7 +18,7 @@ export function useServerActions() {
 
       const { data, error } = await supabase.functions.invoke("create-job", {
         body: {
-          job_type: "test_connection",
+          job_type: "test_credentials",
           created_by: user.id,
           target_scope: { server_ids: [server.id] },
         },
