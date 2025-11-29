@@ -123,6 +123,7 @@ export function VCenterManagementDialog({
       const { error } = await supabase.functions.invoke("create-job", {
         body: {
           job_type: "vcenter_sync",
+          target_scope: { vcenter_ids: [vcenter.id] },
           details: { vcenter_id: vcenter.id },
         },
       });

@@ -258,6 +258,7 @@ export default function VCenter() {
           job_type: "vcenter_sync",
           status: "pending",
           created_by: user.id,
+          target_scope: { type: 'all' },
           details: { sync_type: "full_sync" },
         }).select().single();
 
