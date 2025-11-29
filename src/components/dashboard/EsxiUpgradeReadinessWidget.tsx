@@ -80,17 +80,20 @@ export const EsxiUpgradeReadinessWidget = () => {
 
       const hostIds = eligibleForUpgrade.map(h => h.id);
 
-      const { error } = await supabase.from('jobs').insert({
-        job_type: 'esxi_preflight_check',
-        created_by: user.id,
-        status: 'pending',
-        details: {
-          profile_id: selectedProfile,
-          host_ids: hostIds
+      const { data, error } = await supabase.functions.invoke('create-job', {
+        body: {
+          job_type: 'esxi_preflight_check',
+          target_scope: {
+            vcenter_host_ids: hostIds
+          },
+          details: {
+            profile_id: selectedProfile
+          }
         }
       });
 
       if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || 'Failed to create job');
     },
     onSuccess: () => {
       toast.success("Pre-flight check started");
