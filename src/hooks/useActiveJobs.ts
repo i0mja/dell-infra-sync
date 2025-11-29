@@ -46,7 +46,7 @@ export function useActiveJobs() {
     fetchJobs();
 
     const channel = supabase
-      .channel('active-jobs-changes')
+      .channel(`active-jobs-${Date.now()}`)
       .on(
         'postgres_changes',
         {

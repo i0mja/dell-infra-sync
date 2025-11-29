@@ -138,7 +138,7 @@ export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) =>
     fetchStaleThresholds();
 
     const channel = supabase
-      .channel('jobs-changes')
+      .channel('jobs-panel-changes')
       .on(
         'postgres_changes',
         {
