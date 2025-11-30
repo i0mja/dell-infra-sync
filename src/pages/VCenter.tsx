@@ -5,7 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { VCenterStatsBar } from "@/components/vcenter/VCenterStatsBar";
 import { HostsTable } from "@/components/vcenter/HostsTable";
 import { VMsTable } from "@/components/vcenter/VMsTable";
-import { ClustersPanel } from "@/components/vcenter/ClustersPanel";
+import { ClustersTable } from "@/components/vcenter/ClustersTable";
 import { DatastoresTable } from "@/components/vcenter/DatastoresTable";
 import { VCenterManagementDialog } from "@/components/vcenter/VCenterManagementDialog";
 import { VCenterConnectivityDialog } from "@/components/vcenter/VCenterConnectivityDialog";
@@ -570,7 +570,7 @@ export default function VCenter() {
           </TabsContent>
 
           <TabsContent value="clusters" className="flex-1 mt-0 overflow-hidden">
-            <ClustersPanel
+            <ClustersTable
               clusters={clusters}
               selectedClusterId={selectedClusterId}
               onClusterClick={handleClusterDataClick}
