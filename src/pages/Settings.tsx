@@ -2232,71 +2232,574 @@ export default function Settings() {
           </SettingsSection>
         </TabsContent>
 
-        {/* SECURITY TAB - TODO: Convert remaining sections */}
+        {/* SECURITY & ACCESS TAB */}
         <TabsContent value="security" className="space-y-4">
-          <p className="text-muted-foreground">Security settings will be organized into accordion sections</p>
-        </TabsContent>
-
-        {/* NOTIFICATIONS TAB - TODO: Convert remaining sections */}
-        <TabsContent value="notifications" className="space-y-4">
-          <p className="text-muted-foreground">Notification settings will be organized into accordion sections</p>
-        </TabsContent>
-
-        {/* INFRASTRUCTURE TAB - TODO: Convert remaining sections */}
-        <TabsContent value="infrastructure" className="space-y-4">
-          <p className="text-muted-foreground">Infrastructure settings will be organized into accordion sections</p>
-        </TabsContent>
-
-        {/* SYSTEM TAB - TODO: Convert remaining sections */}
-        <TabsContent value="system" className="space-y-4">
-          <p className="text-muted-foreground">System settings will be organized into accordion sections</p>
-        </TabsContent>
-
-        {/* LEGACY TABS - Keep for backward compatibility during transition */}
-          <TabsContent value="appearance">
+          {/* Credentials */}
+          <SettingsSection
+            id="credentials"
+            title="Credentials"
+            description="Manage iDRAC and ESXi credential sets with IP range auto-assignment"
+            icon={Shield}
+            defaultOpen={defaultOpenSection === 'credentials'}
+          >
             <div className="space-y-4">
-              <Card>
-                <CardContent className="space-y-6">
-                  <div className="space-y-4">
-                    <Label>Theme</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Choose your preferred color scheme
+              <div className="flex justify-between items-center">
+                <div>
+                  <h4 className="text-sm font-medium">Credential Sets</h4>
+                  <p className="text-sm text-muted-foreground">
+                    Create reusable credential sets for iDRAC and ESXi servers
+                  </p>
+                </div>
+                <Button onClick={() => {
+                  setEditingCredential(null);
+                  setCredentialForm({
+                    name: '',
+                    username: '',
+                    password: '',
+                    description: '',
+                    priority: 100,
+                    is_default: false,
+                  });
+                  setTempIpRanges([]);
+                  setShowCredentialDialog(true);
+                }}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Credential Set
+                </Button>
+              </div>
+
+              {credentialSets.length === 0 ? (
+                <Card>
+                  <CardContent className="flex flex-col items-center justify-center py-12">
+                    <Shield className="h-12 w-12 text-muted-foreground mb-4" />
+                    <p className="text-muted-foreground text-center">
+                      No credential sets configured. Add your first credential set to get started.
                     </p>
-                    <div className="grid grid-cols-3 gap-4">
-                      <Button
-                        variant={theme === "light" ? "default" : "outline"}
-                        onClick={() => setTheme("light")}
-                        className="flex items-center gap-2"
-                      >
-                        <Sun className="h-4 w-4" />
-                        Light
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="space-y-3">
+                  {credentialSets.map((cred) => (
+                    <Card key={cred.id}>
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <h4 className="font-medium">{cred.name}</h4>
+                              {cred.is_default && (
+                                <Badge variant="secondary">Default</Badge>
+                              )}
+                              <Badge variant="outline">
+                                {cred.credential_type === 'idrac' ? 'iDRAC' : 'ESXi'}
+                              </Badge>
+                            </div>
+                            {cred.description && (
+                              <p className="text-sm text-muted-foreground mb-2">{cred.description}</p>
+                            )}
+                            <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                              <span>Username: {cred.username}</span>
+                              <span>Priority: {cred.priority}</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setEditingCredential(cred);
+                                setCredentialForm({
+                                  name: cred.name,
+                                  username: cred.username,
+                                  password: '',
+                                  description: cred.description || '',
+                                  priority: cred.priority || 100,
+                                  is_default: cred.is_default || false,
+                                });
+                                loadIpRanges(cred.id).then(() => {
+                                  // Convert loaded ipRanges to tempIpRanges format for inline editing
+                                  setTempIpRanges(ipRanges.map(r => ({ 
+                                    start_ip: r.ip_range.split('-')[0]?.trim() || '', 
+                                    end_ip: r.ip_range.split('-')[1]?.trim() || r.ip_range 
+                                  })));
+                                });
+                                setShowCredentialDialog(true);
+                              }}
+                            >
+                              Edit
+                            </Button>
+                            {testingCredential === cred.id ? (
+                              <Button variant="outline" size="sm" disabled>
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setTestingCredential(cred.id);
+                                  setTestIp("");
+                                }}
+                              >
+                                Test
+                              </Button>
+                            )}
+                            {deleteConfirmId === cred.id ? (
+                              <div className="flex gap-1">
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  onClick={async () => {
+                                    const { error } = await supabase
+                                      .from('credential_sets')
+                                      .delete()
+                                      .eq('id', cred.id);
+
+                                    if (error) {
+                                      toast({
+                                        title: "Error",
+                                        description: error.message,
+                                        variant: "destructive",
+                                      });
+                                    } else {
+                                      toast({
+                                        title: "Success",
+                                        description: "Credential set deleted",
+                                      });
+                                      loadCredentialSets();
+                                    }
+                                    setDeleteConfirmId(null);
+                                  }}
+                                >
+                                  Confirm
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setDeleteConfirmId(null)}
+                                >
+                                  Cancel
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setDeleteConfirmId(cred.id)}
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                        {testingCredential === cred.id && (
+                          <div className="mt-3 pt-3 border-t">
+                            <Label htmlFor={`test-ip-${cred.id}`}>Test IP Address</Label>
+                            <div className="flex gap-2 mt-1">
+                              <Input
+                                id={`test-ip-${cred.id}`}
+                                placeholder="192.168.1.100"
+                                value={testIp}
+                                onChange={(e) => setTestIp(e.target.value)}
+                              />
+                              <Button
+                                onClick={async () => {
+                                  if (!testIp) {
+                                    toast({
+                                      title: "IP Required",
+                                      description: "Enter an IP address to test",
+                                      variant: "destructive",
+                                    });
+                                    return;
+                                  }
+                                  await handleTestCredential(cred);
+                                }}
+                              >
+                                Test Connection
+                              </Button>
+                              <Button
+                                variant="outline"
+                                onClick={() => setTestingCredential(null)}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+
+              {/* Credential Dialog */}
+              <Dialog open={showCredentialDialog} onOpenChange={setShowCredentialDialog}>
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>
+                      {editingCredential ? 'Edit' : 'Add'} Credential Set
+                    </DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="cred-name">Name *</Label>
+                      <Input
+                        id="cred-name"
+                        value={credentialForm.name}
+                        onChange={(e) => setCredentialForm({ ...credentialForm, name: e.target.value })}
+                        placeholder="Production iDRAC Credentials"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="cred-username">Username *</Label>
+                      <Input
+                        id="cred-username"
+                        value={credentialForm.username}
+                        onChange={(e) => setCredentialForm({ ...credentialForm, username: e.target.value })}
+                        placeholder="root"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="cred-password">Password *</Label>
+                      <Input
+                        id="cred-password"
+                        type="password"
+                        value={credentialForm.password}
+                        onChange={(e) => setCredentialForm({ ...credentialForm, password: e.target.value })}
+                        placeholder={editingCredential ? "Leave blank to keep current" : "••••••••"}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="cred-description">Description</Label>
+                      <Textarea
+                        id="cred-description"
+                        value={credentialForm.description}
+                        onChange={(e) => setCredentialForm({ ...credentialForm, description: e.target.value })}
+                        placeholder="Optional description"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="cred-priority">Priority</Label>
+                      <Input
+                        id="cred-priority"
+                        type="number"
+                        value={credentialForm.priority}
+                        onChange={(e) => setCredentialForm({ ...credentialForm, priority: parseInt(e.target.value) || 100 })}
+                      />
+                      <p className="text-sm text-muted-foreground">
+                        Lower numbers = higher priority (used when multiple credentials match)
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <Label>Set as Default</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Use for new servers without specific credentials
+                        </p>
+                      </div>
+                      <Switch
+                        checked={credentialForm.is_default}
+                        onCheckedChange={(checked) => setCredentialForm({ ...credentialForm, is_default: checked })}
+                      />
+                    </div>
+
+                    <Collapsible open={ipRangeExpanded} onOpenChange={setIpRangeExpanded}>
+                      <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium">
+                        {ipRangeExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        IP Range Auto-Assignment ({tempIpRanges.length} ranges)
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="space-y-3 mt-3">
+                        <p className="text-sm text-muted-foreground">
+                          Define IP ranges where these credentials should be automatically assigned
+                        </p>
+                        
+                        {tempIpRanges.map((range, index) => (
+                          <div key={index} className="flex items-center gap-2 p-2 border rounded">
+                            <span className="text-sm flex-1">{range.start_ip} - {range.end_ip}</span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setTempIpRanges(tempIpRanges.filter((_, i) => i !== index))}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+
+                        <div className="flex gap-2">
+                          <Input
+                            placeholder="Start IP (e.g., 192.168.1.1)"
+                            value={newInlineIpRange.start_ip}
+                            onChange={(e) => setNewInlineIpRange({ ...newInlineIpRange, start_ip: e.target.value })}
+                          />
+                          <Input
+                            placeholder="End IP (e.g., 192.168.1.50)"
+                            value={newInlineIpRange.end_ip}
+                            onChange={(e) => setNewInlineIpRange({ ...newInlineIpRange, end_ip: e.target.value })}
+                          />
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              if (newInlineIpRange.start_ip && newInlineIpRange.end_ip) {
+                                setTempIpRanges([...tempIpRanges, newInlineIpRange]);
+                                setNewInlineIpRange({ start_ip: "", end_ip: "" });
+                              }
+                            }}
+                          >
+                            <Plus className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </CollapsibleContent>
+                    </Collapsible>
+
+                    <div className="flex justify-end gap-2">
+                      <Button variant="outline" onClick={() => setShowCredentialDialog(false)}>
+                        Cancel
                       </Button>
-                      <Button
-                        variant={theme === "dark" ? "default" : "outline"}
-                        onClick={() => setTheme("dark")}
-                        className="flex items-center gap-2"
-                      >
-                        <Moon className="h-4 w-4" />
-                        Dark
-                      </Button>
-                      <Button
-                        variant={theme === "system" ? "default" : "outline"}
-                        onClick={() => setTheme("system")}
-                        className="flex items-center gap-2"
-                      >
-                        <Monitor className="h-4 w-4" />
-                        System
+                      <Button onClick={handleSaveCredential} disabled={loading}>
+                        {loading ? 'Saving...' : 'Save'}
                       </Button>
                     </div>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </div>
+          </SettingsSection>
+
+          {/* Identity Provider */}
+          <SettingsSection
+            id="identity-provider"
+            title="Identity Provider"
+            description="Configure LDAP/Active Directory authentication and user synchronization"
+            icon={Users}
+            defaultOpen={defaultOpenSection === 'identity-provider'}
+          >
+            <IdentityProviderSettings />
+          </SettingsSection>
+
+          {/* Audit Logs */}
+          <SettingsSection
+            id="audit-logs"
+            title="Audit Logs"
+            description="View security audit logs and authentication events"
+            icon={FileText}
+            defaultOpen={defaultOpenSection === 'audit-logs'}
+          >
+            <AuditLogViewer />
+          </SettingsSection>
+
+          {/* Operations Safety */}
+          <SettingsSection
+            id="operations-safety"
+            title="Operations Safety"
+            description="Emergency controls and throttling for iDRAC operations"
+            icon={ShieldAlert}
+            defaultOpen={defaultOpenSection === 'operations-safety'}
+          >
+            <div className="space-y-6">
+              <Alert variant={pauseIdracOperations ? "destructive" : "default"}>
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  {pauseIdracOperations ? (
+                    <span className="font-semibold">⚠️ KILL SWITCH ACTIVE - All iDRAC operations are paused</span>
+                  ) : (
+                    "iDRAC operations are running normally"
+                  )}
+                </AlertDescription>
+              </Alert>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Emergency Kill Switch</CardTitle>
+                  <CardDescription>
+                    Immediately halt all iDRAC API calls across the entire platform
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">Pause All iDRAC Operations</p>
+                      <p className="text-sm text-muted-foreground">
+                        Jobs will remain pending until operations are resumed
+                      </p>
+                    </div>
+                    <Switch
+                      checked={pauseIdracOperations}
+                      onCheckedChange={setPauseIdracOperations}
+                    />
+                  </div>
+                  <Button onClick={handleSaveSettings} disabled={loading}>
+                    {loading ? "Saving..." : "Save Safety Settings"}
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>iDRAC Throttling Controls</CardTitle>
+                  <CardDescription>
+                    Limit concurrent operations to prevent overwhelming your infrastructure
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Discovery Max Threads</Label>
+                    <Input
+                      type="number"
+                      value={discoveryMaxThreads}
+                      onChange={(e) => setDiscoveryMaxThreads(parseInt(e.target.value) || 5)}
+                      min={1}
+                      max={20}
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Maximum concurrent server scans during discovery (1-20)
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Request Delay (ms)</Label>
+                    <Input
+                      type="number"
+                      value={idracRequestDelayMs}
+                      onChange={(e) => setIdracRequestDelayMs(parseInt(e.target.value) || 0)}
+                      min={0}
+                      max={5000}
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Delay between sequential iDRAC requests (0-5000ms)
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Max Concurrent iDRAC Operations</Label>
+                    <Input
+                      type="number"
+                      value={idracMaxConcurrent}
+                      onChange={(e) => setIdracMaxConcurrent(parseInt(e.target.value) || 4)}
+                      min={1}
+                      max={20}
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Maximum simultaneous iDRAC operations (1-20)
+                    </p>
                   </div>
                 </CardContent>
               </Card>
             </div>
-          </TabsContent>
+          </SettingsSection>
+        </TabsContent>
 
-          <TabsContent value="smtp">
+        {/* NOTIFICATIONS TAB */}
+        <TabsContent value="notifications" className="space-y-4">
+          {/* Alert Preferences */}
+          <SettingsSection
+            id="alert-preferences"
+            title="Alert Preferences"
+            description="Configure which events trigger notifications"
+            icon={Bell}
+            defaultOpen={defaultOpenSection === 'alert-preferences'}
+          >
             <Card>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-4 pt-6">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>Notify on Job Completion</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Send notification when jobs complete successfully
+                    </p>
+                  </div>
+                  <Switch
+                    checked={notifyOnJobComplete}
+                    onCheckedChange={setNotifyOnJobComplete}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>Notify on Job Failure</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Send notification when jobs fail
+                    </p>
+                  </div>
+                  <Switch
+                    checked={notifyOnJobFailed}
+                    onCheckedChange={setNotifyOnJobFailed}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>Notify on Job Start</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Send notification when jobs begin execution
+                    </p>
+                  </div>
+                  <Switch
+                    checked={notifyOnJobStarted}
+                    onCheckedChange={setNotifyOnJobStarted}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>Notify on Cluster Warning</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Alert when clusters have warnings
+                    </p>
+                  </div>
+                  <Switch
+                    checked={notifyOnClusterWarning}
+                    onCheckedChange={setNotifyOnClusterWarning}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>Notify on Unsafe Cluster</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Alert when clusters become unsafe for maintenance
+                    </p>
+                  </div>
+                  <Switch
+                    checked={notifyOnUnsafeCluster}
+                    onCheckedChange={setNotifyOnUnsafeCluster}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>Notify on Cluster Status Change</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Alert when cluster safety status changes
+                    </p>
+                  </div>
+                  <Switch
+                    checked={notifyOnClusterStatusChange}
+                    onCheckedChange={setNotifyOnClusterStatusChange}
+                  />
+                </div>
+
+                <Button onClick={handleSaveSettings} disabled={loading}>
+                  {loading ? "Saving..." : "Save Alert Preferences"}
+                </Button>
+              </CardContent>
+            </Card>
+          </SettingsSection>
+
+          {/* SMTP Email */}
+          <SettingsSection
+            id="smtp"
+            title="Email (SMTP)"
+            description="Configure SMTP server for email notifications"
+            icon={Mail}
+            defaultOpen={defaultOpenSection === 'smtp'}
+          >
+            <Card>
+              <CardContent className="space-y-4 pt-6">
                 <div className="space-y-2">
                   <Label htmlFor="smtp-host">SMTP Host</Label>
                   <Input
@@ -2355,11 +2858,18 @@ export default function Settings() {
                 </Button>
               </CardContent>
             </Card>
-          </TabsContent>
+          </SettingsSection>
 
-          <TabsContent value="teams">
+          {/* Microsoft Teams */}
+          <SettingsSection
+            id="teams"
+            title="Microsoft Teams"
+            description="Configure Teams webhook for notifications with @mentions"
+            icon={MessageSquare}
+            defaultOpen={defaultOpenSection === 'teams'}
+          >
             <Card>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-4 pt-6">
                 <div className="space-y-2">
                   <Label htmlFor="teams-webhook">Teams Webhook URL</Label>
                   <Input
@@ -2494,97 +3004,210 @@ export default function Settings() {
                 )}
               </CardContent>
             </Card>
-          </TabsContent>
+          </SettingsSection>
+        </TabsContent>
 
-          <TabsContent value="openmanage">
+        {/* INFRASTRUCTURE TAB */}
+        <TabsContent value="infrastructure" className="space-y-4">
+          {/* Server Groups */}
+          <SettingsSection
+            id="server-groups"
+            title="Server Groups"
+            description="Organize servers into logical groups for batch operations"
+            icon={Server}
+            defaultOpen={defaultOpenSection === 'server-groups'}
+          >
+            <ServerGroupsManagement />
+          </SettingsSection>
+
+          {/* Virtual Media & Backup */}
+          <SettingsSection
+            id="virtual-media"
+            title="Virtual Media & Backup"
+            description="ISO image library and SCP share configuration for backups"
+            icon={Disc}
+            defaultOpen={defaultOpenSection === 'virtual-media'}
+          >
+            <div className="space-y-6">
+              {/* ISO Image Library */}
+              <div>
+                <h4 className="text-sm font-semibold mb-2">ISO Image Library</h4>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Manage ISO images for virtual media mounting
+                </p>
+                <IsoImageLibrary />
+              </div>
+
+              {/* SCP Share Settings */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>SCP Share Configuration</CardTitle>
+                  <CardDescription>
+                    Network share for server configuration profile (SCP) backups (required for older iDRAC firmware)
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label>Enable SCP Share</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Required for iDRAC firmware older than 4.40 (uses network share instead of HTTP)
+                      </p>
+                    </div>
+                    <Switch
+                      checked={scpShareEnabled}
+                      onCheckedChange={setScpShareEnabled}
+                    />
+                  </div>
+
+                  {scpShareEnabled && (
+                    <div className="space-y-4 pt-4 border-t">
+                      <div className="space-y-2">
+                        <Label>Share Type</Label>
+                        <Select value={scpShareType} onValueChange={(value: 'CIFS' | 'NFS') => setScpShareType(value)}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="CIFS">CIFS/SMB (Windows Share)</SelectItem>
+                            <SelectItem value="NFS">NFS (Unix Share)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Share Path</Label>
+                        <Input
+                          placeholder={scpShareType === 'CIFS' ? "\\\\server\\share" : "server:/export/scp"}
+                          value={scpSharePath}
+                          onChange={(e) => setScpSharePath(e.target.value)}
+                        />
+                      </div>
+
+                      {scpShareType === 'CIFS' && (
+                        <>
+                          <div className="space-y-2">
+                            <Label>Username</Label>
+                            <Input
+                              value={scpShareUsername}
+                              onChange={(e) => setScpShareUsername(e.target.value)}
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label>Password</Label>
+                            <Input
+                              type="password"
+                              value={scpSharePassword}
+                              onChange={(e) => setScpSharePassword(e.target.value)}
+                            />
+                          </div>
+                        </>
+                      )}
+
+                      <Button onClick={handleSaveSettings} disabled={loading}>
+                        {loading ? "Saving..." : "Save SCP Share Settings"}
+                      </Button>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </SettingsSection>
+
+          {/* Firmware Library */}
+          <SettingsSection
+            id="firmware"
+            title="Firmware Library"
+            description="Manage firmware packages for Dell servers"
+            icon={Briefcase}
+            defaultOpen={defaultOpenSection === 'firmware'}
+          >
+            <FirmwareLibrary />
+          </SettingsSection>
+
+          {/* OpenManage Enterprise */}
+          <SettingsSection
+            id="openmanage"
+            title="OpenManage Enterprise"
+            description="Sync server inventory and firmware from OpenManage Enterprise"
+            icon={CloudCog}
+            defaultOpen={defaultOpenSection === 'openmanage'}
+          >
             <Card>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-4 pt-6">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>Enable OME Sync</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Automatically sync server data from OpenManage Enterprise
+                    </p>
+                  </div>
+                  <Switch
+                    checked={omeSyncEnabled}
+                    onCheckedChange={setOmeSyncEnabled}
+                  />
+                </div>
+
                 <div className="space-y-2">
-                  <Label htmlFor="ome-host">OpenManage Host</Label>
+                  <Label>OME Host</Label>
                   <Input
-                    id="ome-host"
-                    placeholder="openmanage.example.com"
+                    placeholder="openmanage.company.com"
                     value={omeHost}
                     onChange={(e) => setOmeHost(e.target.value)}
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="ome-port">Port</Label>
+                  <Label>OME Port</Label>
                   <Input
-                    id="ome-port"
                     type="number"
-                    placeholder="443"
                     value={omePort}
                     onChange={(e) => setOmePort(parseInt(e.target.value) || 443)}
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="ome-username">Username</Label>
+                  <Label>Username</Label>
                   <Input
-                    id="ome-username"
-                    placeholder="admin"
                     value={omeUsername}
                     onChange={(e) => setOmeUsername(e.target.value)}
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="ome-password">Password</Label>
+                  <Label>Password</Label>
                   <Input
-                    id="ome-password"
                     type="password"
-                    placeholder="••••••••"
                     value={omePassword}
                     onChange={(e) => setOmePassword(e.target.value)}
                   />
                 </div>
 
                 <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label htmlFor="ome-verify-ssl">Verify SSL Certificate</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Disable for self-signed certificates
-                    </p>
-                  </div>
+                  <Label>Verify SSL Certificate</Label>
                   <Switch
-                    id="ome-verify-ssl"
                     checked={omeVerifySSL}
                     onCheckedChange={setOmeVerifySSL}
                   />
                 </div>
 
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label htmlFor="ome-sync-enabled">Enable Daily Sync</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Automatically sync servers daily
-                    </p>
-                  </div>
-                  <Switch
-                    id="ome-sync-enabled"
-                    checked={omeSyncEnabled}
-                    onCheckedChange={setOmeSyncEnabled}
-                  />
-                </div>
-
                 {omeLastSync && (
-                  <div className="text-sm text-muted-foreground">
+                  <p className="text-sm text-muted-foreground">
                     Last sync: {new Date(omeLastSync).toLocaleString()}
-                  </div>
+                  </p>
                 )}
 
                 <div className="flex gap-2">
                   <Button onClick={handleSaveOmeSettings} disabled={loading}>
-                    {loading ? "Saving..." : "Save Settings"}
+                    {loading ? "Saving..." : "Save OME Settings"}
                   </Button>
-                  <Button 
-                    onClick={handleSyncNow} 
-                    disabled={isOpenManageSyncing}
+                  <Button
                     variant="outline"
+                    onClick={handleSyncNow}
+                    disabled={omeSyncing || !omeSyncEnabled}
                   >
-                    {isOpenManageSyncing ? (
+                    {omeSyncing ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                         Syncing...
@@ -2597,1531 +3220,126 @@ export default function Settings() {
                     )}
                   </Button>
                 </div>
-
-                <div className="mt-6 border-t pt-6">
-                  <h3 className="text-lg font-medium mb-2">API Tokens</h3>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    Generate API tokens for authenticating the Python sync script
-                  </p>
-                  
-                  <div className="flex gap-2 mb-4">
-                    <Input
-                      placeholder="Token name (e.g., 'Production Sync')"
-                      value={newTokenName}
-                      onChange={(e) => setNewTokenName(e.target.value)}
-                    />
-                    <Button onClick={generateApiToken}>Generate Token</Button>
-                  </div>
-
-                  {apiTokens.length > 0 && (
-                    <div className="border rounded-lg">
-                      <table className="w-full">
-                        <thead>
-                          <tr className="border-b">
-                            <th className="text-left p-3 text-sm font-medium">Name</th>
-                            <th className="text-left p-3 text-sm font-medium">Created</th>
-                            <th className="text-left p-3 text-sm font-medium">Last Used</th>
-                            <th className="text-right p-3 text-sm font-medium">Action</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {apiTokens.map((token) => (
-                            <tr key={token.id} className="border-b last:border-0">
-                              <td className="p-3">{token.name}</td>
-                              <td className="p-3 text-sm text-muted-foreground">
-                                {new Date(token.created_at).toLocaleDateString()}
-                              </td>
-                              <td className="p-3 text-sm text-muted-foreground">
-                                {token.last_used_at ? new Date(token.last_used_at).toLocaleString() : 'Never'}
-                              </td>
-                              <td className="p-3 text-right">
-                                <Button
-                                  variant="destructive"
-                                  size="sm"
-                                  onClick={() => deleteApiToken(token.id)}
-                                >
-                                  Revoke
-                                </Button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-
-                <div className="mt-4 p-4 bg-muted rounded-lg">
-                  <p className="text-sm">
-                    <strong>Note:</strong> To perform automated syncs, you need to run the <code>openmanage-sync-script.py</code> on your on-premise server. 
-                    See the <a href="/docs/OPENMANAGE_SYNC_GUIDE.md" className="text-primary underline">OpenManage Sync Guide</a> for setup instructions.
-                  </p>
-                </div>
               </CardContent>
             </Card>
-          </TabsContent>
+          </SettingsSection>
+        </TabsContent>
 
-          <TabsContent value="jobs">
-            <Card>
-              <CardContent className="space-y-6">
-                
-                {/* Job Retention & Cleanup Section */}
-                <div className="space-y-4">
-                  <h3 className="text-lg font-medium flex items-center gap-2">
-                    <Shield className="h-4 w-4" />
-                    Job Retention & Cleanup
-                  </h3>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="job-retention-days">Job Retention Period (Days)</Label>
-                    <Input
-                      id="job-retention-days"
-                      type="number"
-                      min="1"
-                      max="365"
-                      value={jobRetentionDays}
-                      onChange={(e) => setJobRetentionDays(parseInt(e.target.value) || 90)}
-                    />
-                    <p className="text-sm text-muted-foreground">
-                      Completed, failed, and cancelled jobs older than this will be automatically deleted (1-365 days)
-                    </p>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="job-auto-cleanup">Enable Automatic Job Cleanup</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Automatically delete old jobs daily at 3 AM
-                      </p>
-                    </div>
-                    <Switch
-                      id="job-auto-cleanup"
-                      checked={jobAutoCleanupEnabled}
-                      onCheckedChange={setJobAutoCleanupEnabled}
-                    />
-                  </div>
-
-                  {jobLastCleanupAt && (
-                    <div className="text-sm text-muted-foreground">
-                      Last job cleanup: {new Date(jobLastCleanupAt).toLocaleString()}
-                    </div>
-                  )}
-
-                  <Button 
-                    onClick={handleJobCleanupNow} 
-                    disabled={jobCleaningUp}
-                    variant="outline"
-                  >
-                    {jobCleaningUp ? "Cleaning Up..." : "Run Job Cleanup Now"}
-                  </Button>
-                </div>
-
-                {/* Stale Job Management Section */}
-                <div className="space-y-4 border-t pt-6">
-                  <h3 className="text-lg font-medium flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4" />
-                    Stale Job Management
-                  </h3>
-
-                  {staleJobCount > 0 && (
-                    <div className="p-4 bg-warning/10 border border-warning rounded-lg">
-                      <p className="text-sm font-medium text-warning mb-1">
-                        ⚠️ {staleJobCount} Stale Job{staleJobCount !== 1 ? 's' : ''} Detected
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        Jobs stuck in pending or running state beyond configured thresholds
-                      </p>
-                    </div>
-                  )}
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="stale-pending-hours">Cancel Pending Jobs After (Hours)</Label>
-                    <Input
-                      id="stale-pending-hours"
-                      type="number"
-                      min="1"
-                      max="168"
-                      value={stalePendingHours}
-                      onChange={(e) => setStalePendingHours(parseInt(e.target.value) || 24)}
-                    />
-                    <p className="text-sm text-muted-foreground">
-                      Auto-cancel jobs stuck in pending state for longer than this (1-168 hours)
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="stale-running-hours">Cancel Running Jobs After (Hours)</Label>
-                    <Input
-                      id="stale-running-hours"
-                      type="number"
-                      min="1"
-                      max="168"
-                      value={staleRunningHours}
-                      onChange={(e) => setStaleRunningHours(parseInt(e.target.value) || 48)}
-                    />
-                    <p className="text-sm text-muted-foreground">
-                      Auto-cancel jobs stuck in running state for longer than this (1-168 hours)
-                    </p>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="auto-cancel-stale">Enable Automatic Stale Job Cancellation</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Automatically cancel stuck jobs during daily cleanup
-                      </p>
-                    </div>
-                    <Switch
-                      id="auto-cancel-stale"
-                      checked={autoCancelStaleJobs}
-                      onCheckedChange={setAutoCancelStaleJobs}
-                    />
-                  </div>
-
-                  <Button 
-                    onClick={handleCancelStaleJobsNow} 
-                    disabled={jobCleaningUp || staleJobCount === 0}
-                    variant={staleJobCount > 0 ? "default" : "outline"}
-                  >
-                    {jobCleaningUp ? "Cancelling..." : `Cancel Stale Jobs Now${staleJobCount > 0 ? ` (${staleJobCount})` : ''}`}
-                  </Button>
-                </div>
-
-                <Button onClick={handleSaveActivitySettings} disabled={loading}>
-                  {loading ? "Saving..." : "Save Jobs Settings"}
-                </Button>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="operations-safety">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <ShieldAlert className="h-5 w-5" />
-                  Operations Safety Controls
-                </CardTitle>
-                <CardDescription>
-                  Emergency kill switch and throttling controls for iDRAC operations
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {/* iDRAC Safety Controls - Kill Switch & Throttling */}
-                <div className="space-y-4 border-2 border-destructive/50 rounded-lg p-4 bg-destructive/5">
-                  <div className="flex items-center gap-2">
-                    <AlertCircle className="h-5 w-5 text-destructive" />
-                    <h3 className="text-lg font-medium text-destructive">iDRAC Safety Controls</h3>
-                  </div>
-                  
-                  <Alert className="border-destructive/50">
-                    <AlertDescription>
-                      <strong>Emergency Kill Switch:</strong> Immediately pause all iDRAC operations if you suspect lock-ups or credential issues.
-                      The Job Executor will respect this setting and stop processing iDRAC jobs.
-                    </AlertDescription>
-                  </Alert>
-                  
-                  <div className="flex items-center justify-between py-2 px-3 bg-background rounded-md border-2 border-destructive">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="pause-idrac" className="text-base font-semibold">
-                        🛑 Pause All iDRAC Operations
-                      </Label>
-                      <p className="text-sm text-muted-foreground">
-                        Stops Job Executor from processing any iDRAC-related jobs
-                      </p>
-                    </div>
-                    <Switch
-                      id="pause-idrac"
-                      checked={pauseIdracOperations}
-                      onCheckedChange={(checked) => {
-                        setPauseIdracOperations(checked);
-                        if (checked) {
-                          toast({
-                            title: "⚠️ iDRAC Operations Paused",
-                            description: "Job Executor will stop processing iDRAC jobs. Remember to save settings!",
-                            variant: "destructive",
-                          });
-                        }
-                      }}
-                    />
-                  </div>
-
-                  {pauseIdracOperations && (
-                    <Alert className="border-yellow-500/50 bg-yellow-500/10">
-                      <AlertCircle className="h-4 w-4 text-yellow-600" />
-                      <AlertDescription className="text-yellow-900 dark:text-yellow-200">
-                        iDRAC operations are currently PAUSED. Click "Save Settings" to apply, then restart Job Executor.
-                      </AlertDescription>
-                    </Alert>
-                  )}
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="discovery-threads" className="text-sm">Discovery Threads</Label>
-                      <Input
-                        id="discovery-threads"
-                        type="number"
-                        min="1"
-                        max="20"
-                        value={discoveryMaxThreads}
-                        onChange={(e) => setDiscoveryMaxThreads(parseInt(e.target.value) || 5)}
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Max concurrent threads for IP discovery (1-20)
-                      </p>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="request-delay" className="text-sm">Request Delay (ms)</Label>
-                      <Input
-                        id="request-delay"
-                        type="number"
-                        min="100"
-                        max="5000"
-                        value={idracRequestDelayMs}
-                        onChange={(e) => setIdracRequestDelayMs(parseInt(e.target.value) || 500)}
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Minimum delay between requests to same iDRAC
-                      </p>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="max-concurrent" className="text-sm">Max Concurrent</Label>
-                      <Input
-                        id="max-concurrent"
-                        type="number"
-                        min="1"
-                        max="20"
-                        value={idracMaxConcurrent}
-                        onChange={(e) => setIdracMaxConcurrent(parseInt(e.target.value) || 4)}
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Max concurrent iDRAC requests globally
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <Button onClick={handleSaveActivitySettings} disabled={loading}>
-                  {loading ? "Saving..." : "Save Operations Safety Settings"}
-                </Button>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="activity">
-            <Card>
-              <CardContent className="space-y-6">
-
-                {/* iDRAC Log Retention & Cleanup Section */}
-                <div className="space-y-4">
-                  <h3 className="text-lg font-medium flex items-center gap-2">
-                    <Shield className="h-4 w-4" />
-                    iDRAC Log Retention & Cleanup
-                  </h3>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="retention-days">Retention Period (Days)</Label>
-                    <Input
-                      id="retention-days"
-                      type="number"
-                      min="1"
-                      max="365"
-                      value={logRetentionDays}
-                      onChange={(e) => setLogRetentionDays(parseInt(e.target.value) || 30)}
-                    />
-                    <p className="text-sm text-muted-foreground">
-                      iDRAC activity logs older than this will be automatically deleted (1-365 days)
-                    </p>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="auto-cleanup">Enable Automatic Cleanup</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Automatically delete old logs daily at 2 AM
-                      </p>
-                    </div>
-                    <Switch
-                      id="auto-cleanup"
-                      checked={autoCleanupEnabled}
-                      onCheckedChange={setAutoCleanupEnabled}
-                    />
-                  </div>
-
-                  {lastCleanupAt && (
-                    <div className="text-sm text-muted-foreground">
-                      Last cleanup: {new Date(lastCleanupAt).toLocaleString()}
-                    </div>
-                  )}
-
-                  <Button 
-                    onClick={handleCleanupNow} 
-                    disabled={cleaningUp}
-                    variant="outline"
-                  >
-                    {cleaningUp ? "Cleaning Up..." : "Run Log Cleanup Now"}
-                  </Button>
-                </div>
-
-                {/* Verbosity Section */}
-                <div className="space-y-4 border-t pt-6">
-                  <h3 className="text-lg font-medium">Log Verbosity</h3>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="log-level">Logging Level</Label>
-                    <select
-                      id="log-level"
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2"
-                      value={logLevel}
-                      onChange={(e) => setLogLevel(e.target.value as 'all' | 'errors_only' | 'slow_only')}
-                    >
-                      <option value="all">All Requests (Detailed)</option>
-                      <option value="errors_only">Errors Only</option>
-                      <option value="slow_only">Slow Requests Only</option>
-                    </select>
-                    <p className="text-sm text-muted-foreground">
-                      Choose what types of commands to log
-                    </p>
-                  </div>
-
-                  {logLevel === 'slow_only' && (
-                    <div className="space-y-2">
-                      <Label htmlFor="slow-threshold">Slow Command Threshold (ms)</Label>
-                      <Input
-                        id="slow-threshold"
-                        type="number"
-                        min="100"
-                        value={slowCommandThreshold}
-                        onChange={(e) => setSlowCommandThreshold(parseInt(e.target.value) || 5000)}
-                      />
-                      <p className="text-sm text-muted-foreground">
-                        Log commands that take longer than this duration
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Size Limits Section */}
-                <div className="space-y-4 border-t pt-6">
-                  <h3 className="text-lg font-medium">Size Limits</h3>
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="max-request">Max Request Body (KB)</Label>
-                      <Input
-                        id="max-request"
-                        type="number"
-                        min="10"
-                        max="1000"
-                        value={maxRequestBodyKb}
-                        onChange={(e) => setMaxRequestBodyKb(parseInt(e.target.value) || 100)}
-                      />
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <Label htmlFor="max-response">Max Response Body (KB)</Label>
-                      <Input
-                        id="max-response"
-                        type="number"
-                        min="10"
-                        max="1000"
-                        value={maxResponseBodyKb}
-                        onChange={(e) => setMaxResponseBodyKb(parseInt(e.target.value) || 100)}
-                      />
-                    </div>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    Request/response bodies larger than these limits will be truncated
-                  </p>
-                </div>
-
-                {/* Dell Online Repository Info */}
-                <Alert className="border-t pt-6">
-                  <Info className="h-4 w-4" />
-                  <AlertDescription>
-                    <strong>Dell Online Repository (downloads.dell.com)</strong>
-                    <ul className="list-disc list-inside mt-2 text-sm space-y-1">
-                      <li>iDRAC servers must have internet connectivity</li>
-                      <li>Firewall must allow HTTPS (443) to downloads.dell.com</li>
-                      <li>DNS resolution must be configured on iDRAC</li>
-                      <li>For air-gapped environments, use Manual Repository option</li>
-                      <li>Select firmware source when creating firmware update jobs</li>
-                    </ul>
-                  </AlertDescription>
-                </Alert>
-
-                {/* Alerts Section */}
-                <div className="space-y-4 border-t pt-6">
-                  <h3 className="text-lg font-medium flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4" />
-                    Alerts & Notifications
-                  </h3>
-
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="alert-failures">Alert on Command Failures</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Show toast notifications for failed iDRAC commands
-                      </p>
-                    </div>
-                    <Switch
-                      id="alert-failures"
-                      checked={alertOnFailures}
-                      onCheckedChange={setAlertOnFailures}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="alert-slow">Alert on Slow Commands</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Show notifications for commands exceeding threshold
-                      </p>
-                    </div>
-                    <Switch
-                      id="alert-slow"
-                      checked={alertOnSlowCommands}
-                      onCheckedChange={setAlertOnSlowCommands}
-                    />
-                  </div>
-                </div>
-
-                {/* Statistics Section */}
-                <div className="space-y-4 border-t pt-6">
-                  <h3 className="text-lg font-medium">Statistics & Analytics</h3>
-
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="keep-stats">Keep Aggregated Statistics</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Preserve summary data after log deletion
-                      </p>
-                    </div>
-                    <Switch
-                      id="keep-stats"
-                      checked={keepStatistics}
-                      onCheckedChange={setKeepStatistics}
-                    />
-                  </div>
-
-                  {keepStatistics && (
-                    <div className="space-y-2">
-                      <Label htmlFor="stats-retention">Statistics Retention (Days)</Label>
-                      <Input
-                        id="stats-retention"
-                        type="number"
-                        min="30"
-                        max="730"
-                        value={statisticsRetentionDays}
-                        onChange={(e) => setStatisticsRetentionDays(parseInt(e.target.value) || 365)}
-                      />
-                      <p className="text-sm text-muted-foreground">
-                        How long to keep aggregated statistics (30-730 days)
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                <Button onClick={handleSaveActivitySettings} disabled={loading}>
-                  {loading ? "Saving..." : "Save Activity Settings"}
-                </Button>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="preferences">
-            <div className="space-y-4">
+        {/* SYSTEM & MONITORING TAB */}
+        <TabsContent value="system" className="space-y-4">
+          {/* Network Connectivity */}
+          <SettingsSection
+            id="network"
+            title="Network Connectivity"
+            description="Test connectivity and configure network timeouts"
+            icon={Network}
+            defaultOpen={defaultOpenSection === 'network'}
+          >
+            <div className="space-y-6">
+              {/* Network Testing */}
               <Card>
                 <CardHeader>
-                  <CardTitle>Notification Center</CardTitle>
+                  <CardTitle>Network Testing</CardTitle>
                   <CardDescription>
-                    Configure the notification center that appears in the top navigation
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="nc-enabled">Enable Notification Center</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Show the notification bell icon with real-time job progress
-                      </p>
-                    </div>
-                    <Switch
-                      id="nc-enabled"
-                      checked={true}
-                      disabled
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="nc-progress">Show Progress Updates</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Display detailed progress bars and status for active jobs
-                      </p>
-                    </div>
-                    <Switch
-                      id="nc-progress"
-                      checked={true}
-                      disabled
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="nc-max-items">Recent Activity Items</Label>
-                    <Input
-                      id="nc-max-items"
-                      type="number"
-                      min="5"
-                      max="50"
-                      defaultValue={10}
-                      disabled
-                    />
-                    <p className="text-sm text-muted-foreground">
-                      Number of recent commands to show (5-50)
-                    </p>
-                  </div>
-
-                  <Alert>
-                    <Info className="h-4 w-4" />
-                    <AlertDescription>
-                      Notification center settings are managed automatically. Use the bell icon in the top navigation to view active operations and recent activity.
-                    </AlertDescription>
-                  </Alert>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Teams & Email Notifications</CardTitle>
-                  <CardDescription>
-                    Configure when to send notifications to Teams or email
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="notify-complete">Job Completed</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Send notification when jobs complete successfully
-                      </p>
-                    </div>
-                    <Switch
-                      id="notify-complete"
-                      checked={notifyOnJobComplete}
-                      onCheckedChange={setNotifyOnJobComplete}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="notify-failed">Job Failed</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Send notification when jobs fail
-                      </p>
-                    </div>
-                    <Switch
-                      id="notify-failed"
-                      checked={notifyOnJobFailed}
-                      onCheckedChange={setNotifyOnJobFailed}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="notify-started">Job Started</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Send notification when jobs start
-                      </p>
-                    </div>
-                    <Switch
-                      id="notify-started"
-                      checked={notifyOnJobStarted}
-                      onCheckedChange={setNotifyOnJobStarted}
-                    />
-                  </div>
-
-                  <Button onClick={handleSaveSettings} disabled={loading}>
-                    {loading ? "Saving..." : "Save Preferences"}
-                  </Button>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>System Diagnostics</CardTitle>
-                  <CardDescription>
-                    Generate a comprehensive diagnostic report for troubleshooting
+                    Test connectivity to iDRAC servers and vCenter
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="flex items-start gap-3">
-                    <FileText className="h-5 w-5 text-muted-foreground mt-0.5" />
-                    <div className="flex-1">
-                      <p className="text-sm text-muted-foreground">
-                        Generate a detailed diagnostic report that includes system information, database status, 
-                        edge function health, server status, job statistics, activity logs, and recent errors. 
-                        This report can be copied and shared when troubleshooting issues.
-                      </p>
-                    </div>
-                  </div>
-                  <Button 
-                    onClick={() => setShowDiagnosticsDialog(true)}
-                    variant="outline"
-                    className="w-full"
-                  >
-                    <FileText className="mr-2 h-4 w-4" />
-                    Generate Diagnostics Report
-                  </Button>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="credentials">
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle>iDRAC Credential Sets</CardTitle>
-            <CardDescription>
-              Manage credential profiles for server discovery and operations. Discovery jobs try credentials in priority order.
-            </CardDescription>
-                  </div>
-                  <Button
-                    onClick={() => {
-                      setEditingCredential(null);
-                      setCredentialForm({
-                        name: '',
-                        username: '',
-                        password: '',
-                        description: '',
-                        priority: credentialSets.length > 0 
-                          ? Math.max(...credentialSets.map(cs => cs.priority)) + 10 
-                          : 100,
-                        is_default: credentialSets.length === 0,
-                      });
-                      setShowCredentialDialog(true);
-                    }}
-                  >
-                    Add Credential Set
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {credentialSets.length === 0 ? (
-                  <div className="text-center py-12">
-                    <Shield className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-                    <h3 className="text-lg font-medium mb-2">No Credential Sets</h3>
-                    <p className="text-sm text-muted-foreground mb-4">
-                      Create credential sets for server discovery. Optionally assign IP ranges to auto-select credentials for specific networks.
-                    </p>
-                    <Button
-                      onClick={() => {
-                        setCredentialForm({
-                          name: '',
-                          username: '',
-                          password: '',
-                          description: '',
-                          priority: 100,
-                          is_default: true,
-                        });
-                        setShowCredentialDialog(true);
-                      }}
-                    >
-                      Create First Credential Set
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {credentialSets.map((credentialSet, index) => (
-                      <Card key={credentialSet.id} className="border-2">
-                        <CardContent className="p-4">
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="flex-1 space-y-2">
-                              <div className="flex items-center gap-2">
-                                <h3 className="font-semibold text-lg">{credentialSet.name}</h3>
-                                {credentialSet.is_default && (
-                                  <span className="inline-flex items-center rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary ring-1 ring-inset ring-primary/20">
-                                    Default
-                                  </span>
-                                )}
-                                <span className="inline-flex items-center rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground ring-1 ring-inset ring-secondary/20">
-                                  Priority: {credentialSet.priority}
-                                </span>
-                              </div>
-                              
-                              <div className="grid grid-cols-2 gap-4 text-sm">
-                                <div>
-                                  <span className="text-muted-foreground">Username:</span>
-                                  <span className="ml-2 font-mono">{credentialSet.username}</span>
-                                </div>
-                                <div>
-                                  <span className="text-muted-foreground">Password:</span>
-                                  <span className="ml-2">••••••••</span>
-                                </div>
-                              </div>
-                              
-                              {credentialSet.description && (
-                                <p className="text-sm text-muted-foreground">
-                                  {credentialSet.description}
-                                </p>
-                              )}
-
-                              {credentialSet.credential_ip_ranges && credentialSet.credential_ip_ranges.length > 0 && (
-                                <div className="mt-3 pt-3 border-t">
-                                  <span className="text-sm text-muted-foreground font-medium">IP Ranges:</span>
-                                  <div className="flex flex-wrap gap-1 mt-2">
-                                    {credentialSet.credential_ip_ranges.map((range: any) => (
-                                      <span key={range.id} className="inline-flex items-center rounded-md bg-blue-50 dark:bg-blue-950 px-2 py-1 text-xs font-mono text-blue-700 dark:text-blue-300 ring-1 ring-inset ring-blue-600/20">
-                                        {range.ip_range}
-                                      </span>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                            
-                            <div className="flex flex-col gap-2">
-                              {/* Priority Controls */}
-                              <div className="flex gap-1">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleMovePriority(credentialSet.id, 'up')}
-                                  disabled={index === 0 || loading}
-                                >
-                                  ↑
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleMovePriority(credentialSet.id, 'down')}
-                                  disabled={index === credentialSets.length - 1 || loading}
-                                >
-                                  ↓
-                                </Button>
-                              </div>
-                              
-                              {/* Action Buttons */}
-                            <div className="flex gap-1">
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => openIpRangeDialog(credentialSet)}
-                                className="gap-1"
-                              >
-                                <Network className="h-3.5 w-3.5" />
-                                IP Ranges ({credentialSet.credential_ip_ranges?.length || 0})
-                              </Button>
-                                
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => {
-                                    setEditingCredential(credentialSet);
-                                    setCredentialForm({
-                                      name: credentialSet.name,
-                                      username: credentialSet.username,
-                                      password: '',
-                                      description: credentialSet.description || '',
-                                      priority: credentialSet.priority,
-                                      is_default: credentialSet.is_default,
-                                    });
-                                    // Load existing IP ranges into temp state - parse ip_range format
-                                    const ranges = (credentialSet.credential_ip_ranges || []).map((r: any) => {
-                                      const [start_ip, end_ip] = r.ip_range.split('-');
-                                      return { start_ip: start_ip.trim(), end_ip: end_ip.trim() };
-                                    });
-                                    setTempIpRanges(ranges);
-                                    setIpRangeExpanded(ranges.length > 0);
-                                    setShowCredentialDialog(true);
-                                  }}
-                                >
-                                  Edit
-                                </Button>
-                                
-                                {!credentialSet.is_default && (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => handleSetDefault(credentialSet.id)}
-                                    disabled={loading}
-                                  >
-                                    Set Default
-                                  </Button>
-                                )}
-                                
-                                <Button
-                                  size="sm"
-                                  variant="destructive"
-                                  onClick={() => setDeleteConfirmId(credentialSet.id)}
-                                  disabled={loading}
-                                >
-                                  Delete
-                                </Button>
-                              </div>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                )}
-                
-                {/* Test Connection Section */}
-                <div className="mt-6 p-4 border rounded-lg bg-muted/50">
-                  <h4 className="font-medium mb-3">Test Credentials</h4>
-                  <p className="text-sm text-muted-foreground mb-3">
-                    Test any credential set against an iDRAC IP address to verify connectivity
-                  </p>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="192.168.1.100"
-                      value={testIp}
-                      onChange={(e) => setTestIp(e.target.value)}
-                    />
-                    {credentialSets.map((credentialSet) => (
-                      <Button
-                        key={credentialSet.id}
-                        variant="outline"
-                        disabled={testingCredential !== null || !testIp}
-                        onClick={() => handleTestCredential(credentialSet)}
-                      >
-                        {testingCredential === credentialSet.id ? "Testing..." : `Test ${credentialSet.name}`}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="identity-provider">
-            <IdentityProviderSettings />
-          </TabsContent>
-
-          <TabsContent value="audit-logs">
-            <AuditLogViewer />
-          </TabsContent>
-
-          <TabsContent value="cluster-monitoring">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <CloudCog className="h-5 w-5" />
-                  Scheduled Cluster Safety Checks
-                </CardTitle>
-                <CardDescription>
-                  Automatically monitor cluster health and receive alerts when conditions become unsafe for maintenance
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {/* Enable scheduled checks */}
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label>Enable Scheduled Checks</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Automatically run safety checks on a schedule
-                    </p>
-                  </div>
-                  <Switch
-                    checked={scheduledChecksEnabled}
-                    onCheckedChange={setScheduledChecksEnabled}
-                    disabled={userRole !== 'admin'}
-                  />
-                </div>
-
-                {scheduledChecksEnabled && (
-                  <>
-                    {/* Schedule frequency */}
-                    <div className="space-y-2">
-                      <Label>Check Frequency</Label>
-                      <Select 
-                        value={checkFrequency} 
-                        onValueChange={setCheckFrequency}
-                        disabled={userRole !== 'admin'}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="0 */4 * * *">Every 4 hours</SelectItem>
-                          <SelectItem value="0 */6 * * *">Every 6 hours (recommended)</SelectItem>
-                          <SelectItem value="0 */12 * * *">Every 12 hours</SelectItem>
-                          <SelectItem value="0 0 * * *">Daily at midnight</SelectItem>
-                          <SelectItem value="0 6,18 * * *">Twice daily (6 AM, 6 PM)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground">
-                        More frequent checks provide earlier warnings but use more resources
-                      </p>
-                    </div>
-
-                    {/* Min required hosts */}
-                    <div className="space-y-2">
-                      <Label>Minimum Required Hosts</Label>
-                      <Input
-                        type="number"
-                        min="1"
-                        max="10"
-                        value={minRequiredHosts}
-                        onChange={(e) => setMinRequiredHosts(parseInt(e.target.value))}
-                        disabled={userRole !== 'admin'}
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Minimum healthy hosts required after taking one offline
-                      </p>
-                    </div>
-
-                    {/* Notification preferences */}
-                    <div className="space-y-3 pt-4 border-t">
-                      <Label className="text-base">Alert Preferences</Label>
-                      
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-0.5">
-                          <Label className="font-normal">Alert on Unsafe Conditions</Label>
-                          <p className="text-xs text-muted-foreground">
-                            Send alert when cluster becomes unsafe for maintenance
-                          </p>
-                        </div>
-                        <Switch
-                          checked={notifyOnUnsafeCluster}
-                          onCheckedChange={setNotifyOnUnsafeCluster}
-                          disabled={userRole !== 'admin'}
-                        />
-                      </div>
-
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-0.5">
-                          <Label className="font-normal">Alert on Warnings</Label>
-                          <p className="text-xs text-muted-foreground">
-                            Send alert for warnings (DRS disabled, low capacity)
-                          </p>
-                        </div>
-                        <Switch
-                          checked={notifyOnClusterWarning}
-                          onCheckedChange={setNotifyOnClusterWarning}
-                          disabled={userRole !== 'admin'}
-                        />
-                      </div>
-
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-0.5">
-                          <Label className="font-normal">Alert on Status Changes</Label>
-                          <p className="text-xs text-muted-foreground">
-                            Send alert when cluster status changes (safe ↔ unsafe)
-                          </p>
-                        </div>
-                        <Switch
-                          checked={notifyOnClusterStatusChange}
-                          onCheckedChange={setNotifyOnClusterStatusChange}
-                          disabled={userRole !== 'admin'}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Last check status */}
-                    {lastScheduledCheck?.last_run_at && (
-                      <div className="p-3 bg-muted rounded-lg space-y-1">
-                        <p className="text-sm font-medium">Last Scheduled Check</p>
-                        <p className="text-xs text-muted-foreground">
-                          {new Date(lastScheduledCheck.last_run_at).toLocaleString()}
+                  {servers.length > 0 ? (
+                    <>
+                      <div className="flex justify-between items-center">
+                        <p className="text-sm text-muted-foreground">
+                          Test all {servers.length} configured servers
                         </p>
-                        {lastScheduledCheck.last_status && (
-                          <Badge variant={lastScheduledCheck.last_status === 'safe' ? 'default' : 'destructive'}>
-                            {lastScheduledCheck.last_status.toUpperCase()}
-                          </Badge>
-                        )}
-                      </div>
-                    )}
-
-                    <div className="flex gap-2">
-                      <Button
-                        onClick={saveScheduledCheckConfig}
-                        disabled={loading || userRole !== 'admin'}
-                        className="flex-1"
-                      >
-                        {loading ? (
-                          <>
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Saving...
-                          </>
-                        ) : (
-                          <>
-                            <Save className="mr-2 h-4 w-4" />
-                            Save Configuration
-                          </>
-                        )}
-                      </Button>
-                      
-                      <Button
-                        onClick={runScheduledChecksNow}
-                        disabled={runningScheduledCheck || userRole !== 'admin'}
-                        variant="outline"
-                      >
-                        {runningScheduledCheck ? (
-                          <>
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Running...
-                          </>
-                        ) : (
-                          <>
-                            <RefreshCw className="mr-2 h-4 w-4" />
-                            Run Now
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="virtual-media">
-            <div className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle className="flex items-center gap-2">
-                        <Disc className="h-5 w-5" />
-                        Virtual Media & SCP Backup
-                      </CardTitle>
-                      <CardDescription>
-                        Configure ISO share defaults and SCP export share for backups
-                      </CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Share Type</Label>
-                      <Select value={vmShareType} onValueChange={(value) => setVmShareType(value as any)}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="nfs">NFS (recommended)</SelectItem>
-                          <SelectItem value="cifs">SMB/CIFS</SelectItem>
-                          <SelectItem value="http">HTTP</SelectItem>
-                          <SelectItem value="https">HTTPS</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground">Host must be reachable from the Job Executor and iDRAC.</p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Share Host</Label>
-                      <Input
-                        placeholder="nfs-gateway.internal"
-                        value={vmHost}
-                        onChange={(e) => setVmHost(e.target.value)}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Export / Root Path</Label>
-                      <Input
-                        placeholder="/exports/isos"
-                        value={vmExportPath}
-                        onChange={(e) => setVmExportPath(e.target.value)}
-                      />
-                      <p className="text-xs text-muted-foreground">Path on the share that exposes your ISO library.</p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>ISO Subdirectory (optional)</Label>
-                      <Input
-                        placeholder="linux/"
-                        value={vmIsoPath}
-                        onChange={(e) => setVmIsoPath(e.target.value)}
-                      />
-                      <p className="text-xs text-muted-foreground">Appended to the export path for a cleaner browse list.</p>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="flex items-center justify-between">
-                      Require authentication
-                      <Switch checked={vmUseAuth} onCheckedChange={setVmUseAuth} />
-                    </Label>
-                    <div className="grid md:grid-cols-2 gap-3">
-                      <Input
-                        placeholder="share-user"
-                        value={vmUsername}
-                        onChange={(e) => setVmUsername(e.target.value)}
-                        disabled={!vmUseAuth}
-                      />
-                      <Input
-                        type="password"
-                        placeholder="••••••••"
-                        value={vmPassword}
-                        onChange={(e) => setVmPassword(e.target.value)}
-                        disabled={!vmUseAuth}
-                      />
-                    </div>
-                    <p className="text-xs text-muted-foreground">Credentials are stored encrypted alongside other settings.</p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Notes</Label>
-                    <Textarea
-                      placeholder="Firewall rules, maintenance windows, or cleanup policy for this share"
-                      value={vmNotes}
-                      onChange={(e) => setVmNotes(e.target.value)}
-                      rows={3}
-                    />
-                  </div>
-
-                  <div className="flex flex-wrap gap-2 justify-end">
-                    <Button
-                      variant="outline"
-                      onClick={handleTestVirtualMediaShare}
-                      disabled={testingVirtualMediaShare}
-                    >
-                      {testingVirtualMediaShare && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Test share
-                    </Button>
-                    <Button onClick={handleSaveVirtualMediaSettings} disabled={loading}>
-                      {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Save defaults
-                    </Button>
-                  </div>
-
-                  {vmTestResult && (
-                    <Alert variant={vmTestResult.success ? "default" : "destructive"}>
-                      <AlertDescription className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          {vmTestResult.success ? (
-                            <CheckCircle2 className="h-4 w-4" />
+                        <Button
+                          onClick={testAllServers}
+                          disabled={testingAllServers}
+                        >
+                          {testingAllServers ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Testing...
+                            </>
                           ) : (
-                            <AlertCircle className="h-4 w-4" />
+                            'Test All Servers'
                           )}
-                          <span>{vmTestResult.message}</span>
-                        </div>
-                        {vmTestResult.baseUrl && (
-                          <p className="text-xs text-muted-foreground">
-                            Base URL: {vmTestResult.baseUrl} (port {vmTestResult.port || 'auto'})
-                          </p>
-                        )}
-                        {vmTestResult.listing_error && (
-                          <p className="text-xs text-muted-foreground">Directory listing: {vmTestResult.listing_error}</p>
-                        )}
-                        {vmTestResult.files && vmTestResult.files.length > 0 && (
-                          <div className="space-y-2">
-                            <p className="text-xs text-muted-foreground">Discovered images</p>
-                            <ScrollArea className="h-32 rounded-md border p-2">
-                              <div className="space-y-1 text-xs">
-                                {vmTestResult.files.map((file) => (
-                                  <div key={file} className="flex items-center gap-2">
-                                    <Disc className="h-3 w-3" />
-                                    <span className="font-mono break-all">{file}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </ScrollArea>
-                          </div>
-                        )}
-                      </AlertDescription>
-                    </Alert>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* ISO Image Library */}
-              <IsoImageLibrary />
-
-              {/* SCP Export Share Configuration */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Disc className="h-5 w-5" />
-                    SCP Export Share Configuration
-                  </CardTitle>
-                  <CardDescription>
-                    Configure network share for SCP backups on older iDRAC firmware
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <Alert className="border-blue-200 bg-blue-50 dark:bg-blue-950/20">
-                    <Info className="h-4 w-4 text-blue-600" />
-                    <AlertDescription className="text-sm">
-                      <strong>For older iDRAC firmware:</strong> If iDRAC doesn't support Local export method (iDRAC 8 v2.70+, iDRAC 9 v4.x+), 
-                      configure a network share as fallback. The Job Executor will automatically use this when Local export fails.
-                      <br /><br />
-                      <strong>Supported:</strong> Windows SMB/CIFS shares or Linux NFS shares accessible from iDRAC network.
-                    </AlertDescription>
-                  </Alert>
-
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="scp-share-enabled">Enable Network Share Export Fallback</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Automatically use network share when Local export is not supported
-                      </p>
-                    </div>
-                    <Switch
-                      id="scp-share-enabled"
-                      checked={scpShareEnabled}
-                      onCheckedChange={setScpShareEnabled}
-                    />
-                  </div>
-
-                  {scpShareEnabled && (
-                    <div className="space-y-4 pl-4 border-l-2 border-border">
-                      <div className="space-y-2">
-                        <Label htmlFor="scp-share-type">Share Type</Label>
-                        <Select value={scpShareType} onValueChange={(value: 'CIFS' | 'NFS') => setScpShareType(value)}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="CIFS">CIFS / SMB (Windows)</SelectItem>
-                            <SelectItem value="NFS">NFS (Linux/Unix)</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <p className="text-xs text-muted-foreground">
-                          {scpShareType === 'CIFS' 
-                            ? 'Windows file share (SMB/CIFS protocol)' 
-                            : 'Unix/Linux network file system'}
-                        </p>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="scp-share-path">Share Path *</Label>
-                        <Input
-                          id="scp-share-path"
-                          placeholder={scpShareType === 'CIFS' ? '\\\\server\\share\\exports' : '/export/scp_backups'}
-                          value={scpSharePath}
-                          onChange={(e) => setScpSharePath(e.target.value)}
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          {scpShareType === 'CIFS' 
-                            ? 'UNC path to Windows share (e.g., \\\\fileserver\\idrac$\\scp_exports)' 
-                            : 'NFS mount path (e.g., /mnt/nfs_share/scp_exports)'}
-                        </p>
-                      </div>
-
-                      {scpShareType === 'CIFS' && (
-                        <>
-                          <div className="space-y-2">
-                            <Label htmlFor="scp-share-username">Share Username</Label>
-                            <Input
-                              id="scp-share-username"
-                              placeholder="domain\\username or username"
-                              value={scpShareUsername}
-                              onChange={(e) => setScpShareUsername(e.target.value)}
-                            />
-                            <p className="text-xs text-muted-foreground">
-                              Username with write access to the share
-                            </p>
-                          </div>
-
-                          <div className="space-y-2">
-                            <Label htmlFor="scp-share-password">Share Password</Label>
-                            <Input
-                              id="scp-share-password"
-                              type="password"
-                              placeholder="••••••••"
-                              value={scpSharePassword}
-                              onChange={(e) => setScpSharePassword(e.target.value)}
-                            />
-                            <p className="text-xs text-muted-foreground">
-                              Password for share access (encrypted in database). Leave blank to keep existing.
-                            </p>
-                          </div>
-                        </>
-                      )}
-
-                      <Alert>
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertDescription className="text-sm">
-                          <strong>Requirements:</strong>
-                          <ul className="list-disc list-inside mt-2 space-y-1">
-                            <li>Share must be accessible from iDRAC network (test connectivity)</li>
-                            <li>iDRAC must have network route to share server</li>
-                            <li>Share must have write permissions for the specified user</li>
-                            <li>For CIFS: Port 445 must be open between iDRAC and file server</li>
-                            <li>For NFS: NFS ports (2049, 111) must be accessible</li>
-                          </ul>
-                        </AlertDescription>
-                      </Alert>
-                    </div>
-                  )}
-
-                  <Button onClick={handleSaveActivitySettings} disabled={loading}>
-                    {loading ? "Saving..." : "Save SCP Settings"}
-                  </Button>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="firmware-library">
-            <FirmwareLibrary />
-          </TabsContent>
-
-          <TabsContent value="network">
-            <div className="space-y-4">
-              {/* Deployment Mode Card */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Deployment Mode</CardTitle>
-                  <CardDescription>
-                    Current backend connectivity status
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center gap-3">
-                    <div className={cn("w-3 h-3 rounded-full", deploymentInfo.color)} />
-                    <div>
-                      <div className="font-medium">{deploymentInfo.mode}</div>
-                      <div className="text-sm text-muted-foreground">{deploymentInfo.description}</div>
-                      <div className="text-xs text-muted-foreground mt-1">
-                        Backend: {import.meta.env.VITE_SUPABASE_URL?.replace(/^https?:\/\//, '').split('/')[0] || 'Unknown'}
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* iDRAC Operations Architecture - Informational Only */}
-              <Card className="mb-6">
-                <CardHeader>
-                  <CardTitle>iDRAC Operations Architecture</CardTitle>
-                  <CardDescription>
-                    How this application connects to iDRAC devices
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Alert>
-                    <Info className="h-4 w-4" />
-                    <AlertDescription>
-                      <strong>All iDRAC operations use the Job Executor</strong>
-                      <br />
-                      <br />
-                      iDRACs are always on private networks that edge functions cannot reach. 
-                      The Job Executor runs on your local network with full access to iDRAC devices.
-                      <br />
-                      <br />
-                      <strong>Supported operations:</strong>
-                      <ul className="list-disc ml-4 mt-2 space-y-1">
-                        <li>Firmware updates and full server updates</li>
-                        <li>Network discovery scans</li>
-                        <li>Credential testing</li>
-                        <li>Server information refresh</li>
-                      </ul>
-                      <br />
-                      <strong>Requirements:</strong>
-                      <ul className="list-disc ml-4 space-y-1">
-                        <li>Job Executor service running on a machine with network access to iDRACs</li>
-                        <li>Proper network configuration to reach iDRAC IP addresses</li>
-                        <li>Valid iDRAC credentials configured in credential sets</li>
-                      </ul>
-                    </AlertDescription>
-                  </Alert>
-                </CardContent>
-              </Card>
-
-              {/* Job Executor Configuration */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Terminal className="h-5 w-5" />
-                    Job Executor Configuration
-                  </CardTitle>
-                  <CardDescription>
-                    Retrieve your SERVICE_ROLE_KEY for local Job Executor setup
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <Alert>
-                    <Info className="h-4 w-4" />
-                    <AlertDescription>
-                      The Job Executor requires a SERVICE_ROLE_KEY to access the database and perform administrative operations.
-                      This key should be added to your Job Executor <code className="text-xs bg-muted px-1 py-0.5 rounded">.env</code> file.
-                    </AlertDescription>
-                  </Alert>
-
-                  {!serviceRoleKey ? (
-                    <Button 
-                      onClick={fetchServiceRoleKey} 
-                      disabled={loadingServiceKey}
-                      className="w-full"
-                    >
-                      {loadingServiceKey ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Retrieving Key...
-                        </>
-                      ) : (
-                        <>
-                          <Terminal className="mr-2 h-4 w-4" />
-                          Retrieve SERVICE_ROLE_KEY
-                        </>
-                      )}
-                    </Button>
-                  ) : (
-                    <div className="space-y-3">
-                      <div className="space-y-2">
-                        <Label className="text-xs font-medium">SERVICE_ROLE_KEY</Label>
-                        <div className="relative">
-                          <Input
-                            value={serviceRoleKey}
-                            readOnly
-                            className="font-mono text-xs pr-10"
-                            type="password"
-                          />
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="absolute right-1 top-1 h-7"
-                            onClick={copyServiceRoleKey}
-                          >
-                            {serviceKeyCopied ? (
-                              <CheckCircle2 className="h-4 w-4 text-green-500" />
-                            ) : (
-                              <Copy className="h-4 w-4" />
-                            )}
-                          </Button>
-                        </div>
-                      </div>
-
-                      <Alert className="bg-muted">
-                        <Terminal className="h-4 w-4" />
-                        <AlertDescription className="text-xs space-y-2">
-                          <div>
-                            <strong>Add this to your Job Executor .env file:</strong>
-                          </div>
-                          <code className="block bg-background p-2 rounded text-xs overflow-x-auto">
-                            SUPABASE_SERVICE_ROLE_KEY={serviceRoleKey}
-                          </code>
-                          <div className="text-muted-foreground mt-2">
-                            ⚠️ Keep this key secure - it grants full database access
-                          </div>
-                        </AlertDescription>
-                      </Alert>
-
-                      <div className="flex gap-2">
-                        <Button 
-                          onClick={copyServiceRoleKey} 
-                          variant="outline"
-                          className="flex-1"
-                        >
-                          <Copy className="mr-2 h-4 w-4" />
-                          {serviceKeyCopied ? "Copied!" : "Copy Key"}
                         </Button>
-                        <Button 
-                          onClick={() => setServiceRoleKey(null)}
+                      </div>
+
+                      <ScrollArea className="h-[300px] rounded-md border p-4">
+                        <div className="space-y-2">
+                          {servers.map((server) => {
+                            const result = serverTestResults.get(server.id);
+                            const testing = testingServers.get(server.id);
+                            
+                            return (
+                              <div key={server.id} className="flex items-center justify-between p-2 rounded hover:bg-accent">
+                                <div className="flex items-center gap-3">
+                                  <div className={cn(
+                                    "h-2 w-2 rounded-full",
+                                    testing ? "bg-yellow-500 animate-pulse" :
+                                    result?.success ? "bg-green-500" :
+                                    result?.error ? "bg-destructive" :
+                                    "bg-muted"
+                                  )} />
+                                  <div>
+                                    <p className="text-sm font-medium">
+                                      {server.hostname || server.ip_address}
+                                    </p>
+                                    {result && (
+                                      <p className="text-xs text-muted-foreground">
+                                        {result.success 
+                                          ? `Online (${result.response_time_ms}ms)${result.version ? ` - ${result.version}` : ''}`
+                                          : result.error
+                                        }
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => testIdracServer(server.id)}
+                                  disabled={testing}
+                                >
+                                  {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Test'}
+                                </Button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </ScrollArea>
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground text-center py-8">
+                      No servers configured yet
+                    </p>
+                  )}
+
+                  {vcenterSettings && (
+                    <div className="pt-4 border-t">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-medium">vCenter Server</p>
+                          <p className="text-sm text-muted-foreground">
+                            {vcenterSettings.host}
+                          </p>
+                          {vcenterTestResult && (
+                            <p className="text-xs text-muted-foreground">
+                              {vcenterTestResult.success 
+                                ? `Online (${vcenterTestResult.response_time_ms}ms)`
+                                : vcenterTestResult.error
+                              }
+                            </p>
+                          )}
+                        </div>
+                        <Button
                           variant="outline"
-                          className="flex-1"
+                          size="sm"
+                          onClick={testVCenterConnection}
+                          disabled={testingVCenter}
                         >
-                          <XCircle className="mr-2 h-4 w-4" />
-                          Hide Key
+                          {testingVCenter ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Test vCenter'}
                         </Button>
                       </div>
                     </div>
@@ -4132,12 +3350,9 @@ export default function Settings() {
               {/* Job Executor Diagnostics */}
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Terminal className="h-5 w-5" />
-                    Job Executor Diagnostics
-                  </CardTitle>
+                  <CardTitle>Job Executor Status</CardTitle>
                   <CardDescription>
-                    Test Job Executor connectivity, credential access, and iDRAC reachability
+                    Monitor Job Executor service health and configuration
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -4145,788 +3360,399 @@ export default function Settings() {
                 </CardContent>
               </Card>
 
-              {/* Network Resilience Settings */}
+              {/* Network Settings */}
               <Card>
                 <CardHeader>
-                  <CardTitle>Network Resilience</CardTitle>
+                  <CardTitle>Network Timeouts & Retry</CardTitle>
                   <CardDescription>
-                    Configure timeouts, retries, and connection pooling for reliable operations
+                    Configure connection timeouts and retry behavior
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-6">
-                  <Collapsible defaultOpen>
-                    <CollapsibleTrigger className="flex items-center justify-between w-full p-3 bg-muted/50 rounded-lg hover:bg-muted">
-                      <h3 className="font-medium">Timeouts</h3>
-                      <ChevronRight className="h-4 w-4 transition-transform data-[state=open]:rotate-90" />
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="pt-4 space-y-4">
-                      <div className="grid grid-cols-3 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="connection-timeout">Connection (seconds)</Label>
-                          <Input
-                            id="connection-timeout"
-                            type="number"
-                            min="5"
-                            max="120"
-                            value={connectionTimeout}
-                            onChange={(e) => setConnectionTimeout(parseInt(e.target.value))}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="read-timeout">Read (seconds)</Label>
-                          <Input
-                            id="read-timeout"
-                            type="number"
-                            min="10"
-                            max="300"
-                            value={readTimeout}
-                            onChange={(e) => setReadTimeout(parseInt(e.target.value))}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="operation-timeout">Operation (seconds)</Label>
-                          <Input
-                            id="operation-timeout"
-                            type="number"
-                            min="60"
-                            max="1800"
-                            value={operationTimeout}
-                            onChange={(e) => setOperationTimeout(parseInt(e.target.value))}
-                          />
-                        </div>
-                      </div>
-                    </CollapsibleContent>
-                  </Collapsible>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Connection Timeout (seconds)</Label>
+                      <Input
+                        type="number"
+                        value={connectionTimeout}
+                        onChange={(e) => setConnectionTimeout(parseInt(e.target.value) || 30)}
+                        min={5}
+                        max={300}
+                      />
+                    </div>
 
-                  <Collapsible defaultOpen>
-                    <CollapsibleTrigger className="flex items-center justify-between w-full p-3 bg-muted/50 rounded-lg hover:bg-muted">
-                      <h3 className="font-medium">Retry Policy</h3>
-                      <ChevronRight className="h-4 w-4 transition-transform data-[state=open]:rotate-90" />
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="pt-4 space-y-4">
-                      <div className="grid grid-cols-3 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="max-retries">Max Attempts</Label>
-                          <Input
-                            id="max-retries"
-                            type="number"
-                            min="0"
-                            max="10"
-                            value={maxRetryAttempts}
-                            onChange={(e) => setMaxRetryAttempts(parseInt(e.target.value))}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="retry-delay">Delay (seconds)</Label>
-                          <Input
-                            id="retry-delay"
-                            type="number"
-                            min="1"
-                            max="60"
-                            value={retryDelay}
-                            onChange={(e) => setRetryDelay(parseInt(e.target.value))}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="backoff-type">Backoff Strategy</Label>
-                          <select
-                            id="backoff-type"
-                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            value={retryBackoffType}
-                            onChange={(e) => setRetryBackoffType(e.target.value as 'exponential' | 'linear' | 'fixed')}
-                          >
-                            <option value="exponential">Exponential</option>
-                            <option value="linear">Linear</option>
-                            <option value="fixed">Fixed</option>
-                          </select>
-                        </div>
-                      </div>
-                    </CollapsibleContent>
-                  </Collapsible>
+                    <div className="space-y-2">
+                      <Label>Read Timeout (seconds)</Label>
+                      <Input
+                        type="number"
+                        value={readTimeout}
+                        onChange={(e) => setReadTimeout(parseInt(e.target.value) || 60)}
+                        min={10}
+                        max={600}
+                      />
+                    </div>
 
-                  <Collapsible defaultOpen>
-                    <CollapsibleTrigger className="flex items-center justify-between w-full p-3 bg-muted/50 rounded-lg hover:bg-muted">
-                      <h3 className="font-medium">Connection & Rate Limits</h3>
-                      <ChevronRight className="h-4 w-4 transition-transform data-[state=open]:rotate-90" />
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="pt-4 space-y-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="max-connections">Max Concurrent Connections</Label>
-                          <Input
-                            id="max-connections"
-                            type="number"
-                            min="1"
-                            max="50"
-                            value={maxConcurrentConnections}
-                            onChange={(e) => setMaxConcurrentConnections(parseInt(e.target.value))}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="rate-limit">Requests Per Minute</Label>
-                          <Input
-                            id="rate-limit"
-                            type="number"
-                            min="1"
-                            max="300"
-                            value={maxRequestsPerMinute}
-                            onChange={(e) => setMaxRequestsPerMinute(parseInt(e.target.value))}
-                          />
-                        </div>
-                      </div>
-                    </CollapsibleContent>
-                  </Collapsible>
+                    <div className="space-y-2">
+                      <Label>Max Retry Attempts</Label>
+                      <Input
+                        type="number"
+                        value={maxRetryAttempts}
+                        onChange={(e) => setMaxRetryAttempts(parseInt(e.target.value) || 3)}
+                        min={0}
+                        max={10}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Retry Backoff</Label>
+                      <Select value={retryBackoffType} onValueChange={(v: any) => setRetryBackoffType(v)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="exponential">Exponential</SelectItem>
+                          <SelectItem value="linear">Linear</SelectItem>
+                          <SelectItem value="fixed">Fixed</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
 
                   <Button onClick={handleSaveNetworkSettings} disabled={loading}>
                     {loading ? "Saving..." : "Save Network Settings"}
                   </Button>
                 </CardContent>
               </Card>
+            </div>
+          </SettingsSection>
 
-              {/* Pre-Job Validation */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Pre-Job Validation</CardTitle>
-                  <CardDescription>
-                    Validate network prerequisites before starting autonomous update jobs
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label>Require Pre-Job Validation</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Block job execution if critical network checks fail
-                      </p>
-                    </div>
-                    <Switch
-                      checked={requirePrereqValidation}
-                      onCheckedChange={setRequirePrereqValidation}
-                    />
+          {/* Cluster Monitoring */}
+          <SettingsSection
+            id="cluster-monitoring"
+            title="Cluster Monitoring"
+            description="Scheduled safety checks for vSphere clusters"
+            icon={Activity}
+            defaultOpen={defaultOpenSection === 'cluster-monitoring'}
+          >
+            <Card>
+              <CardContent className="space-y-4 pt-6">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>Enable Scheduled Checks</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Automatically run cluster safety checks on a schedule
+                    </p>
                   </div>
+                  <Switch
+                    checked={scheduledChecksEnabled}
+                    onCheckedChange={setScheduledChecksEnabled}
+                  />
+                </div>
 
-                  <Alert>
-                    <Info className="h-4 w-4" />
-                    <AlertDescription>
-                      <strong>Network Validation via Job Executor</strong>
-                      <br />
-                      <br />
-                      Network validation requires edge functions to reach iDRACs directly, which cannot access private networks.
-                      <br />
-                      <br />
-                      <strong>To test iDRAC connectivity:</strong>
-                      <ol className="list-decimal ml-4 mt-2 space-y-1">
-                        <li>Ensure Job Executor is running on a machine with network access to iDRACs</li>
-                        <li>Use a discovery job to test multiple servers automatically</li>
-                        <li>Check the Activity Monitor to verify successful iDRAC commands</li>
-                        <li>Manual testing: See <code>docs/JOB_EXECUTOR_GUIDE.md</code> for curl commands</li>
-                      </ol>
-                    </AlertDescription>
-                  </Alert>
-
-                  {prereqResults && (
-                    <div className="space-y-3 p-4 border rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <h4 className="font-medium">Validation Results</h4>
-                        <Badge variant={prereqResults.overallStatus === 'passed' ? "default" : "destructive"}>
-                          {prereqResults.overallStatus === 'passed' ? "All Checks Passed" : "Issues Found"}
-                        </Badge>
-                      </div>
-
-                      {prereqResults.overallStatus === 'failed' && (
-                        <div className="space-y-2">
-                          <p className="text-sm font-medium text-destructive">
-                            Some tests failed. Check the logs below for details.
-                          </p>
-                        </div>
-                      )}
-
-                      <div className="grid grid-cols-2 gap-4 pt-2 border-t">
-                        <div>
-                          <p className="text-sm font-medium">Servers</p>
-                          <p className="text-xs text-muted-foreground">
-                            {prereqResults.servers.reachable}/{prereqResults.servers.tested} reachable
-                          </p>
-                        </div>
-                        {prereqResults.vcenter.configured && (
-                          <div>
-                            <p className="text-sm font-medium">vCenter</p>
-                            <p className="text-xs text-muted-foreground">
-                              {prereqResults.vcenter.reachable ? "Reachable" : "Unreachable"}
-                            </p>
-                          </div>
-                        )}
-                      </div>
-
-                      {executionLog.length > 0 && (
-                        <div className="mt-4">
-                          <div 
-                            className="flex items-center justify-between p-2 rounded-t-lg bg-muted cursor-pointer hover:bg-muted/80"
-                            onClick={() => setShowExecutionLog(!showExecutionLog)}
-                          >
-                            <div className="flex items-center gap-2">
-                              <Terminal className="h-4 w-4" />
-                              <span className="font-medium text-sm">Execution Log</span>
-                              <span className="text-xs text-muted-foreground">({executionLog.length} steps)</span>
-                            </div>
-                            <ChevronDown className={`h-4 w-4 transition-transform ${showExecutionLog ? 'rotate-180' : ''}`} />
-                          </div>
-                          
-                          {showExecutionLog && (
-                            <div className="border border-t-0 rounded-b-lg">
-                              <div className="flex justify-end gap-2 p-2 border-b bg-muted/30">
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={copyExecutionLog}
-                                  className="h-7"
-                                >
-                                  <Copy className="h-3 w-3 mr-1" />
-                                  Copy
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => setExecutionLog([])}
-                                  className="h-7"
-                                >
-                                  Clear
-                                </Button>
-                              </div>
-                              <ScrollArea className="h-[300px] w-full">
-                                <div className="p-3 font-mono text-xs space-y-1">
-                                  {executionLog.map((entry, idx) => {
-                                    const statusColors = {
-                                      success: 'text-green-400',
-                                      failed: 'text-red-400',
-                                      warning: 'text-yellow-400'
-                                    };
-                                    const statusIcons = {
-                                      success: '✓',
-                                      failed: '✗',
-                                      warning: '⚠'
-                                    };
-                                    
-                                    return (
-                                      <div key={idx} className="leading-relaxed">
-                                        <span className="text-muted-foreground">
-                                          [{new Date(entry.timestamp).toLocaleTimeString()}]
-                                        </span>
-                                        {' '}
-                                        <span className={statusColors[entry.status as keyof typeof statusColors]}>
-                                          {statusIcons[entry.status as keyof typeof statusIcons]}
-                                        </span>
-                                        {' '}
-                                        <span className="text-blue-400">{entry.method}</span>
-                                        {' '}
-                                        <span className="text-foreground">{entry.target}</span>
-                                        {entry.response_time_ms > 0 && (
-                                          <>
-                                            {' | '}
-                                            <span className="text-muted-foreground">{entry.response_time_ms}ms</span>
-                                          </>
-                                        )}
-                                        {entry.status_code && (
-                                          <>
-                                            {' | '}
-                                            <span className="text-purple-400">HTTP {entry.status_code}</span>
-                                          </>
-                                        )}
-                                        {entry.details && (
-                                          <div className="ml-6 text-muted-foreground">
-                                            {entry.details}
-                                          </div>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </ScrollArea>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Network Monitoring */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Network Monitoring</CardTitle>
-                  <CardDescription>
-                    Real-time network health and diagnostics
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="space-y-0.5">
-                      <Label>Monitor Latency</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Track response times and alert on slow connections
-                      </p>
-                    </div>
-                    <Switch
-                      checked={monitorLatency}
-                      onCheckedChange={setMonitorLatency}
-                    />
-                  </div>
-
-                  {monitorLatency && (
+                {scheduledChecksEnabled && (
+                  <div className="space-y-4 pt-4 border-t">
                     <div className="space-y-2">
-                      <Label htmlFor="latency-threshold">Alert Threshold (ms)</Label>
+                      <Label>Check Frequency (Cron Expression)</Label>
                       <Input
-                        id="latency-threshold"
-                        type="number"
-                        min="100"
-                        max="10000"
-                        value={latencyAlertThreshold}
-                        onChange={(e) => setLatencyAlertThreshold(parseInt(e.target.value))}
+                        placeholder="0 */6 * * *"
+                        value={checkFrequency}
+                        onChange={(e) => setCheckFrequency(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Examples: "0 */6 * * *" (every 6 hours), "0 0 * * *" (daily at midnight)
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <Label>Check All Clusters</Label>
+                      <Switch
+                        checked={checkAllClusters}
+                        onCheckedChange={setCheckAllClusters}
                       />
                     </div>
-                  )}
 
-                  <Button 
-                    onClick={loadDiagnostics}
-                    disabled={loadingDiagnostics}
-                    variant="outline"
-                    className="w-full"
-                  >
-                    {loadingDiagnostics ? "Loading..." : "Refresh Diagnostics"}
-                  </Button>
-
-                  {diagnosticsData && (
-                    <div className="grid grid-cols-2 gap-4 p-4 border rounded-lg">
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium">Active Connections</p>
-                        <p className="text-2xl font-bold">{diagnosticsData.activeConnections}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium">Average Latency</p>
-                        <p className="text-2xl font-bold">{diagnosticsData.avgLatency}ms</p>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium">Success Rate</p>
-                        <p className="text-2xl font-bold">{diagnosticsData.successRate}%</p>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium">Recent Errors</p>
-                        <p className="text-2xl font-bold">{diagnosticsData.recentErrors.length}</p>
-                      </div>
-
-                      {diagnosticsData.recentErrors.length > 0 && (
-                        <div className="col-span-2 pt-2 border-t">
-                          <p className="text-sm font-medium mb-2">Recent Network Errors:</p>
-                          <ScrollArea className="h-[120px]">
-                            <div className="space-y-2">
-                              {diagnosticsData.recentErrors.map((error: any, idx: number) => (
-                                <div key={idx} className="text-xs p-2 bg-destructive/10 rounded">
-                                  <div className="font-mono">{error.endpoint}</div>
-                                  <div className="text-muted-foreground">{error.error}</div>
-                                  <div className="text-muted-foreground">
-                                    {new Date(error.timestamp).toLocaleString()}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </ScrollArea>
-                        </div>
-                      )}
+                    <div className="space-y-2">
+                      <Label>Minimum Required Hosts</Label>
+                      <Input
+                        type="number"
+                        value={minRequiredHosts}
+                        onChange={(e) => setMinRequiredHosts(parseInt(e.target.value) || 2)}
+                        min={1}
+                      />
                     </div>
+
+                    <div className="flex items-center justify-between">
+                      <Label>Notify on Unsafe Cluster</Label>
+                      <Switch
+                        checked={notifyOnUnsafeCluster}
+                        onCheckedChange={setNotifyOnUnsafeCluster}
+                      />
+                    </div>
+
+                    {lastScheduledCheck && (
+                      <Alert>
+                        <Info className="h-4 w-4" />
+                        <AlertDescription>
+                          Last check: {new Date(lastScheduledCheck.last_run_at).toLocaleString()} - {lastScheduledCheck.last_status}
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
+                    <div className="flex gap-2">
+                      <Button onClick={saveScheduledCheckConfig} disabled={loading}>
+                        {loading ? "Saving..." : "Save Schedule"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={runScheduledChecksNow}
+                        disabled={runningScheduledCheck}
+                      >
+                        {runningScheduledCheck ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Running...
+                          </>
+                        ) : (
+                          'Run Check Now'
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </SettingsSection>
+
+          {/* Activity Monitor */}
+          <SettingsSection
+            id="activity"
+            title="Activity Monitor"
+            description="Configure activity log retention and monitoring"
+            icon={Terminal}
+            defaultOpen={defaultOpenSection === 'activity'}
+          >
+            <Card>
+              <CardContent className="space-y-4 pt-6">
+                <div className="space-y-2">
+                  <Label>Log Retention (days)</Label>
+                  <Input
+                    type="number"
+                    value={logRetentionDays}
+                    onChange={(e) => setLogRetentionDays(parseInt(e.target.value) || 30)}
+                    min={1}
+                    max={365}
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    Activity logs older than this will be automatically deleted
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>Auto-Cleanup</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Automatically delete old logs
+                    </p>
+                  </div>
+                  <Switch
+                    checked={autoCleanupEnabled}
+                    onCheckedChange={setAutoCleanupEnabled}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Log Level</Label>
+                  <Select value={logLevel} onValueChange={(v: any) => setLogLevel(v)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All API Calls</SelectItem>
+                      <SelectItem value="errors_only">Errors Only</SelectItem>
+                      <SelectItem value="slow_only">Slow Requests Only</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Slow Command Threshold (ms)</Label>
+                  <Input
+                    type="number"
+                    value={slowCommandThreshold}
+                    onChange={(e) => setSlowCommandThreshold(parseInt(e.target.value) || 5000)}
+                    min={1000}
+                  />
+                </div>
+
+                {lastCleanupAt && (
+                  <p className="text-sm text-muted-foreground">
+                    Last cleanup: {new Date(lastCleanupAt).toLocaleString()}
+                  </p>
+                )}
+
+                <div className="flex gap-2">
+                  <Button onClick={handleSaveSettings} disabled={loading}>
+                    {loading ? "Saving..." : "Save Activity Settings"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={handleCleanupNow}
+                    disabled={cleaningUp}
+                  >
+                    {cleaningUp ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Cleaning...
+                      </>
+                    ) : (
+                      'Cleanup Now'
+                    )}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </SettingsSection>
+
+          {/* Jobs Configuration */}
+          <SettingsSection
+            id="jobs"
+            title="Jobs Configuration"
+            description="Manage job retention and stale job handling"
+            icon={Database}
+            defaultOpen={defaultOpenSection === 'jobs'}
+          >
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Job Retention</CardTitle>
+                  <CardDescription>
+                    Configure how long completed jobs are kept
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Retention Period (days)</Label>
+                    <Input
+                      type="number"
+                      value={jobRetentionDays}
+                      onChange={(e) => setJobRetentionDays(parseInt(e.target.value) || 90)}
+                      min={1}
+                      max={365}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label>Auto-Cleanup</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Automatically delete old jobs
+                      </p>
+                    </div>
+                    <Switch
+                      checked={jobAutoCleanupEnabled}
+                      onCheckedChange={setJobAutoCleanupEnabled}
+                    />
+                  </div>
+
+                  {jobLastCleanupAt && (
+                    <p className="text-sm text-muted-foreground">
+                      Last cleanup: {new Date(jobLastCleanupAt).toLocaleString()}
+                    </p>
                   )}
+
+                  <div className="flex gap-2">
+                    <Button onClick={handleSaveSettings} disabled={loading}>
+                      {loading ? "Saving..." : "Save Job Settings"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={handleJobCleanupNow}
+                      disabled={jobCleaningUp}
+                    >
+                      {jobCleaningUp ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Cleaning...
+                        </>
+                      ) : (
+                        'Cleanup Now'
+                      )}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Stale Job Management</CardTitle>
+                  <CardDescription>
+                    Handle jobs stuck in pending or running state
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Stale Pending Threshold (hours)</Label>
+                    <Input
+                      type="number"
+                      value={stalePendingHours}
+                      onChange={(e) => setStalePendingHours(parseInt(e.target.value) || 24)}
+                      min={1}
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Jobs pending longer than this are considered stale
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Stale Running Threshold (hours)</Label>
+                    <Input
+                      type="number"
+                      value={staleRunningHours}
+                      onChange={(e) => setStaleRunningHours(parseInt(e.target.value) || 48)}
+                      min={1}
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Jobs running longer than this are considered stale
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label>Auto-Cancel Stale Jobs</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Automatically cancel jobs that exceed thresholds
+                      </p>
+                    </div>
+                    <Switch
+                      checked={autoCancelStaleJobs}
+                      onCheckedChange={setAutoCancelStaleJobs}
+                    />
+                  </div>
+
+                  {staleJobCount > 0 && (
+                    <Alert variant="destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription>
+                        {staleJobCount} stale job(s) detected
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  <Button onClick={handleSaveSettings} disabled={loading}>
+                    {loading ? "Saving..." : "Save Stale Job Settings"}
+                  </Button>
                 </CardContent>
               </Card>
             </div>
-          </TabsContent>
+          </SettingsSection>
+        </TabsContent>
 
-          <TabsContent value="server-groups">
-            <ServerGroupsManagement />
-          </TabsContent>
-        </Tabs>
+      </Tabs>
 
-        {/* Token Generation Dialog */}
-        <Dialog open={showTokenDialog} onOpenChange={setShowTokenDialog}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>API Token Generated</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="p-4 bg-muted rounded-lg">
-                <p className="text-sm font-mono break-all">{generatedToken}</p>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  className="flex-1"
-                  onClick={() => {
-                    navigator.clipboard.writeText(generatedToken || '');
-                    toast({ title: "Copied to clipboard" });
-                  }}
-                >
-                  Copy Token
-                </Button>
-                <Button
-                  className="flex-1"
-                  variant="outline"
-                  onClick={() => {
-                    setShowTokenDialog(false);
-                    setGeneratedToken(null);
-                  }}
-                >
-                  Close
-                </Button>
-              </div>
-              <p className="text-sm text-destructive">
-                ⚠️ Save this token now. You won't be able to see it again!
-              </p>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Credential Set Dialog */}
-        <Dialog open={showCredentialDialog} onOpenChange={setShowCredentialDialog}>
-          <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden">
-            <DialogHeader>
-              <DialogTitle>
-                {editingCredential ? 'Edit Credential Set' : 'Add Credential Set'}
-              </DialogTitle>
-            </DialogHeader>
-            
-            <ScrollArea className="max-h-[calc(90vh-12rem)] pr-4">
-              <div className="grid md:grid-cols-2 gap-6">
-                {/* Left Column: Basic Credentials */}
-                <div className="space-y-4">
-                  <h3 className="text-sm font-medium">Basic Credentials</h3>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="cred-name">Name *</Label>
-                    <Input
-                      id="cred-name"
-                      placeholder="Production iDRAC"
-                      value={credentialForm.name}
-                      onChange={(e) => setCredentialForm({...credentialForm, name: e.target.value})}
-                    />
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="cred-username">Username *</Label>
-                    <Input
-                      id="cred-username"
-                      placeholder="root"
-                      value={credentialForm.username}
-                      onChange={(e) => setCredentialForm({...credentialForm, username: e.target.value})}
-                    />
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="cred-password">
-                      Password * {editingCredential && "(leave blank to keep unchanged)"}
-                    </Label>
-                    <Input
-                      id="cred-password"
-                      type="password"
-                      placeholder="••••••••"
-                      value={credentialForm.password}
-                      onChange={(e) => setCredentialForm({...credentialForm, password: e.target.value})}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Credentials are encrypted at rest and protected by Row Level Security policies
-                    </p>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="cred-description">Description (Optional)</Label>
-                    <Input
-                      id="cred-description"
-                      placeholder="Used for production environment servers"
-                      value={credentialForm.description}
-                      onChange={(e) => setCredentialForm({...credentialForm, description: e.target.value})}
-                    />
-                  </div>
-                </div>
-
-                {/* Right Column: Configuration & IP Ranges */}
-                <div className="space-y-4">
-                  <h3 className="text-sm font-medium">Configuration</h3>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="cred-priority">Priority</Label>
-                    <Input
-                      id="cred-priority"
-                      type="number"
-                      value={credentialForm.priority}
-                      onChange={(e) => setCredentialForm({...credentialForm, priority: parseInt(e.target.value) || 100})}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Lower numbers = higher priority. Discovery will try credentials in ascending priority order.
-                    </p>
-                  </div>
-                  
-                  <div className="flex items-center space-x-2">
-                    <Switch
-                      id="cred-default"
-                      checked={credentialForm.is_default}
-                      onCheckedChange={(checked) => setCredentialForm({...credentialForm, is_default: checked})}
-                    />
-                    <Label htmlFor="cred-default">Set as default credential set</Label>
-                  </div>
-
-                  {/* IP Range Assignment Section - Always visible */}
-                  <Collapsible 
-                    open={ipRangeExpanded} 
-                    onOpenChange={setIpRangeExpanded}
-                    className="border rounded-lg p-4 space-y-3"
-                  >
-                    <CollapsibleTrigger asChild>
-                      <Button variant="ghost" className="w-full justify-between p-0 h-auto hover:bg-transparent">
-                        <div className="flex items-center gap-2">
-                          <Network className="h-4 w-4" />
-                          <span className="font-medium">IP Range Assignment</span>
-                          {tempIpRanges.length > 0 && (
-                            <Badge variant="secondary" className="ml-2">{tempIpRanges.length}</Badge>
-                          )}
-                        </div>
-                        <ChevronRight className={cn(
-                          "h-4 w-4 transition-transform",
-                          ipRangeExpanded && "rotate-90"
-                        )} />
-                      </Button>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="space-y-3 pt-3">
-                      <p className="text-sm text-muted-foreground">
-                        Assign specific IP ranges to use this credential set automatically. Leave empty to use as a general credential set.
-                      </p>
-                      
-                      {/* Existing IP Ranges */}
-                      {tempIpRanges.length > 0 && (
-                        <div className="space-y-2">
-                          {tempIpRanges.map((range, idx) => (
-                            <div key={idx} className="flex items-center gap-2 p-2 bg-muted rounded-md">
-                              <span className="text-sm flex-1 font-mono">
-                                {range.start_ip} - {range.end_ip}
-                              </span>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  setTempIpRanges(tempIpRanges.filter((_, i) => i !== idx));
-                                }}
-                              >
-                                <X className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      
-                      {/* Add New IP Range Inline */}
-                      <div className="space-y-2 pt-2 border-t">
-                        <Label className="text-xs font-medium">Add IP Range</Label>
-                        <div className="grid grid-cols-2 gap-2">
-                          <Input
-                            placeholder="Start IP"
-                            value={newInlineIpRange.start_ip}
-                            onChange={(e) => setNewInlineIpRange({...newInlineIpRange, start_ip: e.target.value})}
-                          />
-                          <Input
-                            placeholder="End IP"
-                            value={newInlineIpRange.end_ip}
-                            onChange={(e) => setNewInlineIpRange({...newInlineIpRange, end_ip: e.target.value})}
-                          />
-                        </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full"
-                          onClick={() => {
-                            if (newInlineIpRange.start_ip && newInlineIpRange.end_ip) {
-                              setTempIpRanges([...tempIpRanges, newInlineIpRange]);
-                              setNewInlineIpRange({ start_ip: "", end_ip: "" });
-                            }
-                          }}
-                        >
-                          <Plus className="mr-2 h-4 w-4" />
-                          Add Range
-                        </Button>
-                      </div>
-                    </CollapsibleContent>
-                  </Collapsible>
-                </div>
-              </div>
-            </ScrollArea>
-
-            <div className="flex justify-end gap-2 pt-4 border-t">
-              <Button variant="outline" onClick={() => {
-                setShowCredentialDialog(false);
-                setEditingCredential(null);
-              }}>
-                Cancel
-              </Button>
-              <Button onClick={handleSaveCredential} disabled={loading}>
-                {loading ? "Saving..." : editingCredential ? "Update" : "Create"}
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Delete Confirmation Dialog */}
-        <Dialog open={deleteConfirmId !== null} onOpenChange={() => setDeleteConfirmId(null)}>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle>Delete Credential Set</DialogTitle>
-            </DialogHeader>
-            <p className="text-sm text-muted-foreground">
-              Are you sure you want to delete this credential set? This action cannot be undone.
-            </p>
-            <div className="flex gap-2 pt-4">
-              <Button
-                variant="outline"
-                className="flex-1"
-                onClick={() => setDeleteConfirmId(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                className="flex-1"
-                onClick={() => deleteConfirmId && handleDeleteCredential(deleteConfirmId)}
-                disabled={loading}
-              >
-                {loading ? "Deleting..." : "Delete"}
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* IP Range Management Dialog */}
-        <Dialog open={showIpRangeDialog} onOpenChange={setShowIpRangeDialog}>
-          <DialogContent className="max-w-3xl max-h-[80vh]">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <Network className="h-5 w-5" />
-                IP Range Assignment for "{selectedCredentialForIpRanges?.name}"
-              </DialogTitle>
-              <p className="text-sm text-muted-foreground">
-                Automatically use these credentials for servers in specific IP ranges during discovery. This helps apply the right credentials to different network segments without manual selection.
-              </p>
-              <div className="mt-2 p-3 rounded-md bg-muted/50 space-y-1">
-                <p className="text-xs font-medium">Supported Formats:</p>
-                <ul className="text-xs text-muted-foreground space-y-0.5 ml-4 list-disc">
-                  <li><span className="font-mono">10.0.0.0/8</span> - CIDR notation for network ranges</li>
-                  <li><span className="font-mono">192.168.1.1-192.168.1.50</span> - Hyphenated range for consecutive IPs</li>
-                  <li><span className="font-mono">172.16.0.100</span> - Single IP address</li>
-                </ul>
-              </div>
-            </DialogHeader>
-            
-            <ScrollArea className="max-h-[500px] pr-4">
-              <div className="space-y-4">
-                {ipRanges.length === 0 ? (
-                  <div className="text-center py-12 space-y-3">
-                    <Network className="mx-auto h-12 w-12 text-muted-foreground" />
-                    <div>
-                      <h4 className="font-medium text-base mb-1">No IP Ranges Configured</h4>
-                      <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                        Add IP ranges below to automatically apply these credentials to specific network segments. This is useful when different server groups require different authentication.
-                      </p>
-                    </div>
-                    <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3 max-w-md mx-auto">
-                      <p className="font-medium mb-2">Example Use Cases:</p>
-                      <ul className="text-left space-y-1 ml-4 list-disc">
-                        <li>Production servers (10.0.0.0/24) use admin credentials</li>
-                        <li>Test environment (192.168.1.0/24) uses test credentials</li>
-                        <li>DMZ servers (172.16.0.0/16) use restricted credentials</li>
-                      </ul>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {ipRanges.map((range) => (
-                      <div key={range.id} className="flex items-start justify-between border rounded-lg p-3 hover:bg-accent/50">
-                        <div className="flex-1">
-                          <span className="font-mono text-sm font-medium">{range.ip_range}</span>
-                          {range.description && (
-                            <p className="text-xs text-muted-foreground mt-1">{range.description}</p>
-                          )}
-                        </div>
-                        <div className="flex gap-2">
-                          <Button 
-                            size="sm" 
-                            variant="ghost"
-                            onClick={() => startEditIpRange(range)}
-                          >
-                            Edit
-                          </Button>
-                          <Button 
-                            size="sm" 
-                            variant="ghost"
-                            onClick={() => handleDeleteIpRange(range.id)}
-                            disabled={loading}
-                          >
-                            Delete
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                
-                <div className="border-t pt-4 space-y-3">
-                  <h4 className="font-medium">{editingIpRange ? "Edit IP Range" : "Add IP Range"}</h4>
-                  <div className="space-y-2">
-                    <Label>IP Range *</Label>
-                    <Input
-                      placeholder="10.0.0.0/8 or 192.168.1.1-192.168.1.50"
-                      value={newIpRange}
-                      onChange={(e) => setNewIpRange(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Description (Optional)</Label>
-                    <Input
-                      placeholder="e.g., US-East Production Datacenter"
-                      value={newIpRangeDescription}
-                      onChange={(e) => setNewIpRangeDescription(e.target.value)}
-                    />
-                  </div>
-                  <div className="flex gap-2">
-                    {editingIpRange ? (
-                      <>
-                        <Button 
-                          onClick={handleUpdateIpRange}
-                          disabled={loading}
-                          className="flex-1"
-                        >
-                          {loading ? "Updating..." : "Update IP Range"}
-                        </Button>
-                        <Button 
-                          variant="outline"
-                          onClick={cancelEditIpRange}
-                          disabled={loading}
-                        >
-                          Cancel
-                        </Button>
-                      </>
-                    ) : (
-                      <Button 
-                        onClick={handleAddIpRange}
-                        disabled={loading}
-                        className="flex-1"
-                      >
-                        {loading ? "Adding..." : "Add IP Range"}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </ScrollArea>
-          </DialogContent>
-        </Dialog>
-
-        <DiagnosticsDialog 
-          open={showDiagnosticsDialog}
-          onOpenChange={setShowDiagnosticsDialog}
-        />
+      <DiagnosticsDialog 
+        open={showDiagnosticsDialog}
+        onOpenChange={setShowDiagnosticsDialog}
+      />
     </div>
   );
 }
