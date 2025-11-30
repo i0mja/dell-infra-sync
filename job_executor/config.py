@@ -7,6 +7,10 @@ DSM_URL = os.getenv("DSM_URL", "http://127.0.0.1:54321")  # Defaults to local Su
 # This is a SECRET - do not commit to version control!
 SERVICE_ROLE_KEY = os.getenv("SERVICE_ROLE_KEY", "")  # Set via env var
 
+# API Server Configuration (for instant operations)
+API_SERVER_PORT = int(os.getenv("API_SERVER_PORT", "8081"))
+API_SERVER_ENABLED = os.getenv("API_SERVER_ENABLED", "true").lower() == "true"
+
 # vCenter connection (for maintenance mode operations)
 VCENTER_HOST = os.getenv("VCENTER_HOST", "vcenter.example.com")
 VCENTER_USER = os.getenv("VCENTER_USER", "administrator@vsphere.local")

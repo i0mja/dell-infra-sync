@@ -93,6 +93,8 @@ from job_executor.config import (
     FIRMWARE_DIRECTORY,
     MEDIA_SERVER_PORT,
     MEDIA_SERVER_ENABLED,
+    API_SERVER_PORT,
+    API_SERVER_ENABLED,
 )
 from job_executor.connectivity import ConnectivityMixin
 from job_executor.scp import ScpMixin
@@ -115,11 +117,10 @@ except ImportError:
     LDAP3_AVAILABLE = False
     FreeIPAAuthenticator = None
 
-# Job types that should bypass the normal queue for instant execution
-INSTANT_JOB_TYPES = ['console_launch', 'browse_datastore', 'connectivity_test', 'power_control', 'idm_authenticate', 'idm_test_connection']
 from job_executor.dell_redfish.operations import DellOperations
 from job_executor.esxi.orchestrator import EsxiOrchestrator
 from job_executor.media_server import MediaServer
+from job_executor.api_server import APIServer
 
 # Best-effort: prefer UTF-8 output if available, but never crash if not
 try:
@@ -147,6 +148,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
         self.dell_operations = None  # Will be initialized on first use
         self._dell_logger = None
         self.media_server = None  # Media HTTP server (ISOs + firmware)
+        self.api_server = None  # API server for instant operations
         
         # Initialize job handlers
         self.idm_handler = IDMHandler(self)
@@ -751,6 +753,23 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
         
         self.log("Job executor started. Polling for jobs...")
         
+        # Start API server if enabled (for instant operations like console-launch)
+        if API_SERVER_ENABLED:
+            try:
+                self.api_server = APIServer(self, API_SERVER_PORT)
+                self.api_server.start()
+                self.log("="*70)
+                self.log(f"API SERVER STARTED: http://{self.get_local_ip()}:{API_SERVER_PORT}")
+                self.log("Available endpoints:")
+                self.log("  GET  /api/health")
+                self.log("  POST /api/console-launch")
+                self.log("  POST /api/power-control")
+                self.log("  POST /api/connectivity-test")
+                self.log("  POST /api/browse-datastore")
+                self.log("="*70)
+            except Exception as e:
+                self.log(f"Warning: Could not start API server: {e}", "WARN")
+        
         # Start media server if enabled (serves ISOs + firmware DUPs)
         if MEDIA_SERVER_ENABLED:
             try:
@@ -767,18 +786,10 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
         try:
             while self.running:
                 try:
-                    # FAST-TRACK: Process instant jobs immediately (console, datastore browsing, etc.)
-                    instant_jobs = self.get_pending_jobs(instant_only=True)
-                    if instant_jobs:
-                        self.log(f"[FAST-TRACK] Found {len(instant_jobs)} instant job(s)")
-                        for job in instant_jobs:
-                            self.log(f"[FAST-TRACK] Executing instant job {job['id']} ({job['job_type']})")
-                            self.execute_job(job)
-                    
-                    # Regular jobs - process one at a time to avoid overwhelming the system
-                    regular_jobs = self.get_pending_jobs(exclude_instant=True)
-                    if regular_jobs:
-                        job = regular_jobs[0]  # Process one regular job per cycle
+                    # Process jobs from the queue (long-running operations only)
+                    jobs = self.get_pending_jobs()
+                    if jobs:
+                        job = jobs[0]  # Process one job per cycle
                         self.log(f"Executing job {job['id']} ({job['job_type']})")
                         self.execute_job(job)
                     
