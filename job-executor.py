@@ -99,6 +99,7 @@ from job_executor.scp import ScpMixin
 from job_executor.mixins.database import DatabaseMixin
 from job_executor.mixins.credentials import CredentialsMixin
 from job_executor.mixins.vcenter_ops import VCenterMixin
+from job_executor.mixins.idrac_ops import IdracMixin
 from job_executor.utils import UNICODE_FALLBACKS, _normalize_unicode, _safe_json_parse, _safe_to_stdout
 from job_executor.dell_redfish.adapter import DellRedfishAdapter
 from job_executor.handlers import (
