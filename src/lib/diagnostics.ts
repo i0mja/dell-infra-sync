@@ -214,11 +214,8 @@ export async function generateDiagnosticsReport(): Promise<DiagnosticsReport> {
     report.database.error = error.message;
   }
 
-  // 3. Test edge functions
+  // 3. Test edge functions (database operations, notifications, auth only)
   const edgeFunctions = [
-    // 'test-idrac-connection', // REMOVED - now using Job Executor
-    'refresh-server-info',
-    'preview-server-info',
     'network-diagnostics',
     'create-job',
   ];

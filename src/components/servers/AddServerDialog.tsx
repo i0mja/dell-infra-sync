@@ -14,7 +14,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Loader2, Info, Server, Key, Search } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { LocalModeHelper } from "./LocalModeHelper";
+import { BackendStatusHelper } from "./BackendStatusHelper";
 import { serverSchema, credentialSchema, safeValidateInput } from "@/lib/validations";
 
 interface AddServerDialogProps {
@@ -602,8 +602,8 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
                     </Alert>
                   )}
                   
-                  {/* Show helper banner in local mode when job times out */}
-                  <LocalModeHelper show={showLocalHelper} />
+                  {/* Show helper banner when backend is not responding */}
+                  <BackendStatusHelper show={showLocalHelper} />
                 </div>
 
                 <div className="flex gap-2">

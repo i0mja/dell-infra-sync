@@ -70,39 +70,48 @@ Dell Server Manager is an **enterprise-grade application** designed for managing
 
 ---
 
-### 2. Two-Component System (MOST IMPORTANT)
+### 2. Backend Architecture
 
-**Job Executor (Python) - PRIMARY for most operations:**
+**Job Executor (Python) - THE Backend Service:**
 
-- ✅ Runs directly on host with full local network access
-- ✅ Handles long-running operations (firmware updates: 30+ minutes)
-- ✅ Provides SSH access for ESXi orchestration
-- ✅ File system access for media server and ISO mounting
-- ✅ Simpler implementation (Python + requests vs Deno + SSL workarounds)
-- ✅ Use job types: `discovery_scan`, `firmware_update`, `power_action`, etc.
+The Job Executor is a **required component** that runs as a system service (systemd on Linux, Task Scheduler on Windows) and provides the core backend functionality for all iDRAC and vCenter operations.
 
-**Edge Functions (Supabase) - CAN reach local IPs when self-hosted:**
+**Capabilities:**
+- ✅ Full local network access (192.168.x.x, 10.x.x.x, 172.16.x.x)
+- ✅ Long-running operations (firmware updates: 30+ minutes)
+- ✅ SSH access for ESXi orchestration
+- ✅ File system access for ISO mounting and media server
+- ✅ Simple, reliable implementation (Python + requests)
+- ✅ Handles ALL iDRAC/vCenter operations via job queue
 
-- ✅ **Self-hosted with host networking**: Can reach local IPs (192.168.x.x, 10.x.x.x)
-- ✅ Quick operations: health checks, power control, discovery
-- ❌ **Cloud-hosted**: Cannot reach private network IPs (Supabase infrastructure limitation)
-- ❌ Limited for long-running operations (function timeout constraints)
-- ❌ No SSH access or file system operations
-- ✅ Ideal for: job orchestration, database operations, notifications
+**Job Types:**
+- `discovery_scan`, `firmware_update`, `power_action`, `bios_config`
+- `scp_backup`, `scp_restore`, `virtual_media_mount`
+- `vcenter_sync`, `cluster_safety_check`, `esxi_upgrade`
 
-**When to Use What**:
+**Location:**
+- Main file: `job-executor.py`
+- Modules: `job_executor/` directory
+- Handlers: `job_executor/handlers/`
+- Dell Redfish operations: `job_executor/dell_redfish/`
 
-| Operation Type | Job Executor | Edge Functions (Self-Hosted) | Edge Functions (Cloud) |
-|----------------|--------------|------------------------------|------------------------|
-| iDRAC operations (quick: power, discovery) | ✅ Preferred | ✅ Possible | ❌ No local access |
-| iDRAC operations (long: firmware 30+ min) | ✅ Required | ❌ Timeout limits | ❌ No local access |
-| ESXi SSH orchestration | ✅ Required | ❌ No SSH | ❌ No local access |
-| File system (ISO mounting, media server) | ✅ Required | ❌ No file system | ❌ No local access |
-| vCenter operations | ✅ Preferred | ✅ Possible | ❌ No local access |
-| Job orchestration, database CRUD | ⚠️ Via Supabase client | ✅ Yes | ✅ Yes |
-| Notifications | ❌ No | ✅ Yes | ✅ Yes |
+**Edge Functions (Supporting Services):**
 
-**Deployment Reality**: This app targets internal IT tools, typically self-hosted. Edge Functions CAN reach local IPs with `network_mode: "host"` in Docker. However, Job Executor remains the preferred choice for operations requiring long execution times, SSH access, or file system operations.
+Edge Functions handle database operations, authentication, and notifications. They do NOT perform iDRAC/vCenter operations.
+
+**Used for:**
+- ✅ Job orchestration (`create-job`, `update-job`)
+- ✅ Database CRUD operations
+- ✅ Authentication (`break-glass-authenticate`, `idm-authenticate`)
+- ✅ Notifications (`send-notification`)
+- ✅ Database maintenance (`cleanup-*` functions)
+- ✅ Network diagnostics
+
+**NOT used for:**
+- ❌ Direct iDRAC API calls (Job Executor handles this)
+- ❌ Direct vCenter API calls (Job Executor handles this)
+- ❌ Long-running operations (timeout constraints)
+- ❌ SSH access or file system operations
 
 ---
 
