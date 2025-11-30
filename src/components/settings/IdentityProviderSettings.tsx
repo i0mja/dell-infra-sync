@@ -10,9 +10,11 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Separator } from '@/components/ui/separator';
 import { useIdmSettings } from '@/hooks/useIdmSettings';
 import { useIdmGroupMappings } from '@/hooks/useIdmGroupMappings';
 import { useBreakGlassAdmins } from '@/hooks/useBreakGlassAdmins';
+import { IdmSessionManager } from './IdmSessionManager';
 import { AlertCircle, CheckCircle2, Loader2, Plus, RefreshCw, Save, ShieldAlert, TestTube, Trash2 } from 'lucide-react';
 
 export function IdentityProviderSettings() {
@@ -743,6 +745,22 @@ export function IdentityProviderSettings() {
           )}
         </Button>
       </div>
+
+      {/* Active IDM Sessions Section */}
+      {authMode !== 'local_only' && (
+        <>
+          <Separator className="my-6" />
+          <Card>
+            <CardHeader>
+              <CardTitle>Active IDM Sessions</CardTitle>
+              <CardDescription>Manage user sessions and force logouts</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <IdmSessionManager />
+            </CardContent>
+          </Card>
+        </>
+      )}
     </div>
   );
 }
