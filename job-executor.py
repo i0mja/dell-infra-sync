@@ -99,8 +99,15 @@ from job_executor.scp import ScpMixin
 from job_executor.utils import UNICODE_FALLBACKS, _normalize_unicode, _safe_json_parse, _safe_to_stdout
 from job_executor.dell_redfish.adapter import DellRedfishAdapter
 
+# Import IDM/FreeIPA authentication (conditional)
+try:
+    from job_executor.ldap_auth import FreeIPAAuthenticator, LDAP3_AVAILABLE
+except ImportError:
+    LDAP3_AVAILABLE = False
+    FreeIPAAuthenticator = None
+
 # Job types that should bypass the normal queue for instant execution
-INSTANT_JOB_TYPES = ['console_launch', 'browse_datastore', 'connectivity_test', 'power_control']
+INSTANT_JOB_TYPES = ['console_launch', 'browse_datastore', 'connectivity_test', 'power_control', 'idm_authenticate', 'idm_test_connection']
 from job_executor.dell_redfish.operations import DellOperations
 from job_executor.esxi.orchestrator import EsxiOrchestrator
 from job_executor.media_server import MediaServer
@@ -313,6 +320,67 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
         except Exception as e:
             self.log(f"Error checking pause status: {e}", "ERROR")
             return False  # Default to not paused on error
+    
+    def get_idm_settings(self) -> Optional[Dict]:
+        """Fetch IDM/FreeIPA settings from database."""
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            }
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/idm_settings",
+                headers=headers,
+                params={'select': '*', 'limit': '1'},
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            if response.status_code == 200:
+                settings = _safe_json_parse(response)
+                if settings and len(settings) > 0:
+                    return settings[0]
+            return None
+        except Exception as e:
+            self.log(f"Error fetching IDM settings: {e}", "ERROR")
+            return None
+    
+    def decrypt_bind_password(self, encrypted_password: str) -> Optional[str]:
+        """Decrypt the FreeIPA bind password using encryption key."""
+        if not encrypted_password:
+            return None
+        return self.decrypt_password(encrypted_password)
+    
+    def create_freeipa_authenticator(self, settings: Dict) -> Optional['FreeIPAAuthenticator']:
+        """Create FreeIPAAuthenticator from IDM settings."""
+        if not LDAP3_AVAILABLE:
+            self.log("ldap3 library not installed - IDM features unavailable", "ERROR")
+            self.log("Install with: pip install ldap3>=2.9.1", "ERROR")
+            return None
+        
+        try:
+            # Write CA certificate to temp file if provided
+            ca_cert_path = None
+            if settings.get('ca_certificate'):
+                import tempfile
+                fd, ca_cert_path = tempfile.mkstemp(suffix='.pem')
+                with os.fdopen(fd, 'w') as f:
+                    f.write(settings['ca_certificate'])
+            
+            return FreeIPAAuthenticator(
+                server_host=settings['server_host'],
+                base_dn=settings['base_dn'],
+                user_search_base=settings.get('user_search_base', 'cn=users,cn=accounts'),
+                group_search_base=settings.get('group_search_base', 'cn=groups,cn=accounts'),
+                use_ldaps=settings.get('use_ldaps', True),
+                ldaps_port=settings.get('ldaps_port', 636),
+                ldap_port=settings.get('server_port', 389),
+                verify_certificate=settings.get('verify_certificate', True),
+                ca_certificate=ca_cert_path,
+                connection_timeout=settings.get('connection_timeout_seconds', 10),
+            )
+        except Exception as e:
+            self.log(f"Failed to create FreeIPA authenticator: {e}", "ERROR")
+            return None
     
     def log_idrac_command(
         self,
@@ -7960,6 +8028,12 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self.execute_browse_datastore(job)
         elif job_type == 'esxi_preflight_check':
             self.execute_esxi_preflight_check(job)
+        elif job_type == 'idm_authenticate':
+            self.execute_idm_authenticate(job)
+        elif job_type == 'idm_test_connection':
+            self.execute_idm_test_connection(job)
+        elif job_type == 'idm_sync_users':
+            self.execute_idm_sync_users(job)
         else:
             self.log(f"Unknown job type: {job_type}", "ERROR")
             self.update_job_status(
@@ -7974,6 +8048,252 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
     # Connectivity tests implemented in ConnectivityMixin
 
     # Connectivity test job implemented in ConnectivityMixin
+    
+    def execute_idm_authenticate(self, job: Dict):
+        """Authenticate user against FreeIPA LDAP."""
+        try:
+            self.log(f"Starting IDM authentication job: {job['id']}")
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            details = job.get('details', {})
+            username = details.get('username')
+            password = details.get('password')  # Passed securely from edge function
+            
+            if not username or not password:
+                raise ValueError("Username and password required")
+            
+            # Get IDM settings
+            idm_settings = self.get_idm_settings()
+            if not idm_settings:
+                raise ValueError("IDM not configured")
+            
+            if idm_settings['auth_mode'] == 'local_only':
+                raise ValueError("IDM authentication not enabled (auth_mode: local_only)")
+            
+            # Create authenticator
+            authenticator = self.create_freeipa_authenticator(idm_settings)
+            if not authenticator:
+                raise ValueError("Failed to initialize FreeIPA authenticator")
+            
+            # Authenticate user
+            self.log(f"Authenticating user '{username}' against FreeIPA: {idm_settings['server_host']}")
+            auth_result = authenticator.authenticate_user(username, password)
+            
+            if auth_result['success']:
+                self.log(f"[OK] User '{username}' authenticated successfully")
+                self.log(f"  User DN: {auth_result.get('user_dn')}")
+                self.log(f"  Groups: {len(auth_result.get('groups', []))} group(s)")
+            else:
+                self.log(f"[X] Authentication failed for '{username}': {auth_result.get('error')}", "WARN")
+            
+            # Complete job with auth result
+            self.update_job_status(
+                job['id'],
+                'completed',
+                completed_at=datetime.now().isoformat(),
+                details={'auth_result': auth_result}
+            )
+            
+        except Exception as e:
+            self.log(f"IDM authentication job failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={
+                    'error': str(e),
+                    'auth_result': {'success': False, 'error': str(e)}
+                }
+            )
+    
+    def execute_idm_test_connection(self, job: Dict):
+        """Test FreeIPA LDAP connection with service account."""
+        try:
+            self.log(f"Starting IDM connection test job: {job['id']}")
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            details = job.get('details', {})
+            
+            # Get settings from job details or database
+            server_host = details.get('server_host')
+            bind_dn = details.get('bind_dn')
+            bind_password = details.get('bind_password')
+            
+            if not server_host:
+                # Use settings from database
+                idm_settings = self.get_idm_settings()
+                if not idm_settings:
+                    raise ValueError("IDM not configured and no settings provided")
+                
+                server_host = idm_settings['server_host']
+                bind_dn = idm_settings.get('bind_dn')
+                bind_password = self.decrypt_bind_password(idm_settings.get('bind_password_encrypted'))
+            
+            if not server_host or not bind_dn or not bind_password:
+                raise ValueError("Server host, bind DN, and bind password required")
+            
+            # Build authenticator settings
+            auth_settings = details if details.get('server_host') else self.get_idm_settings()
+            if details.get('server_host'):
+                # Add defaults for testing
+                auth_settings.setdefault('base_dn', details.get('base_dn', 'dc=example,dc=com'))
+                auth_settings.setdefault('use_ldaps', details.get('use_ldaps', True))
+            
+            authenticator = self.create_freeipa_authenticator(auth_settings)
+            if not authenticator:
+                raise ValueError("Failed to initialize FreeIPA authenticator")
+            
+            # Test connection
+            self.log(f"Testing connection to FreeIPA: {server_host}")
+            test_result = authenticator.test_connection(bind_dn, bind_password)
+            
+            if test_result['success']:
+                self.log(f"[OK] FreeIPA connection successful")
+                self.log(f"  Server: {test_result.get('server_info', {}).get('vendor', 'Unknown')}")
+                self.log(f"  Response time: {test_result.get('response_time_ms', 0)}ms")
+            else:
+                self.log(f"[X] FreeIPA connection failed: {test_result.get('message')}", "ERROR")
+            
+            self.update_job_status(
+                job['id'],
+                'completed',
+                completed_at=datetime.now().isoformat(),
+                details={'test_result': test_result}
+            )
+            
+        except Exception as e:
+            self.log(f"IDM connection test failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={
+                    'error': str(e),
+                    'test_result': {'success': False, 'message': str(e)}
+                }
+            )
+    
+    def execute_idm_sync_users(self, job: Dict):
+        """Sync all users from FreeIPA to local database."""
+        try:
+            self.log(f"Starting IDM user sync job: {job['id']}")
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            # Get IDM settings
+            idm_settings = self.get_idm_settings()
+            if not idm_settings:
+                raise ValueError("IDM not configured")
+            
+            if not idm_settings.get('sync_enabled'):
+                raise ValueError("IDM user sync is not enabled")
+            
+            bind_dn = idm_settings.get('bind_dn')
+            bind_password = self.decrypt_bind_password(idm_settings.get('bind_password_encrypted'))
+            
+            if not bind_dn or not bind_password:
+                raise ValueError("Service account credentials required for user sync")
+            
+            authenticator = self.create_freeipa_authenticator(idm_settings)
+            if not authenticator:
+                raise ValueError("Failed to initialize FreeIPA authenticator")
+            
+            # Sync users
+            self.log(f"Syncing users from FreeIPA: {idm_settings['server_host']}")
+            users = authenticator.sync_all_users(bind_dn, bind_password)
+            
+            self.log(f"Found {len(users)} user(s) in FreeIPA")
+            
+            # Process users (update profiles table)
+            synced_count = 0
+            error_count = 0
+            
+            for user in users:
+                try:
+                    # Upsert user to profiles based on idm_uid
+                    self._sync_idm_user_to_profile(user)
+                    synced_count += 1
+                except Exception as e:
+                    self.log(f"  Error syncing user {user.get('uid')}: {e}", "WARN")
+                    error_count += 1
+            
+            # Update last sync timestamp
+            self._update_idm_sync_status(
+                success=error_count == 0,
+                error=f"{error_count} user(s) failed to sync" if error_count > 0 else None
+            )
+            
+            self.log(f"[OK] User sync complete: {synced_count} synced, {error_count} errors")
+            
+            self.update_job_status(
+                job['id'],
+                'completed',
+                completed_at=datetime.now().isoformat(),
+                details={
+                    'total_users': len(users),
+                    'synced_count': synced_count,
+                    'error_count': error_count
+                }
+            )
+            
+        except Exception as e:
+            self.log(f"IDM user sync failed: {e}", "ERROR")
+            self._update_idm_sync_status(success=False, error=str(e))
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e)}
+            )
+    
+    def _sync_idm_user_to_profile(self, user: Dict):
+        """Sync a single FreeIPA user to profiles table."""
+        headers = {
+            'apikey': SERVICE_ROLE_KEY,
+            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            'Content-Type': 'application/json',
+            'Prefer': 'resolution=merge-duplicates'
+        }
+        
+        # Check if user exists by idm_uid
+        check_url = f"{DSM_URL}/rest/v1/profiles"
+        params = {'idm_uid': f"eq.{user['uid']}", 'select': 'id'}
+        response = requests.get(check_url, headers=headers, params=params, verify=VERIFY_SSL)
+        
+        if response.status_code == 200:
+            existing = _safe_json_parse(response)
+            if existing:
+                # Update existing profile
+                update_url = f"{DSM_URL}/rest/v1/profiles?idm_uid=eq.{user['uid']}"
+                update_data = {
+                    'full_name': user.get('full_name'),
+                    'idm_groups': user.get('groups'),
+                    'last_idm_sync': datetime.now().isoformat(),
+                    'idm_disabled': user.get('disabled', False),
+                    'idm_mail': user.get('email'),
+                }
+                requests.patch(update_url, headers=headers, json=update_data, verify=VERIFY_SSL)
+    
+    def _update_idm_sync_status(self, success: bool, error: Optional[str] = None):
+        """Update IDM settings with sync status."""
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            update_data = {
+                'last_sync_at': datetime.now().isoformat(),
+                'last_sync_status': 'success' if success else 'error',
+                'last_sync_error': error
+            }
+            requests.patch(
+                f"{DSM_URL}/rest/v1/idm_settings",
+                headers=headers,
+                json=update_data,
+                verify=VERIFY_SSL
+            )
+        except Exception as e:
+            self.log(f"Failed to update IDM sync status: {e}", "WARN")
     
     def execute_console_launch(self, job: Dict):
         """Get authenticated KVM console URL using Dell's official Redfish endpoint"""
