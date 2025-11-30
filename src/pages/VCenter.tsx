@@ -10,6 +10,7 @@ import { DatastoresTable } from "@/components/vcenter/DatastoresTable";
 import { VCenterManagementDialog } from "@/components/vcenter/VCenterManagementDialog";
 import { VCenterConnectivityDialog } from "@/components/vcenter/VCenterConnectivityDialog";
 import { ClusterUpdateWizard } from "@/components/jobs/ClusterUpdateWizard";
+import { VCenterDetailsSidebar } from "@/components/vcenter/VCenterDetailsSidebar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EsxiProfilesTab } from "@/components/vcenter/EsxiProfilesTab";
 import { useVCenterData } from "@/hooks/useVCenterData";
@@ -429,6 +430,32 @@ export default function VCenter() {
     }
   };
 
+  const handleCloseSidebar = () => {
+    setSelectedHostId(null);
+    setSelectedVmId(null);
+    setSelectedClusterId(null);
+    setSelectedDatastoreId(null);
+  };
+
+  // Resolve selected objects from IDs
+  const selectedHost = selectedHostId 
+    ? hosts.find(h => h.id === selectedHostId) || null 
+    : null;
+
+  const selectedVm = selectedVmId 
+    ? vms.find(v => v.id === selectedVmId) || null 
+    : null;
+
+  const selectedClusterData = selectedClusterId 
+    ? clusters.find(c => c.id === selectedClusterId) || null 
+    : null;
+
+  const selectedDatastore = selectedDatastoreId 
+    ? datastores.find(d => d.id === selectedDatastoreId) || null 
+    : null;
+
+  const hasSelection = selectedHost || selectedVm || selectedClusterData || selectedDatastore;
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <VCenterStatsBar
@@ -456,8 +483,10 @@ export default function VCenter() {
         onVCenterChange={setSelectedVCenterId}
       />
 
-      <div className="flex-1 overflow-hidden">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
+      <div className="flex-1 flex overflow-hidden">
+        {/* Scrollable tabs/table area */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
           {/* Tabs Row with Action Buttons */}
           <div className="flex items-center border-b bg-card px-4">
             <TabsList className="h-auto p-0 bg-transparent gap-2">
@@ -557,6 +586,23 @@ export default function VCenter() {
             <EsxiProfilesTab />
           </TabsContent>
         </Tabs>
+        </div>
+
+        {/* Fixed sidebar - only shows when something is selected */}
+        {hasSelection && (
+          <VCenterDetailsSidebar 
+            selectedHost={selectedHost}
+            selectedCluster={null}
+            selectedVm={selectedVm}
+            selectedClusterData={selectedClusterData}
+            selectedDatastore={selectedDatastore}
+            onClusterUpdate={handleClusterUpdate}
+            onClose={handleCloseSidebar}
+            onHostSync={(host) => handleHostSync(host.id)}
+            onViewLinkedServer={(host) => handleViewLinkedServer(host.server_id!)}
+            onLinkToServer={(host) => handleLinkToServer(host.id)}
+          />
+        )}
       </div>
 
       <VCenterManagementDialog

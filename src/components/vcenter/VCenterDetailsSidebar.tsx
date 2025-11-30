@@ -31,6 +31,9 @@ interface VCenterDetailsSidebarProps {
   selectedDatastore?: any;
   onClusterUpdate: (clusterName?: string) => void;
   onClose: () => void;
+  onHostSync?: (host: VCenterHost) => void;
+  onViewLinkedServer?: (host: VCenterHost) => void;
+  onLinkToServer?: (host: VCenterHost) => void;
 }
 
 export function VCenterDetailsSidebar({
@@ -41,12 +44,15 @@ export function VCenterDetailsSidebar({
   selectedDatastore,
   onClusterUpdate,
   onClose,
+  onHostSync,
+  onViewLinkedServer,
+  onLinkToServer,
 }: VCenterDetailsSidebarProps) {
   
   // VM Details View
   if (selectedVm) {
     return (
-      <div className="h-full flex flex-col">
+      <div className="w-96 border-l bg-card flex-shrink-0 h-full flex flex-col">
         <div className="flex items-center justify-between p-4 border-b">
           <h2 className="text-lg font-semibold">VM Details</h2>
           <Button variant="ghost" size="icon" onClick={onClose}>
@@ -130,7 +136,7 @@ export function VCenterDetailsSidebar({
   // Cluster Data Details View
   if (selectedClusterData) {
     return (
-      <div className="h-full flex flex-col">
+      <div className="w-96 border-l bg-card flex-shrink-0 h-full flex flex-col">
         <div className="flex items-center justify-between p-4 border-b">
           <h2 className="text-lg font-semibold">Cluster Details</h2>
           <Button variant="ghost" size="icon" onClick={onClose}>
@@ -211,7 +217,7 @@ export function VCenterDetailsSidebar({
       : 0;
 
     return (
-      <div className="h-full flex flex-col">
+      <div className="w-96 border-l bg-card flex-shrink-0 h-full flex flex-col">
         <div className="flex items-center justify-between p-4 border-b">
           <h2 className="text-lg font-semibold">Datastore Details</h2>
           <Button variant="ghost" size="icon" onClick={onClose}>
@@ -291,7 +297,7 @@ export function VCenterDetailsSidebar({
   // Host Details View
   if (selectedHost) {
     return (
-      <div className="h-full flex flex-col">
+      <div className="w-96 border-l bg-card flex-shrink-0 h-full flex flex-col">
         <div className="flex items-center justify-between p-4 border-b">
           <h2 className="text-lg font-semibold">Host Details</h2>
           <Button variant="ghost" size="icon" onClick={onClose}>
@@ -349,14 +355,24 @@ export function VCenterDetailsSidebar({
                     <Link2 className="mr-1 h-3 w-3" />
                     Linked to physical server
                   </Badge>
-                  <Button variant="outline" size="sm" className="w-full">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="w-full"
+                    onClick={() => onViewLinkedServer?.(selectedHost)}
+                  >
                     View Physical Server
                   </Button>
                 </div>
               ) : (
                 <div className="space-y-3">
                   <p className="text-sm text-muted-foreground">Not linked to a physical server</p>
-                  <Button variant="outline" size="sm" className="w-full">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="w-full"
+                    onClick={() => onLinkToServer?.(selectedHost)}
+                  >
                     Link to Server
                   </Button>
                 </div>
@@ -367,7 +383,12 @@ export function VCenterDetailsSidebar({
 
             <div>
               <h3 className="text-sm font-medium text-muted-foreground mb-2">Actions</h3>
-              <Button variant="outline" size="sm" className="w-full">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="w-full"
+                onClick={() => onHostSync?.(selectedHost)}
+              >
                 <RefreshCcw className="mr-2 h-4 w-4" />
                 Sync This Host
               </Button>
@@ -384,7 +405,7 @@ export function VCenterDetailsSidebar({
     const connectedHosts = selectedCluster.hosts.filter((h) => h.status === "connected").length;
 
     return (
-      <div className="h-full flex flex-col">
+      <div className="w-96 border-l bg-card flex-shrink-0 h-full flex flex-col">
         <div className="flex items-center justify-between p-4 border-b">
           <h2 className="text-lg font-semibold">Cluster Summary</h2>
           <Button variant="ghost" size="icon" onClick={onClose}>
