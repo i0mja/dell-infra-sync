@@ -65,6 +65,7 @@ export default function Servers() {
   const [discoveryScanOpen, setDiscoveryScanOpen] = useState(false);
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
   const [updateWizardOpen, setUpdateWizardOpen] = useState(false);
+  const [bulkUpdateServerIds, setBulkUpdateServerIds] = useState<string[]>([]);
   const [launchingConsole, setLaunchingConsole] = useState(false);
 
   // Hooks
@@ -189,6 +190,11 @@ export default function Servers() {
     refetch();
   };
 
+  const handleBulkUpdate = (serverIds: string[]) => {
+    setBulkUpdateServerIds(serverIds);
+    setUpdateWizardOpen(true);
+  };
+
   const handleLaunchConsole = async (server: Server) => {
     setLaunchingConsole(true);
     try {
@@ -295,6 +301,7 @@ export default function Servers() {
           vCenterClusters={uniqueVCenterClusters}
           onBulkAutoLink={handleBulkAutoLink}
           bulkLinking={isLinking}
+          onBulkUpdate={handleBulkUpdate}
           />
         </div>
 
@@ -415,17 +422,22 @@ export default function Servers() {
             onSuccess={refetch}
             preSelectedServerId={selectedServer.id}
           />
-
-          <ClusterUpdateWizard
-            open={updateWizardOpen}
-            onOpenChange={setUpdateWizardOpen}
-            preSelectedTarget={{
-              type: 'servers',
-              ids: [selectedServer.id]
-            }}
-          />
         </>
       )}
+
+      <ClusterUpdateWizard
+        open={updateWizardOpen}
+        onOpenChange={(open) => {
+          setUpdateWizardOpen(open);
+          if (!open) setBulkUpdateServerIds([]);
+        }}
+        preSelectedTarget={{
+          type: 'servers',
+          ids: bulkUpdateServerIds.length > 0 
+            ? bulkUpdateServerIds 
+            : (selectedServer ? [selectedServer.id] : [])
+        }}
+      />
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
