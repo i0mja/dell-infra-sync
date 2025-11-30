@@ -38,6 +38,8 @@ interface CommandsTableProps {
   onRowClick: (command: Command) => void;
   isLive: boolean;
   className?: string;
+  visibleColumns?: string[];
+  onToggleColumn?: (column: string) => void;
 }
 
 export const CommandsTable = ({
@@ -45,8 +47,18 @@ export const CommandsTable = ({
   selectedId,
   onRowClick,
   isLive,
-  className
+  className,
+  visibleColumns,
+  onToggleColumn,
 }: CommandsTableProps) => {
+  const defaultColumns = ["time", "operation", "endpoint", "type", "status", "response"];
+  
+  const isColVisible = (col: string) => {
+    if (visibleColumns) {
+      return visibleColumns.includes(col);
+    }
+    return defaultColumns.includes(col);
+  };
   const getOperationBadge = (type: string) => {
     const variants: Record<string, string> = {
       idrac_api: "bg-blue-500/10 text-blue-500 border-blue-500/20",
@@ -111,15 +123,15 @@ export const CommandsTable = ({
       )}
     >
       <div className="overflow-auto max-h-full">
-        <Table className="min-w-full">
+          <Table className="min-w-full">
             <TableHeader className="sticky top-0 z-10 bg-muted/60 backdrop-blur">
               <TableRow>
-                <TableHead className="w-[120px]">Time</TableHead>
-                <TableHead className="w-[140px]">Operation</TableHead>
-                <TableHead>Endpoint</TableHead>
-                <TableHead className="w-[110px]">Type</TableHead>
-                <TableHead className="w-[110px]">Status</TableHead>
-                <TableHead className="w-[110px] text-right">Response (ms)</TableHead>
+                {isColVisible("time") && <TableHead className="w-[120px]">Time</TableHead>}
+                {isColVisible("operation") && <TableHead className="w-[140px]">Operation</TableHead>}
+                {isColVisible("endpoint") && <TableHead>Endpoint</TableHead>}
+                {isColVisible("type") && <TableHead className="w-[110px]">Type</TableHead>}
+                {isColVisible("status") && <TableHead className="w-[110px]">Status</TableHead>}
+                {isColVisible("response") && <TableHead className="w-[110px] text-right">Response (ms)</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -142,26 +154,38 @@ export const CommandsTable = ({
                     )}
                     data-state={selectedId === command.id ? 'selected' : undefined}
                   >
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {formatTime(command.timestamp)}
-                    </TableCell>
-                    <TableCell>
-                      {getOperationBadge(command.operation_type)}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">
-                      <span title={command.endpoint}>{formatEndpoint(command.endpoint)}</span>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="font-mono text-xs">
-                        {command.command_type}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {getStatusBadge(command.success, command.status_code)}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-xs">
-                      {command.response_time_ms || '-'}
-                    </TableCell>
+                    {isColVisible("time") && (
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {formatTime(command.timestamp)}
+                      </TableCell>
+                    )}
+                    {isColVisible("operation") && (
+                      <TableCell>
+                        {getOperationBadge(command.operation_type)}
+                      </TableCell>
+                    )}
+                    {isColVisible("endpoint") && (
+                      <TableCell className="font-mono text-xs">
+                        <span title={command.endpoint}>{formatEndpoint(command.endpoint)}</span>
+                      </TableCell>
+                    )}
+                    {isColVisible("type") && (
+                      <TableCell>
+                        <Badge variant="outline" className="font-mono text-xs">
+                          {command.command_type}
+                        </Badge>
+                      </TableCell>
+                    )}
+                    {isColVisible("status") && (
+                      <TableCell>
+                        {getStatusBadge(command.success, command.status_code)}
+                      </TableCell>
+                    )}
+                    {isColVisible("response") && (
+                      <TableCell className="text-right font-mono text-xs">
+                        {command.response_time_ms || '-'}
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))
               )}
