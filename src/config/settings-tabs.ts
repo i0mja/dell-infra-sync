@@ -198,6 +198,13 @@ export const getTabById = (id: string): SettingsTab | undefined => {
 
 // Map old tab IDs to new structure for backward compatibility
 export const mapLegacyTabId = (oldTabId: string): { tab: string; section?: string } => {
+  // First, check if it's already a valid tab ID
+  const validTabIds = ['general', 'security', 'notifications', 'infrastructure', 'system'];
+  if (validTabIds.includes(oldTabId)) {
+    return { tab: oldTabId };
+  }
+  
+  // Then check legacy mappings for backward compatibility
   const mapping: Record<string, { tab: string; section?: string }> = {
     'appearance': { tab: 'general', section: 'appearance' },
     'preferences': { tab: 'notifications', section: 'preferences' },
