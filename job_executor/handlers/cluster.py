@@ -191,31 +191,106 @@ class ClusterHandler(BaseHandler):
             self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
             
             details = job.get('details', {})
-            cluster_id = details.get('cluster_id') or details.get('cluster_name')
+            target_scope = job.get('target_scope', {})
+            
             update_scope = details.get('update_scope', 'full_stack')
             firmware_updates = details.get('firmware_updates', [])
             backup_scp = details.get('backup_scp', True)
             min_healthy_hosts = details.get('min_healthy_hosts', 2)
             continue_on_failure = details.get('continue_on_failure', False)
-
-            workflow_results['cluster_id'] = cluster_id
+            
             workflow_results['update_scope'] = update_scope
             
-            # Get cluster hosts
-            response = requests.get(
-                f"{DSM_URL}/rest/v1/vcenter_hosts?cluster=eq.{cluster_id}&select=*",
-                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
-                verify=VERIFY_SSL
-            )
+            eligible_hosts = []
             
-            if response.status_code != 200:
-                raise Exception(f"Failed to fetch cluster hosts: {response.status_code}")
+            # Mode 1: Individual servers via target_scope
+            if target_scope.get('type') == 'servers' and target_scope.get('server_ids'):
+                server_ids = target_scope['server_ids']
+                self.log(f"  [INFO] Target mode: Individual servers ({len(server_ids)} selected)")
+                
+                # Fetch servers directly from servers table
+                for server_id in server_ids:
+                    response = requests.get(
+                        f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}&select=*",
+                        headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                        verify=VERIFY_SSL
+                    )
+                    if response.status_code == 200:
+                        servers = _safe_json_parse(response)
+                        if servers:
+                            server = servers[0]
+                            eligible_hosts.append({
+                                'id': server_id,
+                                'name': server.get('hostname') or server.get('ip_address'),
+                                'server_id': server_id,
+                                'ip_address': server.get('ip_address')
+                            })
+                
+                workflow_results['target_type'] = 'servers'
+                workflow_results['server_ids'] = server_ids
+                
+            # Mode 2: Server group via target_scope
+            elif target_scope.get('type') == 'group' and target_scope.get('group_id'):
+                group_id = target_scope['group_id']
+                self.log(f"  [INFO] Target mode: Server group {group_id}")
+                
+                # Fetch servers in group
+                response = requests.get(
+                    f"{DSM_URL}/rest/v1/server_group_members?server_group_id=eq.{group_id}&select=server_id,servers(*)",
+                    headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                    verify=VERIFY_SSL
+                )
+                if response.status_code == 200:
+                    members = _safe_json_parse(response)
+                    for member in members:
+                        server = member.get('servers')
+                        if server:
+                            eligible_hosts.append({
+                                'id': server['id'],
+                                'name': server.get('hostname') or server.get('ip_address'),
+                                'server_id': server['id'],
+                                'ip_address': server.get('ip_address')
+                            })
+                
+                workflow_results['target_type'] = 'group'
+                workflow_results['group_id'] = group_id
+                
+            # Mode 3: Cluster via details or target_scope (existing behavior)
+            else:
+                cluster_id = details.get('cluster_id') or details.get('cluster_name') or target_scope.get('cluster_name')
+                self.log(f"  [INFO] Target mode: Cluster {cluster_id}")
+                
+                if not cluster_id:
+                    self.log(f"  [ERROR] No valid target specified!", "ERROR")
+                    self.log(f"  [DEBUG] target_scope: {target_scope}", "DEBUG")
+                    self.log(f"  [DEBUG] details: {details}", "DEBUG")
+                    raise Exception("No valid target: missing cluster_id, group_id, or server_ids")
+                
+                workflow_results['cluster_id'] = cluster_id
+                workflow_results['target_type'] = 'cluster'
+                
+                # Existing cluster logic - fetch from vcenter_hosts
+                response = requests.get(
+                    f"{DSM_URL}/rest/v1/vcenter_hosts?cluster=eq.{cluster_id}&select=*",
+                    headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                    verify=VERIFY_SSL
+                )
+                
+                if response.status_code != 200:
+                    raise Exception(f"Failed to fetch cluster hosts: {response.status_code}")
+                
+                cluster_hosts = _safe_json_parse(response)
+                eligible_hosts = [h for h in cluster_hosts if h.get('server_id') and h.get('status') == 'connected']
             
-            cluster_hosts = _safe_json_parse(response)
-            eligible_hosts = [h for h in cluster_hosts if h.get('server_id') and h.get('status') == 'connected']
             workflow_results['total_hosts'] = len(eligible_hosts)
             
-            self.log(f"  [OK] Found {len(eligible_hosts)} eligible hosts in cluster")
+            if len(eligible_hosts) == 0:
+                self.log(f"  [ERROR] No eligible hosts/servers found!", "ERROR")
+                self.log(f"  [DEBUG] target_scope: {target_scope}", "DEBUG")
+                self.log(f"  [DEBUG] details: {details}", "DEBUG")
+                raise Exception("No eligible hosts/servers found for update. Check target_scope or cluster_id.")
+            
+            self.log(f"  [OK] Found {len(eligible_hosts)} eligible hosts/servers")
             
             # Update each host sequentially
             for host_index, host in enumerate(eligible_hosts, 1):
