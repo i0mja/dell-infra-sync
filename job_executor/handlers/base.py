@@ -26,33 +26,27 @@ class BaseHandler:
         """
         self.executor.log(message, level)
     
-    def update_job_status(
-        self,
-        job_id: str,
-        status: str,
-        details: Optional[Dict] = None,
-        error: Optional[str] = None
-    ) -> bool:
+    def update_job_status(self, job_id: str, status: str, **kwargs) -> bool:
         """
         Update job status in database
         
         Args:
             job_id: Job UUID
             status: New status (pending, running, completed, failed, cancelled)
-            details: Optional details dict to merge with existing details
-            error: Optional error message for failed jobs
+            **kwargs: Additional arguments (details, error, started_at, completed_at, etc.)
             
         Returns:
             True if update successful, False otherwise
         """
-        return self.executor.update_job_status(job_id, status, details, error)
+        return self.executor.update_job_status(job_id, status, **kwargs)
     
     def update_task_status(
         self,
         task_id: str,
         status: str,
+        log: Optional[str] = None,
         progress: Optional[int] = None,
-        log_message: Optional[str] = None
+        **kwargs
     ) -> bool:
         """
         Update task status in database
@@ -60,13 +54,14 @@ class BaseHandler:
         Args:
             task_id: Task UUID
             status: New status (pending, running, completed, failed)
+            log: Optional log message to append
             progress: Optional progress percentage (0-100)
-            log_message: Optional log message to append
+            **kwargs: Additional arguments
             
         Returns:
             True if update successful, False otherwise
         """
-        return self.executor.update_task_status(task_id, status, progress, log_message)
+        return self.executor.update_task_status(task_id, status, log=log, progress=progress, **kwargs)
     
     def create_task(
         self,
