@@ -1,4 +1,11 @@
-import { LucideIcon, Palette, Mail, MessageSquare, Server, Briefcase, Activity, Bell, Shield, Network, Users, Disc, ShieldAlert, CloudCog, ShieldCheck } from "lucide-react";
+import { LucideIcon, Palette, Shield, Bell, Server, Activity } from "lucide-react";
+
+export interface SettingsSubsection {
+  id: string;
+  name: string;
+  description: string;
+  icon: LucideIcon;
+}
 
 export interface SettingsTab {
   id: string;
@@ -6,181 +13,210 @@ export interface SettingsTab {
   title: string;
   description: string;
   icon: LucideIcon;
-  group: 'General' | 'Security' | 'Integrations' | 'Monitoring' | 'Infrastructure';
-  order: number;
+  subsections: SettingsSubsection[];
 }
 
 export const settingsTabs: SettingsTab[] = [
   {
-    id: 'appearance',
-    name: 'Appearance',
-    title: 'Appearance',
-    description: 'Customize how the application looks and feels',
+    id: 'general',
+    name: 'General',
+    title: 'General Settings',
+    description: 'Application appearance and user preferences',
     icon: Palette,
-    group: 'General',
-    order: 1,
+    subsections: [
+      {
+        id: 'appearance',
+        name: 'Appearance',
+        description: 'Customize the look and feel of the application',
+        icon: Palette,
+      },
+    ],
   },
   {
-    id: 'preferences',
-    name: 'Preferences',
-    title: 'Notification Preferences',
-    description: 'Choose which events trigger notifications',
-    icon: Bell,
-    group: 'General',
-    order: 2,
-  },
-  {
-    id: 'credentials',
-    name: 'Credentials',
-    title: 'Credential Management',
-    description: 'Manage iDRAC credential sets for server discovery and operations',
+    id: 'security',
+    name: 'Security & Access',
+    title: 'Security & Access Control',
+    description: 'Manage authentication, credentials, and security settings',
     icon: Shield,
-    group: 'Security',
-    order: 3,
+    subsections: [
+      {
+        id: 'credentials',
+        name: 'Credentials',
+        description: 'Manage iDRAC credential sets for server operations',
+        icon: Shield,
+      },
+      {
+        id: 'identity-provider',
+        name: 'Identity Provider',
+        description: 'Configure FreeIPA/LDAP authentication',
+        icon: Shield,
+      },
+      {
+        id: 'audit-logs',
+        name: 'Audit Logs',
+        description: 'View security events and authentication history',
+        icon: Activity,
+      },
+      {
+        id: 'operations-safety',
+        name: 'Operations Safety',
+        description: 'Configure throttling and emergency kill switch',
+        icon: Shield,
+      },
+    ],
   },
   {
-    id: 'identity-provider',
-    name: 'Identity Provider',
-    title: 'Identity Provider Settings',
-    description: 'Configure FreeIPA/LDAP authentication for enterprise SSO',
-    icon: ShieldCheck,
-    group: 'Security',
-    order: 3.5,
+    id: 'notifications',
+    name: 'Notifications',
+    title: 'Notification Settings',
+    description: 'Configure alerts and notification channels',
+    icon: Bell,
+    subsections: [
+      {
+        id: 'preferences',
+        name: 'Alert Preferences',
+        description: 'Choose which events trigger notifications',
+        icon: Bell,
+      },
+      {
+        id: 'smtp',
+        name: 'Email (SMTP)',
+        description: 'Configure SMTP server for email notifications',
+        icon: Bell,
+      },
+      {
+        id: 'teams',
+        name: 'Microsoft Teams',
+        description: 'Configure Teams webhook for notifications',
+        icon: Bell,
+      },
+    ],
   },
   {
-    id: 'audit-logs',
-    name: 'Audit Logs',
-    title: 'Security Audit Logs',
-    description: 'View authentication events, security actions, and break-glass usage',
-    icon: ShieldAlert,
-    group: 'Security',
-    order: 3.6,
-  },
-  {
-    id: 'operations-safety',
-    name: 'Operations Safety',
-    title: 'Operations Safety Controls',
-    description: 'Configure iDRAC operation throttling and emergency kill switch',
-    icon: ShieldAlert,
-    group: 'Security',
-    order: 4,
-  },
-  {
-    id: 'smtp',
-    name: 'SMTP Email',
-    title: 'SMTP Configuration',
-    description: 'Configure your SMTP server for email notifications',
-    icon: Mail,
-    group: 'Integrations',
-    order: 5,
-  },
-  {
-    id: 'teams',
-    name: 'Microsoft Teams',
-    title: 'Microsoft Teams Integration',
-    description: 'Configure Teams webhook for job notifications',
-    icon: MessageSquare,
-    group: 'Integrations',
-    order: 6,
-  },
-  {
-    id: 'openmanage',
-    name: 'OpenManage',
-    title: 'Dell OpenManage Enterprise',
-    description: 'Configure automatic server discovery from OpenManage Enterprise',
+    id: 'infrastructure',
+    name: 'Infrastructure',
+    title: 'Infrastructure Management',
+    description: 'Manage servers, firmware, and external integrations',
     icon: Server,
-    group: 'Integrations',
-    order: 7,
+    subsections: [
+      {
+        id: 'server-groups',
+        name: 'Server Groups',
+        description: 'Organize servers into application clusters',
+        icon: Server,
+      },
+      {
+        id: 'virtual-media',
+        name: 'Virtual Media & Backup',
+        description: 'Configure ISO share and SCP backup defaults',
+        icon: Server,
+      },
+      {
+        id: 'firmware-library',
+        name: 'Firmware Library',
+        description: 'Manage Dell Update Packages (DUPs)',
+        icon: Server,
+      },
+      {
+        id: 'openmanage',
+        name: 'OpenManage Enterprise',
+        description: 'Configure automatic server discovery',
+        icon: Server,
+      },
+    ],
   },
   {
-    id: 'server-groups',
-    name: 'Server Groups',
-    title: 'Server Groups',
-    description: 'Organize Dell servers into application clusters for unified maintenance planning',
-    icon: Users,
-    group: 'Infrastructure',
-    order: 8,
-  },
-  {
-    id: 'virtual-media',
-    name: 'Virtual Media & Backup',
-    title: 'Virtual Media & SCP Backup',
-    description: 'Configure ISO share defaults and SCP export share for backups',
-    icon: Disc,
-    group: 'Infrastructure',
-    order: 9,
-  },
-  {
-    id: 'firmware-library',
-    name: 'Firmware Library',
-    title: 'Firmware Library',
-    description: 'Manage Dell Update Packages (DUPs) for offline firmware updates',
-    icon: Server,
-    group: 'Infrastructure',
-    order: 10,
-  },
-  {
-    id: 'network',
-    name: 'Network',
-    title: 'Network Connectivity',
-    description: 'Test connectivity to iDRAC servers and vCenter hosts',
-    icon: Network,
-    group: 'Monitoring',
-    order: 11,
-  },
-  {
-    id: 'cluster-monitoring',
-    name: 'Cluster Monitoring',
-    title: 'Scheduled Cluster Safety Checks',
-    description: 'Configure automated cluster health monitoring and safety alerts',
-    icon: CloudCog,
-    group: 'Monitoring',
-    order: 12,
-  },
-  {
-    id: 'activity',
-    name: 'Activity Monitor',
-    title: 'Activity Monitor Settings',
-    description: 'Configure log retention, cleanup, and monitoring preferences',
+    id: 'system',
+    name: 'System & Monitoring',
+    title: 'System & Monitoring',
+    description: 'Network, monitoring, and system configuration',
     icon: Activity,
-    group: 'Monitoring',
-    order: 13,
-  },
-  {
-    id: 'jobs',
-    name: 'Jobs',
-    title: 'Jobs Configuration',
-    description: 'Configure job retention, cleanup, and stale job management',
-    icon: Briefcase,
-    group: 'Monitoring',
-    order: 14,
+    subsections: [
+      {
+        id: 'network',
+        name: 'Network Connectivity',
+        description: 'Test connectivity and configure network settings',
+        icon: Activity,
+      },
+      {
+        id: 'cluster-monitoring',
+        name: 'Cluster Monitoring',
+        description: 'Configure scheduled safety checks',
+        icon: Activity,
+      },
+      {
+        id: 'activity',
+        name: 'Activity Monitor',
+        description: 'Configure log retention and cleanup',
+        icon: Activity,
+      },
+      {
+        id: 'jobs',
+        name: 'Jobs Configuration',
+        description: 'Manage job retention and stale jobs',
+        icon: Activity,
+      },
+    ],
   },
 ];
 
 export type SettingsTabId = typeof settingsTabs[number]['id'];
 
 export const getSettingsNavigation = () => {
-  return settingsTabs
-    .sort((a, b) => a.order - b.order)
-    .map(tab => ({
-      name: tab.name,
-      href: `/settings?tab=${tab.id}`,
-      icon: tab.icon,
-      group: tab.group,
-    }));
+  return settingsTabs.map(tab => ({
+    name: tab.name,
+    href: `/settings?tab=${tab.id}`,
+    icon: tab.icon,
+  }));
 };
 
 export const getTabMetadata = () => {
-  return settingsTabs.reduce((acc, tab) => {
-    acc[tab.id] = {
+  const metadata: Record<string, { title: string; description: string; icon: LucideIcon }> = {};
+  
+  settingsTabs.forEach(tab => {
+    metadata[tab.id] = {
       title: tab.title,
       description: tab.description,
       icon: tab.icon,
     };
-    return acc;
-  }, {} as Record<string, { title: string; description: string; icon: LucideIcon }>);
+    
+    tab.subsections.forEach(subsection => {
+      metadata[subsection.id] = {
+        title: subsection.name,
+        description: subsection.description,
+        icon: subsection.icon,
+      };
+    });
+  });
+  
+  return metadata;
 };
 
 export const getTabById = (id: string): SettingsTab | undefined => {
   return settingsTabs.find(tab => tab.id === id);
+};
+
+// Map old tab IDs to new structure for backward compatibility
+export const mapLegacyTabId = (oldTabId: string): { tab: string; section?: string } => {
+  const mapping: Record<string, { tab: string; section?: string }> = {
+    'appearance': { tab: 'general', section: 'appearance' },
+    'preferences': { tab: 'notifications', section: 'preferences' },
+    'credentials': { tab: 'security', section: 'credentials' },
+    'identity-provider': { tab: 'security', section: 'identity-provider' },
+    'audit-logs': { tab: 'security', section: 'audit-logs' },
+    'operations-safety': { tab: 'security', section: 'operations-safety' },
+    'smtp': { tab: 'notifications', section: 'smtp' },
+    'teams': { tab: 'notifications', section: 'teams' },
+    'openmanage': { tab: 'infrastructure', section: 'openmanage' },
+    'server-groups': { tab: 'infrastructure', section: 'server-groups' },
+    'virtual-media': { tab: 'infrastructure', section: 'virtual-media' },
+    'firmware-library': { tab: 'infrastructure', section: 'firmware-library' },
+    'network': { tab: 'system', section: 'network' },
+    'cluster-monitoring': { tab: 'system', section: 'cluster-monitoring' },
+    'activity': { tab: 'system', section: 'activity' },
+    'activity-monitor': { tab: 'system', section: 'activity' },
+    'jobs': { tab: 'system', section: 'jobs' },
+  };
+  
+  return mapping[oldTabId] || { tab: 'general' };
 };

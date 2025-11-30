@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTheme } from "next-themes";
 import { Activity, AlertCircle, Bell, Briefcase, CheckCircle2, ChevronDown, ChevronRight, CloudCog, Copy, Database, Disc, FileText, Globe, Info, Loader2, Mail, MessageSquare, Monitor, Moon, Network, Palette, Plus, RefreshCw, Save, Server, Settings as SettingsIcon, Shield, ShieldAlert, Sun, Terminal, Users, X, XCircle } from "lucide-react";
@@ -27,7 +27,8 @@ import { useSearchParams } from "react-router-dom";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { getTabMetadata } from "@/config/settings-tabs";
+import { getTabMetadata, settingsTabs, mapLegacyTabId } from "@/config/settings-tabs";
+import { SettingsSection } from "@/components/settings/SettingsSection";
 
 export default function Settings() {
   const isLocalMode = import.meta.env.VITE_SUPABASE_URL?.includes('127.0.0.1') || 
@@ -39,10 +40,17 @@ export default function Settings() {
   const [loading, setLoading] = useState(false);
   const [settingsId, setSettingsId] = useState<string | null>(null);
   
-  // Get default tab from query params or use 'appearance'
+  // Get default tab from query params or use 'general'
   const tabFromUrl = searchParams.get('tab');
-  const initialTab = tabFromUrl === 'activity-monitor' ? 'activity' : tabFromUrl === 'jobs' ? 'jobs' : tabFromUrl || 'appearance';
+  const sectionFromUrl = searchParams.get('section');
+  
+  // Map legacy tabs to new structure
+  const mapped = mapLegacyTabId(tabFromUrl || 'appearance');
+  const initialTab = mapped.tab;
+  const initialSection = sectionFromUrl || mapped.section;
+  
   const [activeTab, setActiveTab] = useState(initialTab);
+  const [defaultOpenSection, setDefaultOpenSection] = useState(initialSection);
 
   // SMTP Settings
   const [smtpHost, setSmtpHost] = useState("");
@@ -2162,7 +2170,89 @@ export default function Settings() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="grid w-full grid-cols-5 mb-6">
+          {settingsTabs.map(tab => {
+            const Icon = tab.icon;
+            return (
+              <TabsTrigger key={tab.id} value={tab.id} className="flex items-center gap-2">
+                <Icon className="h-4 w-4" />
+                {tab.name}
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
 
+        {/* GENERAL TAB */}
+        <TabsContent value="general" className="space-y-4">
+          <SettingsSection
+            id="appearance"
+            title="Appearance"
+            description="Customize the look and feel of the application"
+            icon={Palette}
+            defaultOpen={defaultOpenSection === 'appearance'}
+          >
+            <div className="space-y-4">
+              <Card>
+                <CardContent className="space-y-6">
+                  <div className="space-y-4">
+                    <Label>Theme</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Choose your preferred color scheme
+                    </p>
+                    <div className="grid grid-cols-3 gap-4">
+                      <Button
+                        variant={theme === "light" ? "default" : "outline"}
+                        onClick={() => setTheme("light")}
+                        className="flex items-center gap-2"
+                      >
+                        <Sun className="h-4 w-4" />
+                        Light
+                      </Button>
+                      <Button
+                        variant={theme === "dark" ? "default" : "outline"}
+                        onClick={() => setTheme("dark")}
+                        className="flex items-center gap-2"
+                      >
+                        <Moon className="h-4 w-4" />
+                        Dark
+                      </Button>
+                      <Button
+                        variant={theme === "system" ? "default" : "outline"}
+                        onClick={() => setTheme("system")}
+                        className="flex items-center gap-2"
+                      >
+                        <Monitor className="h-4 w-4" />
+                        System
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </SettingsSection>
+        </TabsContent>
+
+        {/* SECURITY TAB - TODO: Convert remaining sections */}
+        <TabsContent value="security" className="space-y-4">
+          <p className="text-muted-foreground">Security settings will be organized into accordion sections</p>
+        </TabsContent>
+
+        {/* NOTIFICATIONS TAB - TODO: Convert remaining sections */}
+        <TabsContent value="notifications" className="space-y-4">
+          <p className="text-muted-foreground">Notification settings will be organized into accordion sections</p>
+        </TabsContent>
+
+        {/* INFRASTRUCTURE TAB - TODO: Convert remaining sections */}
+        <TabsContent value="infrastructure" className="space-y-4">
+          <p className="text-muted-foreground">Infrastructure settings will be organized into accordion sections</p>
+        </TabsContent>
+
+        {/* SYSTEM TAB - TODO: Convert remaining sections */}
+        <TabsContent value="system" className="space-y-4">
+          <p className="text-muted-foreground">System settings will be organized into accordion sections</p>
+        </TabsContent>
+
+        {/* LEGACY TABS - Keep for backward compatibility during transition */}
           <TabsContent value="appearance">
             <div className="space-y-4">
               <Card>
