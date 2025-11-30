@@ -97,7 +97,7 @@ export function ServerQuickView({
   };
 
   return (
-    <div className="w-80 border-l bg-background flex flex-col flex-shrink-0 overflow-hidden">
+    <div className="w-80 h-full border-l bg-background flex flex-col flex-shrink-0 overflow-hidden">
       {/* Header */}
       <div className="p-4 border-b space-y-3">
         <div className="flex items-start justify-between gap-2">
