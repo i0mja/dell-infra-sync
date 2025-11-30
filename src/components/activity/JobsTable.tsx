@@ -51,6 +51,7 @@ interface Job {
   runningTasks?: number;
   currentLog?: string | null;
   averageProgress?: number;
+  calculatedProgress?: number | null;
 }
 
 interface JobsTableProps {
@@ -450,18 +451,21 @@ export function JobsTable({
                 {isColumnVisible("progress") && (
                   <TableCell>
                     {job.status === "running" ? (
-                      job.details?.progress_percent !== undefined ? (
+                      // Priority 1: Calculated progress from details fields
+                      job.calculatedProgress !== undefined && job.calculatedProgress !== null ? (
                         <div className="flex items-center gap-2">
-                          <Progress value={job.details.progress_percent} className="w-24 h-2" />
-                          <span className="text-xs text-muted-foreground">{job.details.progress_percent}%</span>
+                          <Progress value={job.calculatedProgress} className="w-24 h-2" />
+                          <span className="text-xs text-muted-foreground">{job.calculatedProgress}%</span>
                         </div>
-                      ) : job.averageProgress !== undefined ? (
+                      // Priority 2: Task-based average progress
+                      ) : job.averageProgress !== undefined && job.averageProgress > 0 ? (
                         <div className="flex items-center gap-2">
                           <Progress value={job.averageProgress} className="w-24 h-2" />
                           <span className="text-xs text-muted-foreground">{Math.round(job.averageProgress)}%</span>
                         </div>
+                      // Priority 3: Show current step text
                       ) : job.details?.current_step ? (
-                        <span className="text-xs text-muted-foreground">{job.details.current_step}</span>
+                        <span className="text-xs text-muted-foreground truncate max-w-[150px]">{job.details.current_step}</span>
                       ) : (
                         <span className="text-sm text-muted-foreground">—</span>
                       )

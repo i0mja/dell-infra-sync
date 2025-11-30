@@ -46,9 +46,35 @@ export function useJobProgress(jobId: string | null, enabled: boolean = true) {
         elapsedMs = Date.now() - new Date(job.started_at).getTime();
       }
       
-      // Calculate progress percentage
+      // Calculate progress percentage from details if available
+      const details = job?.details;
       let progressPercent = 0;
-      if (totalTasks > 0) {
+      
+      // Try to calculate from job details first (with type guards)
+      if (details && typeof details === 'object' && !Array.isArray(details)) {
+        if ('progress_percent' in details && typeof details.progress_percent === 'number') {
+          progressPercent = details.progress_percent;
+        } else if ('vms_total' in details && 'vms_processed' in details && 
+                   typeof details.vms_total === 'number' && typeof details.vms_processed === 'number' && 
+                   details.vms_total > 0) {
+          progressPercent = Math.round((details.vms_processed / details.vms_total) * 100);
+        } else if ('total_ips' in details && 'servers_scanned' in details && 
+                   typeof details.total_ips === 'number' && typeof details.servers_scanned === 'number' && 
+                   details.total_ips > 0) {
+          progressPercent = Math.round((details.servers_scanned / details.total_ips) * 100);
+        } else if ('hosts_total' in details && 'hosts_processed' in details && 
+                   typeof details.hosts_total === 'number' && typeof details.hosts_processed === 'number' && 
+                   details.hosts_total > 0) {
+          progressPercent = Math.round((details.hosts_processed / details.hosts_total) * 100);
+        } else if ('total_servers' in details && 'current_server_index' in details && 
+                   typeof details.total_servers === 'number' && typeof details.current_server_index === 'number' && 
+                   details.total_servers > 0) {
+          progressPercent = Math.round(((details.current_server_index + 1) / details.total_servers) * 100);
+        } else if (totalTasks > 0) {
+          // Fall back to task-based calculation
+          progressPercent = Math.round((completedTasks / totalTasks) * 100);
+        }
+      } else if (totalTasks > 0) {
         progressPercent = Math.round((completedTasks / totalTasks) * 100);
       }
       
