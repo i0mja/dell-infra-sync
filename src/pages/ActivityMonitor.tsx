@@ -245,9 +245,8 @@ export default function ActivityMonitor() {
     setSelectedCommand(cmd);
     if (!isDesktop) {
       setIsDetailsSheetOpen(true);
-    } else {
-      setIsDetailsDialogOpen(true);
     }
+    // On desktop, sidebar shows inline automatically
   };
 
   const handleCloseDetails = () => {
@@ -417,14 +416,26 @@ export default function ActivityMonitor() {
         onExportJSON={handleExportJSON}
       />
 
-      <div className="flex-1 overflow-hidden">
-        <Tabs value={activeTab} onValueChange={handleTabChange} className="h-full flex flex-col">
-          {/* Tab bar with Columns/Export buttons */}
-          <div className="flex items-center border-b bg-card px-4">
-            <TabsList>
-              <TabsTrigger value="operations">Operations</TabsTrigger>
-              <TabsTrigger value="api-log">Activity Log</TabsTrigger>
-            </TabsList>
+      <div className="flex-1 flex overflow-hidden">
+        {/* Scrollable tabs/table area */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <Tabs value={activeTab} onValueChange={handleTabChange} className="h-full flex flex-col">
+            {/* Tab bar with Columns/Export buttons */}
+            <div className="flex items-center border-b bg-card px-4">
+              <TabsList className="h-auto p-0 bg-transparent gap-2">
+                <TabsTrigger 
+                  value="operations"
+                  className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
+                >
+                  Operations
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="api-log"
+                  className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
+                >
+                  Activity Log
+                </TabsTrigger>
+              </TabsList>
             
             {activeJobs.length > 0 && activeTab === "operations" && (
               <>
@@ -571,7 +582,17 @@ export default function ActivityMonitor() {
               onToggleColumn={toggleCommandColumn}
             />
           </TabsContent>
-        </Tabs>
+          </Tabs>
+        </div>
+
+        {/* Inline sidebar - shows when command selected on desktop */}
+        {selectedCommand && isDesktop && (
+          <CommandDetailsSidebar
+            command={selectedCommand}
+            onClose={handleCloseDetails}
+            onExpand={() => setIsDetailsDialogOpen(true)}
+          />
+        )}
       </div>
 
       <Sheet
