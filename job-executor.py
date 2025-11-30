@@ -8058,7 +8058,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self.log(f"Starting IDM authentication job: {job['id']}")
             self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
             
-            details = job.get('details', {})
+            details = job.get('details') or {}
             username = details.get('username')
             password = details.get('password')  # Passed securely from edge function
             
@@ -8119,7 +8119,7 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             self.log(f"Starting IDM connection test job: {job['id']}")
             self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
             
-            details = job.get('details', {})
+            details = job.get('details') or {}
             
             # Get settings from job details or database
             server_host = details.get('server_host')
