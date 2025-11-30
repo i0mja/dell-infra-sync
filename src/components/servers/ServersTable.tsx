@@ -105,6 +105,7 @@ interface ServersTableProps {
   bulkLinking?: boolean;
   onServerDelete?: (server: Server) => void;
   onBulkDelete?: (serverIds: string[]) => void;
+  onBulkUpdate?: (serverIds: string[]) => void;
 }
 
 export function ServersTable({
@@ -138,6 +139,7 @@ export function ServersTable({
   bulkLinking = false,
   onServerDelete,
   onBulkDelete,
+  onBulkUpdate,
 }: ServersTableProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [sortField, setSortField] = useState<string | null>(null);
@@ -430,6 +432,12 @@ export function ServersTable({
               <RefreshCw className="h-3.5 w-3.5 mr-1" />
               Refresh
             </Button>
+            {onBulkUpdate && (
+              <Button variant="ghost" size="sm" className="h-8" onClick={() => onBulkUpdate(Array.from(selectedServers))}>
+                <ShieldCheck className="h-3.5 w-3.5 mr-1" />
+                Update ({selectedServers.size})
+              </Button>
+            )}
             {onBulkDelete && (
               <Button variant="ghost" size="sm" className="h-8 text-destructive hover:text-destructive" 
                 onClick={() => onBulkDelete(Array.from(selectedServers))}>
@@ -695,6 +703,15 @@ export function ServersTable({
                           </ContextMenuItem>
                         </>
                       )}
+                      {selectedServers.has(server.id) && selectedServers.size > 1 && onBulkUpdate && (
+                        <>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem onClick={() => onBulkUpdate(Array.from(selectedServers))}>
+                            <ShieldCheck className="mr-2 h-4 w-4" />
+                            Update Selected ({selectedServers.size})
+                          </ContextMenuItem>
+                        </>
+                      )}
                       {onServerDelete && (
                         <>
                           <ContextMenuSeparator />
@@ -835,6 +852,15 @@ export function ServersTable({
                                   <ContextMenuItem onClick={() => onAutoLinkVCenter(server)}>
                                     <Link2 className="mr-2 h-4 w-4" />
                                     Auto-link vCenter
+                                  </ContextMenuItem>
+                                </>
+                              )}
+                              {selectedServers.has(server.id) && selectedServers.size > 1 && onBulkUpdate && (
+                                <>
+                                  <ContextMenuSeparator />
+                                  <ContextMenuItem onClick={() => onBulkUpdate(Array.from(selectedServers))}>
+                                    <ShieldCheck className="mr-2 h-4 w-4" />
+                                    Update Selected ({selectedServers.size})
                                   </ContextMenuItem>
                                 </>
                               )}
