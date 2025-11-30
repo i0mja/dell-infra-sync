@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { SettingsSection } from "@/components/settings/SettingsSection";
-import { Network, Activity, Terminal, Database, Loader2 } from "lucide-react";
+import { Network, Activity, Terminal, Database, Loader2, Key, Eye, Copy } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -43,6 +43,11 @@ export function SystemSettings() {
   const [staleRunningHours, setStaleRunningHours] = useState(48);
   const [autoCancelStaleJobs, setAutoCancelStaleJobs] = useState(true);
   const [staleJobCount, setStaleJobCount] = useState(0);
+
+  // Service Key
+  const [serviceKey, setServiceKey] = useState<string | null>(null);
+  const [serviceKeyLoading, setServiceKeyLoading] = useState(false);
+  const [serviceKeyRevealed, setServiceKeyRevealed] = useState(false);
 
   useEffect(() => {
     loadNetworkSettings();
@@ -230,6 +235,28 @@ export function SystemSettings() {
       });
     } finally {
       setJobCleaningUp(false);
+    }
+  };
+
+  const handleRevealServiceKey = async () => {
+    setServiceKeyLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('get-service-key');
+      if (error) throw error;
+      setServiceKey(data.service_role_key);
+      setServiceKeyRevealed(true);
+      toast({
+        title: "Service Key Retrieved",
+        description: "Copy this key to your Job Executor .env file",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to retrieve service key",
+        variant: "destructive",
+      });
+    } finally {
+      setServiceKeyLoading(false);
     }
   };
 
@@ -523,6 +550,71 @@ export function SystemSettings() {
               </Button>
             </CardContent>
           </Card>
+        </div>
+      </SettingsSection>
+
+      {/* Service Key */}
+      <SettingsSection
+        id="service-key"
+        title="Job Executor Service Key"
+        description="API key required for the Job Executor to communicate with the backend"
+        icon={Key}
+      >
+        <div className="space-y-4">
+          <Alert>
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              The Job Executor needs this key to authenticate with the backend.
+              Keep it secure and never share it publicly.
+            </AlertDescription>
+          </Alert>
+
+          {serviceKeyRevealed && serviceKey ? (
+            <div className="space-y-2">
+              <Label>SERVICE_ROLE_KEY</Label>
+              <div className="flex gap-2">
+                <Input
+                  type="password"
+                  value={serviceKey}
+                  readOnly
+                  className="font-mono text-sm"
+                />
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    navigator.clipboard.writeText(serviceKey);
+                    toast({ title: "Copied to clipboard" });
+                  }}
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Add this to your Job Executor .env file:
+                <code className="ml-1 px-1 bg-muted rounded text-xs">
+                  SERVICE_ROLE_KEY={serviceKey.substring(0, 20)}...
+                </code>
+              </p>
+            </div>
+          ) : (
+            <Button
+              onClick={handleRevealServiceKey}
+              disabled={serviceKeyLoading}
+              variant="outline"
+            >
+              {serviceKeyLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Retrieving...
+                </>
+              ) : (
+                <>
+                  <Eye className="mr-2 h-4 w-4" />
+                  Reveal Service Key
+                </>
+              )}
+            </Button>
+          )}
         </div>
       </SettingsSection>
     </div>
