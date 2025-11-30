@@ -8086,12 +8086,16 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             else:
                 self.log(f"[X] Authentication failed for '{username}': {auth_result.get('error')}", "WARN")
             
-            # Complete job with auth result
+            # Clear password from details before updating job (security best practice)
+            sanitized_details = {k: v for k, v in details.items() if k != 'password'}
+            sanitized_details['auth_result'] = auth_result
+            
+            # Complete job with auth result (password removed)
             self.update_job_status(
                 job['id'],
                 'completed',
                 completed_at=datetime.now().isoformat(),
-                details={'auth_result': auth_result}
+                details=sanitized_details
             )
             
         except Exception as e:
