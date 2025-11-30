@@ -14,16 +14,22 @@
 
 ### Two-Component System (MOST IMPORTANT)
 
-**Job Executor (Python) - PRIMARY for 95% of use cases:**
+**Job Executor (Python) - PRIMARY for most operations:**
 - Runs directly on host with full local network access
-- Handles ALL iDRAC operations: firmware, discovery, power, BIOS, SCP, virtual media
+- Handles long-running operations (firmware: 30+ minutes, exceeds Edge Function timeouts)
+- Provides SSH access for ESXi orchestration (Edge Functions cannot SSH)
+- File system access for media server and ISO mounting
+- Simpler implementation: Python + requests vs Deno + SSL workarounds
 - Location: `job-executor.py` + `job_executor/` modules
 - Deployment: systemd (Linux) or Task Scheduler (Windows)
 
-**Edge Functions (Supabase) - SECONDARY, cloud deployments only:**
-- Cannot reliably reach local IPs from Docker containers
-- In local mode, defer to Job Executor
-- Only use for public iDRAC IPs in cloud deployments
+**Edge Functions (Supabase) - CAN reach local IPs when self-hosted:**
+- **Self-hosted**: CAN reach local IPs with `network_mode: "host"` in Docker
+- **Cloud-hosted**: Cannot reach private network IPs (Supabase infrastructure limitation)
+- Use for: quick operations (health checks, power), job orchestration, database CRUD, notifications
+- Limitations: timeout constraints, no SSH, no file system access
+
+**Deployment Reality**: Internal IT tools typically self-hosted. Edge Functions work for local IPs with proper Docker networking, but Job Executor preferred for long-running ops, SSH, and file system.
 
 ### Deployment Mode Detection
 ```python

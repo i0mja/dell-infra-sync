@@ -72,30 +72,37 @@ Dell Server Manager is an **enterprise-grade application** designed for managing
 
 ### 2. Two-Component System (MOST IMPORTANT)
 
-**Job Executor (Python) - PRIMARY for 95% of use cases:**
+**Job Executor (Python) - PRIMARY for most operations:**
 
 - ✅ Runs directly on host with full local network access
-- ✅ Handles ALL iDRAC operations (firmware, discovery, power, BIOS, SCP)
+- ✅ Handles long-running operations (firmware updates: 30+ minutes)
+- ✅ Provides SSH access for ESXi orchestration
+- ✅ File system access for media server and ISO mounting
+- ✅ Simpler implementation (Python + requests vs Deno + SSL workarounds)
 - ✅ Use job types: `discovery_scan`, `firmware_update`, `power_action`, etc.
-- ✅ **Always prefer Job Executor for local/offline deployments**
 
-**Edge Functions (Supabase) - SECONDARY, cloud deployments only:**
+**Edge Functions (Supabase) - CAN reach local IPs when self-hosted:**
 
-- ❌ Cannot reliably reach local IPs from Docker containers
-- ❌ Network limitations: Docker NAT prevents local subnet access
-- ✅ Used only for: job orchestration, database operations, notifications
-- ⚠️ In local mode, defer all iDRAC operations to Job Executor
+- ✅ **Self-hosted with host networking**: Can reach local IPs (192.168.x.x, 10.x.x.x)
+- ✅ Quick operations: health checks, power control, discovery
+- ❌ **Cloud-hosted**: Cannot reach private network IPs (Supabase infrastructure limitation)
+- ❌ Limited for long-running operations (function timeout constraints)
+- ❌ No SSH access or file system operations
+- ✅ Ideal for: job orchestration, database operations, notifications
 
 **When to Use What**:
 
-| Operation Type | Job Executor | Edge Functions |
-|----------------|--------------|----------------|
-| iDRAC operations (firmware, power, BIOS) | ✅ PRIMARY | ❌ Not reliable |
-| vCenter operations (sync, cluster checks) | ✅ PRIMARY | ❌ Not reliable |
-| Job orchestration (create jobs, tasks) | ⚠️ Optional | ✅ Yes |
-| Database CRUD | ⚠️ Via Supabase client | ✅ Yes |
-| Notifications | ❌ No | ✅ Yes |
-| Authentication | ✅ FreeIPA/LDAP | ✅ Supabase Auth |
+| Operation Type | Job Executor | Edge Functions (Self-Hosted) | Edge Functions (Cloud) |
+|----------------|--------------|------------------------------|------------------------|
+| iDRAC operations (quick: power, discovery) | ✅ Preferred | ✅ Possible | ❌ No local access |
+| iDRAC operations (long: firmware 30+ min) | ✅ Required | ❌ Timeout limits | ❌ No local access |
+| ESXi SSH orchestration | ✅ Required | ❌ No SSH | ❌ No local access |
+| File system (ISO mounting, media server) | ✅ Required | ❌ No file system | ❌ No local access |
+| vCenter operations | ✅ Preferred | ✅ Possible | ❌ No local access |
+| Job orchestration, database CRUD | ⚠️ Via Supabase client | ✅ Yes | ✅ Yes |
+| Notifications | ❌ No | ✅ Yes | ✅ Yes |
+
+**Deployment Reality**: This app targets internal IT tools, typically self-hosted. Edge Functions CAN reach local IPs with `network_mode: "host"` in Docker. However, Job Executor remains the preferred choice for operations requiring long execution times, SSH access, or file system operations.
 
 ---
 
