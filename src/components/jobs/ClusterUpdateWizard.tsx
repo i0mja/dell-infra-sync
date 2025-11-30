@@ -182,6 +182,38 @@ export const ClusterUpdateWizard = ({
     setTargetInfo(null);
   }, [targetType, selectedCluster, selectedGroup, selectedServerIds]);
 
+  // Sync preSelectedTarget to state when dialog opens
+  useEffect(() => {
+    if (open && preSelectedTarget) {
+      setTargetType(preSelectedTarget.type);
+      
+      if (preSelectedTarget.type === 'cluster' && preSelectedTarget.id) {
+        setSelectedCluster(preSelectedTarget.id);
+        setSelectedGroup('');
+        setSelectedServerIds([]);
+      } else if (preSelectedTarget.type === 'group' && preSelectedTarget.id) {
+        setSelectedGroup(preSelectedTarget.id);
+        setSelectedCluster('');
+        setSelectedServerIds([]);
+      } else if (preSelectedTarget.type === 'servers' && preSelectedTarget.ids) {
+        setSelectedServerIds(preSelectedTarget.ids);
+        setSelectedCluster('');
+        setSelectedGroup('');
+      }
+    }
+  }, [open, preSelectedTarget]);
+
+  // Reset wizard when closed
+  useEffect(() => {
+    if (!open) {
+      setCurrentStep(1);
+      setSafetyCheckPassed(false);
+      setTargetInfo(null);
+      setConfirmed(false);
+      setJobId(null);
+    }
+  }, [open]);
+
   const fetchTargets = async () => {
     if (targetType === 'cluster') {
       const { data } = await supabase
