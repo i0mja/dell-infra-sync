@@ -149,7 +149,7 @@ const Layout = () => {
   const containerClasses = cn(
     "w-full",
     useEdgeToEdgeLayout
-      ? "max-w-full px-0 pb-6 pt-0"
+      ? "max-w-full px-0 pb-0 pt-0 h-full"
       : "mx-auto max-w-screen-2xl px-4 py-6 sm:px-6 lg:px-8"
   );
 
@@ -226,9 +226,15 @@ const Layout = () => {
         </header>
 
         {/* Main Content */}
-        <main className="flex-1 overflow-auto bg-background">
+        <main className={cn(
+          "flex-1 bg-background",
+          useEdgeToEdgeLayout ? "overflow-hidden" : "overflow-auto"
+        )}>
           <div className={containerClasses}>
-            <div className="animate-in fade-in duration-300">
+            <div className={cn(
+              "animate-in fade-in duration-300",
+              useEdgeToEdgeLayout && "h-full"
+            )}>
               <Outlet key={location.pathname} />
             </div>
           </div>
