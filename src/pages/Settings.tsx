@@ -2166,7 +2166,7 @@ export default function Settings() {
         }}
       />
       
-      <div className="p-8 space-y-6 max-w-5xl mx-auto">
+      <div className="px-6 py-6 space-y-6 max-w-6xl">
           {activeTab === 'general' && (
             <div className="space-y-8">
           <SettingsSection
