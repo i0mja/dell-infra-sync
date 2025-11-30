@@ -422,7 +422,8 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
         response_body: Optional[dict],
         success: bool,
         error_message: Optional[str] = None,
-        operation_type: str = 'idrac_api'
+        operation_type: str = 'idrac_api',
+        source: str = 'job_executor'
     ):
         """Log iDRAC command to activity monitor"""
         try:
@@ -480,7 +481,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
                 'success': success,
                 'error_message': error_message,
                 'initiated_by': None,
-                'source': 'job_executor',
+                'source': source,
                 'operation_type': operation_type
             }
             

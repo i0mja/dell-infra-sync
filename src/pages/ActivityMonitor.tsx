@@ -166,6 +166,8 @@ export default function ActivityMonitor() {
         query = query.eq('source', 'job_executor');
       } else if (commandSource === 'edge_function') {
         query = query.eq('source', 'edge_function');
+      } else if (commandSource === 'instant_api') {
+        query = query.eq('source', 'instant_api');
       }
 
       const { data, error } = await query;
@@ -421,7 +423,7 @@ export default function ActivityMonitor() {
           <div className="flex items-center border-b bg-card px-4">
             <TabsList>
               <TabsTrigger value="operations">Operations</TabsTrigger>
-              <TabsTrigger value="api-log">API Log</TabsTrigger>
+              <TabsTrigger value="api-log">Activity Log</TabsTrigger>
             </TabsList>
             
             {activeJobs.length > 0 && activeTab === "operations" && (
