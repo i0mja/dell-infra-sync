@@ -1,6 +1,7 @@
 import { ReactNode } from "react";
 import { LucideIcon } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
+import { Card } from "@/components/ui/card";
 
 interface SettingsSectionProps {
   id: string;
@@ -17,11 +18,11 @@ export function SettingsSection({
   children,
 }: SettingsSectionProps) {
   return (
-    <div className="space-y-4">
-      <div className="flex items-start gap-3">
+    <Card className="p-6">
+      <div className="flex items-start gap-3 mb-4">
         {Icon && (
           <div className="p-2 rounded-md bg-muted/50">
-            <Icon className="h-4 w-4 text-muted-foreground" />
+            <Icon className="h-5 w-5 text-muted-foreground" />
           </div>
         )}
         <div className="flex-1 min-w-0">
@@ -33,9 +34,10 @@ export function SettingsSection({
           )}
         </div>
       </div>
-      <div className="space-y-4">
+      <Separator className="my-4" />
+      <div>
         {children}
       </div>
-    </div>
+    </Card>
   );
 }

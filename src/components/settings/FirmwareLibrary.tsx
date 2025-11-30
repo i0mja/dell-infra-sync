@@ -32,23 +32,15 @@ export function FirmwareLibrary() {
   const componentTypes = ["all", ...new Set(firmwarePackages.map(pkg => pkg.component_type))];
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle>Firmware Library</CardTitle>
-            <CardDescription>
-              Manage Dell Update Packages (DUPs) for offline firmware updates
-            </CardDescription>
-          </div>
+    <>
+      <div className="space-y-6">
+        <div className="flex items-center justify-end">
           <Button onClick={() => setUploadDialogOpen(true)}>
             <Upload className="h-4 w-4 mr-2" />
             Upload Firmware
           </Button>
         </div>
-      </CardHeader>
 
-      <CardContent className="space-y-6">
         {/* Storage indicator */}
         <div className="space-y-2">
           <div className="flex items-center justify-between text-sm">
@@ -123,12 +115,12 @@ export function FirmwareLibrary() {
             Showing {filteredPackages.length} of {firmwarePackages.length} firmware packages
           </div>
         )}
-      </CardContent>
+      </div>
 
       <FirmwareUploadDialog
         open={uploadDialogOpen}
         onOpenChange={setUploadDialogOpen}
       />
-    </Card>
+    </>
   );
 }
