@@ -2176,42 +2176,36 @@ export default function Settings() {
             icon={Palette}
           >
             <div className="space-y-4">
-              <Card>
-                <CardContent className="space-y-6">
-                  <div className="space-y-4">
-                    <Label>Theme</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Choose your preferred color scheme
-                    </p>
-                    <div className="grid grid-cols-3 gap-4">
-                      <Button
-                        variant={theme === "light" ? "default" : "outline"}
-                        onClick={() => setTheme("light")}
-                        className="flex items-center gap-2"
-                      >
-                        <Sun className="h-4 w-4" />
-                        Light
-                      </Button>
-                      <Button
-                        variant={theme === "dark" ? "default" : "outline"}
-                        onClick={() => setTheme("dark")}
-                        className="flex items-center gap-2"
-                      >
-                        <Moon className="h-4 w-4" />
-                        Dark
-                      </Button>
-                      <Button
-                        variant={theme === "system" ? "default" : "outline"}
-                        onClick={() => setTheme("system")}
-                        className="flex items-center gap-2"
-                      >
-                        <Monitor className="h-4 w-4" />
-                        System
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+              <Label>Theme</Label>
+              <p className="text-sm text-muted-foreground">
+                Choose your preferred color scheme
+              </p>
+              <div className="grid grid-cols-3 gap-4">
+                <Button
+                  variant={theme === "light" ? "default" : "outline"}
+                  onClick={() => setTheme("light")}
+                  className="flex items-center gap-2"
+                >
+                  <Sun className="h-4 w-4" />
+                  Light
+                </Button>
+                <Button
+                  variant={theme === "dark" ? "default" : "outline"}
+                  onClick={() => setTheme("dark")}
+                  className="flex items-center gap-2"
+                >
+                  <Moon className="h-4 w-4" />
+                  Dark
+                </Button>
+                <Button
+                  variant={theme === "system" ? "default" : "outline"}
+                  onClick={() => setTheme("system")}
+                  className="flex items-center gap-2"
+                >
+                  <Monitor className="h-4 w-4" />
+                  System
+                </Button>
+              </div>
             </div>
           </SettingsSection>
           </div>
@@ -2684,9 +2678,8 @@ export default function Settings() {
             description="Configure which events trigger notifications"
             icon={Bell}
           >
-            <Card>
-              <CardContent className="space-y-4 pt-6">
-                <div className="flex items-center justify-between">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
                     <Label>Notify on Job Completion</Label>
                     <p className="text-sm text-muted-foreground">
@@ -2767,8 +2760,7 @@ export default function Settings() {
                 <Button onClick={handleSaveSettings} disabled={loading}>
                   {loading ? "Saving..." : "Save Alert Preferences"}
                 </Button>
-              </CardContent>
-            </Card>
+            </div>
           </SettingsSection>
 
           {/* SMTP Email */}
@@ -2778,9 +2770,8 @@ export default function Settings() {
             description="Configure SMTP server for email notifications"
             icon={Mail}
           >
-            <Card>
-              <CardContent className="space-y-4 pt-6">
-                <div className="space-y-2">
+            <div className="space-y-4">
+              <div className="space-y-2">
                   <Label htmlFor="smtp-host">SMTP Host</Label>
                   <Input
                     id="smtp-host"
@@ -2836,8 +2827,7 @@ export default function Settings() {
                 <Button onClick={handleSaveSettings} disabled={loading}>
                   {loading ? "Saving..." : "Save SMTP Settings"}
                 </Button>
-              </CardContent>
-            </Card>
+            </div>
           </SettingsSection>
 
           {/* Microsoft Teams */}
@@ -2847,9 +2837,8 @@ export default function Settings() {
             description="Configure Teams webhook for notifications with @mentions"
             icon={MessageSquare}
           >
-            <Card>
-              <CardContent className="space-y-4 pt-6">
-                <div className="space-y-2">
+            <div className="space-y-4">
+              <div className="space-y-2">
                   <Label htmlFor="teams-webhook">Teams Webhook URL</Label>
                   <Input
                     id="teams-webhook"
@@ -2981,8 +2970,7 @@ export default function Settings() {
                     </div>
                   </div>
                 )}
-              </CardContent>
-            </Card>
+            </div>
           </SettingsSection>
           </div>
           )}
@@ -3110,9 +3098,8 @@ export default function Settings() {
             description="Sync server inventory and firmware from OpenManage Enterprise"
             icon={CloudCog}
           >
-            <Card>
-              <CardContent className="space-y-4 pt-6">
-                <div className="flex items-center justify-between">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
                     <Label>Enable OME Sync</Label>
                     <p className="text-sm text-muted-foreground">
@@ -3196,8 +3183,7 @@ export default function Settings() {
                     )}
                   </Button>
                 </div>
-              </CardContent>
-            </Card>
+            </div>
           </SettingsSection>
           </div>
           )}
@@ -3456,9 +3442,8 @@ export default function Settings() {
             description="Scheduled safety checks for vSphere clusters"
             icon={Activity}
           >
-            <Card>
-              <CardContent className="space-y-4 pt-6">
-                <div className="flex items-center justify-between">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
                     <Label>Enable Scheduled Checks</Label>
                     <p className="text-sm text-muted-foreground">
@@ -3541,8 +3526,7 @@ export default function Settings() {
                     </div>
                   </div>
                 )}
-              </CardContent>
-            </Card>
+            </div>
           </SettingsSection>
 
           {/* Activity Monitor */}
@@ -3552,9 +3536,8 @@ export default function Settings() {
             description="Configure activity log retention and monitoring"
             icon={Terminal}
           >
-            <Card>
-              <CardContent className="space-y-4 pt-6">
-                <div className="space-y-2">
+            <div className="space-y-4">
+              <div className="space-y-2">
                   <Label>Log Retention (days)</Label>
                   <Input
                     type="number"
@@ -3630,8 +3613,7 @@ export default function Settings() {
                     )}
                   </Button>
                 </div>
-              </CardContent>
-            </Card>
+            </div>
           </SettingsSection>
 
           {/* Jobs Configuration */}
