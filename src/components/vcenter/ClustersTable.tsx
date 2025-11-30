@@ -36,6 +36,13 @@ interface ClustersTableProps {
   selectedClusterId: string | null;
   onClusterClick: (clusterId: string) => void;
   loading: boolean;
+  searchTerm: string;
+  statusFilter: string;
+  haFilter: string;
+  drsFilter: string;
+  onExport?: () => void;
+  visibleColumns?: string[];
+  onToggleColumn?: (column: string) => void;
 }
 
 export function ClustersTable({
@@ -43,22 +50,42 @@ export function ClustersTable({
   selectedClusterId,
   onClusterClick,
   loading,
+  searchTerm,
+  statusFilter,
+  haFilter,
+  drsFilter,
+  onExport,
+  visibleColumns: parentVisibleColumns,
+  onToggleColumn,
 }: ClustersTableProps) {
-  const [searchTerm, setSearchTerm] = useState("");
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [selectedClusters, setSelectedClusters] = useState<Set<string>>(new Set());
   const { toast } = useToast();
 
-  const { visibleColumns, isColumnVisible, toggleColumn } = useColumnVisibility(
+  const { visibleColumns, isColumnVisible, toggleColumn: localToggleColumn } = useColumnVisibility(
     "vcenter-clusters-columns",
     ["name", "status", "hosts", "vms", "ha", "drs", "cpu", "memory", "storage", "sync"]
   );
 
-  // Filter clusters by search term
-  const filteredClusters = clusters.filter((cluster) =>
-    cluster.cluster_name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const effectiveVisibleColumns = parentVisibleColumns || visibleColumns;
+  const effectiveToggleColumn = onToggleColumn || localToggleColumn;
+  const isColVisible = (col: string) => effectiveVisibleColumns.includes(col);
+
+  // Filter clusters
+  const filteredClusters = clusters.filter((cluster) => {
+    const matchesSearch = cluster.cluster_name.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesStatus = statusFilter === "all" || cluster.overall_status?.toLowerCase() === statusFilter;
+    const matchesHa = haFilter === "all" || 
+      (haFilter === "enabled" && cluster.ha_enabled) ||
+      (haFilter === "disabled" && !cluster.ha_enabled);
+    const matchesDrs = drsFilter === "all" || 
+      (drsFilter === "enabled" && cluster.drs_enabled) ||
+      (drsFilter === "disabled" && !cluster.drs_enabled);
+
+    return matchesSearch && matchesStatus && matchesHa && matchesDrs;
+  });
 
   // Apply sorting
   const sortedClusters = sortField
@@ -131,6 +158,10 @@ export function ClustersTable({
   };
 
   const handleExportCSV = () => {
+    if (onExport) {
+      onExport();
+      return;
+    }
     const columns: ExportColumn<VCenterCluster>[] = [
       { key: "cluster_name", label: "Cluster Name" },
       { key: "overall_status", label: "Status" },
@@ -217,94 +248,7 @@ export function ClustersTable({
   }
 
   return (
-    <div className="flex flex-col h-full bg-background">
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b bg-card">
-        <Input
-          placeholder="Search clusters..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="max-w-xs"
-        />
-        <div className="flex-1" />
-        <Button variant="outline" size="sm" onClick={handleExportCSV}>
-          <Download className="h-4 w-4 mr-1" />
-          Export CSV
-        </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm">
-              <Columns3 className="h-4 w-4 mr-1" />
-              Columns
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuCheckboxItem
-              checked={isColumnVisible("name")}
-              onCheckedChange={() => toggleColumn("name")}
-            >
-              Cluster Name
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem
-              checked={isColumnVisible("status")}
-              onCheckedChange={() => toggleColumn("status")}
-            >
-              Status
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem
-              checked={isColumnVisible("hosts")}
-              onCheckedChange={() => toggleColumn("hosts")}
-            >
-              Hosts
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem
-              checked={isColumnVisible("vms")}
-              onCheckedChange={() => toggleColumn("vms")}
-            >
-              VMs
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem
-              checked={isColumnVisible("ha")}
-              onCheckedChange={() => toggleColumn("ha")}
-            >
-              HA
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem
-              checked={isColumnVisible("drs")}
-              onCheckedChange={() => toggleColumn("drs")}
-            >
-              DRS
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem
-              checked={isColumnVisible("cpu")}
-              onCheckedChange={() => toggleColumn("cpu")}
-            >
-              CPU Usage
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem
-              checked={isColumnVisible("memory")}
-              onCheckedChange={() => toggleColumn("memory")}
-            >
-              Memory Usage
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem
-              checked={isColumnVisible("storage")}
-              onCheckedChange={() => toggleColumn("storage")}
-            >
-              Storage Usage
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem
-              checked={isColumnVisible("sync")}
-              onCheckedChange={() => toggleColumn("sync")}
-            >
-              Last Sync
-            </DropdownMenuCheckboxItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-
+    <div className="flex flex-col h-full bg-background overflow-hidden">
       {/* Table */}
       <div className="overflow-auto flex-1">
         <Table>

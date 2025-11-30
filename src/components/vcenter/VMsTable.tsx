@@ -45,21 +45,37 @@ interface VMsTableProps {
   selectedVmId: string | null;
   onVmClick: (vm: VCenterVM) => void;
   loading: boolean;
+  searchTerm: string;
+  clusterFilter: string;
+  powerFilter: string;
+  toolsFilter: string;
+  osFilter: string;
+  onExport?: () => void;
+  visibleColumns?: string[];
+  onToggleColumn?: (column: string) => void;
 }
 
-export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProps) {
-  const [searchTerm, setSearchTerm] = useState("");
-  const [clusterFilter, setClusterFilter] = useState("all");
-  const [powerFilter, setPowerFilter] = useState("all");
-  const [toolsFilter, setToolsFilter] = useState("all");
-  const [osFilter, setOsFilter] = useState("all");
+export function VMsTable({ 
+  vms, 
+  selectedVmId, 
+  onVmClick, 
+  loading,
+  searchTerm,
+  clusterFilter,
+  powerFilter,
+  toolsFilter,
+  osFilter,
+  onExport,
+  visibleColumns: parentVisibleColumns,
+  onToggleColumn,
+}: VMsTableProps) {
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [selectedVms, setSelectedVms] = useState<Set<string>>(new Set());
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [viewName, setViewName] = useState("");
 
-  const { visibleColumns, isColumnVisible, toggleColumn } = useColumnVisibility("vcenter-vms-columns", [
+  const { visibleColumns, isColumnVisible, toggleColumn: localToggleColumn } = useColumnVisibility("vcenter-vms-columns", [
     "name",
     "power",
     "ip",
@@ -69,6 +85,10 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
     "tools",
     "cluster",
   ]);
+
+  const effectiveVisibleColumns = parentVisibleColumns || visibleColumns;
+  const effectiveToggleColumn = onToggleColumn || localToggleColumn;
+  const isColVisible = (col: string) => effectiveVisibleColumns.includes(col);
 
   const { savedViews, saveView, loadView, deleteView, clearView } = useSavedViews("vcenter-vms-views");
 
@@ -157,6 +177,11 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
   };
 
   const handleExportCSV = () => {
+    if (onExport) {
+      onExport();
+      return;
+    }
+
     const columns: ExportColumn<VCenterVM>[] = [
       { key: "name", label: "VM Name" },
       { key: "power_state", label: "Power State" },
@@ -293,63 +318,63 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
                     <TableHead className="w-12">
                       <Checkbox checked={selectedVms.size === filteredVms.length} onCheckedChange={toggleAllVms} />
                     </TableHead>
-                    {isColumnVisible("name") && (
+                    {isColVisible("name") && (
                       <TableHead className="w-[250px] cursor-pointer" onClick={() => handleSort("name")}>
                         <div className="flex items-center">
                           VM Name {getSortIcon("name")}
                         </div>
                       </TableHead>
                     )}
-                    {isColumnVisible("power") && (
+                    {isColVisible("power") && (
                       <TableHead className="w-[120px] cursor-pointer" onClick={() => handleSort("power_state")}>
                         <div className="flex items-center">
                           Power {getSortIcon("power_state")}
                         </div>
                       </TableHead>
                     )}
-                    {isColumnVisible("ip") && (
+                    {isColVisible("ip") && (
                       <TableHead className="w-[140px] cursor-pointer" onClick={() => handleSort("ip_address")}>
                         <div className="flex items-center">
                           IP Address {getSortIcon("ip_address")}
                         </div>
                       </TableHead>
                     )}
-                    {isColumnVisible("resources") && (
+                    {isColVisible("resources") && (
                       <TableHead className="w-[60px] cursor-pointer" onClick={() => handleSort("cpu_count")}>
                         <div className="flex items-center">
                           CPU {getSortIcon("cpu_count")}
                         </div>
                       </TableHead>
                     )}
-                    {isColumnVisible("resources") && (
+                    {isColVisible("resources") && (
                       <TableHead className="w-[70px] cursor-pointer" onClick={() => handleSort("memory_mb")}>
                         <div className="flex items-center">
                           RAM {getSortIcon("memory_mb")}
                         </div>
                       </TableHead>
                     )}
-                    {isColumnVisible("disk") && (
+                    {isColVisible("disk") && (
                       <TableHead className="w-[80px] cursor-pointer" onClick={() => handleSort("disk_gb")}>
                         <div className="flex items-center">
                           Disk (GB) {getSortIcon("disk_gb")}
                         </div>
                       </TableHead>
                     )}
-                    {isColumnVisible("os") && (
+                    {isColVisible("os") && (
                       <TableHead className="w-[180px] cursor-pointer" onClick={() => handleSort("guest_os")}>
                         <div className="flex items-center">
                           Guest OS {getSortIcon("guest_os")}
                         </div>
                       </TableHead>
                     )}
-                    {isColumnVisible("tools") && (
+                    {isColVisible("tools") && (
                       <TableHead className="w-[120px] cursor-pointer" onClick={() => handleSort("tools_status")}>
                         <div className="flex items-center">
                           Tools {getSortIcon("tools_status")}
                         </div>
                       </TableHead>
                     )}
-                    {isColumnVisible("cluster") && (
+                    {isColVisible("cluster") && (
                       <TableHead className="w-[140px] cursor-pointer" onClick={() => handleSort("cluster_name")}>
                         <div className="flex items-center">
                           Cluster {getSortIcon("cluster_name")}
@@ -374,25 +399,25 @@ export function VMsTable({ vms, selectedVmId, onVmClick, loading }: VMsTableProp
                           onClick={(e) => e.stopPropagation()}
                         />
                       </TableCell>
-                      {isColumnVisible("name") && <TableCell className="font-medium">{vm.name}</TableCell>}
-                      {isColumnVisible("power") && <TableCell>{getPowerStateBadge(vm.power_state)}</TableCell>}
-                      {isColumnVisible("ip") && (
+                      {isColVisible("name") && <TableCell className="font-medium">{vm.name}</TableCell>}
+                      {isColVisible("power") && <TableCell>{getPowerStateBadge(vm.power_state)}</TableCell>}
+                      {isColVisible("ip") && (
                         <TableCell className="text-sm font-mono text-xs">{vm.ip_address || "N/A"}</TableCell>
                       )}
-                      {isColumnVisible("resources") && (
+                      {isColVisible("resources") && (
                         <TableCell className="text-sm">{vm.cpu_count || 0}</TableCell>
                       )}
-                      {isColumnVisible("resources") && (
+                      {isColVisible("resources") && (
                         <TableCell className="text-sm">{vm.memory_mb ? Math.round(vm.memory_mb / 1024) : 0}GB</TableCell>
                       )}
-                      {isColumnVisible("disk") && (
+                      {isColVisible("disk") && (
                         <TableCell className="text-sm">{vm.disk_gb ? vm.disk_gb.toFixed(0) : "0"}</TableCell>
                       )}
-                      {isColumnVisible("os") && (
+                      {isColVisible("os") && (
                         <TableCell className="text-sm truncate max-w-[180px]">{vm.guest_os || "Unknown"}</TableCell>
                       )}
-                      {isColumnVisible("tools") && <TableCell>{getToolsStatusBadge(vm.tools_status)}</TableCell>}
-                      {isColumnVisible("cluster") && <TableCell className="text-sm">{vm.cluster_name || "N/A"}</TableCell>}
+                      {isColVisible("tools") && <TableCell>{getToolsStatusBadge(vm.tools_status)}</TableCell>}
+                      {isColVisible("cluster") && <TableCell className="text-sm">{vm.cluster_name || "N/A"}</TableCell>}
                     </TableRow>
                   ))}
                 </TableBody>
