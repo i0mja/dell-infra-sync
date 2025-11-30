@@ -2233,208 +2233,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
         except Exception as e:
             self.log(f"Error inserting auth-failed server {ip}: {e}", "ERROR")
 
-    def execute_discovery_scan(self, job: Dict):
-        """Execute IP discovery scan with multi-credential support OR refresh existing servers"""
-        self.log(f"Starting discovery scan job {job['id']}")
-        
-        self.update_job_status(
-            job['id'],
-            'running',
-            started_at=datetime.now().isoformat()
-        )
-        
-        try:
-            target_scope = job['target_scope']
-            
-            # Check if this is a per-server refresh (when adding individual servers)
-            if 'server_ids' in target_scope and target_scope['server_ids']:
-                self.refresh_existing_servers(job, target_scope['server_ids'])
-                return
-            
-            # Otherwise, proceed with IP range discovery
-            ip_range = target_scope.get('ip_range', '')
-            ip_list = target_scope.get('ip_list', [])  # Handle IP list from UI
-            credential_set_ids = job.get('credential_set_ids', [])
-            
-            # Fetch credential sets from database
-            credential_sets = self.get_credential_sets(credential_set_ids)
-            
-            # Fallback to environment defaults if no sets configured
-            if not credential_sets:
-                credential_sets = [{
-                    'id': None,
-                    'name': 'Environment Default',
-                    'username': IDRAC_DEFAULT_USER,
-                    'password_encrypted': IDRAC_DEFAULT_PASSWORD,
-                    'priority': 999
-                }]
-            
-            self.log(f"Using {len(credential_sets)} credential set(s) for discovery")
-            
-            # Parse IPs to scan
-            ips_to_scan = []
-            
-            # Handle IP list first (multiple individual IPs from UI)
-            if ip_list and len(ip_list) > 0:
-                ips_to_scan = ip_list
-                self.log(f"Scanning {len(ips_to_scan)} IPs from provided list...")
-            
-            # Handle IP range
-            elif ip_range:
-                if '/' in ip_range:  # CIDR notation
-                    network = ipaddress.ip_network(ip_range, strict=False)
-                    ips_to_scan = [str(ip) for ip in network.hosts()]
-                    self.log(f"Scanning CIDR range {ip_range}: {len(ips_to_scan)} IPs")
-                elif '-' in ip_range:  # Range notation
-                    start, end = ip_range.split('-')
-                    start_ip = ipaddress.ip_address(start.strip())
-                    end_ip = ipaddress.ip_address(end.strip())
-                    current = start_ip
-                    while current <= end_ip:
-                        ips_to_scan.append(str(current))
-                        current += 1
-                    self.log(f"Scanning IP range {ip_range}: {len(ips_to_scan)} IPs")
-                else:
-                    # Treat as single IP address
-                    try:
-                        ipaddress.ip_address(ip_range.strip())  # Validate it's a valid IP
-                        ips_to_scan = [ip_range.strip()]
-                        self.log(f"Scanning single IP: {ip_range}")
-                    except ValueError:
-                        raise ValueError(f"Invalid IP format: {ip_range}")
-            
-            if not ips_to_scan:
-                raise ValueError("No IPs to scan - provide ip_range or ip_list")
-            
-            self.log(f"Scanning {len(ips_to_scan)} IPs with 3-stage optimization...")
-            self.log(f"  Stage 1: TCP port check (443)")
-            self.log(f"  Stage 2: iDRAC detection (/redfish/v1)")
-            self.log(f"  Stage 3: Full authentication")
-            
-            # Get activity settings for discovery thread limit
-            settings = self.fetch_activity_settings()
-            max_threads = settings.get('discovery_max_threads', 5)
-            self.log(f"Using {max_threads} concurrent threads for discovery")
-            
-            discovered = []
-            auth_failures = []
-            stage1_filtered = 0  # Port closed
-            stage2_filtered = 0  # Not an iDRAC
-            
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
-                futures = {}
-                
-                # Submit jobs with pacing to avoid thundering herd
-                for i, ip in enumerate(ips_to_scan):
-                    # Add small random delay between starting each scan (50-200ms)
-                    if i > 0 and len(ips_to_scan) > 10:
-                        time.sleep(0.05 + (0.15 * (i % 10) / 10.0))
-                    
-                    future = executor.submit(
-                        self.discover_single_ip,
-                        ip,
-                        credential_sets,
-                        job['id']
-                    )
-                    futures[future] = ip
-                
-                timeout_count = 0
-                total_requests = len(ips_to_scan)
-                
-                for future in concurrent.futures.as_completed(futures):
-                    ip = futures[future]
-                    try:
-                        result = future.result(timeout=30)  # 30s timeout per IP
-                        if result['success']:
-                            self.log(f"✓ Found iDRAC at {ip}: {result['model']} (using {result['credential_set_name']})")
-                            discovered.append(result)
-                        elif result.get('idrac_detected') and result.get('auth_failed'):
-                            # Only add to auth_failures if we CONFIRMED an iDRAC exists (got 401/403)
-                            auth_failures.append({
-                                'ip': ip,
-                                'reason': 'iDRAC detected but authentication failed'
-                            })
-                        elif not result.get('idrac_detected'):
-                            # Track filtering stages
-                            if not result.get('port_open', True):
-                                stage1_filtered += 1
-                            else:
-                                stage2_filtered += 1
-                        # else: No iDRAC at this IP - don't add to anything
-                    except concurrent.futures.TimeoutError:
-                        timeout_count += 1
-                        # If >30% of requests timeout, warn about overload
-                        if timeout_count / total_requests > 0.3:
-                            self.log("⚠️  Multiple timeouts detected - iDRACs may be overloaded. Consider reducing discovery_max_threads in settings.", "WARN")
-                    except Exception as e:
-                        pass  # Silent fail for non-responsive IPs
-            
-            self.log(f"Discovery complete:")
-            self.log(f"  ✓ {len(discovered)} servers authenticated")
-            self.log(f"  ⚠ {len(auth_failures)} iDRACs require credentials")
-            self.log(f"  ⊗ {stage1_filtered} IPs filtered (port closed)")
-            self.log(f"  ⊗ {stage2_filtered} IPs filtered (not iDRAC)")
-            total_filtered = stage1_filtered + stage2_filtered
-            if total_filtered > 0:
-                self.log(f"  Optimization: Skipped full auth on {total_filtered} IPs ({total_filtered/len(ips_to_scan)*100:.1f}%)")
-            
-            # Insert discovered servers into database with credential info
-            for server in discovered:
-                self.insert_discovered_server(server, job['id'])
-            
-            # Auth failures are tracked in job details but NOT inserted as servers
-            # This keeps the servers list clean - only authenticated iDRACs appear
-            
-            # Auto-trigger full refresh for newly discovered servers
-            if discovered:
-                self.log(f"Auto-triggering full refresh for {len(discovered)} discovered servers...")
-                try:
-                    # Get server IDs of newly discovered servers
-                    discovered_ips = [s['ip'] for s in discovered]
-                    servers_url = f"{DSM_URL}/rest/v1/servers"
-                    params = {
-                        "ip_address": f"in.({','.join(discovered_ips)})",
-                        "select": "id"
-                    }
-                    response = requests.get(servers_url, headers=self.headers, params=params, verify=VERIFY_SSL)
-                    
-                    if response.status_code == 200:
-                        server_records = response.json()
-                        server_ids = [s['id'] for s in server_records]
-                        
-                        if server_ids:
-                            # Call refresh_existing_servers to get full server info
-                            self.refresh_existing_servers(job, server_ids)
-                            self.log(f"✓ Auto-refresh completed for {len(server_ids)} servers")
-                    else:
-                        self.log(f"Failed to fetch discovered server IDs: {response.status_code}", "WARN")
-                except Exception as e:
-                    self.log(f"Auto-refresh failed: {e}", "WARN")
-            
-            self.update_job_status(
-                job['id'],
-                'completed',
-                completed_at=datetime.now().isoformat(),
-                details={
-                    "discovered_count": len(discovered),
-                    "auth_failures": len(auth_failures),
-                    "scanned_ips": len(ips_to_scan),
-                    "auth_failure_ips": [f['ip'] for f in auth_failures],
-                    "auto_refresh_triggered": len(discovered) > 0,
-                    "stage1_filtered": stage1_filtered,
-                    "stage2_filtered": stage2_filtered,
-                    "optimization_enabled": True
-                }
-            )
-            
-        except Exception as e:
-            self.log(f"Discovery scan failed: {e}", "ERROR")
-            self.update_job_status(
-                job['id'],
-                'failed',
-                completed_at=datetime.now().isoformat(),
-                details={"error": str(e)}
-            )
+    # execute_discovery_scan moved to DiscoveryHandler
 
     # connect_vcenter moved to VCenterMixin
     # check_vcenter_connection moved to VCenterMixin
@@ -6582,78 +6381,49 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             )
             return
         
-        if job_type == 'discovery_scan':
-            self.execute_discovery_scan(job)
-        elif job_type == 'firmware_update':
-            self.execute_firmware_update(job)
-        elif job_type == 'full_server_update':
-            self.execute_full_server_update(job)
-        elif job_type == 'test_credentials':
-            self.execute_test_credentials(job)
-        elif job_type == 'power_action':
-            self.execute_power_action(job)
-        elif job_type == 'health_check':
-            self.execute_health_check(job)
-        elif job_type == 'fetch_event_logs':
-            self.execute_fetch_event_logs(job)
-        elif job_type == 'boot_configuration':
-            self.execute_boot_configuration(job)
-        elif job_type == 'virtual_media_mount':
-            self.execute_virtual_media_mount(job)
-        elif job_type == 'virtual_media_unmount':
-            self.execute_virtual_media_unmount(job)
-        elif job_type == 'scp_export':
-            self.execute_scp_export(job)
-        elif job_type == 'scp_import':
-            self.execute_scp_import(job)
-        elif job_type == 'bios_config_read':
-            self.execute_bios_config_read(job)
-        elif job_type == 'bios_config_write':
-            self.execute_bios_config_write(job)
-        elif job_type == 'vcenter_sync':
-            self.execute_vcenter_sync(job)
-        elif job_type == 'vcenter_connectivity_test':
-            self.execute_vcenter_connectivity_test(job)
-        elif job_type == 'openmanage_sync':
-            self.execute_openmanage_sync(job)
-        elif job_type == 'cluster_safety_check':
-            self.execute_cluster_safety_check(job)
-        elif job_type == 'server_group_safety_check':
-            self.execute_server_group_safety_check(job)
-        elif job_type == 'prepare_host_for_update':
-            self.execute_prepare_host_for_update(job)
-        elif job_type == 'verify_host_after_update':
-            self.execute_verify_host_after_update(job)
-        elif job_type == 'rolling_cluster_update':
-            self.execute_rolling_cluster_update(job)
-        elif job_type == 'iso_upload':
-            self.execute_iso_upload(job)
-        elif job_type == 'scan_local_isos':
-            self.execute_scan_local_isos(job)
-        elif job_type == 'register_iso_url':
-            self.execute_register_iso_url(job)
-        elif job_type == 'firmware_upload':
-            self.execute_firmware_upload(job)
-        elif job_type == 'catalog_sync':
-            self.execute_catalog_sync(job)
-        elif job_type == 'console_launch':
-            self.execute_console_launch(job)
-        elif job_type == 'esxi_upgrade':
-            self.execute_esxi_upgrade(job)
-        elif job_type == 'esxi_then_firmware':
-            self.execute_esxi_then_firmware(job)
-        elif job_type == 'firmware_then_esxi':
-            self.execute_firmware_then_esxi(job)
-        elif job_type == 'browse_datastore':
-            self.execute_browse_datastore(job)
-        elif job_type == 'esxi_preflight_check':
-            self.execute_esxi_preflight_check(job)
-        elif job_type == 'idm_authenticate':
-            self.execute_idm_authenticate(job)
-        elif job_type == 'idm_test_connection':
-            self.execute_idm_test_connection(job)
-        elif job_type == 'idm_sync_users':
-            self.execute_idm_sync_users(job)
+        # Dispatch to handler
+        handler_map = {
+            'discovery_scan': self.discovery_handler.execute_discovery_scan,
+            'firmware_update': self.firmware_handler.execute_firmware_update,
+            'full_server_update': self.firmware_handler.execute_full_server_update,
+            'test_credentials': self.discovery_handler.execute_test_credentials,
+            'power_action': self.power_handler.execute_power_action,
+            'health_check': self.discovery_handler.execute_health_check,
+            'fetch_event_logs': self.discovery_handler.execute_fetch_event_logs,
+            'boot_configuration': self.boot_handler.execute_boot_configuration,
+            'virtual_media_mount': self.virtual_media_handler.execute_virtual_media_mount,
+            'virtual_media_unmount': self.virtual_media_handler.execute_virtual_media_unmount,
+            'scp_export': self.execute_scp_export,
+            'scp_import': self.execute_scp_import,
+            'bios_config_read': self.boot_handler.execute_bios_config_read,
+            'bios_config_write': self.boot_handler.execute_bios_config_write,
+            'vcenter_sync': self.vcenter_handler.execute_vcenter_sync,
+            'vcenter_connectivity_test': self.vcenter_handler.execute_vcenter_connectivity_test,
+            'openmanage_sync': self.vcenter_handler.execute_openmanage_sync,
+            'cluster_safety_check': self.cluster_handler.execute_cluster_safety_check,
+            'server_group_safety_check': self.cluster_handler.execute_server_group_safety_check,
+            'prepare_host_for_update': self.cluster_handler.execute_prepare_host_for_update,
+            'verify_host_after_update': self.cluster_handler.execute_verify_host_after_update,
+            'rolling_cluster_update': self.cluster_handler.execute_rolling_cluster_update,
+            'iso_upload': self.media_handler.execute_iso_upload,
+            'scan_local_isos': self.media_handler.execute_scan_local_isos,
+            'register_iso_url': self.media_handler.execute_register_iso_url,
+            'firmware_upload': self.media_handler.execute_firmware_upload,
+            'catalog_sync': self.media_handler.execute_catalog_sync,
+            'console_launch': self.console_handler.execute_console_launch,
+            'esxi_upgrade': self.esxi_handler.execute_esxi_upgrade,
+            'esxi_then_firmware': self.esxi_handler.execute_esxi_then_firmware,
+            'firmware_then_esxi': self.esxi_handler.execute_firmware_then_esxi,
+            'browse_datastore': self.datastore_handler.execute_browse_datastore,
+            'esxi_preflight_check': self.esxi_handler.execute_esxi_preflight_check,
+            'idm_authenticate': self.idm_handler.execute_idm_authenticate,
+            'idm_test_connection': self.idm_handler.execute_idm_test_connection,
+            'idm_sync_users': self.idm_handler.execute_idm_sync_users,
+        }
+        
+        handler = handler_map.get(job_type)
+        if handler:
+            handler(job)
         else:
             self.log(f"Unknown job type: {job_type}", "ERROR")
             self.update_job_status(
