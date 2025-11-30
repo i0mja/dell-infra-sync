@@ -4,9 +4,13 @@ import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { VCenterStatsBar } from "@/components/vcenter/VCenterStatsBar";
 import { HostsTable } from "@/components/vcenter/HostsTable";
+import { HostFilterToolbar } from "@/components/vcenter/HostFilterToolbar";
 import { VMsTable } from "@/components/vcenter/VMsTable";
+import { VMsFilterToolbar } from "@/components/vcenter/VMsFilterToolbar";
 import { ClustersTable } from "@/components/vcenter/ClustersTable";
+import { ClustersFilterToolbar } from "@/components/vcenter/ClustersFilterToolbar";
 import { DatastoresTable } from "@/components/vcenter/DatastoresTable";
+import { DatastoresFilterToolbar } from "@/components/vcenter/DatastoresFilterToolbar";
 import { VCenterManagementDialog } from "@/components/vcenter/VCenterManagementDialog";
 import { VCenterConnectivityDialog } from "@/components/vcenter/VCenterConnectivityDialog";
 import { ClusterUpdateWizard } from "@/components/jobs/ClusterUpdateWizard";
@@ -41,10 +45,32 @@ interface ClusterGroup {
 export default function VCenter() {
   const [hosts, setHosts] = useState<VCenterHost[]>([]);
   const [hostsLoading, setHostsLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [clusterFilter, setClusterFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [linkFilter, setLinkFilter] = useState("all");
+  
+  // Hosts filters
+  const [hostsSearch, setHostsSearch] = useState("");
+  const [hostsClusterFilter, setHostsClusterFilter] = useState("all");
+  const [hostsStatusFilter, setHostsStatusFilter] = useState("all");
+  const [hostsLinkFilter, setHostsLinkFilter] = useState("all");
+  
+  // VMs filters
+  const [vmsSearch, setVmsSearch] = useState("");
+  const [vmsClusterFilter, setVmsClusterFilter] = useState("all");
+  const [vmsPowerFilter, setVmsPowerFilter] = useState("all");
+  const [vmsToolsFilter, setVmsToolsFilter] = useState("all");
+  const [vmsOsFilter, setVmsOsFilter] = useState("all");
+  
+  // Clusters filters
+  const [clustersSearch, setClustersSearch] = useState("");
+  const [clustersStatusFilter, setClustersStatusFilter] = useState("all");
+  const [clustersHaFilter, setClustersHaFilter] = useState("all");
+  const [clustersDrsFilter, setClustersDrsFilter] = useState("all");
+  
+  // Datastores filters
+  const [datastoresSearch, setDatastoresSearch] = useState("");
+  const [datastoresTypeFilter, setDatastoresTypeFilter] = useState("all");
+  const [datastoresAccessFilter, setDatastoresAccessFilter] = useState("all");
+  const [datastoresCapacityFilter, setDatastoresCapacityFilter] = useState("all");
+  
   const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
   const [selectedVmId, setSelectedVmId] = useState<string | null>(null);
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
@@ -149,24 +175,24 @@ export default function VCenter() {
 
   const filteredHosts = hosts.filter((host) => {
     const matchesSearch =
-      !searchTerm ||
-      host.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      host.cluster?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      host.serial_number?.toLowerCase().includes(searchTerm.toLowerCase());
+      !hostsSearch ||
+      host.name.toLowerCase().includes(hostsSearch.toLowerCase()) ||
+      host.cluster?.toLowerCase().includes(hostsSearch.toLowerCase()) ||
+      host.serial_number?.toLowerCase().includes(hostsSearch.toLowerCase());
 
     const matchesCluster =
-      clusterFilter === "all" || host.cluster === clusterFilter;
+      hostsClusterFilter === "all" || host.cluster === hostsClusterFilter;
 
     const matchesStatus =
-      statusFilter === "all" ||
-      (statusFilter === "connected" && host.status === "connected") ||
-      (statusFilter === "disconnected" && host.status === "disconnected") ||
-      (statusFilter === "maintenance" && host.maintenance_mode);
+      hostsStatusFilter === "all" ||
+      (hostsStatusFilter === "connected" && host.status === "connected") ||
+      (hostsStatusFilter === "disconnected" && host.status === "disconnected") ||
+      (hostsStatusFilter === "maintenance" && host.maintenance_mode);
 
     const matchesLink =
-      linkFilter === "all" ||
-      (linkFilter === "linked" && host.server_id) ||
-      (linkFilter === "unlinked" && !host.server_id);
+      hostsLinkFilter === "all" ||
+      (hostsLinkFilter === "linked" && host.server_id) ||
+      (hostsLinkFilter === "unlinked" && !host.server_id);
 
     return matchesSearch && matchesCluster && matchesStatus && matchesLink;
   });
@@ -529,18 +555,70 @@ export default function VCenter() {
             
             <div className="flex-1" />
             
-            {/* Action Buttons (only show for data tabs, not clusters) */}
-            {activeTab !== "clusters" && (
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm">
-                  <Columns3 className="mr-1 h-4 w-4" /> Columns
-                </Button>
-                <Button variant="outline" size="sm">
-                  <Download className="mr-1 h-4 w-4" /> Export
-                </Button>
-              </div>
-            )}
+            {/* Action Buttons */}
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm">
+                <Columns3 className="mr-1 h-4 w-4" /> Columns
+              </Button>
+              <Button variant="outline" size="sm">
+                <Download className="mr-1 h-4 w-4" /> Export
+              </Button>
+            </div>
           </div>
+
+          {/* Filter Toolbars */}
+          {activeTab === "hosts" && (
+            <HostFilterToolbar
+              searchTerm={hostsSearch}
+              onSearchChange={setHostsSearch}
+              clusters={Array.from(new Set(hosts.map((h) => h.cluster).filter(Boolean))) as string[]}
+              clusterFilter={hostsClusterFilter}
+              onClusterFilterChange={setHostsClusterFilter}
+              statusFilter={hostsStatusFilter}
+              onStatusFilterChange={setHostsStatusFilter}
+              linkFilter={hostsLinkFilter}
+              onLinkFilterChange={setHostsLinkFilter}
+            />
+          )}
+          {activeTab === "vms" && (
+            <VMsFilterToolbar
+              searchTerm={vmsSearch}
+              onSearchChange={setVmsSearch}
+              clusters={Array.from(new Set(vms.map((v) => v.cluster_name).filter(Boolean))) as string[]}
+              clusterFilter={vmsClusterFilter}
+              onClusterFilterChange={setVmsClusterFilter}
+              powerFilter={vmsPowerFilter}
+              onPowerFilterChange={setVmsPowerFilter}
+              toolsFilter={vmsToolsFilter}
+              onToolsFilterChange={setVmsToolsFilter}
+              osFilter={vmsOsFilter}
+              onOsFilterChange={setVmsOsFilter}
+            />
+          )}
+          {activeTab === "clusters" && (
+            <ClustersFilterToolbar
+              searchTerm={clustersSearch}
+              onSearchChange={setClustersSearch}
+              statusFilter={clustersStatusFilter}
+              onStatusFilterChange={setClustersStatusFilter}
+              haFilter={clustersHaFilter}
+              onHaFilterChange={setClustersHaFilter}
+              drsFilter={clustersDrsFilter}
+              onDrsFilterChange={setClustersDrsFilter}
+            />
+          )}
+          {activeTab === "datastores" && (
+            <DatastoresFilterToolbar
+              searchTerm={datastoresSearch}
+              onSearchChange={setDatastoresSearch}
+              typeFilter={datastoresTypeFilter}
+              onTypeFilterChange={setDatastoresTypeFilter}
+              accessFilter={datastoresAccessFilter}
+              onAccessFilterChange={setDatastoresAccessFilter}
+              capacityFilter={datastoresCapacityFilter}
+              onCapacityFilterChange={setDatastoresCapacityFilter}
+            />
+          )}
 
           <TabsContent value="hosts" className="flex-1 mt-0 overflow-hidden">
             <HostsTable
@@ -566,6 +644,11 @@ export default function VCenter() {
               selectedVmId={selectedVmId}
               onVmClick={(vm) => handleVmClick(vm.id)}
               loading={vmsLoading}
+              searchTerm={vmsSearch}
+              clusterFilter={vmsClusterFilter}
+              powerFilter={vmsPowerFilter}
+              toolsFilter={vmsToolsFilter}
+              osFilter={vmsOsFilter}
             />
           </TabsContent>
 
@@ -575,6 +658,10 @@ export default function VCenter() {
               selectedClusterId={selectedClusterId}
               onClusterClick={handleClusterDataClick}
               loading={vmsLoading}
+              searchTerm={clustersSearch}
+              statusFilter={clustersStatusFilter}
+              haFilter={clustersHaFilter}
+              drsFilter={clustersDrsFilter}
             />
           </TabsContent>
 
@@ -584,6 +671,10 @@ export default function VCenter() {
               selectedDatastoreId={selectedDatastoreId}
               onDatastoreClick={(ds) => handleDatastoreClick(ds.id)}
               loading={vmsLoading}
+              searchTerm={datastoresSearch}
+              typeFilter={datastoresTypeFilter}
+              accessFilter={datastoresAccessFilter}
+              capacityFilter={datastoresCapacityFilter}
             />
           </TabsContent>
 

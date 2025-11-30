@@ -20,18 +20,37 @@ interface DatastoresTableProps {
   selectedDatastoreId: string | null;
   onDatastoreClick: (datastore: VCenterDatastore) => void;
   loading: boolean;
+  searchTerm: string;
+  typeFilter: string;
+  accessFilter: string;
+  capacityFilter: string;
+  onExport?: () => void;
+  visibleColumns?: string[];
+  onToggleColumn?: (column: string) => void;
 }
 
-export function DatastoresTable({ datastores, selectedDatastoreId, onDatastoreClick, loading }: DatastoresTableProps) {
-  const [searchTerm, setSearchTerm] = useState("");
-  const [typeFilter, setTypeFilter] = useState("all");
-  const [accessFilter, setAccessFilter] = useState("all");
-  const [capacityFilter, setCapacityFilter] = useState("all");
+export function DatastoresTable({ 
+  datastores, 
+  selectedDatastoreId, 
+  onDatastoreClick, 
+  loading,
+  searchTerm,
+  typeFilter,
+  accessFilter,
+  capacityFilter,
+  onExport,
+  visibleColumns: parentVisibleColumns,
+  onToggleColumn,
+}: DatastoresTableProps) {
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [selectedDatastores, setSelectedDatastores] = useState<Set<string>>(new Set());
 
-  const { visibleColumns, isColumnVisible, toggleColumn } = useColumnVisibility("vcenter-datastores-columns", ["name", "type", "capacity", "free", "usage", "hosts", "vms", "status"]);
+  const { visibleColumns, isColumnVisible, toggleColumn: localToggleColumn } = useColumnVisibility("vcenter-datastores-columns", ["name", "type", "capacity", "free", "usage", "hosts", "vms", "status"]);
+
+  const effectiveVisibleColumns = parentVisibleColumns || visibleColumns;
+  const effectiveToggleColumn = onToggleColumn || localToggleColumn;
+  const isColVisible = (col: string) => effectiveVisibleColumns.includes(col);
 
   const types = Array.from(new Set(datastores.map((ds) => ds.type).filter(Boolean))).sort() as string[];
 
@@ -76,6 +95,10 @@ export function DatastoresTable({ datastores, selectedDatastoreId, onDatastoreCl
   };
 
   const handleExportCSV = () => {
+    if (onExport) {
+      onExport();
+      return;
+    }
     const columns: ExportColumn<VCenterDatastore>[] = [
       { key: "name", label: "Name" },
       { key: "type", label: "Type" },
