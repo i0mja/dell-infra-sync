@@ -3270,6 +3270,9 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
                             log=f'Processing host {index+1}/{total_hosts}: {host.name}',
                             progress=progress
                         )
+                except Exception as progress_error:
+                    self.log(f"  Warning: Could not update progress: {progress_error}", "WARNING")
+                
                 try:
                     # Get host details
                     host_name = host.name
