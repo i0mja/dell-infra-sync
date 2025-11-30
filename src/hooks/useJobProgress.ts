@@ -50,30 +50,79 @@ export function useJobProgress(jobId: string | null, enabled: boolean = true) {
       const details = job?.details;
       let progressPercent = 0;
       
-      // Try to calculate from job details first (with type guards)
-      if (details && typeof details === 'object' && !Array.isArray(details)) {
-        if ('progress_percent' in details && typeof details.progress_percent === 'number') {
-          progressPercent = details.progress_percent;
-        } else if ('vms_total' in details && 'vms_processed' in details && 
-                   typeof details.vms_total === 'number' && typeof details.vms_processed === 'number' && 
-                   details.vms_total > 0) {
-          progressPercent = Math.round((details.vms_processed / details.vms_total) * 100);
-        } else if ('total_ips' in details && 'servers_scanned' in details && 
-                   typeof details.total_ips === 'number' && typeof details.servers_scanned === 'number' && 
-                   details.total_ips > 0) {
-          progressPercent = Math.round((details.servers_scanned / details.total_ips) * 100);
-        } else if ('hosts_total' in details && 'hosts_processed' in details && 
-                   typeof details.hosts_total === 'number' && typeof details.hosts_processed === 'number' && 
-                   details.hosts_total > 0) {
-          progressPercent = Math.round((details.hosts_processed / details.hosts_total) * 100);
-        } else if ('total_servers' in details && 'current_server_index' in details && 
-                   typeof details.total_servers === 'number' && typeof details.current_server_index === 'number' && 
-                   details.total_servers > 0) {
-          progressPercent = Math.round(((details.current_server_index + 1) / details.total_servers) * 100);
-        } else if (totalTasks > 0) {
-          // Fall back to task-based calculation
-          progressPercent = Math.round((completedTasks / totalTasks) * 100);
+      // Calculate progress from details if available
+      const calculatedProgress = (() => {
+        const jobDetails = job?.details;
+        if (!jobDetails || typeof jobDetails !== 'object' || Array.isArray(jobDetails)) return null;
+        
+        // Already has explicit progress
+        if ('progress_percent' in jobDetails && jobDetails.progress_percent !== undefined && jobDetails.progress_percent !== null) {
+          return typeof jobDetails.progress_percent === 'number' ? jobDetails.progress_percent : null;
         }
+        
+        // vCenter sync: vms_processed / vms_total
+        if ('vms_total' in jobDetails && 'vms_processed' in jobDetails && 
+            typeof jobDetails.vms_total === 'number' && typeof jobDetails.vms_processed === 'number' && 
+            jobDetails.vms_total > 0) {
+          return Math.round((jobDetails.vms_processed / jobDetails.vms_total) * 100);
+        }
+        
+        // Discovery scan: servers_scanned / total_ips
+        if ('total_ips' in jobDetails && 'servers_scanned' in jobDetails && 
+            typeof jobDetails.total_ips === 'number' && typeof jobDetails.servers_scanned === 'number' && 
+            jobDetails.total_ips > 0) {
+          return Math.round((jobDetails.servers_scanned / jobDetails.total_ips) * 100);
+        }
+        
+        // Hosts sync: hosts_processed / hosts_total or hosts_synced / hosts_total
+        if ('hosts_total' in jobDetails && 
+            typeof jobDetails.hosts_total === 'number' && jobDetails.hosts_total > 0) {
+          const processed = ('hosts_processed' in jobDetails && typeof jobDetails.hosts_processed === 'number') 
+            ? jobDetails.hosts_processed 
+            : ('hosts_synced' in jobDetails && typeof jobDetails.hosts_synced === 'number') 
+            ? jobDetails.hosts_synced 
+            : null;
+          if (processed !== null) {
+            return Math.round((processed / jobDetails.hosts_total) * 100);
+          }
+        }
+        
+        // Multi-server jobs: current_server_index / total_servers
+        if ('total_servers' in jobDetails && 'current_server_index' in jobDetails && 
+            typeof jobDetails.total_servers === 'number' && typeof jobDetails.current_server_index === 'number' && 
+            jobDetails.total_servers > 0) {
+          return Math.round(((jobDetails.current_server_index + 1) / jobDetails.total_servers) * 100);
+        }
+        
+        // Health check: (success_count + failed_count) / total
+        if ('total' in jobDetails && 'success_count' in jobDetails && 
+            typeof jobDetails.total === 'number' && jobDetails.total > 0) {
+          const completed = (typeof jobDetails.success_count === 'number' ? jobDetails.success_count : 0) + 
+                           (typeof jobDetails.failed_count === 'number' ? jobDetails.failed_count : 0);
+          return Math.round((completed / jobDetails.total) * 100);
+        }
+        
+        // Multi-server jobs with total_servers: scp_export, power_control, event_log_fetch
+        if ('total_servers' in jobDetails && 
+            typeof jobDetails.total_servers === 'number' && jobDetails.total_servers > 0) {
+          // Check if we have success/failed counts
+          if ('success_count' in jobDetails || 'failed_count' in jobDetails) {
+            const completed = (typeof jobDetails.success_count === 'number' ? jobDetails.success_count : 0) + 
+                             (typeof jobDetails.failed_count === 'number' ? jobDetails.failed_count : 0);
+            return Math.round((completed / jobDetails.total_servers) * 100);
+          }
+          // Check if we have results array
+          if ('results' in jobDetails && Array.isArray(jobDetails.results)) {
+            return Math.round((jobDetails.results.length / jobDetails.total_servers) * 100);
+          }
+        }
+        
+        return null;
+      })();
+      
+      // Use calculated progress or fall back to task-based calculation
+      if (calculatedProgress !== null) {
+        progressPercent = calculatedProgress;
       } else if (totalTasks > 0) {
         progressPercent = Math.round((completedTasks / totalTasks) * 100);
       }

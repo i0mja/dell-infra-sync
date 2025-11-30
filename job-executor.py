@@ -4890,8 +4890,22 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             
             success_count = 0
             failed_count = 0
+            total_servers = len(servers)
             
-            for server in servers:
+            for index, server in enumerate(servers):
+                # Update progress
+                self.update_job_status(
+                    job['id'],
+                    'running',
+                    details={
+                        "current_server_index": index,
+                        "total_servers": total_servers,
+                        "success_count": success_count,
+                        "failed_count": failed_count,
+                        "action": action,
+                        "current_step": f"Executing {action} on {server['ip_address']} ({index+1}/{total_servers})"
+                    }
+                )
                 ip = server['ip_address']
                 self.log(f"Executing {action} on {ip}...")
                 
@@ -5037,8 +5051,22 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             success_count = 0
             failed_count = 0
             failed_servers = []
+            total_servers = len(servers)
             
-            for server in servers:
+            for index, server in enumerate(servers):
+                # Update progress
+                self.update_job_status(
+                    job['id'],
+                    'running',
+                    details={
+                        "current_server_index": index,
+                        "total_servers": total_servers,
+                        "success_count": success_count,
+                        "failed_count": failed_count,
+                        "total": total_servers,
+                        "current_step": f"Checking {server['ip_address']} ({index+1}/{total_servers})"
+                    }
+                )
                 ip = server['ip_address']
                 self.log(f"Checking health for {ip}...")
                 
@@ -5940,8 +5968,22 @@ class JobExecutor(ScpMixin, ConnectivityMixin):
             success_count = 0
             failed_count = 0
             results = []
+            total_servers = len(servers)
             
-            for server in servers:
+            for index, server in enumerate(servers):
+                # Update progress
+                self.update_job_status(
+                    job['id'],
+                    'running',
+                    details={
+                        "current_server_index": index,
+                        "total_servers": total_servers,
+                        "success_count": success_count,
+                        "failed_count": failed_count,
+                        "action": action,
+                        "current_step": f"Processing {server['ip_address']} ({index+1}/{total_servers})"
+                    }
+                )
                 ip = server['ip_address']
                 self.log(f"Processing boot configuration for {ip}...")
                 
