@@ -3,16 +3,22 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ActivityStatsBar } from "@/components/activity/ActivityStatsBar";
-import { FilterToolbar } from "@/components/activity/FilterToolbar";
+import { JobsFilterToolbar } from "@/components/activity/JobsFilterToolbar";
+import { CommandsFilterToolbar } from "@/components/activity/CommandsFilterToolbar";
 import { CommandsTable } from "@/components/activity/CommandsTable";
 import { CommandDetailsSidebar } from "@/components/activity/CommandDetailsSidebar";
 import { CommandDetailDialog } from "@/components/activity/CommandDetailDialog";
-import { ActiveJobsBanner } from "@/components/activity/ActiveJobsBanner";
-import { JobsActivityView } from "@/components/activity/JobsActivityView";
+import { JobsTable } from "@/components/activity/JobsTable";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuCheckboxItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Columns3, Download } from "lucide-react";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useActiveJobs } from "@/hooks/useActiveJobs";
+import { useJobsWithProgress } from "@/hooks/useJobsWithProgress";
+import { useColumnVisibility } from "@/hooks/useColumnVisibility";
+import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 
 interface IdracCommand {
   id: string;
@@ -49,23 +55,44 @@ interface Job {
 
 export default function ActivityMonitor() {
   const [commands, setCommands] = useState<IdracCommand[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedCommand, setSelectedCommand] = useState<IdracCommand | null>(null);
+  const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
   const [isDetailsSheetOpen, setIsDetailsSheetOpen] = useState(false);
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState("operations");
   
-  // Filters
+  // Jobs filters
+  const [jobsSearch, setJobsSearch] = useState("");
+  const [jobsStatusFilter, setJobsStatusFilter] = useState("all");
+  const [jobsTypeFilter, setJobsTypeFilter] = useState("all");
+  const [jobsTimeRange, setJobsTimeRange] = useState("24h");
+  
+  // Commands filters
   const [serverFilter, setServerFilter] = useState<string>("all");
   const [commandTypeFilter, setCommandTypeFilter] = useState<string>("all");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [commandStatusFilter, setCommandStatusFilter] = useState<string>("all");
   const [operationTypeFilter, setOperationTypeFilter] = useState<string>("all");
   const [commandSource, setCommandSource] = useState<string>("all");
-  const [timeRangeFilter, setTimeRangeFilter] = useState<string>("24h");
-  const [searchTerm, setSearchTerm] = useState("");
+  const [commandTimeRange, setCommandTimeRange] = useState<string>("24h");
+  const [commandSearchTerm, setCommandSearchTerm] = useState("");
 
   // Connection state
   const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
 
   const isDesktop = useMediaQuery('(min-width: 1280px)');
+
+  // Column visibility for jobs
+  const { visibleColumns: jobsColumns, isColumnVisible: isJobColVisible, toggleColumn: toggleJobColumn } = useColumnVisibility(
+    "jobs-table-columns",
+    ["job_type", "status", "duration", "target", "started", "progress"]
+  );
+
+  // Column visibility for commands
+  const { visibleColumns: commandsColumns, isColumnVisible: isCommandColVisible, toggleColumn: toggleCommandColumn } = useColumnVisibility(
+    "commands-table-columns",
+    ["time", "operation", "endpoint", "type", "status", "response"]
+  );
 
   // Fetch servers for filter dropdown
   const { data: servers } = useQuery({
@@ -83,10 +110,19 @@ export default function ActivityMonitor() {
   // Fetch active jobs for live view with real-time updates
   const { activeJobs, refetch: refetchActiveJobs } = useActiveJobs();
 
+  // Fetch jobs with progress
+  const { data: jobsWithProgress } = useJobsWithProgress();
+
+  useEffect(() => {
+    if (jobsWithProgress) {
+      setJobs(jobsWithProgress as Job[]);
+    }
+  }, [jobsWithProgress]);
+
   // Calculate time range
-  const getTimeRangeDate = () => {
+  const getTimeRangeDate = (filter: string) => {
     const now = new Date();
-    switch (timeRangeFilter) {
+    switch (filter) {
       case '1h': return new Date(now.getTime() - 60 * 60 * 1000);
       case '6h': return new Date(now.getTime() - 6 * 60 * 60 * 1000);
       case '24h': return new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -99,7 +135,7 @@ export default function ActivityMonitor() {
 
   // Fetch commands
   const { data: commandsData, refetch, isError, error } = useQuery({
-    queryKey: ['idrac-commands', serverFilter, commandTypeFilter, statusFilter, operationTypeFilter, commandSource, timeRangeFilter],
+    queryKey: ['idrac-commands', serverFilter, commandTypeFilter, commandStatusFilter, operationTypeFilter, commandSource, commandTimeRange],
     queryFn: async () => {
       let query = supabase
         .from('idrac_commands')
@@ -107,8 +143,8 @@ export default function ActivityMonitor() {
         .order('timestamp', { ascending: false })
         .limit(500);
 
-      if (timeRangeFilter !== 'all') {
-        query = query.gte('timestamp', getTimeRangeDate().toISOString());
+      if (commandTimeRange !== 'all') {
+        query = query.gte('timestamp', getTimeRangeDate(commandTimeRange).toISOString());
       }
 
       if (serverFilter !== 'all') {
@@ -117,8 +153,8 @@ export default function ActivityMonitor() {
       if (commandTypeFilter !== 'all') {
         query = query.eq('command_type', commandTypeFilter);
       }
-      if (statusFilter !== 'all') {
-        query = query.eq('success', statusFilter === 'success');
+      if (commandStatusFilter !== 'all') {
+        query = query.eq('success', commandStatusFilter === 'success');
       }
       if (operationTypeFilter !== 'all') {
         query = query.eq('operation_type', operationTypeFilter as 'idrac_api' | 'vcenter_api' | 'openmanage_api');
@@ -224,7 +260,29 @@ export default function ActivityMonitor() {
     return (successCount / commands.length) * 100;
   };
 
-  const handleExportCSV = () => {
+  const handleJobClick = (job: Job) => {
+    setExpandedJobId(expandedJobId === job.id ? null : job.id);
+  };
+
+  const handleTabChange = (value: string) => {
+    setActiveTab(value);
+    setSelectedCommand(null);
+    setExpandedJobId(null);
+  };
+
+  const handleExportJobsCSV = () => {
+    const columns: ExportColumn<Job>[] = [
+      { key: "job_type", label: "Job Type" },
+      { key: "status", label: "Status" },
+      { key: "created_at", label: "Created" },
+      { key: "started_at", label: "Started" },
+      { key: "completed_at", label: "Completed" },
+    ];
+    exportToCSV(filteredJobs, columns, "jobs");
+    toast.success(`Exported ${filteredJobs.length} jobs`);
+  };
+
+  const handleExportCommandsCSV = () => {
     const stringifyField = (value: unknown) => {
       if (value === null || value === undefined) return '';
       if (typeof value === 'string') return value;
@@ -322,8 +380,8 @@ export default function ActivityMonitor() {
 
   // Filter commands based on search
   const filteredCommands = commands.filter(cmd => {
-    if (!searchTerm) return true;
-    const search = searchTerm.toLowerCase();
+    if (!commandSearchTerm) return true;
+    const search = commandSearchTerm.toLowerCase();
     return (
       cmd.endpoint.toLowerCase().includes(search) ||
       cmd.full_url.toLowerCase().includes(search) ||
@@ -331,6 +389,17 @@ export default function ActivityMonitor() {
       cmd.servers?.hostname?.toLowerCase().includes(search) ||
       cmd.servers?.ip_address?.toLowerCase().includes(search)
     );
+  });
+
+  // Filter jobs based on search and filters
+  const filteredJobs = jobs.filter(job => {
+    if (jobsStatusFilter !== "all" && job.status !== jobsStatusFilter) return false;
+    if (jobsTypeFilter !== "all" && job.job_type !== jobsTypeFilter) return false;
+    if (jobsSearch) {
+      const search = jobsSearch.toLowerCase();
+      if (!job.job_type.toLowerCase().includes(search)) return false;
+    }
+    return true;
   });
 
   return (
@@ -342,38 +411,163 @@ export default function ActivityMonitor() {
         failedCount={commands.filter(c => !c.success).length}
         liveStatus={realtimeStatus}
         onRefresh={handleManualRefresh}
-        onExportCSV={handleExportCSV}
+        onExportCSV={handleExportCommandsCSV}
         onExportJSON={handleExportJSON}
       />
 
       <div className="flex-1 overflow-hidden">
-        <Tabs defaultValue="operations" className="h-full">
-          <TabsContent value="operations" className="h-full mt-0">
-            <JobsActivityView 
-              activeJobs={activeJobs}
-              realtimeStatus={realtimeStatus}
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="h-full flex flex-col">
+          {/* Tab bar with Columns/Export buttons */}
+          <div className="flex items-center border-b bg-card px-4">
+            <TabsList>
+              <TabsTrigger value="operations">Operations</TabsTrigger>
+              <TabsTrigger value="api-log">API Log</TabsTrigger>
+            </TabsList>
+            
+            {activeJobs.length > 0 && activeTab === "operations" && (
+              <>
+                <div className="w-px h-6 bg-border mx-2" />
+                <div className="inline-flex items-center gap-2 px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 text-xs">
+                  <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
+                  {activeJobs.length} running
+                </div>
+              </>
+            )}
+
+            <div className="flex-1" />
+
+            <div
+              className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${
+                realtimeStatus === 'connected'
+                  ? 'bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/30'
+                  : 'bg-amber-500/10 text-amber-700 ring-1 ring-amber-500/30'
+              }`}
+            >
+              <span className="h-2 w-2 rounded-full bg-current" />
+              {realtimeStatus === 'connected' ? 'Live' : 'Paused'}
+            </div>
+
+            {/* Columns dropdown */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-8 ml-2">
+                  <Columns3 className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-56" align="end">
+                <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {activeTab === "operations" ? (
+                  <>
+                    <DropdownMenuCheckboxItem checked={isJobColVisible("job_type")} onCheckedChange={() => toggleJobColumn("job_type")}>
+                      Job Type
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem checked={isJobColVisible("status")} onCheckedChange={() => toggleJobColumn("status")}>
+                      Status
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem checked={isJobColVisible("duration")} onCheckedChange={() => toggleJobColumn("duration")}>
+                      Duration
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem checked={isJobColVisible("target")} onCheckedChange={() => toggleJobColumn("target")}>
+                      Target
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem checked={isJobColVisible("started")} onCheckedChange={() => toggleJobColumn("started")}>
+                      Started
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem checked={isJobColVisible("progress")} onCheckedChange={() => toggleJobColumn("progress")}>
+                      Progress
+                    </DropdownMenuCheckboxItem>
+                  </>
+                ) : (
+                  <>
+                    <DropdownMenuCheckboxItem checked={isCommandColVisible("time")} onCheckedChange={() => toggleCommandColumn("time")}>
+                      Time
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem checked={isCommandColVisible("operation")} onCheckedChange={() => toggleCommandColumn("operation")}>
+                      Operation
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem checked={isCommandColVisible("endpoint")} onCheckedChange={() => toggleCommandColumn("endpoint")}>
+                      Endpoint
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem checked={isCommandColVisible("type")} onCheckedChange={() => toggleCommandColumn("type")}>
+                      Type
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem checked={isCommandColVisible("status")} onCheckedChange={() => toggleCommandColumn("status")}>
+                      Status
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem checked={isCommandColVisible("response")} onCheckedChange={() => toggleCommandColumn("response")}>
+                      Response
+                    </DropdownMenuCheckboxItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* Export button */}
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="h-8 ml-1" 
+              onClick={activeTab === "operations" ? handleExportJobsCSV : handleExportCommandsCSV}
+            >
+              <Download className="h-4 w-4" />
+            </Button>
+          </div>
+
+          {/* Filter toolbar - contextual per tab */}
+          {activeTab === "operations" && (
+            <JobsFilterToolbar
+              searchTerm={jobsSearch}
+              onSearchChange={setJobsSearch}
+              statusFilter={jobsStatusFilter}
+              onStatusFilterChange={setJobsStatusFilter}
+              jobTypeFilter={jobsTypeFilter}
+              onJobTypeFilterChange={setJobsTypeFilter}
+              timeRangeFilter={jobsTimeRange}
+              onTimeRangeFilterChange={setJobsTimeRange}
+            />
+          )}
+          {activeTab === "api-log" && (
+            <CommandsFilterToolbar
+              searchTerm={commandSearchTerm}
+              onSearchChange={setCommandSearchTerm}
+              operationTypeFilter={operationTypeFilter}
+              onOperationTypeFilterChange={setOperationTypeFilter}
+              serverFilter={serverFilter}
+              onServerFilterChange={setServerFilter}
+              commandTypeFilter={commandTypeFilter}
+              onCommandTypeFilterChange={setCommandTypeFilter}
+              statusFilter={commandStatusFilter}
+              onStatusFilterChange={setCommandStatusFilter}
+              sourceFilter={commandSource}
+              onSourceFilterChange={setCommandSource}
+              timeRangeFilter={commandTimeRange}
+              onTimeRangeFilterChange={setCommandTimeRange}
+              servers={servers || []}
+            />
+          )}
+
+          {/* Tab content */}
+          <TabsContent value="operations" className="flex-1 mt-0 overflow-hidden">
+            <JobsTable
+              jobs={filteredJobs}
+              onJobClick={handleJobClick}
+              expandedJobId={expandedJobId}
+              visibleColumns={jobsColumns}
+              onToggleColumn={toggleJobColumn}
+              onExport={handleExportJobsCSV}
             />
           </TabsContent>
 
-          <TabsContent value="api-log" className="h-full mt-0">
-            <div className="flex flex-col h-full border rounded-lg shadow-sm">
-              <div className="flex items-center gap-2 px-4 py-2 border-b flex-wrap">
-                <TabsList>
-                  <TabsTrigger value="operations">Operations</TabsTrigger>
-                  <TabsTrigger value="api-log">API Log</TabsTrigger>
-                </TabsList>
-                <div className="flex-1" />
-                <div className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${
-                  realtimeStatus === 'connected' ? 'bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/30' : 'bg-amber-500/10 text-amber-700 ring-1 ring-amber-500/30'
-                }`}>
-                  <span className="h-2 w-2 rounded-full bg-current" />
-                  {realtimeStatus === 'connected' ? 'Live' : 'Paused'}
-                </div>
-              </div>
-              <div className="flex-1 overflow-auto">
-                <CommandsTable commands={filteredCommands} selectedId={selectedCommand?.id} onRowClick={handleRowClick} isLive={realtimeStatus === 'connected'} className="border-0 rounded-none" />
-              </div>
-            </div>
+          <TabsContent value="api-log" className="flex-1 mt-0 overflow-hidden">
+            <CommandsTable
+              commands={filteredCommands}
+              selectedId={selectedCommand?.id}
+              onRowClick={handleRowClick}
+              isLive={realtimeStatus === 'connected'}
+              visibleColumns={commandsColumns}
+              onToggleColumn={toggleCommandColumn}
+            />
           </TabsContent>
         </Tabs>
       </div>

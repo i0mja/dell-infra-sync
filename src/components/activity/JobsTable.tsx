@@ -56,40 +56,45 @@ interface Job {
 
 interface JobsTableProps {
   jobs: Job[];
-  searchTerm: string;
-  onSearchChange: (value: string) => void;
-  statusFilter: string;
-  onStatusFilterChange: (value: string) => void;
-  jobTypeFilter: string;
-  onJobTypeFilterChange: (value: string) => void;
-  timeRangeFilter: string;
-  onTimeRangeFilterChange: (value: string) => void;
   onJobClick: (job: Job) => void;
   expandedJobId: string | null;
+  visibleColumns?: string[];
+  onToggleColumn?: (column: string) => void;
+  onExport?: () => void;
 }
 
 export function JobsTable({
   jobs,
-  searchTerm,
-  onSearchChange,
-  statusFilter,
-  onStatusFilterChange,
-  jobTypeFilter,
-  onJobTypeFilterChange,
-  timeRangeFilter,
-  onTimeRangeFilterChange,
   onJobClick,
   expandedJobId,
+  visibleColumns: propsVisibleColumns,
+  onToggleColumn: propsOnToggleColumn,
+  onExport: propsOnExport,
 }: JobsTableProps) {
   const [sortField, setSortField] = useState<string | null>("created_at");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const { toast } = useToast();
 
-  const { visibleColumns, isColumnVisible, toggleColumn } = useColumnVisibility(
+  const { visibleColumns: localVisibleColumns, isColumnVisible: localIsColumnVisible, toggleColumn: localToggleColumn } = useColumnVisibility(
     "jobs-table-columns",
     ["job_type", "status", "duration", "target", "started", "progress"]
   );
+
+  const isColumnVisible = (col: string) => {
+    if (propsVisibleColumns) {
+      return propsVisibleColumns.includes(col);
+    }
+    return localIsColumnVisible(col);
+  };
+
+  const toggleColumn = (col: string) => {
+    if (propsOnToggleColumn) {
+      propsOnToggleColumn(col);
+    } else {
+      localToggleColumn(col);
+    }
+  };
 
   const handleSort = (field: string) => {
     if (sortField === field) {
@@ -129,6 +134,11 @@ export function JobsTable({
   };
 
   const handleExportCSV = () => {
+    if (propsOnExport) {
+      propsOnExport();
+      return;
+    }
+
     const columns: ExportColumn<Job>[] = [
       { key: "job_type", label: "Job Type" },
       { key: "status", label: "Status" },
@@ -258,127 +268,7 @@ export function JobsTable({
   }
 
   return (
-    <div className="flex flex-col h-full border rounded-lg shadow-sm">
-      {/* Unified Toolbar */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b flex-wrap">
-        <Checkbox
-          checked={selectedJobs.size === jobs.length && jobs.length > 0}
-          onCheckedChange={toggleAllJobs}
-        />
-        <span className="text-xs text-muted-foreground">
-          {selectedJobs.size > 0 ? `${selectedJobs.size} selected` : "Select all"}
-        </span>
-
-        <div className="relative w-64">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-          <Input
-            placeholder="Search jobs..."
-            value={searchTerm}
-            onChange={(e) => onSearchChange(e.target.value)}
-            className="pl-8 h-8 text-sm"
-          />
-        </div>
-
-        <Select value={statusFilter} onValueChange={onStatusFilterChange}>
-          <SelectTrigger className="w-[120px] h-8 text-sm">
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Status</SelectItem>
-            <SelectItem value="completed">Completed</SelectItem>
-            <SelectItem value="failed">Failed</SelectItem>
-            <SelectItem value="running">Running</SelectItem>
-            <SelectItem value="pending">Pending</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <Select value={jobTypeFilter} onValueChange={onJobTypeFilterChange}>
-          <SelectTrigger className="w-[160px] h-8 text-sm">
-            <SelectValue placeholder="Job Type" />
-          </SelectTrigger>
-            <SelectContent>
-            <SelectItem value="all">All Types</SelectItem>
-            <SelectItem value="discovery_scan">Initial Server Sync</SelectItem>
-            <SelectItem value="vcenter_sync">vCenter Sync</SelectItem>
-            <SelectItem value="scp_export">SCP Export</SelectItem>
-            <SelectItem value="scp_import">SCP Import</SelectItem>
-            <SelectItem value="firmware_update">Firmware Update</SelectItem>
-            <SelectItem value="power_control">Power Control</SelectItem>
-            <SelectItem value="console_launch">Console Launch</SelectItem>
-            <SelectItem value="esxi_upgrade">ESXi Upgrade</SelectItem>
-            <SelectItem value="esxi_preflight_check">ESXi Preflight</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <Select value={timeRangeFilter} onValueChange={onTimeRangeFilterChange}>
-          <SelectTrigger className="w-[100px] h-8 text-sm">
-            <SelectValue placeholder="Time" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="1h">1 Hour</SelectItem>
-            <SelectItem value="6h">6 Hours</SelectItem>
-            <SelectItem value="24h">24 Hours</SelectItem>
-            <SelectItem value="7d">7 Days</SelectItem>
-            <SelectItem value="30d">30 Days</SelectItem>
-            <SelectItem value="all">All Time</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <div className="flex-1" />
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-8">
-              <Columns3 className="h-3.5 w-3.5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-56" align="end">
-            <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuCheckboxItem
-              checked={isColumnVisible("job_type")}
-              onCheckedChange={() => toggleColumn("job_type")}
-            >
-              Job Type
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem
-              checked={isColumnVisible("status")}
-              onCheckedChange={() => toggleColumn("status")}
-            >
-              Status
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem
-              checked={isColumnVisible("duration")}
-              onCheckedChange={() => toggleColumn("duration")}
-            >
-              Duration
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem
-              checked={isColumnVisible("target")}
-              onCheckedChange={() => toggleColumn("target")}
-            >
-              Target
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem
-              checked={isColumnVisible("started")}
-              onCheckedChange={() => toggleColumn("started")}
-            >
-              Started
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem
-              checked={isColumnVisible("progress")}
-              onCheckedChange={() => toggleColumn("progress")}
-            >
-              Progress
-            </DropdownMenuCheckboxItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <Button variant="ghost" size="sm" className="h-8" onClick={handleExportCSV}>
-          <Download className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-
+    <div className="flex flex-col h-full">
       {/* Table */}
       <div className="flex-1 overflow-auto">
         <Table>
