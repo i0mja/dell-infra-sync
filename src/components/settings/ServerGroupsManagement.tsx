@@ -355,14 +355,7 @@ export function ServerGroupsManagement() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">Server Groups</h2>
-          <p className="text-muted-foreground">
-            Organize standalone Dell servers into logical groups for maintenance scheduling
-          </p>
-        </div>
-        
+      <div className="flex items-center justify-end">
         <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
           <DialogTrigger asChild>
             <Button onClick={() => { setEditingGroup(null); resetForm(); }}>
