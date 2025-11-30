@@ -77,11 +77,11 @@ export const CommandDetailsSidebar = ({
   };
 
   return (
-    <div className={cn("border rounded-lg bg-card flex flex-col h-full overflow-hidden", className)}>
+    <div className={cn("w-96 border-l bg-card flex-shrink-0 h-full flex flex-col", className)}>
       {/* Header */}
-      <div className="border-b px-4 py-3 flex items-center gap-2">
-        <h3 className="font-semibold">Command Details</h3>
-        <div className="ml-auto flex items-center gap-2">
+      <div className="flex items-center justify-between p-4 border-b">
+        <h2 className="text-lg font-semibold">Command Details</h2>
+        <div className="flex items-center gap-2">
           {onExpand && (
             <Button
               variant="outline"
