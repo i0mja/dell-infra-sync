@@ -87,11 +87,17 @@ export function useJobsWithProgress() {
             return Math.round((details.servers_scanned / details.total_ips) * 100);
           }
           
-          // Hosts sync: hosts_processed / hosts_total
-          if ('hosts_total' in details && 'hosts_processed' in details && 
-              typeof details.hosts_total === 'number' && typeof details.hosts_processed === 'number' && 
-              details.hosts_total > 0) {
-            return Math.round((details.hosts_processed / details.hosts_total) * 100);
+          // Hosts sync: hosts_processed / hosts_total or hosts_synced / hosts_total
+          if ('hosts_total' in details && 
+              typeof details.hosts_total === 'number' && details.hosts_total > 0) {
+            const processed = ('hosts_processed' in details && typeof details.hosts_processed === 'number') 
+              ? details.hosts_processed 
+              : ('hosts_synced' in details && typeof details.hosts_synced === 'number') 
+              ? details.hosts_synced 
+              : null;
+            if (processed !== null) {
+              return Math.round((processed / details.hosts_total) * 100);
+            }
           }
           
           // Multi-server jobs: current_server_index / total_servers
@@ -99,6 +105,29 @@ export function useJobsWithProgress() {
               typeof details.total_servers === 'number' && typeof details.current_server_index === 'number' && 
               details.total_servers > 0) {
             return Math.round(((details.current_server_index + 1) / details.total_servers) * 100);
+          }
+          
+          // Health check: (success_count + failed_count) / total
+          if ('total' in details && 'success_count' in details && 
+              typeof details.total === 'number' && details.total > 0) {
+            const completed = (typeof details.success_count === 'number' ? details.success_count : 0) + 
+                             (typeof details.failed_count === 'number' ? details.failed_count : 0);
+            return Math.round((completed / details.total) * 100);
+          }
+          
+          // Multi-server jobs with total_servers: scp_export, power_control, event_log_fetch
+          if ('total_servers' in details && 
+              typeof details.total_servers === 'number' && details.total_servers > 0) {
+            // Check if we have success/failed counts
+            if ('success_count' in details || 'failed_count' in details) {
+              const completed = (typeof details.success_count === 'number' ? details.success_count : 0) + 
+                               (typeof details.failed_count === 'number' ? details.failed_count : 0);
+              return Math.round((completed / details.total_servers) * 100);
+            }
+            // Check if we have results array
+            if ('results' in details && Array.isArray(details.results)) {
+              return Math.round((details.results.length / details.total_servers) * 100);
+            }
           }
           
           return null;
