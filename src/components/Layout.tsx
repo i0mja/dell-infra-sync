@@ -63,7 +63,7 @@ const Layout = () => {
 
   const settingsNavigation = getSettingsNavigation();
 
-  const activeTab = searchParams.get('tab') || 'appearance';
+  const activeTab = searchParams.get('tab') || 'general';
 
   const NavLinks = () => (
     <>
