@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTheme } from "next-themes";
 import { Activity, AlertCircle, Bell, Briefcase, CheckCircle2, ChevronDown, ChevronRight, CloudCog, Copy, Database, Disc, FileText, Globe, Info, Loader2, Mail, MessageSquare, Monitor, Moon, Network, Palette, Plus, RefreshCw, Save, Server, Settings as SettingsIcon, Shield, ShieldAlert, Sun, Terminal, Users, X, XCircle } from "lucide-react";
@@ -29,6 +28,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { getTabMetadata, settingsTabs, mapLegacyTabId } from "@/config/settings-tabs";
 import { SettingsSection } from "@/components/settings/SettingsSection";
+import { SettingsNavigation } from "@/components/settings/SettingsNavigation";
+import { SettingsPageHeader } from "@/components/settings/SettingsPageHeader";
 
 export default function Settings() {
   const isLocalMode = import.meta.env.VITE_SUPABASE_URL?.includes('127.0.0.1') || 
@@ -464,9 +465,6 @@ export default function Settings() {
     const newTab = tabFromUrl === 'activity-monitor' ? 'activity' : tabFromUrl === 'jobs' ? 'jobs' : tabFromUrl || 'appearance';
     setActiveTab(newTab);
   }, [searchParams]);
-
-  // Tab metadata for dynamic headers
-  const tabMetadata = getTabMetadata();
 
   const loadRecentNotifications = async () => {
     const { data, error } = await supabase
@@ -2148,48 +2146,39 @@ export default function Settings() {
     );
   }
 
+  // Get current tab metadata
+  const currentTab = settingsTabs.find(t => t.id === activeTab) || settingsTabs[0];
+  const tabMetadata = getTabMetadata();
+  const currentMeta = tabMetadata[activeTab];
+
   return (
-    <div className="container mx-auto py-8">
-      <div className="mb-6">
-        <div className="flex items-center gap-3 mb-2">
-          {tabMetadata[activeTab]?.icon && (
-            <div className="text-primary">
-              {(() => {
-                const IconComponent = tabMetadata[activeTab].icon;
-                return <IconComponent className="h-8 w-8" />;
-              })()}
-            </div>
-          )}
-          <h1 className="text-3xl font-bold">
-            {tabMetadata[activeTab]?.title || "Settings"}
-          </h1>
-        </div>
-        <p className="text-muted-foreground">
-          {tabMetadata[activeTab]?.description || "Manage your application settings"}
-        </p>
-      </div>
-
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-5 mb-6">
-          {settingsTabs.map(tab => {
-            const Icon = tab.icon;
-            return (
-              <TabsTrigger key={tab.id} value={tab.id} className="flex items-center gap-2">
-                <Icon className="h-4 w-4" />
-                {tab.name}
-              </TabsTrigger>
-            );
-          })}
-        </TabsList>
-
-        {/* GENERAL TAB */}
-        <TabsContent value="general" className="space-y-4">
+    <div className="flex min-h-screen w-full bg-background">
+      <SettingsNavigation
+        items={settingsTabs}
+        activeTab={activeTab}
+        activeSection={defaultOpenSection}
+        onNavigate={(tabId, sectionId) => {
+          setActiveTab(tabId);
+          if (sectionId) setDefaultOpenSection(sectionId);
+        }}
+      />
+      
+      <main className="flex-1 overflow-y-auto">
+        <SettingsPageHeader
+          icon={currentTab.icon}
+          title={currentMeta?.title || currentTab.title}
+          description={currentMeta?.description || currentTab.description}
+          badge={isLocalMode ? { label: "Air-Gapped Mode", variant: "secondary" } : { label: "Cloud Mode", variant: "default" }}
+        />
+        
+        <div className="px-8 py-6 max-w-5xl">
+          {activeTab === 'general' && (
+            <div className="space-y-8">
           <SettingsSection
             id="appearance"
             title="Appearance"
             description="Customize the look and feel of the application"
             icon={Palette}
-            defaultOpen={defaultOpenSection === 'appearance'}
           >
             <div className="space-y-4">
               <Card>
@@ -2230,17 +2219,17 @@ export default function Settings() {
               </Card>
             </div>
           </SettingsSection>
-        </TabsContent>
+          </div>
+          )}
 
-        {/* SECURITY & ACCESS TAB */}
-        <TabsContent value="security" className="space-y-4">
+          {activeTab === 'security' && (
+            <div className="space-y-8">
           {/* Credentials */}
           <SettingsSection
             id="credentials"
             title="Credentials"
             description="Manage iDRAC and ESXi credential sets with IP range auto-assignment"
             icon={Shield}
-            defaultOpen={defaultOpenSection === 'credentials'}
           >
             <div className="space-y-4">
               <div className="flex justify-between items-center">
@@ -2576,7 +2565,6 @@ export default function Settings() {
             title="Identity Provider"
             description="Configure LDAP/Active Directory authentication and user synchronization"
             icon={Users}
-            defaultOpen={defaultOpenSection === 'identity-provider'}
           >
             <IdentityProviderSettings />
           </SettingsSection>
@@ -2587,7 +2575,6 @@ export default function Settings() {
             title="Audit Logs"
             description="View security audit logs and authentication events"
             icon={FileText}
-            defaultOpen={defaultOpenSection === 'audit-logs'}
           >
             <AuditLogViewer />
           </SettingsSection>
@@ -2598,7 +2585,6 @@ export default function Settings() {
             title="Operations Safety"
             description="Emergency controls and throttling for iDRAC operations"
             icon={ShieldAlert}
-            defaultOpen={defaultOpenSection === 'operations-safety'}
           >
             <div className="space-y-6">
               <Alert variant={pauseIdracOperations ? "destructive" : "default"}>
@@ -2691,17 +2677,17 @@ export default function Settings() {
               </Card>
             </div>
           </SettingsSection>
-        </TabsContent>
+          </div>
+          )}
 
-        {/* NOTIFICATIONS TAB */}
-        <TabsContent value="notifications" className="space-y-4">
+          {activeTab === 'notifications' && (
+            <div className="space-y-8">
           {/* Alert Preferences */}
           <SettingsSection
             id="alert-preferences"
             title="Alert Preferences"
             description="Configure which events trigger notifications"
             icon={Bell}
-            defaultOpen={defaultOpenSection === 'alert-preferences'}
           >
             <Card>
               <CardContent className="space-y-4 pt-6">
@@ -2796,7 +2782,6 @@ export default function Settings() {
             title="Email (SMTP)"
             description="Configure SMTP server for email notifications"
             icon={Mail}
-            defaultOpen={defaultOpenSection === 'smtp'}
           >
             <Card>
               <CardContent className="space-y-4 pt-6">
@@ -2866,7 +2851,6 @@ export default function Settings() {
             title="Microsoft Teams"
             description="Configure Teams webhook for notifications with @mentions"
             icon={MessageSquare}
-            defaultOpen={defaultOpenSection === 'teams'}
           >
             <Card>
               <CardContent className="space-y-4 pt-6">
@@ -3005,17 +2989,17 @@ export default function Settings() {
               </CardContent>
             </Card>
           </SettingsSection>
-        </TabsContent>
+          </div>
+          )}
 
-        {/* INFRASTRUCTURE TAB */}
-        <TabsContent value="infrastructure" className="space-y-4">
+          {activeTab === 'infrastructure' && (
+            <div className="space-y-8">
           {/* Server Groups */}
           <SettingsSection
             id="server-groups"
             title="Server Groups"
             description="Organize servers into logical groups for batch operations"
             icon={Server}
-            defaultOpen={defaultOpenSection === 'server-groups'}
           >
             <ServerGroupsManagement />
           </SettingsSection>
@@ -3026,7 +3010,6 @@ export default function Settings() {
             title="Virtual Media & Backup"
             description="ISO image library and SCP share configuration for backups"
             icon={Disc}
-            defaultOpen={defaultOpenSection === 'virtual-media'}
           >
             <div className="space-y-6">
               {/* ISO Image Library */}
@@ -3121,7 +3104,6 @@ export default function Settings() {
             title="Firmware Library"
             description="Manage firmware packages for Dell servers"
             icon={Briefcase}
-            defaultOpen={defaultOpenSection === 'firmware'}
           >
             <FirmwareLibrary />
           </SettingsSection>
@@ -3132,7 +3114,6 @@ export default function Settings() {
             title="OpenManage Enterprise"
             description="Sync server inventory and firmware from OpenManage Enterprise"
             icon={CloudCog}
-            defaultOpen={defaultOpenSection === 'openmanage'}
           >
             <Card>
               <CardContent className="space-y-4 pt-6">
@@ -3223,17 +3204,17 @@ export default function Settings() {
               </CardContent>
             </Card>
           </SettingsSection>
-        </TabsContent>
+          </div>
+          )}
 
-        {/* SYSTEM & MONITORING TAB */}
-        <TabsContent value="system" className="space-y-4">
+          {activeTab === 'system' && (
+            <div className="space-y-8">
           {/* Network Connectivity */}
           <SettingsSection
             id="network"
             title="Network Connectivity"
             description="Test connectivity and configure network timeouts"
             icon={Network}
-            defaultOpen={defaultOpenSection === 'network'}
           >
             <div className="space-y-6">
               {/* Network Testing */}
@@ -3479,7 +3460,6 @@ export default function Settings() {
             title="Cluster Monitoring"
             description="Scheduled safety checks for vSphere clusters"
             icon={Activity}
-            defaultOpen={defaultOpenSection === 'cluster-monitoring'}
           >
             <Card>
               <CardContent className="space-y-4 pt-6">
@@ -3576,7 +3556,6 @@ export default function Settings() {
             title="Activity Monitor"
             description="Configure activity log retention and monitoring"
             icon={Terminal}
-            defaultOpen={defaultOpenSection === 'activity'}
           >
             <Card>
               <CardContent className="space-y-4 pt-6">
@@ -3666,7 +3645,6 @@ export default function Settings() {
             title="Jobs Configuration"
             description="Manage job retention and stale job handling"
             icon={Database}
-            defaultOpen={defaultOpenSection === 'jobs'}
           >
             <div className="space-y-6">
               <Card>
@@ -3792,11 +3770,12 @@ export default function Settings() {
               </Card>
             </div>
           </SettingsSection>
-        </TabsContent>
+          </div>
+          )}
+        </div>
+      </main>
 
-      </Tabs>
-
-      <DiagnosticsDialog 
+      <DiagnosticsDialog
         open={showDiagnosticsDialog}
         onOpenChange={setShowDiagnosticsDialog}
       />
