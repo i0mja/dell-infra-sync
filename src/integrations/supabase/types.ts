@@ -149,27 +149,39 @@ export type Database = {
       audit_logs: {
         Row: {
           action: string
+          auth_method: string | null
+          auth_source: string | null
           created_at: string
           details: Json | null
           id: string
+          idm_groups_at_login: Json | null
+          idm_user_dn: string | null
           ip_address: string | null
           timestamp: string
           user_id: string | null
         }
         Insert: {
           action: string
+          auth_method?: string | null
+          auth_source?: string | null
           created_at?: string
           details?: Json | null
           id?: string
+          idm_groups_at_login?: Json | null
+          idm_user_dn?: string | null
           ip_address?: string | null
           timestamp?: string
           user_id?: string | null
         }
         Update: {
           action?: string
+          auth_method?: string | null
+          auth_source?: string | null
           created_at?: string
           details?: Json | null
           id?: string
+          idm_groups_at_login?: Json | null
+          idm_user_dn?: string | null
           ip_address?: string | null
           timestamp?: string
           user_id?: string | null
@@ -183,6 +195,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      auth_rate_limits: {
+        Row: {
+          attempt_count: number | null
+          first_attempt_at: string | null
+          id: string
+          identifier: string
+          identifier_type: string
+          last_attempt_at: string | null
+          locked_until: string | null
+        }
+        Insert: {
+          attempt_count?: number | null
+          first_attempt_at?: string | null
+          id?: string
+          identifier: string
+          identifier_type: string
+          last_attempt_at?: string | null
+          locked_until?: string | null
+        }
+        Update: {
+          attempt_count?: number | null
+          first_attempt_at?: string | null
+          id?: string
+          identifier?: string
+          identifier_type?: string
+          last_attempt_at?: string | null
+          locked_until?: string | null
+        }
+        Relationships: []
       }
       bios_configurations: {
         Row: {
@@ -244,6 +286,69 @@ export type Database = {
             columns: ["server_id"]
             isOneToOne: false
             referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      break_glass_admins: {
+        Row: {
+          activated_at: string | null
+          activated_by: string | null
+          activation_reason: string | null
+          created_at: string | null
+          created_by: string | null
+          deactivated_at: string | null
+          email: string
+          full_name: string
+          id: string
+          is_active: boolean | null
+          last_used_at: string | null
+          password_hash: string
+          use_count: number | null
+        }
+        Insert: {
+          activated_at?: string | null
+          activated_by?: string | null
+          activation_reason?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          deactivated_at?: string | null
+          email: string
+          full_name: string
+          id?: string
+          is_active?: boolean | null
+          last_used_at?: string | null
+          password_hash: string
+          use_count?: number | null
+        }
+        Update: {
+          activated_at?: string | null
+          activated_by?: string | null
+          activation_reason?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          deactivated_at?: string | null
+          email?: string
+          full_name?: string
+          id?: string
+          is_active?: boolean | null
+          last_used_at?: string | null
+          password_hash?: string
+          use_count?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "break_glass_admins_activated_by_fkey"
+            columns: ["activated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "break_glass_admins_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -617,6 +722,191 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      idm_auth_sessions: {
+        Row: {
+          auth_method: string | null
+          id: string
+          idm_groups: Json | null
+          idm_uid: string
+          idm_user_dn: string
+          invalidated_at: string | null
+          invalidation_reason: string | null
+          ip_address: string | null
+          is_active: boolean | null
+          last_activity_at: string | null
+          mapped_role: Database["public"]["Enums"]["app_role"]
+          session_expires_at: string | null
+          session_started_at: string | null
+          user_agent: string | null
+          user_id: string | null
+        }
+        Insert: {
+          auth_method?: string | null
+          id?: string
+          idm_groups?: Json | null
+          idm_uid: string
+          idm_user_dn: string
+          invalidated_at?: string | null
+          invalidation_reason?: string | null
+          ip_address?: string | null
+          is_active?: boolean | null
+          last_activity_at?: string | null
+          mapped_role: Database["public"]["Enums"]["app_role"]
+          session_expires_at?: string | null
+          session_started_at?: string | null
+          user_agent?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          auth_method?: string | null
+          id?: string
+          idm_groups?: Json | null
+          idm_uid?: string
+          idm_user_dn?: string
+          invalidated_at?: string | null
+          invalidation_reason?: string | null
+          ip_address?: string | null
+          is_active?: boolean | null
+          last_activity_at?: string | null
+          mapped_role?: Database["public"]["Enums"]["app_role"]
+          session_expires_at?: string | null
+          session_started_at?: string | null
+          user_agent?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "idm_auth_sessions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      idm_group_mappings: {
+        Row: {
+          app_role: Database["public"]["Enums"]["app_role"]
+          created_at: string | null
+          description: string | null
+          id: string
+          idm_group_dn: string
+          idm_group_name: string
+          is_active: boolean | null
+          priority: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          app_role: Database["public"]["Enums"]["app_role"]
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          idm_group_dn: string
+          idm_group_name: string
+          is_active?: boolean | null
+          priority?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          app_role?: Database["public"]["Enums"]["app_role"]
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          idm_group_dn?: string
+          idm_group_name?: string
+          is_active?: boolean | null
+          priority?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      idm_settings: {
+        Row: {
+          auth_mode: string
+          base_dn: string | null
+          bind_dn: string | null
+          bind_password_encrypted: string | null
+          ca_certificate: string | null
+          connection_timeout_seconds: number | null
+          created_at: string | null
+          failover_behavior: string | null
+          group_search_base: string | null
+          id: string
+          last_sync_at: string | null
+          last_sync_error: string | null
+          last_sync_status: string | null
+          ldaps_port: number | null
+          lockout_duration_minutes: number | null
+          max_failed_attempts: number | null
+          require_ldaps: boolean | null
+          server_host: string | null
+          server_port: number | null
+          session_timeout_minutes: number | null
+          sync_enabled: boolean | null
+          sync_interval_minutes: number | null
+          updated_at: string | null
+          use_ldaps: boolean | null
+          user_search_base: string | null
+          verify_certificate: boolean | null
+        }
+        Insert: {
+          auth_mode?: string
+          base_dn?: string | null
+          bind_dn?: string | null
+          bind_password_encrypted?: string | null
+          ca_certificate?: string | null
+          connection_timeout_seconds?: number | null
+          created_at?: string | null
+          failover_behavior?: string | null
+          group_search_base?: string | null
+          id?: string
+          last_sync_at?: string | null
+          last_sync_error?: string | null
+          last_sync_status?: string | null
+          ldaps_port?: number | null
+          lockout_duration_minutes?: number | null
+          max_failed_attempts?: number | null
+          require_ldaps?: boolean | null
+          server_host?: string | null
+          server_port?: number | null
+          session_timeout_minutes?: number | null
+          sync_enabled?: boolean | null
+          sync_interval_minutes?: number | null
+          updated_at?: string | null
+          use_ldaps?: boolean | null
+          user_search_base?: string | null
+          verify_certificate?: boolean | null
+        }
+        Update: {
+          auth_mode?: string
+          base_dn?: string | null
+          bind_dn?: string | null
+          bind_password_encrypted?: string | null
+          ca_certificate?: string | null
+          connection_timeout_seconds?: number | null
+          created_at?: string | null
+          failover_behavior?: string | null
+          group_search_base?: string | null
+          id?: string
+          last_sync_at?: string | null
+          last_sync_error?: string | null
+          last_sync_status?: string | null
+          ldaps_port?: number | null
+          lockout_duration_minutes?: number | null
+          max_failed_attempts?: number | null
+          require_ldaps?: boolean | null
+          server_host?: string | null
+          server_port?: number | null
+          session_timeout_minutes?: number | null
+          sync_enabled?: boolean | null
+          sync_interval_minutes?: number | null
+          updated_at?: string | null
+          use_ldaps?: boolean | null
+          user_search_base?: string | null
+          verify_certificate?: boolean | null
+        }
+        Relationships: []
       }
       idrac_commands: {
         Row: {
@@ -1231,6 +1521,15 @@ export type Database = {
           email: string
           full_name: string | null
           id: string
+          idm_department: string | null
+          idm_disabled: boolean | null
+          idm_groups: Json | null
+          idm_mail: string | null
+          idm_source: string | null
+          idm_title: string | null
+          idm_uid: string | null
+          idm_user_dn: string | null
+          last_idm_sync: string | null
           updated_at: string
         }
         Insert: {
@@ -1238,6 +1537,15 @@ export type Database = {
           email: string
           full_name?: string | null
           id: string
+          idm_department?: string | null
+          idm_disabled?: boolean | null
+          idm_groups?: Json | null
+          idm_mail?: string | null
+          idm_source?: string | null
+          idm_title?: string | null
+          idm_uid?: string | null
+          idm_user_dn?: string | null
+          last_idm_sync?: string | null
           updated_at?: string
         }
         Update: {
@@ -1245,6 +1553,15 @@ export type Database = {
           email?: string
           full_name?: string | null
           id?: string
+          idm_department?: string | null
+          idm_disabled?: boolean | null
+          idm_groups?: Json | null
+          idm_mail?: string | null
+          idm_source?: string | null
+          idm_title?: string | null
+          idm_uid?: string | null
+          idm_user_dn?: string | null
+          last_idm_sync?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -2715,6 +3032,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      check_auth_rate_limit: {
+        Args: {
+          p_identifier: string
+          p_identifier_type: string
+          p_lockout_minutes?: number
+          p_max_attempts?: number
+        }
+        Returns: Json
+      }
       cleanup_activity_logs: { Args: never; Returns: undefined }
       cleanup_old_jobs: { Args: never; Returns: undefined }
       decrypt_password: {
@@ -2736,6 +3062,16 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      record_auth_attempt: {
+        Args: {
+          p_identifier: string
+          p_identifier_type: string
+          p_lockout_minutes?: number
+          p_max_attempts?: number
+          p_success: boolean
+        }
+        Returns: undefined
       }
       run_scheduled_cluster_safety_checks: { Args: never; Returns: undefined }
       send_maintenance_reminders: { Args: never; Returns: undefined }
@@ -2779,6 +3115,9 @@ export type Database = {
         | "firmware_then_esxi"
         | "browse_datastore"
         | "esxi_preflight_check"
+        | "idm_authenticate"
+        | "idm_sync_users"
+        | "idm_test_connection"
       operation_type: "idrac_api" | "vcenter_api" | "openmanage_api"
     }
     CompositeTypes: {
@@ -2944,6 +3283,9 @@ export const Constants = {
         "firmware_then_esxi",
         "browse_datastore",
         "esxi_preflight_check",
+        "idm_authenticate",
+        "idm_sync_users",
+        "idm_test_connection",
       ],
       operation_type: ["idrac_api", "vcenter_api", "openmanage_api"],
     },
