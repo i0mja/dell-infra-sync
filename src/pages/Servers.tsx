@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { useServers } from "@/hooks/useServers";
+import { launchConsole } from "@/lib/job-executor-api";
 import { useServerActions } from "@/hooks/useServerActions";
 import { useAutoLinkVCenter } from "@/hooks/useAutoLinkVCenter";
 import { supabase } from "@/integrations/supabase/client";
@@ -28,7 +29,6 @@ import { DiscoveryScanDialog } from "@/components/servers/DiscoveryScanDialog";
 import { WorkflowJobDialog } from "@/components/jobs/WorkflowJobDialog";
 import { ClusterUpdateWizard } from "@/components/jobs/ClusterUpdateWizard";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { ConsoleLaunchDialog } from "@/components/servers/ConsoleLaunchDialog";
 import type { Server } from "@/hooks/useServers";
 
 export default function Servers() {
@@ -65,8 +65,7 @@ export default function Servers() {
   const [discoveryScanOpen, setDiscoveryScanOpen] = useState(false);
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
   const [updateWizardOpen, setUpdateWizardOpen] = useState(false);
-  const [consoleLaunchDialogOpen, setConsoleLaunchDialogOpen] = useState(false);
-  const [consoleJobId, setConsoleJobId] = useState<string | null>(null);
+  const [launchingConsole, setLaunchingConsole] = useState(false);
 
   // Hooks
   const {
@@ -191,31 +190,35 @@ export default function Servers() {
   };
 
   const handleLaunchConsole = async (server: Server) => {
-    if (!user) return;
-
+    setLaunchingConsole(true);
     try {
-      const { data, error } = await supabase.functions.invoke("create-job", {
-        body: {
-          job_type: "console_launch",
-          created_by: user.id,
-          target_scope: { server_ids: [server.id] },
-        },
-      });
-
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || "Failed to create job");
-
-      const jobId = data.job?.id;
-      if (!jobId) throw new Error("No job ID returned");
-
-      setConsoleJobId(jobId);
-      setConsoleLaunchDialogOpen(true);
+      const result = await launchConsole(server.id);
+      
+      if (result.success && result.console_url) {
+        window.open(result.console_url, '_blank');
+        
+        if (result.requires_login) {
+          toast({
+            title: "Console Opened",
+            description: "Please log in manually in the new tab (iDRAC8)"
+          });
+        } else {
+          toast({
+            title: "Console Launched",
+            description: "iDRAC console opened in new tab"
+          });
+        }
+      } else {
+        throw new Error(result.error || "Failed to get console URL");
+      }
     } catch (error: any) {
       toast({
         title: "Failed to Launch Console",
-        description: error.message || "An error occurred",
+        description: error.message,
         variant: "destructive",
       });
+    } finally {
+      setLaunchingConsole(false);
     }
   };
 
@@ -411,12 +414,6 @@ export default function Servers() {
             onOpenChange={setWorkflowDialogOpen}
             onSuccess={refetch}
             preSelectedServerId={selectedServer.id}
-          />
-
-          <ConsoleLaunchDialog
-            open={consoleLaunchDialogOpen}
-            onOpenChange={setConsoleLaunchDialogOpen}
-            jobId={consoleJobId}
           />
 
           <ClusterUpdateWizard
