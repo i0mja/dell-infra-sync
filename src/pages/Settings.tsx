@@ -28,7 +28,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { getTabMetadata, settingsTabs, mapLegacyTabId } from "@/config/settings-tabs";
 import { SettingsSection } from "@/components/settings/SettingsSection";
-import { SettingsNavigation } from "@/components/settings/SettingsNavigation";
 import { SettingsPageHeader } from "@/components/settings/SettingsPageHeader";
 
 export default function Settings() {
@@ -45,13 +44,17 @@ export default function Settings() {
   const tabFromUrl = searchParams.get('tab');
   const sectionFromUrl = searchParams.get('section');
   
-  // Map legacy tabs to new structure
-  const mapped = mapLegacyTabId(tabFromUrl || 'appearance');
-  const initialTab = mapped.tab;
-  const initialSection = sectionFromUrl || mapped.section;
-  
-  const [activeTab, setActiveTab] = useState(initialTab);
-  const [defaultOpenSection, setDefaultOpenSection] = useState(initialSection);
+  const [activeTab, setActiveTab] = useState<string>('general');
+  const [defaultOpenSection, setDefaultOpenSection] = useState<string | undefined>();
+
+  // Sync URL params to state
+  useEffect(() => {
+    const mapped = mapLegacyTabId(tabFromUrl || 'general');
+    setActiveTab(mapped.tab);
+    if (mapped.section) {
+      setDefaultOpenSection(mapped.section);
+    }
+  }, [tabFromUrl, sectionFromUrl]);
 
   // SMTP Settings
   const [smtpHost, setSmtpHost] = useState("");
@@ -2149,29 +2152,21 @@ export default function Settings() {
   // Get current tab metadata
   const currentTab = settingsTabs.find(t => t.id === activeTab) || settingsTabs[0];
   const tabMetadata = getTabMetadata();
-  const currentMeta = tabMetadata[activeTab];
+  const deploymentMode = isLocalMode ? "air-gapped" : "cloud";
 
   return (
-    <div className="flex min-h-screen w-full bg-background">
-      <SettingsNavigation
-        items={settingsTabs}
-        activeTab={activeTab}
-        activeSection={defaultOpenSection}
-        onNavigate={(tabId, sectionId) => {
-          setActiveTab(tabId);
-          if (sectionId) setDefaultOpenSection(sectionId);
+    <div className="min-h-screen bg-background">
+      <SettingsPageHeader
+        icon={currentTab.icon}
+        title={currentTab.title}
+        description={currentTab.description}
+        badge={{
+          label: deploymentMode === "cloud" ? "Cloud" : "Air-Gapped",
+          variant: deploymentMode === "cloud" ? "default" : "secondary",
         }}
       />
       
-      <main className="flex-1 overflow-y-auto">
-        <SettingsPageHeader
-          icon={currentTab.icon}
-          title={currentMeta?.title || currentTab.title}
-          description={currentMeta?.description || currentTab.description}
-          badge={isLocalMode ? { label: "Air-Gapped Mode", variant: "secondary" } : { label: "Cloud Mode", variant: "default" }}
-        />
-        
-        <div className="px-8 py-6 max-w-5xl">
+      <div className="p-8 space-y-6 max-w-5xl mx-auto">
           {activeTab === 'general' && (
             <div className="space-y-8">
           <SettingsSection
@@ -3773,7 +3768,6 @@ export default function Settings() {
           </div>
           )}
         </div>
-      </main>
 
       <DiagnosticsDialog
         open={showDiagnosticsDialog}
