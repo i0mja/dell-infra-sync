@@ -92,7 +92,7 @@ export const LocalModeHelper = ({ show }: LocalModeHelperProps) => {
         </div>
 
         <p className="text-xs text-muted-foreground">
-          💡 Get your SERVICE_ROLE_KEY from Settings → Activity → Job Executor
+          💡 Get your SERVICE_ROLE_KEY from Settings → System & Monitoring → Network Connectivity
         </p>
       </AlertDescription>
     </Alert>
