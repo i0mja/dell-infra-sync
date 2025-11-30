@@ -35,7 +35,7 @@ import { useServerDrives } from "@/hooks/useServerDrives";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useState } from "react";
-import { ConsoleLaunchDialog } from "./ConsoleLaunchDialog";
+import { launchConsole } from "@/lib/job-executor-api";
 
 interface GroupData {
   name: string;
@@ -91,8 +91,7 @@ export function ServerDetailsSidebar({
   onAssignCredentials,
   onCreateJob,
 }: ServerDetailsSidebarProps) {
-  const [consoleDialogOpen, setConsoleDialogOpen] = useState(false);
-  const [consoleJobId, setConsoleJobId] = useState<string | null>(null);
+  const [launchingConsole, setLaunchingConsole] = useState(false);
   
   // Fetch drives for selected server
   const { data: drives, isLoading: drivesLoading } = useServerDrives(selectedServer?.id || null);
@@ -100,38 +99,33 @@ export function ServerDetailsSidebar({
   const handleLaunchConsole = async () => {
     if (!selectedServer) return;
     
+    setLaunchingConsole(true);
     try {
-      // Get user ID
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        toast.error('Authentication required');
-        return;
+      const result = await launchConsole(selectedServer.id);
+      
+      if (result.success && result.console_url) {
+        // Open console in new tab
+        window.open(result.console_url, '_blank');
+        
+        if (result.requires_login) {
+          toast.success('Console opened (iDRAC8)', {
+            description: 'Please log in manually in the new tab'
+          });
+        } else {
+          toast.success('Console opened with SSO', {
+            description: 'Session authenticated automatically'
+          });
+        }
+      } else {
+        throw new Error(result.error || 'Failed to get console URL');
       }
-
-      // Create console_launch job
-      const { data: job, error: jobError } = await supabase
-        .from('jobs')
-        .insert({
-          job_type: 'console_launch',
-          created_by: user.id,
-          status: 'pending',
-          details: {
-            server_id: selectedServer.id
-          }
-        })
-        .select()
-        .single();
-
-      if (jobError) throw jobError;
-
-      setConsoleJobId(job.id);
-      setConsoleDialogOpen(true);
-      toast.success('Preparing console session...');
     } catch (error) {
       console.error('Error launching console:', error);
       toast.error('Failed to launch console', {
         description: error instanceof Error ? error.message : 'Unknown error'
       });
+    } finally {
+      setLaunchingConsole(false);
     }
   };
 
@@ -151,12 +145,6 @@ export function ServerDetailsSidebar({
 
     return (
       <>
-        <ConsoleLaunchDialog 
-          open={consoleDialogOpen}
-          onOpenChange={setConsoleDialogOpen}
-          jobId={consoleJobId}
-        />
-        
         <Card className="h-full flex flex-col max-h-full">
         <CardHeader className="pb-3">
           <div className="flex items-start justify-between">
@@ -446,8 +434,13 @@ export function ServerDetailsSidebar({
               size="sm"
               className="w-full"
               onClick={handleLaunchConsole}
+              disabled={launchingConsole}
             >
-              <Monitor className="mr-2 h-3 w-3" />
+              {launchingConsole ? (
+                <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+              ) : (
+                <Monitor className="mr-2 h-3 w-3" />
+              )}
               Launch Console
             </Button>
           </div>
@@ -713,18 +706,11 @@ export function ServerDetailsSidebar({
 
   // Empty State
   return (
-    <>
-      <ConsoleLaunchDialog 
-        open={consoleDialogOpen}
-        onOpenChange={setConsoleDialogOpen}
-        jobId={consoleJobId}
-      />
-      
-      <Card className="h-full flex flex-col">
-        <CardHeader>
-          <CardTitle className="text-lg">Server Details</CardTitle>
-          <CardDescription>Select a server or group to view details</CardDescription>
-        </CardHeader>
+    <Card className="h-full flex flex-col">
+      <CardHeader>
+        <CardTitle className="text-lg">Server Details</CardTitle>
+        <CardDescription>Select a server or group to view details</CardDescription>
+      </CardHeader>
 
         <Separator />
 
@@ -736,6 +722,5 @@ export function ServerDetailsSidebar({
           </div>
         </CardContent>
       </Card>
-    </>
   );
 }

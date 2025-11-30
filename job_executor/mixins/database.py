@@ -9,25 +9,15 @@ from job_executor.utils import _safe_json_parse
 class DatabaseMixin:
     """Mixin providing database operations for Job Executor"""
     
-    def get_pending_jobs(self, instant_only: bool = False, exclude_instant: bool = False) -> List[Dict]:
+    def get_pending_jobs(self) -> List[Dict]:
         """
         Fetch pending jobs from the database
         
-        Args:
-            instant_only: Only return instant job types (console_launch, browse_datastore, etc.)
-            exclude_instant: Exclude instant job types from results
-            
         Returns:
             List of pending job dicts ready for execution
         """
         try:
             from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
-            
-            # Import here to avoid circular dependency
-            INSTANT_JOB_TYPES = [
-                'console_launch', 'browse_datastore', 'connectivity_test', 
-                'power_control', 'idm_authenticate', 'idm_test_connection'
-            ]
             
             url = f"{DSM_URL}/rest/v1/jobs"
             headers = {
@@ -45,7 +35,7 @@ class DatabaseMixin:
             
             if response.status_code == 200:
                 jobs = _safe_json_parse(response)
-                # Filter by schedule_at and instant status
+                # Filter by schedule_at
                 ready_jobs = []
                 for job in jobs:
                     # Check if scheduled time has passed
@@ -53,14 +43,6 @@ class DatabaseMixin:
                         scheduled_time = datetime.fromisoformat(job['schedule_at'].replace('Z', '+00:00'))
                         if scheduled_time > datetime.now():
                             continue
-                    
-                    # Filter by instant job type
-                    is_instant = job['job_type'] in INSTANT_JOB_TYPES
-                    
-                    if instant_only and not is_instant:
-                        continue
-                    if exclude_instant and is_instant:
-                        continue
                     
                     ready_jobs.append(job)
                 return ready_jobs
