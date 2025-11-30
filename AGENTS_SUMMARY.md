@@ -1,601 +1,641 @@
-# AGENTS_SUMMARY.md - Dell Server Manager Quick Reference for AI Assistants
+# Dell Server Manager - LLM Quick Reference
 
-> **Condensed version of AGENTS.md (~500 lines) optimized for AI coding assistants**
-> For full details, see AGENTS.md (1911 lines)
-
----
-
-## 🎯 Application Overview
-
-**Dell Server Manager** is an enterprise application for managing Dell servers via iDRAC Redfish API.
-
-**CRITICAL CHARACTERISTICS:**
-- **Offline-first**: Designed for air-gapped/secure networks WITHOUT internet access
-- **Local network only**: Operates on 192.168.x.x, 10.x.x.x, 172.16.x.x networks
-- **No cloud required**: If accessible in browser, this app CAN and SHOULD manage it
-- **Target users**: Enterprise IT admins in secure/classified environments
+**Purpose**: Fast lookup for AI coding assistants. Dense, scannable format optimized for LLM parsing.
 
 ---
 
-## ⚠️ CRITICAL ARCHITECTURE (MUST READ)
+## CRITICAL RULES (READ FIRST)
 
-### 1. Offline-First Design
+### Offline-First Design (NEVER VIOLATE)
+- App MUST function without internet connectivity
+- All iDRAC operations use local network HTTP/HTTPS only (192.168.x.x, 10.x.x.x, 172.16.x.x)
+- No external API calls for server management
+- If accessible in a browser, this app CAN and SHOULD manage it
 
-**NEVER assume cloud connectivity is available.**
-- All iDRAC operations use local HTTP/HTTPS
-- No external API calls for core functionality
-- Browser accessibility = app accessibility
+### Two-Component System (MOST IMPORTANT)
 
-### 2. Two-Component System (MOST IMPORTANT)
+**Job Executor (Python) - PRIMARY for 95% of use cases:**
+- Runs directly on host with full local network access
+- Handles ALL iDRAC operations: firmware, discovery, power, BIOS, SCP, virtual media
+- Location: `job-executor.py` + `job_executor/` modules
+- Deployment: systemd (Linux) or Task Scheduler (Windows)
 
-#### **Job Executor (Python) - PRIMARY METHOD**
-- Runs on host machine with full local network access
-- **Use for**: 95% of use cases (local deployments)
-- Handles ALL iDRAC operations: firmware, discovery, power, BIOS, SCP, etc.
-- **Why**: Docker networking limits edge function access to local IPs
-
-#### **Edge Functions (Supabase) - SECONDARY, CLOUD ONLY**
-- Runs in Docker with limited host network access
-- **Use for**: Cloud deployments with public iDRAC IPs only
-- Cannot reliably reach 192.168.x.x/10.x.x.x from Docker containers
+**Edge Functions (Supabase) - SECONDARY, cloud deployments only:**
+- Cannot reliably reach local IPs from Docker containers
 - In local mode, defer to Job Executor
+- Only use for public iDRAC IPs in cloud deployments
 
-### 3. Deployment Mode Detection
-
-**ALWAYS detect mode and adjust UI/features:**
+### Deployment Mode Detection
+```python
+# Python
+DEPLOYMENT_MODE = os.getenv("DEPLOYMENT_MODE", "local")  # "local" or "cloud"
+is_local = DEPLOYMENT_MODE == "local"
+```
 
 ```typescript
-const isLocalMode = import.meta.env.VITE_SUPABASE_URL?.includes('127.0.0.1') || 
-                   import.meta.env.VITE_SUPABASE_URL?.includes('localhost');
-```
-
-- **Local Mode**: Job Executor handles all operations
-- **Cloud Mode**: Edge Functions can work (public IPs only)
-
-### 4. Feature Implementation Strategy
-
-**Universal pattern - works in BOTH modes:**
-1. Create job type (database migration)
-2. Implement in Job Executor (job-executor.py)
-3. Create UI to trigger job
-4. Poll job status for completion
-
-**For local mode** (ALWAYS IMPLEMENT FIRST):
-- Disable instant preview/edge function features
-- Show messages directing to Job Executor
-- Create job types for all operations
-
-**For cloud mode** (OPTIONAL):
-- Enable instant features (test connection, preview)
-- Edge functions work for quick queries
-
----
-
-## 📦 Technology Stack
-
-**Frontend:**
-- React 18 + TypeScript
-- Tailwind CSS + shadcn/ui
-- TanStack Query (React Query)
-- Vite + React Router
-
-**Backend (Lovable Cloud/Supabase):**
-- PostgreSQL with RLS
-- Supabase Auth
-- Edge Functions (Deno)
-- Realtime subscriptions
-
-**Job Executor:**
-- Python 3.7+
-- requests (iDRAC Redfish API)
-- pyVmomi (vCenter API)
-- cryptography (password encryption)
-- Runs as systemd service (Linux) or Task Scheduler (Windows)
-
----
-
-## 🗂️ Project Structure (Key Locations)
-
-```
-src/
-├── components/
-│   ├── activity/          # Activity monitor
-│   ├── jobs/              # Job management UI
-│   ├── servers/           # Server management
-│   └── ui/                # shadcn/ui components
-├── integrations/supabase/
-│   ├── client.ts          # Supabase client (auto-generated)
-│   └── types.ts           # Database types (auto-generated)
-├── pages/                 # Route pages
-└── index.css              # Design tokens
-
-supabase/
-├── functions/             # Edge functions (Deno)
-│   └── _shared/          # Shared utilities (idrac-logger, etc.)
-├── migrations/           # Database migrations
-└── config.toml           # Supabase config
-
-job_executor/             # Job Executor modules (NEW)
-├── config.py             # Environment config
-├── connectivity.py       # Network testing/discovery
-├── scp.py               # SCP backup/restore
-└── utils.py             # Utilities
-
-job-executor.py           # Main executor script
+// TypeScript
+const deploymentMode = import.meta.env.VITE_DEPLOYMENT_MODE || 'local';
+const isLocal = deploymentMode === 'local';
 ```
 
 ---
 
-## 🗄️ Database Schema (Essential Tables)
+## ARCHITECTURE AT A GLANCE
 
-### `servers` - Dell Server Inventory
-- `ip_address` (unique) - iDRAC IP
-- `credential_set_id` (FK) - Linked credentials
-- `vcenter_host_id` (FK) - Linked ESXi host
-- `connection_status` - "connected"/"failed"/"unknown"
-- `credential_test_status` - Last credential test result
-- `power_state`, `overall_health`, `bios_version`, `idrac_firmware`
+### JobExecutor Class Hierarchy
+```
+JobExecutor
+├── DatabaseMixin      (job/task CRUD, pending job polling)
+├── CredentialsMixin   (password decryption, credential resolution)
+├── VCenterMixin       (vCenter connection, host operations)
+├── IdracMixin         (iDRAC server info, discovery, health)
+├── ScpMixin           (SCP export/import operations)
+└── ConnectivityMixin  (network testing, port scanning)
+```
 
-### `credential_sets` - Shared iDRAC Credentials
-- `username`, `password_encrypted` - Encrypted credentials
-- `is_default` - Default fallback
-- `priority` - Resolution priority (lower = higher)
-- Related: `credential_ip_ranges` (CIDR mapping)
+### Handler Delegation Pattern
+```python
+# job-executor.py
+def execute_job(self, job: Dict):
+    """Route job to appropriate handler based on job_type"""
+    handler = self.handler_map.get(job_type)
+    if handler:
+        return handler(job)
+```
 
-### `jobs` - Async Job Queue
-- `job_type` (ENUM) - Job type (see below)
-- `status` (ENUM) - "pending"/"running"/"completed"/"failed"
-- `target_scope` (JSONB) - Target definition
-- `details` (JSONB) - Job-specific parameters
-- `schedule_at` (TIMESTAMP) - Scheduled execution time
-- `component_order` (INTEGER) - Firmware component order
-- `auto_select_latest` (BOOLEAN) - Auto-select latest firmware
-
-**Job Types:**
-- `firmware_update`, `discovery_scan`, `vcenter_sync`
-- `power_action`, `health_check`, `fetch_event_logs`
-- `boot_configuration`, `virtual_media_mount/unmount`
-- `bios_config_read/write`, `scp_export/import`
-- `full_server_update`, `rolling_cluster_update`
-- `prepare_host_for_update`, `verify_host_after_update`
-- `cluster_safety_check`, `server_group_safety_check`
-
-### `job_tasks` - Individual Tasks Within Jobs
-- `job_id` (FK) - Parent job
-- `server_id` (FK) - Target server
-- `status`, `log` - Task tracking
-
-### `idrac_commands` - Activity Log (CRITICAL)
-- **Log ALL API calls** (iDRAC, vCenter, OpenManage)
-- Used by **both Edge Functions AND Job Executor**
-- `operation_type` - "idrac_api"/"vcenter_api"/"openmanage_api"
-- `source` - "edge_function"/"job_executor"/"manual"
-- `success`, `error_message`, `response_time_ms`
-- Provides full audit trail
-
-### `server_groups` - Server Organization
-- `name`, `description`
-- `group_type` - "manual" / "vcenter_cluster"
-- `min_healthy_servers` - Safety threshold
-- Related: `server_group_members` (many-to-many join)
-
-### `vcenter_hosts` - ESXi Hosts
-- `name`, `cluster` - vCenter data
-- `serial_number` - Link to servers
-- `server_id` (FK) - Bidirectional link
-- Auto-synced from vCenter
-
-### `maintenance_windows` - Scheduled Maintenance
-- `planned_start/end` - Schedule
-- `started_at/completed_at` - Actual execution times
-- `status` - "planned"/"approved"/"in_progress"/"completed"/"cancelled"
-- `server_ids/cluster_ids/server_group_ids` - Targets
-- `job_ids` - Associated jobs
-- `details` (JSONB) - Additional configuration
-- `last_executed_at` - Last execution (for recurring)
-- `requires_approval`, `auto_execute` - Workflow
-- `notification_sent`, `notify_before_hours` - Notifications
-- `safety_check_snapshot` (JSONB) - Pre-execution safety check
-- `recurrence_enabled`, `recurrence_pattern` - Recurring
-
-### `profiles` - User Profiles
-- Linked to `auth.users`
-- **NEVER reference auth.users directly** - use profiles
-
-### `user_roles` - RBAC
-- `role` (ENUM) - "admin"/"operator"/"viewer"
-
-### Additional Tables
-- `api_tokens` - API token management
-- `audit_logs` - User action audit trail
-- `bios_configurations` - BIOS snapshots and pending changes
-- `cluster_safety_checks` - vCenter cluster safety results
-- `network_settings` - Global network and API throttling config
-- `notification_logs` - Notification delivery tracking
-- `notification_settings` - Teams webhook and SMTP config
-- `openmanage_settings` - Dell OpenManage Enterprise integration
-- `scheduled_safety_checks` - Scheduled cluster safety check config
-- `scp_backups` - SCP backup/restore storage
-- `server_boot_config_history` - Boot configuration change history
-- `server_event_logs` - iDRAC event logs (SEL)
-- `server_group_safety_checks` - Server group safety results
+**Key Insight**: The 800-line `job-executor.py` delegates to 12 specialized handlers (~3,500 total lines). Each handler inherits from `BaseHandler` for common utilities.
 
 ---
 
-## 🔧 Common Implementation Patterns
+## JOB TYPE → HANDLER MAP (COMPLETE)
 
-### 1. Adding New iDRAC Operation
+| Job Type | Handler File | Handler Class | Method |
+|----------|--------------|---------------|--------|
+| **Authentication & Identity** | | | |
+| `idm_authenticate` | handlers/idm.py | IDMHandler | execute_idm_authenticate |
+| `idm_test_connection` | handlers/idm.py | IDMHandler | execute_idm_test_connection |
+| `idm_sync_users` | handlers/idm.py | IDMHandler | execute_idm_sync |
+| **Console & Diagnostics** | | | |
+| `console_launch` | handlers/console.py | ConsoleHandler | execute_console_launch |
+| `health_check` | handlers/discovery.py | DiscoveryHandler | execute_health_check |
+| `fetch_event_logs` | handlers/discovery.py | DiscoveryHandler | execute_fetch_event_logs |
+| **Storage & Media** | | | |
+| `browse_datastore` | handlers/datastore.py | DatastoreHandler | execute_browse_datastore |
+| `iso_upload` | handlers/media_upload.py | MediaUploadHandler | execute_iso_upload |
+| `scan_local_isos` | handlers/media_upload.py | MediaUploadHandler | execute_scan_local_isos |
+| `register_iso_url` | handlers/media_upload.py | MediaUploadHandler | execute_register_iso_url |
+| `virtual_media_mount` | handlers/virtual_media.py | VirtualMediaHandler | execute_virtual_media_mount |
+| `virtual_media_unmount` | handlers/virtual_media.py | VirtualMediaHandler | execute_virtual_media_unmount |
+| **Power & Boot** | | | |
+| `power_action` | handlers/power.py | PowerHandler | execute_power_action |
+| `boot_configuration` | handlers/boot.py | BootHandler | execute_boot_configuration |
+| `bios_config_read` | handlers/boot.py | BootHandler | execute_bios_config_read |
+| `bios_config_write` | handlers/boot.py | BootHandler | execute_bios_config_write |
+| **Discovery & Credentials** | | | |
+| `discovery_scan` | handlers/discovery.py | DiscoveryHandler | execute_discovery_scan |
+| `test_credentials` | handlers/discovery.py | DiscoveryHandler | execute_test_credentials |
+| **Firmware** | | | |
+| `firmware_update` | handlers/firmware.py | FirmwareHandler | execute_firmware_update |
+| `full_server_update` | handlers/firmware.py | FirmwareHandler | execute_full_server_update |
+| **Cluster & Maintenance** | | | |
+| `prepare_host` | handlers/cluster.py | ClusterHandler | execute_prepare_host |
+| `verify_host` | handlers/cluster.py | ClusterHandler | execute_verify_host |
+| `rolling_update` | handlers/cluster.py | ClusterHandler | execute_rolling_update |
+| `safety_check` | handlers/cluster.py | ClusterHandler | execute_safety_check |
+| **ESXi Upgrades** | | | |
+| `esxi_upgrade` | handlers/esxi_handlers.py | ESXiHandler | execute_esxi_upgrade |
+| `esxi_then_firmware` | handlers/esxi_handlers.py | ESXiHandler | execute_esxi_then_firmware |
+| `firmware_then_esxi` | handlers/esxi_handlers.py | ESXiHandler | execute_firmware_then_esxi |
+| `esxi_preflight` | handlers/esxi_handlers.py | ESXiHandler | execute_esxi_preflight |
+| **vCenter Sync** | | | |
+| `vcenter_sync` | handlers/vcenter_handlers.py | VCenterHandlers | execute_vcenter_sync |
+| `openmanage_sync` | handlers/vcenter_handlers.py | VCenterHandlers | execute_openmanage_sync |
+| **SCP Backup/Restore** | | | |
+| `scp_export` | Handled in mixins/scp.py | ScpMixin | export_scp |
+| `scp_import` | Handled in mixins/scp.py | ScpMixin | import_scp |
 
-**Step 1: Migration**
+---
+
+## MIXIN RESPONSIBILITIES
+
+| Mixin | File | Key Methods | Purpose |
+|-------|------|-------------|---------|
+| **DatabaseMixin** | mixins/database.py | `get_pending_jobs()`<br>`update_job_status()`<br>`update_task_status()`<br>`create_task()` | Job/task CRUD operations, pending job polling |
+| **CredentialsMixin** | mixins/credentials.py | `get_encryption_key()`<br>`decrypt_password()`<br>`resolve_credentials_for_server()`<br>`get_esxi_credentials_for_host()` | Password decryption, credential resolution by priority |
+| **VCenterMixin** | mixins/vcenter_ops.py | `connect_to_vcenter()`<br>`enter_maintenance_mode()`<br>`exit_maintenance_mode()`<br>`get_host_by_name()` | vCenter connection, host maintenance operations |
+| **IdracMixin** | mixins/idrac_ops.py | `get_server_info()`<br>`test_idrac_connection()`<br>`discover_server()` | iDRAC server discovery, info gathering, health checks |
+| **ScpMixin** | scp.py | `export_scp()`<br>`import_scp()`<br>`validate_scp_content()` | SCP backup/restore operations (Dell configuration) |
+| **ConnectivityMixin** | connectivity.py | `test_network_connectivity()`<br>`scan_port_range()` | Network testing, port scanning, prerequisite validation |
+
+---
+
+## DATABASE SCHEMA (ESSENTIAL TABLES)
+
+### servers
 ```sql
-ALTER TYPE job_type ADD VALUE 'new_operation';
+id UUID PRIMARY KEY
+name TEXT NOT NULL
+ip_address TEXT NOT NULL
+model TEXT, bios_version TEXT, firmware_version TEXT
+credential_set_id UUID REFERENCES credential_sets(id)
+discovered_username TEXT, discovered_password_encrypted TEXT
+vcenter_host_id UUID REFERENCES vcenter_hosts(id)
+server_group_id UUID REFERENCES server_groups(id)
+connection_status TEXT -- 'online', 'offline', 'unknown'
+created_at, updated_at TIMESTAMP
 ```
 
-**Step 2: Job Executor**
+### credential_sets
+```sql
+id UUID PRIMARY KEY
+name TEXT NOT NULL
+credential_type TEXT -- 'idrac', 'esxi', 'vcenter'
+username TEXT NOT NULL
+password_encrypted TEXT  -- AES-256 encrypted
+is_default BOOLEAN DEFAULT false
+priority INTEGER  -- For IP range matching
+vcenter_host_id UUID  -- For ESXi-specific credentials
+```
+
+### jobs
+```sql
+id UUID PRIMARY KEY
+job_type TEXT NOT NULL  -- See JOB TYPE MAP above
+status TEXT  -- 'pending', 'running', 'completed', 'failed', 'cancelled'
+created_by UUID REFERENCES profiles(id)
+target_scope JSONB  -- { server_ids: [...], cluster_ids: [...] }
+details JSONB  -- Job-specific parameters
+credential_set_ids TEXT[]
+firmware_source TEXT  -- 'local' or 'dell_catalog'
+dell_catalog_url TEXT
+started_at, completed_at TIMESTAMP
+```
+
+### job_tasks
+```sql
+id UUID PRIMARY KEY
+job_id UUID REFERENCES jobs(id)
+server_id UUID REFERENCES servers(id)
+vcenter_host_id UUID REFERENCES vcenter_hosts(id)
+status TEXT
+progress INTEGER  -- 0-100
+log TEXT  -- Task execution log
+started_at, completed_at TIMESTAMP
+```
+
+### idrac_commands (Activity Log)
+```sql
+id UUID PRIMARY KEY
+server_id UUID REFERENCES servers(id)
+job_id UUID REFERENCES jobs(id)
+task_id UUID REFERENCES job_tasks(id)
+command_type TEXT  -- e.g., 'GET', 'POST', 'PATCH'
+operation_type TEXT  -- 'firmware_update', 'power_control', 'scp_export', etc.
+endpoint TEXT  -- '/redfish/v1/Systems/System.Embedded.1'
+full_url TEXT
+request_body JSONB
+response_body JSONB
+status_code INTEGER
+success BOOLEAN
+response_time_ms INTEGER
+error_message TEXT
+source TEXT  -- 'job_executor' or 'edge_function'
+initiated_by UUID REFERENCES profiles(id)
+timestamp TIMESTAMP DEFAULT now()
+```
+
+### server_groups
+```sql
+id UUID PRIMARY KEY
+name TEXT NOT NULL
+description TEXT
+group_type TEXT  -- 'manual', 'vcenter_cluster'
+vcenter_cluster_name TEXT
+```
+
+### vcenter_hosts
+```sql
+id UUID PRIMARY KEY
+name TEXT NOT NULL  -- ESXi hostname
+ip_address TEXT
+vcenter_id UUID  -- Which vCenter it belongs to
+cluster_name TEXT
+connection_state TEXT  -- 'connected', 'disconnected', 'notResponding'
+maintenance_mode BOOLEAN
+esxi_version TEXT
+server_id UUID REFERENCES servers(id)  -- Linked Dell server
+```
+
+---
+
+## CREDENTIAL RESOLUTION ORDER
+
+When `CredentialsMixin.resolve_credentials_for_server()` is called:
+
+1. **Explicit server credential_set_id** (highest priority)
+   - Check `servers.credential_set_id`
+   
+2. **Discovered credentials**
+   - Check `servers.discovered_username` + `servers.discovered_password_encrypted`
+   
+3. **IP range match** (priority ordered)
+   - Query `credential_ip_ranges` WHERE server IP matches range
+   - Order by `credential_ip_ranges.priority ASC`
+   
+4. **Default credential set**
+   - Query `credential_sets` WHERE `is_default = true` AND `credential_type = 'idrac'`
+   
+5. **Environment fallback** (lowest priority)
+   - Use `IDRAC_USER` / `IDRAC_PASSWORD` from environment
+
+Returns: `(username, password, source, credential_set_id)`
+
+---
+
+## ACTIVITY LOGGING (REQUIRED)
+
+### Python (Job Executor)
 ```python
-def execute_new_operation(self, job_id):
-    job = self.get_job_by_id(job_id)
-    self.update_job_status(job_id, 'running')
-    
-    for server_id in job['target_scope']['server_ids']:
-        server = self.get_server_by_id(server_id)
-        username, password = self.get_credentials_for_server(server)
-        
-        # Make iDRAC API call
-        response = requests.get(f"https://{server['ip_address']}/redfish/v1/...", ...)
-        
-        # Log command
-        self.log_idrac_command(server_id, job_id, 'GET', endpoint, ...)
-    
-    self.update_job_status(job_id, 'completed')
-```
+from job_executor.utils import log_idrac_command
 
-**Step 3: UI**
-```tsx
-<CreateJobDialog jobType="new_operation" targetScope={{ server_ids: [...] }} />
-```
+# Inside handler method
+response = requests.get(url, auth=(username, password), verify=False)
+elapsed_ms = int(response.elapsed.total_seconds() * 1000)
 
-**Step 4: Poll Status**
-```tsx
-const { data: job } = useQuery({
-  queryKey: ['jobs', jobId],
-  refetchInterval: (data) => 
-    data?.status === 'pending' || data?.status === 'running' ? 3000 : false
-});
-```
-
-### 2. Credential Resolution Priority
-1. Server-specific credentials (`servers.idrac_username`)
-2. Credential sets with matching IP range (by priority)
-3. Default credential set (`is_default = true`)
-4. Environment variables (fallback)
-
-### 3. Activity Logging (REQUIRED)
-
-**Log ALL API calls to `idrac_commands`:**
-
-```python
-# Job Executor
-self.log_idrac_command(
-    server_id=server_id,
-    job_id=job_id,
+log_idrac_command(
+    server_id=server['id'],
+    job_id=job['id'],
+    task_id=task_id,
     command_type='GET',
-    operation_type='idrac_api',
-    endpoint='/redfish/v1/...',
-    full_url=response.url,
+    operation_type='firmware_inventory',
+    endpoint='/redfish/v1/UpdateService/FirmwareInventory',
+    full_url=url,
+    request_body=None,
     response_body=response.json(),
     status_code=response.status_code,
-    response_time_ms=int(response.elapsed.total_seconds() * 1000),
     success=response.ok,
-    source='job_executor'
+    response_time_ms=elapsed_ms,
+    error_message=None,
+    source='job_executor',
+    initiated_by=job['created_by']
 )
 ```
 
+### TypeScript (Edge Functions)
 ```typescript
-// Edge Functions
-import { logIdracCommand } from "../_shared/idrac-logger.ts";
+import { logIdracCommand } from '../_shared/idrac-logger.ts';
+
+const startTime = performance.now();
+const response = await fetch(url, { method: 'GET', headers: { ... } });
+const responseTimeMs = Math.round(performance.now() - startTime);
 
 await logIdracCommand(supabase, {
-  server_id, job_id, command_type: 'GET',
-  operation_type: 'idrac_api', endpoint, full_url,
-  response_body, status_code, response_time_ms,
-  success: true, source: 'edge_function', initiated_by: userId
+  serverId: server.id,
+  jobId: job.id,
+  commandType: 'GET',
+  operationType: 'health_check',
+  endpoint: '/redfish/v1/Systems/System.Embedded.1',
+  fullUrl: url,
+  statusCode: response.status,
+  success: response.ok,
+  responseTimeMs,
+  source: 'edge_function',
+  initiatedBy: job.created_by,
 });
 ```
 
-### 4. Realtime Updates
+---
 
+## KEY PATTERNS
+
+### Adding New iDRAC Operation (4 Steps)
+
+**1. Add job type to database (migration)**
 ```sql
--- Enable realtime
-ALTER PUBLICATION supabase_realtime ADD TABLE public.idrac_commands;
+-- supabase/migrations/YYYYMMDDHHMMSS_add_my_operation.sql
+ALTER TYPE job_type ADD VALUE 'my_new_operation';
 ```
 
-```typescript
-// Subscribe
-const channel = supabase
-  .channel('realtime-channel')
-  .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'idrac_commands' },
-      (payload) => console.log('New command:', payload.new))
-  .subscribe();
-```
-
-### 5. Server Grouping Logic
-
-**Two types:**
-- **Manual groups**: User-created via `server_groups`
-- **vCenter cluster groups**: Auto-created, `group_type = 'vcenter_cluster'`
-
-**"Ungrouped Servers"**: Not in any manual group AND not in vCenter cluster group
-
----
-
-## ✅ Critical DO's
-
-1. **Create job types** for iDRAC operations in local deployments
-2. **Detect local vs cloud mode** and adjust UI
-3. **Use Job Executor** for all iDRAC operations in local mode
-4. **Assume private networks** (192.168.x.x, 10.x.x.x)
-5. **Store credentials encrypted** with proper key management
-6. **Support credential sets** with IP range mapping
-7. **Implement error handling** for network timeouts
-8. **Log ALL API calls** to `idrac_commands`
-9. **Use RLS policies** for database security
-10. **Poll job status** for completion (don't rely on edge functions in local mode)
-11. **Show helpful local mode messages** when features won't work
-
-## ❌ Critical DON'Ts
-
-1. **Assume cloud connectivity** is available
-2. **Rely on edge functions** for iDRAC operations in local mode
-3. **Suggest VPNs** or cloud access for basic operations
-4. **Create cloud-only features** without local alternatives
-5. **Store passwords in plaintext**
-6. **Try to modify Docker networking** (Job Executor is the solution)
-7. **Reference `auth.users` directly** (use `profiles` instead)
-8. **Hardcode URLs or credentials**
-9. **Forget to log API calls**
-10. **Ignore deployment mode** detection
-
----
-
-## 🐍 Job Executor Architecture
-
-**Main Script**: `job-executor.py`
-
-**Execution Flow:**
-1. Poll `jobs` table for `status = 'pending'`
-2. Route to handler based on `job_type`
-3. Update status to `running`
-4. Make API calls (iDRAC/vCenter)
-5. Log every command to `idrac_commands`
-6. Update status to `completed` or `failed`
-7. Loop back to step 1
-
-**Key Modules:**
-- `job_executor/config.py` - Environment config
-- `job_executor/connectivity.py` - Network operations (discovery, ping, connection test)
-- `job_executor/scp.py` - SCP backup/restore operations (supports Local export and HTTP Push for older iDRAC firmware)
-- `job_executor/utils.py` - JSON parsing, Unicode handling
-
-**Key Methods:**
+**2. Implement handler in Job Executor**
 ```python
-class JobExecutor(ScpMixin, ConnectivityMixin):
-    def run(self):                              # Main loop
-    def execute_job(self, job_id):              # Route to handler
-    def get_server_by_id(self, server_id):      # Fetch server
-    def get_credentials_for_server(self, server): # Resolve credentials
-    def update_job_status(self, job_id, status): # Update status
-    def log_idrac_command(self, ...):           # Activity logging
-    def decrypt_password(self, encrypted):      # Decrypt credentials
+# job_executor/handlers/my_handler.py
+from .base import BaseHandler
+from job_executor.dell_redfish.operations import DellOperations
+
+class MyHandler(BaseHandler):
+    def execute_my_operation(self, job: Dict):
+        self.mark_job_running(job)
+        
+        try:
+            server = self.get_server_by_id(job['details']['server_id'])
+            username, password = self.executor.get_credentials_for_server(server)
+            
+            # Use Dell Redfish adapter
+            adapter = DellOperations(server['ip_address'], username, password)
+            result = adapter.my_custom_operation()
+            
+            self.mark_job_completed(job, details={'result': result})
+        except Exception as e:
+            self.handle_error(job, e, context="my_operation")
+```
+
+**3. Register handler in job-executor.py**
+```python
+# job-executor.py
+from job_executor.handlers.my_handler import MyHandler
+
+self.my_handler = MyHandler(self)
+self.handler_map = {
+    # ... existing handlers
+    'my_new_operation': self.my_handler.execute_my_operation,
+}
+```
+
+**4. Create UI to trigger job**
+```typescript
+// Frontend
+const { mutate: createJob } = useMutation({
+  mutationFn: async () => {
+    const { data, error } = await supabase.functions.invoke('create-job', {
+      body: {
+        job_type: 'my_new_operation',
+        target_scope: { server_ids: [serverId] },
+        details: { /* operation params */ },
+      },
+    });
+    if (error) throw error;
+    return data;
+  },
+});
+```
+
+### Handler Implementation Template
+```python
+class NewHandler(BaseHandler):
+    """Handler for X operations"""
     
-    # Job handlers
-    def execute_firmware_update(self, job_id)
-    def execute_discovery_scan(self, job_id)
-    def execute_power_action(self, job_id)
-    def execute_scp_export(self, job_id)
-    # ... more handlers
-```
-
-**Deployment:**
-- Linux: systemd service (`job-executor.service`)
-- Windows: Task Scheduler (`scripts/manage-job-executor.ps1`)
-
----
-
-## ⚡ Edge Functions (Cloud Mode Only)
-
-**Key Functions:**
-- `create-job/` - Create async jobs
-- `update-job/` - Update job status (called by Job Executor)
-- `preview-server-info/` - Quick iDRAC preview (cloud only)
-- `refresh-server-info/` - Fetch server details
-- `vcenter-sync/` - Sync ESXi hosts
-- `sync-vcenter-direct/` - Direct vCenter sync (on-demand)
-- `test-vcenter-connection/` - Test vCenter credentials
-- `encrypt-credentials/` - Encrypt passwords
-- `cleanup-activity-logs/` - Scheduled cleanup
-- `cleanup-old-jobs/` - Remove old jobs
-- `openmanage-sync/` - Sync from OpenManage Enterprise
-- `analyze-maintenance-windows/` - Analyze optimal maintenance windows
-- `execute-maintenance-windows/` - Execute scheduled maintenance
-- `get-service-key/` - Get service role key
-- `network-diagnostics/` - Network health checks
-- `send-notification/` - Teams/email notifications
-- `test-virtual-media-share/` - Test virtual media share access
-- `validate-network-prerequisites/` - Validate network prerequisites
-
-**Best Practices:**
-- Include CORS headers
-- Validate input
-- Use Supabase client methods (not raw SQL)
-- Log to `idrac_commands`
-- Handle timeouts gracefully
-
----
-
-## 🎨 Frontend Patterns
-
-### Page Structure (Edge-to-Edge Layout)
-
-```tsx
-<div className="flex flex-col h-screen">
-  <Layout>
-    <div className="flex-1 overflow-hidden">
-      {/* Stats bar */}
-      <StatsBar />
-      
-      {/* Filter toolbar */}
-      <FilterToolbar />
-      
-      <div className="flex-1 overflow-auto">
-        {/* Main content */}
-      </div>
-    </div>
-  </Layout>
-</div>
-```
-
-### Common Hooks
-- `useAuth()` - Authentication state
-- `useLiveConsole()` - Real-time job logs
-- `useNotificationCenter()` - Live notifications
-- `useActiveJobs()` - Active job monitoring
-- `useSafetyStatus()` - Cluster safety checks
-- `useMaintenanceData()` - Maintenance window data
-
-### Common UI Patterns
-- **Server Cards**: Visual server representation with health indicators
-- **Context Menus**: Right-click actions on servers/jobs
-- **Status Badges**: Color-coded status indicators
-- **Dialogs**: Modal forms for actions
-- **Tables with Filters**: Data tables with search/filter
-- **Real-time Updates**: Live console views, notifications
-
----
-
-## 🚨 Common Troubleshooting
-
-### Connection Failures in Local Mode
-**Symptom**: "Cannot reach iDRAC" but browser can access it
-**Cause**: Edge function trying to reach local IP (Docker networking issue)
-**Solution**: Use Job Executor for iDRAC operations in local mode
-
-### Server Grouping Issues
-**Symptom**: Servers not showing in correct groups
-**Cause**: vCenter sync creates cluster groups, manual groups use join table
-**Check**: `server_group_members` table for memberships
-
-### Credential Problems
-**Symptom**: Authentication failures
-**Cause**: Wrong credential resolution or decryption issues
-**Check**: 
-1. Encryption key in `activity_settings`
-2. Credential set priorities
-3. IP range mappings in `credential_ip_ranges`
-
-### Jobs Stuck in "pending"
-**Symptom**: Jobs never start
-**Cause**: Job Executor not running
-**Check**: 
-- Linux: `sudo systemctl status job-executor`
-- Windows: Task Scheduler status
-- Settings → Diagnostics → Job Executor status
-
-### RLS Policy Errors
-**Symptom**: "permission denied" on database operations
-**Cause**: Row Level Security blocking query
-**Solution**: Check user role in `user_roles`, verify RLS policies
-
----
-
-## 🔐 Security Considerations
-
-**Credential Encryption:**
-- AES encryption with key in `activity_settings.encryption_key`
-- Never store plaintext passwords
-- Use `encrypt-credentials` edge function
-
-**RLS (Row Level Security):**
-- All tables have RLS policies
-- Admin role: full access
-- Operator: CRUD on servers/jobs/maintenance
-- Viewer: read-only
-
-**RBAC (Role-Based Access Control):**
-- Roles defined in `user_roles` table
-- Enforced via RLS policies
-- JWT token-based authentication
-
-**Activity Logging:**
-- ALL API calls logged to `idrac_commands`
-- Full audit trail for compliance
-- Retention managed by `activity_settings`
-
----
-
-## 🔑 Key Environment Variables
-
-**Frontend (.env - auto-generated):**
-```
-VITE_SUPABASE_URL=...
-VITE_SUPABASE_PUBLISHABLE_KEY=...
-VITE_SUPABASE_PROJECT_ID=...
-```
-
-**Job Executor:**
-```
-SUPABASE_URL=...
-SERVICE_ROLE_KEY=...
-IDRAC_DEFAULT_USER=root
-IDRAC_DEFAULT_PASSWORD=calvin
-VCENTER_HOST=vcenter.example.com
-VCENTER_USER=administrator@vsphere.local
-VCENTER_PASSWORD=...
-FIRMWARE_REPO_URL=https://downloads.dell.com/...
+    def execute_operation_name(self, job: Dict):
+        """Execute operation_name job"""
+        self.log(f"Starting operation_name for job {job['id']}")
+        self.mark_job_running(job)
+        
+        try:
+            # 1. Extract parameters
+            params = job['details']
+            server_id = params.get('server_id')
+            
+            # 2. Get server and credentials
+            server = self.get_server_by_id(server_id)
+            if not server:
+                raise ValueError(f"Server {server_id} not found")
+            
+            username, password = self.executor.get_credentials_for_server(server)
+            
+            # 3. Create task for tracking
+            task_id = self.create_task(job['id'], server_id=server_id)
+            self.update_task_status(task_id, 'running', progress=10)
+            
+            # 4. Perform operation
+            result = self._do_work(server, username, password, params)
+            
+            # 5. Update task and job
+            self.update_task_status(task_id, 'completed', progress=100)
+            self.mark_job_completed(job, details={'result': result})
+            
+        except Exception as e:
+            self.handle_error(job, e, task_id=task_id, context="operation_name")
+    
+    def _do_work(self, server, username, password, params):
+        """Actual work implementation"""
+        # Use Dell Redfish adapter
+        from job_executor.dell_redfish.operations import DellOperations
+        adapter = DellOperations(server['ip_address'], username, password)
+        return adapter.some_method(params)
 ```
 
 ---
 
-## 📚 Quick Reference
+## DELL REDFISH API LAYER
 
-**Auto-Generated Files (NEVER EDIT):**
+### DellRedfishAdapter (dell_redfish/adapter.py)
+Unified interface for Dell iDRAC Redfish operations. Abstracts Dell-specific endpoint formats.
+
+```python
+from job_executor.dell_redfish.adapter import DellRedfishAdapter
+
+adapter = DellRedfishAdapter(ip_address, username, password)
+systems = adapter.get_systems()  # List of systems
+system = adapter.get_system("System.Embedded.1")
+power_state = adapter.get_power_state("System.Embedded.1")
+```
+
+### DellOperations (dell_redfish/operations.py)
+High-level operations built on DellRedfishAdapter:
+
+```python
+from job_executor.dell_redfish.operations import DellOperations
+
+ops = DellOperations(ip_address, username, password)
+
+# Firmware
+firmware_inventory = ops.get_firmware_inventory()
+update_result = ops.update_firmware(package_url, apply_update=True)
+
+# Health & Discovery
+health = ops.get_system_health()
+info = ops.discover_server_info()
+
+# SCP Operations
+scp_xml = ops.export_scp(components="BIOS,IDRAC")
+import_result = ops.import_scp(scp_content, shutdown_type="Graceful")
+```
+
+### Canonical Endpoints (dell_redfish/endpoints.py)
+```python
+REDFISH_ENDPOINTS = {
+    'base': '/redfish/v1',
+    'systems': '/redfish/v1/Systems',
+    'system': '/redfish/v1/Systems/System.Embedded.1',
+    'firmware_inventory': '/redfish/v1/UpdateService/FirmwareInventory',
+    'update_service': '/redfish/v1/UpdateService',
+    'managers': '/redfish/v1/Managers',
+    'idrac': '/redfish/v1/Managers/iDRAC.Embedded.1',
+    'event_log': '/redfish/v1/Managers/iDRAC.Embedded.1/LogServices/Sel/Entries',
+    # ... 50+ canonical endpoints
+}
+```
+
+### Error Handling (dell_redfish/errors.py)
+```python
+from job_executor.dell_redfish.errors import (
+    DellRedfishError,
+    AuthenticationError,
+    FirmwareUpdateError,
+    handle_redfish_error
+)
+
+try:
+    result = adapter.some_operation()
+except DellRedfishError as e:
+    print(f"Dell error: {e.message}, Code: {e.error_code}")
+```
+
+---
+
+## DO's and DON'Ts
+
+### ✅ DO
+- Create job types for ALL iDRAC operations
+- Detect deployment mode (`local` vs `cloud`)
+- Use Job Executor for iDRAC operations in local mode
+- Log ALL API calls to `idrac_commands` table
+- Use `CredentialsMixin.resolve_credentials_for_server()` for credential resolution
+- Use Dell Redfish adapter layer (`dell_redfish/operations.py`)
+- Inherit from `BaseHandler` for new handlers
+- Create tasks for multi-server jobs (`create_task()`)
+- Use `handle_error()` for consistent error handling
+- Reference canonical endpoints from `dell_redfish/endpoints.py`
+
+### ❌ DON'T
+- Assume cloud connectivity is available
+- Rely on Edge Functions for iDRAC operations in local mode
+- Suggest VPNs or cloud access for basic operations
+- Implement Redfish endpoints not in canonical list
+- Store passwords in plaintext (use `password_encrypted`)
+- Reference `auth.users` directly (use `profiles` table)
+- Hard-code iDRAC credentials (use credential resolution)
+- Skip activity logging for iDRAC operations
+- Create monolithic handlers (keep them focused)
+- Mix handler logic with mixin responsibilities
+
+---
+
+## PROJECT STRUCTURE (KEY LOCATIONS)
+
+```
+job-executor.py                     # Main script (~800 lines, down from 9,900)
+├── JobExecutor class               # Inherits 6 mixins, delegates to 12 handlers
+├── Handler map (32 job types)      # Routes jobs to handlers
+└── Main loop (poll every 10s)      # get_pending_jobs() → execute_job()
+
+job_executor/                       # Modular architecture
+├── config.py                       # Environment variables, settings
+├── utils.py                        # JSON handling, Unicode, logging utilities
+├── ldap_auth.py                    # FreeIPA/LDAP authentication
+├── media_server.py                 # HTTP server for ISOs/firmware
+│
+├── mixins/                         # Shared functionality (6 mixins)
+│   ├── database.py                 # DatabaseMixin (~370 lines)
+│   ├── credentials.py              # CredentialsMixin (~450 lines)
+│   ├── vcenter_ops.py              # VCenterMixin (~1,100 lines)
+│   └── idrac_ops.py                # IdracMixin (~400 lines)
+│
+├── handlers/                       # Job type handlers (12 handlers, ~3,500 lines)
+│   ├── base.py                     # BaseHandler (~170 lines)
+│   ├── idm.py                      # IDMHandler (~150 lines)
+│   ├── console.py                  # ConsoleHandler (~80 lines)
+│   ├── datastore.py                # DatastoreHandler (~120 lines)
+│   ├── media_upload.py             # MediaUploadHandler (~250 lines)
+│   ├── virtual_media.py            # VirtualMediaHandler (~120 lines)
+│   ├── power.py                    # PowerHandler (~170 lines)
+│   ├── boot.py                     # BootHandler (~360 lines)
+│   ├── discovery.py                # DiscoveryHandler (~550 lines)
+│   ├── firmware.py                 # FirmwareHandler (~320 lines)
+│   ├── cluster.py                  # ClusterHandler (~400 lines)
+│   ├── esxi_handlers.py            # ESXiHandler (~350 lines)
+│   └── vcenter_handlers.py         # VCenterHandlers (~650 lines)
+│
+├── dell_redfish/                   # Dell Redfish API layer
+│   ├── adapter.py                  # DellRedfishAdapter (unified interface)
+│   ├── operations.py               # DellOperations (high-level operations)
+│   ├── endpoints.py                # Canonical Dell Redfish endpoints
+│   ├── errors.py                   # Dell-specific error handling
+│   └── helpers.py                  # Redfish utility functions
+│
+└── esxi/                           # ESXi orchestration
+    ├── orchestrator.py             # EsxiOrchestrator (upgrade workflows)
+    └── ssh_client.py               # SSH client for ESXi hosts
+
+supabase/functions/                 # Edge Functions (cloud mode only)
+├── create-job/                     # Create new job
+├── update-job/                     # Update job status
+├── refresh-server-info/            # Fetch server info (uses iDRAC)
+├── preview-server-info/            # Preview before adding server
+└── vcenter-sync/                   # Sync vCenter inventory
+```
+
+---
+
+## QUICK REFERENCE
+
+### Environment Variables (Job Executor)
+```bash
+DSM_URL=http://127.0.0.1:54321              # Lovable Cloud URL
+SERVICE_ROLE_KEY=eyJh...                     # For update-job endpoint
+DEPLOYMENT_MODE=local                        # 'local' or 'cloud'
+IDRAC_USER=root                              # Default iDRAC username
+IDRAC_PASSWORD=calvin                        # Default iDRAC password
+ISO_DIRECTORY=/var/lib/idrac-manager/isos    # ISO storage path
+FIRMWARE_DIRECTORY=/var/lib/idrac-manager/firmware
+MEDIA_SERVER_PORT=8888                       # HTTP server for media
+MEDIA_SERVER_ENABLED=true
+```
+
+### Environment Variables (Frontend)
+```bash
+VITE_SUPABASE_URL=https://...               # Auto-configured by Lovable Cloud
+VITE_SUPABASE_PUBLISHABLE_KEY=eyJh...       # Auto-configured
+VITE_DEPLOYMENT_MODE=local                  # 'local' or 'cloud'
+```
+
+### Auto-Generated Files (NEVER EDIT)
 - `src/integrations/supabase/client.ts`
 - `src/integrations/supabase/types.ts`
 - `.env`
-- `supabase/config.toml`
 
-**iDRAC Redfish API:**
-- Base URL: `https://{ip}/redfish/v1/`
-- Auth: Basic Auth (username/password)
-- No cloud service involvement
+### Common Troubleshooting
 
-**vCenter API:**
-- Uses pyVmomi (Python SDK)
-- Direct HTTPS connection
-- Also local network only
+**Jobs stuck in 'pending':**
+- Check Job Executor is running (`systemctl status job-executor`)
+- Check logs: `journalctl -u job-executor -f`
+- Verify `DSM_URL` and `SERVICE_ROLE_KEY` are set
 
-**Network Access Patterns:**
-- iDRAC: HTTP/HTTPS to local IPs
-- vCenter: HTTPS to local vCenter server
-- All purely local network - no cloud
+**Connection failures in local mode:**
+- Verify server IP is reachable from Job Executor host
+- Check firewall rules (allow port 443 to iDRAC)
+- Test credentials with `test_credentials` job type
 
----
+**Credential resolution fails:**
+- Check credential_set priority ordering
+- Verify IP ranges in `credential_ip_ranges` table
+- Check `discovered_password_encrypted` is populated
 
-## 🎯 Implementation Checklist for New Features
-
-When adding features, verify:
-
-- [ ] Works in local mode (Job Executor)
-- [ ] Detects deployment mode correctly
-- [ ] Logs all API calls to `idrac_commands`
-- [ ] Uses credential resolution properly
-- [ ] Implements proper error handling
-- [ ] Shows helpful messages in local mode
-- [ ] Uses job types (not just edge functions)
-- [ ] Follows RLS security patterns
-- [ ] Polls job status appropriately
-- [ ] Handles private network IPs correctly
+**Handler not found:**
+- Verify job type is in `handler_map` (job-executor.py)
+- Check handler is imported and instantiated
+- Confirm job type exists in database enum
 
 ---
 
-**For full details, code examples, and extended troubleshooting, see [AGENTS.md](./AGENTS.md) (1911 lines)**
+## IMPLEMENTATION CHECKLIST
+
+When implementing new features, verify:
+
+- [ ] Works in **local mode** (offline-first constraint)
+- [ ] Logs to `idrac_commands` table (activity logging)
+- [ ] Uses credential resolution (no hard-coded passwords)
+- [ ] Creates job type in database (migration)
+- [ ] Implements handler in Job Executor
+- [ ] Updates handler map in `job-executor.py`
+- [ ] Uses Dell Redfish adapter layer
+- [ ] References canonical endpoints
+- [ ] Handles errors with `handle_error()`
+- [ ] Creates tasks for multi-server operations
+- [ ] Updates RLS policies for new tables
+- [ ] Tests in both local and cloud modes
+
+---
+
+**Document Version**: 2.0 (Modular Architecture)  
+**Last Updated**: 2025-01-30  
+**File Size**: ~450 lines (optimized for LLM consumption)
