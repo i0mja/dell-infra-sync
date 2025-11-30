@@ -3360,6 +3360,53 @@ export default function Settings() {
                 </CardContent>
               </Card>
 
+              {/* Service Role Key */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Service Role Key</CardTitle>
+                  <CardDescription>
+                    Required for Job Executor authentication
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {!serviceRoleKey ? (
+                    <Button onClick={fetchServiceRoleKey} disabled={loadingServiceKey}>
+                      {loadingServiceKey ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Loading...
+                        </>
+                      ) : (
+                        'Reveal Key'
+                      )}
+                    </Button>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <Input
+                          type="text"
+                          value={serviceRoleKey}
+                          readOnly
+                          className="font-mono text-xs"
+                        />
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={copyServiceRoleKey}
+                        >
+                          <Copy className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <Alert variant="destructive">
+                        <AlertDescription className="text-xs">
+                          ⚠️ Keep this key secure - it has full access to your backend
+                        </AlertDescription>
+                      </Alert>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
               {/* Network Settings */}
               <Card>
                 <CardHeader>
