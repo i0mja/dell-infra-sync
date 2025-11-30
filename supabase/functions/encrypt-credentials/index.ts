@@ -13,9 +13,10 @@ interface EncryptCredentialsRequest {
   vcenter_id?: string;
   vcenter_settings_id?: string;
   openmanage_settings_id?: string;
+  idm_settings_id?: string;
   username?: string;
   password: string;
-  type: 'credential_set' | 'server' | 'vcenter' | 'openmanage' | 'activity_settings';
+  type: 'credential_set' | 'server' | 'vcenter' | 'openmanage' | 'activity_settings' | 'idm_settings';
 }
 
 serve(async (req) => {
@@ -199,6 +200,19 @@ serve(async (req) => {
           .from('activity_settings')
           .update({ scp_share_password_encrypted: encryptedData })
           .eq('id', settingsData.id);
+        break;
+
+      case 'idm_settings':
+        if (!request.idm_settings_id) {
+          return new Response(
+            JSON.stringify({ error: 'idm_settings_id required for idm_settings type' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        updateResult = await supabaseAdmin
+          .from('idm_settings')
+          .update({ bind_password_encrypted: encryptedData })
+          .eq('id', request.idm_settings_id);
         break;
 
       default:

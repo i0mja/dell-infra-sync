@@ -30,5 +30,8 @@ verify_jwt = true  # Requires authentication for previewing new servers
 [functions.encrypt-credentials]
 verify_jwt = true  # Requires admin/operator authentication for password encryption
 
+[functions.idm-authenticate]
+verify_jwt = false  # Public endpoint - users logging in aren't authenticated yet
+
 [functions.get-service-key]
 verify_jwt = true  # Requires admin authentication to retrieve service role key
