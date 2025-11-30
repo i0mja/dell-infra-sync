@@ -12,37 +12,35 @@
 - No external API calls for server management
 - If accessible in a browser, this app CAN and SHOULD manage it
 
-### Two-Component System (MOST IMPORTANT)
+### Backend Architecture
 
-**Job Executor (Python) - PRIMARY for most operations:**
-- Runs directly on host with full local network access
-- Handles long-running operations (firmware: 30+ minutes, exceeds Edge Function timeouts)
-- Provides SSH access for ESXi orchestration (Edge Functions cannot SSH)
-- File system access for media server and ISO mounting
-- Simpler implementation: Python + requests vs Deno + SSL workarounds
+**Job Executor (Python) - THE Backend Service (Required):**
+- System service running on host (systemd/Task Scheduler)
+- Handles ALL iDRAC and vCenter operations via job queue
+- Full local network access (192.168.x.x, 10.x.x.x, 172.16.x.x)
+- Long-running operations: firmware updates, SCP backups (30+ min)
+- SSH access for ESXi orchestration
+- File system access for ISO mounting, media server
 - Location: `job-executor.py` + `job_executor/` modules
-- Deployment: systemd (Linux) or Task Scheduler (Windows)
+- Job types: `discovery_scan`, `firmware_update`, `power_action`, `scp_backup`, etc.
 
-**Edge Functions (Supabase) - CAN reach local IPs when self-hosted:**
-- **Self-hosted**: CAN reach local IPs with `network_mode: "host"` in Docker
-- **Cloud-hosted**: Cannot reach private network IPs (Supabase infrastructure limitation)
-- Use for: quick operations (health checks, power), job orchestration, database CRUD, notifications
-- Limitations: timeout constraints, no SSH, no file system access
+**Edge Functions (Supporting Services):**
+- Job orchestration: `create-job`, `update-job`
+- Database CRUD operations
+- Authentication: `break-glass-authenticate`, `idm-authenticate`
+- Notifications: `send-notification`
+- Database maintenance: `cleanup-*` functions
+- Network diagnostics
+- **NOT for**: Direct iDRAC/vCenter API calls (Job Executor does this)
 
-**Deployment Reality**: Internal IT tools typically self-hosted. Edge Functions work for local IPs with proper Docker networking, but Job Executor preferred for long-running ops, SSH, and file system.
+### Execution Flow
 
-### Deployment Mode Detection
-```python
-# Python
-DEPLOYMENT_MODE = os.getenv("DEPLOYMENT_MODE", "local")  # "local" or "cloud"
-is_local = DEPLOYMENT_MODE == "local"
-```
-
-```typescript
-// TypeScript
-const deploymentMode = import.meta.env.VITE_DEPLOYMENT_MODE || 'local';
-const isLocal = deploymentMode === 'local';
-```
+All iDRAC/vCenter operations follow this pattern:
+1. Frontend creates job via `create-job` edge function
+2. Job Executor polls `jobs` table, picks up pending job
+3. Job Executor executes operation using Python handlers
+4. Job Executor updates job status and logs to database
+5. Frontend polls job status and displays progress
 
 ---
 
@@ -492,8 +490,7 @@ except DellRedfishError as e:
 
 ### ✅ DO
 - Create job types for ALL iDRAC operations
-- Detect deployment mode (`local` vs `cloud`)
-- Use Job Executor for iDRAC operations in local mode
+- Use Job Executor for ALL iDRAC/vCenter operations
 - Log ALL API calls to `idrac_commands` table
 - Use `CredentialsMixin.resolve_credentials_for_server()` for credential resolution
 - Use Dell Redfish adapter layer (`dell_redfish/operations.py`)
@@ -504,7 +501,7 @@ except DellRedfishError as e:
 
 ### ❌ DON'T
 - Assume cloud connectivity is available
-- Rely on Edge Functions for iDRAC operations in local mode
+- Use Edge Functions for iDRAC operations (always use Job Executor)
 - Suggest VPNs or cloud access for basic operations
 - Implement Redfish endpoints not in canonical list
 - Store passwords in plaintext (use `password_encrypted`)
@@ -562,12 +559,15 @@ job_executor/                       # Modular architecture
     ├── orchestrator.py             # EsxiOrchestrator (upgrade workflows)
     └── ssh_client.py               # SSH client for ESXi hosts
 
-supabase/functions/                 # Edge Functions (cloud mode only)
-├── create-job/                     # Create new job
-├── update-job/                     # Update job status
-├── refresh-server-info/            # Fetch server info (uses iDRAC)
-├── preview-server-info/            # Preview before adding server
-└── vcenter-sync/                   # Sync vCenter inventory
+supabase/functions/                 # Edge Functions (database/auth/notifications)
+├── create-job/                     # Create new job (database operation)
+├── update-job/                     # Update job status (database operation)
+├── send-notification/              # Send notifications
+├── break-glass-authenticate/       # Emergency authentication
+├── idm-authenticate/               # IDM/LDAP authentication
+├── encrypt-credentials/            # Credential encryption
+├── cleanup-*/                      # Database maintenance
+└── network-diagnostics/            # Network diagnostics
 ```
 
 ---
@@ -578,7 +578,6 @@ supabase/functions/                 # Edge Functions (cloud mode only)
 ```bash
 DSM_URL=http://127.0.0.1:54321              # Lovable Cloud URL
 SERVICE_ROLE_KEY=eyJh...                     # For update-job endpoint
-DEPLOYMENT_MODE=local                        # 'local' or 'cloud'
 IDRAC_USER=root                              # Default iDRAC username
 IDRAC_PASSWORD=calvin                        # Default iDRAC password
 ISO_DIRECTORY=/var/lib/idrac-manager/isos    # ISO storage path
@@ -591,7 +590,6 @@ MEDIA_SERVER_ENABLED=true
 ```bash
 VITE_SUPABASE_URL=https://...               # Auto-configured by Lovable Cloud
 VITE_SUPABASE_PUBLISHABLE_KEY=eyJh...       # Auto-configured
-VITE_DEPLOYMENT_MODE=local                  # 'local' or 'cloud'
 ```
 
 ### Auto-Generated Files (NEVER EDIT)
@@ -606,7 +604,7 @@ VITE_DEPLOYMENT_MODE=local                  # 'local' or 'cloud'
 - Check logs: `journalctl -u job-executor -f`
 - Verify `DSM_URL` and `SERVICE_ROLE_KEY` are set
 
-**Connection failures in local mode:**
+**Connection failures:**
 - Verify server IP is reachable from Job Executor host
 - Check firewall rules (allow port 443 to iDRAC)
 - Test credentials with `test_credentials` job type
@@ -627,7 +625,7 @@ VITE_DEPLOYMENT_MODE=local                  # 'local' or 'cloud'
 
 When implementing new features, verify:
 
-- [ ] Works in **local mode** (offline-first constraint)
+- [ ] Works offline-first (no internet required)
 - [ ] Logs to `idrac_commands` table (activity logging)
 - [ ] Uses credential resolution (no hard-coded passwords)
 - [ ] Creates job type in database (migration)
@@ -638,7 +636,7 @@ When implementing new features, verify:
 - [ ] Handles errors with `handle_error()`
 - [ ] Creates tasks for multi-server operations
 - [ ] Updates RLS policies for new tables
-- [ ] Tests in both local and cloud modes
+- [ ] Tests with Job Executor backend
 
 ---
 

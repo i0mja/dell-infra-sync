@@ -43,10 +43,10 @@ This document tracks Redfish usage across the project and ensures alignment with
 
 ## Supabase Edge Function Audit
 - **Session lifecycle** (`supabase/functions/_shared/idrac-session.ts`): Creates sessions via POST to `SessionService/Sessions` and deletes via DELETE on the returned Location, matching Dell examples and using `X-Auth-Token` headers for authenticated requests.
-- **Server info retrieval** (`supabase/functions/preview-server-info/index.ts`, `supabase/functions/refresh-server-info/index.ts`): Pull system and manager resources with the same canonical endpoints as the Python executor for consistency across deployment modes.
+- **Note**: Direct iDRAC operations are now exclusively handled by the Job Executor (Python backend). Edge Functions focus on database operations, authentication, and notifications.
 
 ## Payloads, Authentication, and Monitoring
-- **Authentication**: Basic auth and session token headers are both supported in the executor and edge functions, following Dell recommendations.
+- **Authentication**: Basic auth and session token headers are supported in the executor, following Dell recommendations.
 - **Payload formats**: Reset actions cover Dell-supported `ResetType` options (GracefulShutdown, GracefulRestart, ForceRestart, ForceOff, On, PowerCycle). SCP import/export payloads mirror Dell OEM schema with explicit `Target` fields. Boot workflows pass `Boot` objects with Pxe/Hdd/Cd/BiosSetup/UefiTarget/SDCard/UefiHttp values per Dell scripts.
 - **Task/job polling**: Task state checks handle Completed/Running/Pending/Exception, and job monitoring watches Dell OEM job queues with configurable polling intervals to mirror Dell script guidance on long-running operations.
 
