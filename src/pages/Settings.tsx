@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useTheme } from "next-themes";
 import { Activity, AlertCircle, Bell, Briefcase, CheckCircle2, ChevronDown, ChevronRight, CloudCog, Copy, Database, Disc, FileText, Globe, Info, Loader2, Mail, MessageSquare, Monitor, Moon, Network, Palette, Plus, RefreshCw, Save, Server, Settings as SettingsIcon, Shield, ShieldAlert, Sun, Terminal, Users, X, XCircle } from "lucide-react";
 import { ServerGroupsManagement } from "@/components/settings/ServerGroupsManagement";
+import { IdentityProviderSettings } from "@/components/settings/IdentityProviderSettings";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { DiagnosticsDialog } from "@/components/settings/DiagnosticsDialog";
@@ -3404,6 +3405,10 @@ export default function Settings() {
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="identity-provider">
+            <IdentityProviderSettings />
           </TabsContent>
 
           <TabsContent value="cluster-monitoring">

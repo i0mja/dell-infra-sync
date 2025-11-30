@@ -1,4 +1,4 @@
-import { LucideIcon, Palette, Mail, MessageSquare, Server, Briefcase, Activity, Bell, Shield, Network, Users, Disc, ShieldAlert, CloudCog } from "lucide-react";
+import { LucideIcon, Palette, Mail, MessageSquare, Server, Briefcase, Activity, Bell, Shield, Network, Users, Disc, ShieldAlert, CloudCog, ShieldCheck } from "lucide-react";
 
 export interface SettingsTab {
   id: string;
@@ -37,6 +37,15 @@ export const settingsTabs: SettingsTab[] = [
     icon: Shield,
     group: 'Security',
     order: 3,
+  },
+  {
+    id: 'identity-provider',
+    name: 'Identity Provider',
+    title: 'Identity Provider Settings',
+    description: 'Configure FreeIPA/LDAP authentication for enterprise SSO',
+    icon: ShieldCheck,
+    group: 'Security',
+    order: 3.5,
   },
   {
     id: 'operations-safety',
