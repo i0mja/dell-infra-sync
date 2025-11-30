@@ -17,7 +17,7 @@ export function SettingsSection({
   children,
 }: SettingsSectionProps) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-start gap-3">
         {Icon && (
           <div className="p-2 rounded-md bg-muted/50">
@@ -36,7 +36,6 @@ export function SettingsSection({
       <div className="space-y-4">
         {children}
       </div>
-      <Separator className="my-6" />
     </div>
   );
 }

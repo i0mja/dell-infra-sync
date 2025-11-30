@@ -20,8 +20,8 @@ export function SettingsPageHeader({
   actions,
 }: SettingsPageHeaderProps) {
   return (
-    <div className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-10">
-      <div className="px-8 py-6">
+    <div className="sticky top-0 z-10 bg-background">
+      <div className="px-6 py-6">
         <div className="flex items-start justify-between">
           <div className="flex items-start gap-4">
             <div className="p-2 rounded-lg bg-primary/10">
