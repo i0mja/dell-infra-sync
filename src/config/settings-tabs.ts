@@ -48,6 +48,15 @@ export const settingsTabs: SettingsTab[] = [
     order: 3.5,
   },
   {
+    id: 'audit-logs',
+    name: 'Audit Logs',
+    title: 'Security Audit Logs',
+    description: 'View authentication events, security actions, and break-glass usage',
+    icon: ShieldAlert,
+    group: 'Security',
+    order: 3.6,
+  },
+  {
     id: 'operations-safety',
     name: 'Operations Safety',
     title: 'Operations Safety Controls',

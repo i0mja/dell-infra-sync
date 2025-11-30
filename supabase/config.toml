@@ -1,5 +1,8 @@
 project_id = "ylwkczjqvymshktuuqkx"
 
+[functions.break-glass-authenticate]
+verify_jwt = false  # Public endpoint for emergency access
+
 [functions.update-job]
 verify_jwt = false  # Called by local job executor with service role key
 

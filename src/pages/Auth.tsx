@@ -25,6 +25,9 @@ const Auth = () => {
   const [idmSettings, setIdmSettings] = useState<any>(null);
   const [idmLoading, setIdmLoading] = useState(true);
   const [lockoutRemaining, setLockoutRemaining] = useState<number | null>(null);
+  const [showBreakGlass, setShowBreakGlass] = useState(false);
+  const [breakGlassEmail, setBreakGlassEmail] = useState("");
+  const [breakGlassPassword, setBreakGlassPassword] = useState("");
   const { signIn, signUp } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -226,6 +229,57 @@ const Auth = () => {
     setLoading(false);
   };
 
+  const handleBreakGlassSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/break-glass-authenticate`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: breakGlassEmail, password: breakGlassPassword }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (response.status === 429) {
+        toast({
+          title: "Account Locked",
+          description: result.error || 'Too many failed attempts',
+          variant: "destructive",
+        });
+      } else if (result.success) {
+        await supabase.auth.setSession({
+          access_token: result.access_token,
+          refresh_token: result.refresh_token,
+        });
+        toast({
+          title: "Emergency Access Granted",
+          description: "Break-glass authentication successful. This usage has been logged.",
+          variant: "destructive",
+        });
+        navigate("/");
+      } else {
+        toast({
+          title: "Authentication Failed",
+          description: result.error || 'Invalid credentials',
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
+      toast({
+        title: "Connection Error",
+        description: "Unable to reach authentication service",
+        variant: "destructive",
+      });
+    }
+
+    setLoading(false);
+  };
+
   // Determine if we should show FreeIPA option
   const showFreeIPAOption = !idmLoading && idmSettings && idmSettings.auth_mode !== 'local_only';
   const hideSignUp = idmSettings?.auth_mode === 'idm_primary';
@@ -294,6 +348,52 @@ const Auth = () => {
                 </div>
                 <Button type="submit" className="w-full" disabled={loading}>
                   {loading ? "Sending..." : "Send Reset Link"}
+                </Button>
+              </form>
+            </div>
+          ) : showBreakGlass ? (
+            /* Break-Glass Emergency Access Form */
+            <div className="space-y-4">
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  <strong>Emergency Access Only</strong><br />
+                  This is for break-glass administrators during critical incidents. All usage is logged and audited.
+                </AlertDescription>
+              </Alert>
+              
+              <Button
+                variant="ghost"
+                onClick={() => setShowBreakGlass(false)}
+                className="mb-2"
+              >
+                ← Back to Sign In
+              </Button>
+
+              <form onSubmit={handleBreakGlassSignIn} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="break-glass-email">Email Address</Label>
+                  <Input
+                    id="break-glass-email"
+                    type="email"
+                    placeholder="admin@company.com"
+                    value={breakGlassEmail}
+                    onChange={(e) => setBreakGlassEmail(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="break-glass-password">Password</Label>
+                  <Input
+                    id="break-glass-password"
+                    type="password"
+                    value={breakGlassPassword}
+                    onChange={(e) => setBreakGlassPassword(e.target.value)}
+                    required
+                  />
+                </div>
+                <Button type="submit" className="w-full" disabled={loading} variant="destructive">
+                  {loading ? "Authenticating..." : "Emergency Access"}
                 </Button>
               </form>
             </div>
@@ -445,6 +545,17 @@ const Auth = () => {
                   )}
                 </Tabs>
               )}
+
+              {/* Break-Glass Access Link */}
+              <div className="mt-4 text-center">
+                <Button
+                  variant="link"
+                  className="text-sm text-muted-foreground"
+                  onClick={() => setShowBreakGlass(true)}
+                >
+                  Emergency Access (Break-Glass)
+                </Button>
+              </div>
             </>
           )}
         </CardContent>
