@@ -114,6 +114,7 @@ export function CommandsFilterToolbar({
           <SelectItem value="all">All Sources</SelectItem>
           <SelectItem value="edge_function">Edge Function</SelectItem>
           <SelectItem value="job_executor">Job Executor</SelectItem>
+          <SelectItem value="instant_api">Instant API</SelectItem>
           <SelectItem value="manual">Manual</SelectItem>
         </SelectContent>
       </Select>

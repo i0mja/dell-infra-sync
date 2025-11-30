@@ -42,6 +42,42 @@ class APIHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(content_length)
         return json.loads(body.decode('utf-8'))
     
+    def _log_operation(
+        self,
+        server_id: str,
+        operation_name: str,
+        endpoint: str,
+        full_url: str,
+        request_body: Dict,
+        status_code: int,
+        response_time_ms: int,
+        response_body: Dict,
+        success: bool,
+        error_message: str = None,
+        operation_type: str = 'idrac_api'
+    ):
+        """Log an instant API operation to the activity monitor"""
+        try:
+            self.executor.log_idrac_command(
+                server_id=server_id,
+                job_id=None,  # No job for instant operations
+                task_id=None,
+                command_type=operation_name,
+                endpoint=endpoint,
+                full_url=full_url,
+                request_headers=None,
+                request_body=request_body,
+                status_code=status_code,
+                response_time_ms=response_time_ms,
+                response_body=response_body,
+                success=success,
+                error_message=error_message,
+                operation_type=operation_type,
+                source='instant_api'
+            )
+        except Exception as e:
+            self.executor.log(f"Failed to log API operation: {e}", "ERROR")
+    
     def do_POST(self):
         """Handle POST requests"""
         try:
@@ -73,6 +109,7 @@ class APIHandler(BaseHTTPRequestHandler):
     
     def _handle_console_launch(self):
         """Launch iDRAC console"""
+        start_time = datetime.now()
         data = self._read_json_body()
         server_id = data.get('server_id')
         
@@ -113,7 +150,8 @@ class APIHandler(BaseHTTPRequestHandler):
                 return
             
             # Success response
-            self._send_json({
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            response = {
                 'success': True,
                 'console_url': console_url,
                 'server_id': server_id,
@@ -121,14 +159,48 @@ class APIHandler(BaseHTTPRequestHandler):
                 'session_type': kvm_info.get('session_type', 'HTML5'),
                 'requires_login': kvm_info.get('requires_login', False),
                 'message': kvm_info.get('message')
-            })
+            }
+            
+            # Log operation
+            self._log_operation(
+                server_id=server_id,
+                operation_name='console_launch',
+                endpoint='/api/console-launch',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/console-launch',
+                request_body=data,
+                status_code=200,
+                response_time_ms=response_time_ms,
+                response_body=response,
+                success=True,
+                operation_type='idrac_api'
+            )
+            
+            self._send_json(response)
             
         except Exception as e:
             self.executor.log(f"Console launch failed: {e}", "ERROR")
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            
+            # Log failed operation
+            self._log_operation(
+                server_id=server_id,
+                operation_name='console_launch',
+                endpoint='/api/console-launch',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/console-launch',
+                request_body=data,
+                status_code=500,
+                response_time_ms=response_time_ms,
+                response_body={'error': str(e)},
+                success=False,
+                error_message=str(e),
+                operation_type='idrac_api'
+            )
+            
             self._send_error(str(e), 500)
     
     def _handle_power_control(self):
         """Control server power"""
+        start_time = datetime.now()
         data = self._read_json_body()
         server_id = data.get('server_id')
         action = data.get('action')
@@ -179,22 +251,75 @@ class APIHandler(BaseHTTPRequestHandler):
                 job_id=None
             )
             
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            
             if result.get('success'):
-                self._send_json({
+                response = {
                     'success': True,
                     'action': action,
                     'server_id': server_id,
                     'message': result.get('message', 'Power action completed')
-                })
+                }
+                
+                # Log successful operation
+                self._log_operation(
+                    server_id=server_id,
+                    operation_name=f'power_{action}',
+                    endpoint='/api/power-control',
+                    full_url=f'http://localhost:{self.executor.api_server.port}/api/power-control',
+                    request_body=data,
+                    status_code=200,
+                    response_time_ms=response_time_ms,
+                    response_body=response,
+                    success=True,
+                    operation_type='idrac_api'
+                )
+                
+                self._send_json(response)
             else:
-                self._send_error(result.get('error', 'Power action failed'), 500)
+                error_msg = result.get('error', 'Power action failed')
+                
+                # Log failed operation
+                self._log_operation(
+                    server_id=server_id,
+                    operation_name=f'power_{action}',
+                    endpoint='/api/power-control',
+                    full_url=f'http://localhost:{self.executor.api_server.port}/api/power-control',
+                    request_body=data,
+                    status_code=500,
+                    response_time_ms=response_time_ms,
+                    response_body={'error': error_msg},
+                    success=False,
+                    error_message=error_msg,
+                    operation_type='idrac_api'
+                )
+                
+                self._send_error(error_msg, 500)
                 
         except Exception as e:
             self.executor.log(f"Power control failed: {e}", "ERROR")
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            
+            # Log exception
+            self._log_operation(
+                server_id=server_id,
+                operation_name=f'power_{action}',
+                endpoint='/api/power-control',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/power-control',
+                request_body=data,
+                status_code=500,
+                response_time_ms=response_time_ms,
+                response_body={'error': str(e)},
+                success=False,
+                error_message=str(e),
+                operation_type='idrac_api'
+            )
+            
             self._send_error(str(e), 500)
     
     def _handle_connectivity_test(self):
         """Test server connectivity"""
+        start_time = datetime.now()
         data = self._read_json_body()
         server_id = data.get('server_id')
         
@@ -230,21 +355,56 @@ class APIHandler(BaseHTTPRequestHandler):
                     None
                 )
             
-            self._send_json({
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            response = {
                 'success': True,
                 'server_id': server_id,
                 'ip_address': ip_address,
                 'reachable': result.get('reachable', False),
                 'response_time_ms': result.get('response_time_ms'),
                 'message': result.get('message')
-            })
+            }
+            
+            # Log operation
+            self._log_operation(
+                server_id=server_id,
+                operation_name='connectivity_test',
+                endpoint='/api/connectivity-test',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/connectivity-test',
+                request_body=data,
+                status_code=200,
+                response_time_ms=response_time_ms,
+                response_body=response,
+                success=True,
+                operation_type='idrac_api'
+            )
+            
+            self._send_json(response)
             
         except Exception as e:
             self.executor.log(f"Connectivity test failed: {e}", "ERROR")
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            
+            # Log failed operation
+            self._log_operation(
+                server_id=server_id,
+                operation_name='connectivity_test',
+                endpoint='/api/connectivity-test',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/connectivity-test',
+                request_body=data,
+                status_code=500,
+                response_time_ms=response_time_ms,
+                response_body={'error': str(e)},
+                success=False,
+                error_message=str(e),
+                operation_type='idrac_api'
+            )
+            
             self._send_error(str(e), 500)
     
     def _handle_browse_datastore(self):
         """Browse vCenter datastore"""
+        start_time = datetime.now()
         data = self._read_json_body()
         vcenter_id = data.get('vcenter_id')
         datastore_name = data.get('datastore_name')
@@ -330,15 +490,49 @@ class APIHandler(BaseHTTPRequestHandler):
             
             Disconnect(si)
             
-            self._send_json({
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            response = {
                 'success': True,
                 'datastore_name': datastore_name,
                 'files': files,
                 'total_files': len(files)
-            })
+            }
+            
+            # Log operation (no server_id for datastore browsing)
+            self._log_operation(
+                server_id=None,
+                operation_name='browse_datastore',
+                endpoint='/api/browse-datastore',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/browse-datastore',
+                request_body=data,
+                status_code=200,
+                response_time_ms=response_time_ms,
+                response_body={'datastore': datastore_name, 'file_count': len(files)},
+                success=True,
+                operation_type='vcenter_api'
+            )
+            
+            self._send_json(response)
             
         except Exception as e:
             self.executor.log(f"Datastore browse failed: {e}", "ERROR")
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            
+            # Log failed operation
+            self._log_operation(
+                server_id=None,
+                operation_name='browse_datastore',
+                endpoint='/api/browse-datastore',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/browse-datastore',
+                request_body=data,
+                status_code=500,
+                response_time_ms=response_time_ms,
+                response_body={'error': str(e)},
+                success=False,
+                error_message=str(e),
+                operation_type='vcenter_api'
+            )
+            
             self._send_error(str(e), 500)
     
     def log_message(self, format, *args):
