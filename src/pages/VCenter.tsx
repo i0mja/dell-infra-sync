@@ -437,6 +437,11 @@ export default function VCenter() {
     setSelectedDatastoreId(null);
   };
 
+  const handleTabChange = (newTab: string) => {
+    setActiveTab(newTab);
+    handleCloseSidebar();
+  };
+
   // Resolve selected objects from IDs
   const selectedHost = selectedHostId 
     ? hosts.find(h => h.id === selectedHostId) || null 
@@ -486,7 +491,7 @@ export default function VCenter() {
       <div className="flex-1 flex overflow-hidden">
         {/* Scrollable tabs/table area */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
+          <Tabs value={activeTab} onValueChange={handleTabChange} className="h-full flex flex-col">
           {/* Tabs Row with Action Buttons */}
           <div className="flex items-center border-b bg-card px-4">
             <TabsList className="h-auto p-0 bg-transparent gap-2">
