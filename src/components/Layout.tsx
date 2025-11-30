@@ -100,8 +100,9 @@ const Layout = () => {
             )}
             onClick={() => {
               if (location.pathname !== '/settings') {
-                navigate('/settings?tab=appearance');
+                navigate('/settings?tab=general');
               }
+              setSettingsOpen(!settingsOpen);
             }}
           >
             <Settings className="mr-2 h-4 w-4" />
