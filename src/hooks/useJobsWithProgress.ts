@@ -23,6 +23,7 @@ interface JobWithProgress {
   runningTasks: number;
   currentLog: string | null;
   averageProgress: number;
+  calculatedProgress: number | null;
 }
 
 export function useJobsWithProgress() {
@@ -62,6 +63,47 @@ export function useJobsWithProgress() {
           ? tasksWithProgress.reduce((sum, t) => sum + (t.progress || 0), 0) / tasksWithProgress.length
           : 0;
 
+        // Calculate progress from details if available
+        const calculatedProgress = (() => {
+          const details = job.details;
+          if (!details || typeof details !== 'object' || Array.isArray(details)) return null;
+          
+          // Already has explicit progress
+          if ('progress_percent' in details && details.progress_percent !== undefined && details.progress_percent !== null) {
+            return typeof details.progress_percent === 'number' ? details.progress_percent : null;
+          }
+          
+          // vCenter sync: vms_processed / vms_total
+          if ('vms_total' in details && 'vms_processed' in details && 
+              typeof details.vms_total === 'number' && typeof details.vms_processed === 'number' && 
+              details.vms_total > 0) {
+            return Math.round((details.vms_processed / details.vms_total) * 100);
+          }
+          
+          // Discovery scan: servers_scanned / total_ips
+          if ('total_ips' in details && 'servers_scanned' in details && 
+              typeof details.total_ips === 'number' && typeof details.servers_scanned === 'number' && 
+              details.total_ips > 0) {
+            return Math.round((details.servers_scanned / details.total_ips) * 100);
+          }
+          
+          // Hosts sync: hosts_processed / hosts_total
+          if ('hosts_total' in details && 'hosts_processed' in details && 
+              typeof details.hosts_total === 'number' && typeof details.hosts_processed === 'number' && 
+              details.hosts_total > 0) {
+            return Math.round((details.hosts_processed / details.hosts_total) * 100);
+          }
+          
+          // Multi-server jobs: current_server_index / total_servers
+          if ('total_servers' in details && 'current_server_index' in details && 
+              typeof details.total_servers === 'number' && typeof details.current_server_index === 'number' && 
+              details.total_servers > 0) {
+            return Math.round(((details.current_server_index + 1) / details.total_servers) * 100);
+          }
+          
+          return null;
+        })();
+
         return {
           ...job,
           totalTasks: tasks.length,
@@ -69,6 +111,7 @@ export function useJobsWithProgress() {
           runningTasks,
           currentLog: runningTask?.log || null,
           averageProgress,
+          calculatedProgress,
         };
       });
 
