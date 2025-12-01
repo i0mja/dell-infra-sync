@@ -41,8 +41,8 @@ class ClusterHandler(BaseHandler):
             self.log(f"  [{idx}/{len(eligible_hosts)}] Checking {host['name']}...")
             
             try:
-            # Fetch server details
-            server = self.get_server_by_id(host['server_id'])
+                # Fetch server details
+                server = self.get_server_by_id(host['server_id'])
                 if not server:
                     raise Exception("Server not found in database")
                 
