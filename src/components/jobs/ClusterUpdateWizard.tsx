@@ -373,10 +373,21 @@ export const ClusterUpdateWizard = ({
     }
   };
 
-  const handleAcknowledgeClusterExpansion = () => {
+  const handleAcknowledgeClusterExpansion = async () => {
     if (!clusterConflict) return;
     
-    // Switch to cluster mode with the detected cluster
+    // Fetch clusters FIRST before switching tabs
+    const { data } = await supabase
+      .from("vcenter_hosts")
+      .select("cluster")
+      .not("cluster", "is", null);
+    
+    if (data) {
+      const uniqueClusters = [...new Set(data.map(h => h.cluster).filter(Boolean))];
+      setClusters(uniqueClusters as string[]);
+    }
+    
+    // Now switch to cluster mode and preselect
     setTargetType('cluster');
     setSelectedCluster(clusterConflict.clusterName);
     setSelectedServerIds([]);
@@ -384,7 +395,7 @@ export const ClusterUpdateWizard = ({
     setSafetyCheckPassed(false);
     
     toast({
-      title: "Plan Updated",
+      title: "Target Updated",
       description: `Now targeting all hosts in "${clusterConflict.clusterName}" cluster.`,
     });
   };
