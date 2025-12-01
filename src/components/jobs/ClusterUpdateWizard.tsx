@@ -61,6 +61,14 @@ interface TargetInfo {
   connected: number;
 }
 
+interface ClusterConflict {
+  detected: boolean;
+  clusterName: string;
+  selectedServers: string[];
+  allClusterHostIds: string[];
+  acknowledged: boolean;
+}
+
 const STEPS = [
   { id: 1, name: 'Target Selection', icon: Server },
   { id: 2, name: 'Update Type & Details', icon: Shield },
@@ -100,6 +108,7 @@ export const ClusterUpdateWizard = ({
   const [targetInfoLoading, setTargetInfoLoading] = useState(false);
   const [safetyCheckLoading, setSafetyCheckLoading] = useState(false);
   const [safetyCheckPassed, setSafetyCheckPassed] = useState(false);
+  const [clusterConflict, setClusterConflict] = useState<ClusterConflict | null>(null);
   
   // Step 2: Update Type and Selection
   const [updateType, setUpdateType] = useState<'firmware_only' | 'esxi_only' | 'esxi_then_firmware' | 'firmware_then_esxi'>('firmware_only');
@@ -176,6 +185,7 @@ export const ClusterUpdateWizard = ({
       fetchTargetInfo();
     } else if (targetType === 'servers' && selectedServerIds.length > 0) {
       fetchTargetInfo();
+      checkClusterMembership();
     }
   }, [targetType, selectedCluster, selectedGroup, selectedServerIds]);
 
@@ -318,6 +328,67 @@ export const ClusterUpdateWizard = ({
     }
   };
 
+  const checkClusterMembership = async () => {
+    if (selectedServerIds.length === 0) {
+      setClusterConflict(null);
+      return;
+    }
+
+    // Check if any selected server belongs to a cluster
+    const { data: linkedHosts } = await supabase
+      .from("vcenter_hosts")
+      .select("id, server_id, cluster, name")
+      .in("server_id", selectedServerIds)
+      .not("cluster", "is", null);
+    
+    if (linkedHosts && linkedHosts.length > 0) {
+      const clusterName = linkedHosts[0].cluster;
+      
+      // Get ALL hosts in this cluster
+      const { data: allClusterHosts } = await supabase
+        .from("vcenter_hosts")
+        .select("server_id, name")
+        .eq("cluster", clusterName)
+        .not("server_id", "is", null);
+      
+      const allClusterServerIds = allClusterHosts?.map(h => h.server_id).filter(Boolean) || [];
+      
+      // Check if user selected all hosts (no conflict) or partial (conflict)
+      const selectedAllHosts = allClusterServerIds.length > 0 && 
+        allClusterServerIds.every(id => selectedServerIds.includes(id));
+      
+      if (!selectedAllHosts && allClusterServerIds.length > selectedServerIds.length) {
+        setClusterConflict({
+          detected: true,
+          clusterName,
+          selectedServers: selectedServerIds,
+          allClusterHostIds: allClusterServerIds as string[],
+          acknowledged: false
+        });
+      } else {
+        setClusterConflict(null);
+      }
+    } else {
+      setClusterConflict(null);
+    }
+  };
+
+  const handleAcknowledgeClusterExpansion = () => {
+    if (!clusterConflict) return;
+    
+    // Switch to cluster mode with the detected cluster
+    setTargetType('cluster');
+    setSelectedCluster(clusterConflict.clusterName);
+    setSelectedServerIds([]);
+    setClusterConflict(null);
+    setSafetyCheckPassed(false);
+    
+    toast({
+      title: "Plan Updated",
+      description: `Now targeting all hosts in "${clusterConflict.clusterName}" cluster.`,
+    });
+  };
+
   const runSafetyCheck = async () => {
     if (!targetInfo) return;
 
@@ -373,7 +444,8 @@ export const ClusterUpdateWizard = ({
         } else if (targetType === 'group') {
           return selectedGroup && safetyCheckPassed;
         } else if (targetType === 'servers') {
-          return selectedServerIds.length > 0 && safetyCheckPassed;
+          const noConflict = !clusterConflict || clusterConflict.acknowledged;
+          return selectedServerIds.length > 0 && safetyCheckPassed && noConflict;
         }
         return false;
       case 2:
@@ -676,6 +748,7 @@ export const ClusterUpdateWizard = ({
                           } else {
                             setSelectedServerIds(selectedServerIds.filter(id => id !== server.id));
                           }
+                          setSafetyCheckPassed(false);
                         }}
                       />
                       <Label className="flex-1 cursor-pointer">
@@ -687,6 +760,42 @@ export const ClusterUpdateWizard = ({
                     </div>
                   ))}
                 </div>
+
+                {clusterConflict && clusterConflict.detected && !clusterConflict.acknowledged && (
+                  <Alert variant="destructive" className="border-2 mt-4">
+                    <AlertTriangle className="h-5 w-5" />
+                    <AlertTitle className="text-lg">Cannot Update Cluster Hosts Individually</AlertTitle>
+                    <AlertDescription className="space-y-3">
+                      <p>
+                        <strong>{clusterConflict.selectedServers.length} selected server(s)</strong> belong to 
+                        vCenter cluster <strong>"{clusterConflict.clusterName}"</strong>.
+                      </p>
+                      
+                      <div className="bg-destructive/10 p-3 rounded-md text-sm space-y-1">
+                        <p className="font-medium">Why is this dangerous?</p>
+                        <ul className="list-disc list-inside space-y-0.5">
+                          <li>Cluster HA/DRS may fail to migrate VMs if hosts have different firmware versions</li>
+                          <li>vCenter may flag hosts as incompatible with each other</li>
+                          <li>EVC mode violations can cause VM migration failures</li>
+                          <li>Partial updates leave your cluster in an inconsistent state</li>
+                        </ul>
+                      </div>
+                      
+                      <p className="text-sm">
+                        The update plan will be adjusted to include <strong>all {clusterConflict.allClusterHostIds.length} hosts</strong> 
+                        in cluster "{clusterConflict.clusterName}".
+                      </p>
+                      
+                      <Button 
+                        onClick={handleAcknowledgeClusterExpansion}
+                        className="w-full"
+                      >
+                        <CheckCircle className="mr-2 h-4 w-4" />
+                        OK - Update Entire Cluster Instead
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
+                )}
               </div>
             )}
 
@@ -722,7 +831,7 @@ export const ClusterUpdateWizard = ({
                   <Separator className="my-3" />
                   <Button 
                     onClick={runSafetyCheck} 
-                    disabled={safetyCheckLoading || safetyCheckPassed}
+                    disabled={safetyCheckLoading || safetyCheckPassed || (clusterConflict?.detected && !clusterConflict.acknowledged)}
                     className="w-full"
                   >
                     {safetyCheckLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
