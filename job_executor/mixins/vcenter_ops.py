@@ -463,7 +463,7 @@ class VCenterMixin:
             self.log(f"  Traceback: {traceback.format_exc()}", "ERROR")
             return 0
 
-    def sync_vcenter_datastores(self, content, source_vcenter_id: str) -> Dict:
+    def sync_vcenter_datastores(self, content, source_vcenter_id: str, progress_callback=None) -> Dict:
         """Sync datastore information from vCenter"""
         try:
             self.log("Creating datastore container view...")
@@ -480,10 +480,22 @@ class VCenterMixin:
                 'Content-Type': 'application/json'
             }
             
+            # Fetch all vcenter_hosts in one query for faster lookups
+            all_hosts_response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_hosts?select=id,name&source_vcenter_id=eq.{source_vcenter_id}",
+                headers=headers,
+                verify=VERIFY_SSL
+            )
+            host_lookup = {}
+            if all_hosts_response.status_code == 200:
+                hosts = _safe_json_parse(all_hosts_response)
+                if hosts:
+                    host_lookup = {h['name']: h['id'] for h in hosts}
+            
             synced = 0
             host_mount_synced = 0
             
-            for ds in container.view:
+            for i, ds in enumerate(container.view):
                 try:
                     summary = ds.summary
                     
@@ -517,23 +529,16 @@ class VCenterMixin:
                         if datastore_result:
                             datastore_db_id = datastore_result[0]['id'] if isinstance(datastore_result, list) else datastore_result.get('id')
                         
-                        # Sync host mount info
+                        # Sync host mount info using batched host lookup
                         if datastore_db_id and hasattr(ds, 'host'):
                             for mount_info in ds.host:
                                 try:
                                     host = mount_info.key
                                     
-                                    # Find vcenter_host ID
-                                    host_lookup = requests.get(
-                                        f"{DSM_URL}/rest/v1/vcenter_hosts?select=id&name=eq.{host.name}",
-                                        headers=headers,
-                                        verify=VERIFY_SSL
-                                    )
+                                    # Use pre-fetched host lookup
+                                    host_db_id = host_lookup.get(host.name)
                                     
-                                    if host_lookup.status_code == 200:
-                                        hosts_found = _safe_json_parse(host_lookup)
-                                        if hosts_found:
-                                            host_db_id = hosts_found[0]['id']
+                                    if host_db_id:
                                             
                                             mount_data = {
                                                 'datastore_id': datastore_db_id,
@@ -558,6 +563,11 @@ class VCenterMixin:
                                     self.log(f"    Error syncing host mount: {mount_err}", "WARNING")
                         
                         self.log(f"  Synced datastore: {summary.name}")
+                        
+                        # Report progress
+                        if progress_callback:
+                            pct = int((i + 1) / total_datastores * 100)
+                            progress_callback(pct, f"Synced {i+1}/{total_datastores} datastores")
                     
                 except Exception as e:
                     self.log(f"  Error syncing datastore: {e}", "WARNING")
@@ -572,7 +582,7 @@ class VCenterMixin:
             self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
             return {'synced': 0, 'error': str(e)}
 
-    def sync_vcenter_alarms(self, content, source_vcenter_id: str) -> Dict:
+    def sync_vcenter_alarms(self, content, source_vcenter_id: str, progress_callback=None) -> Dict:
         """Sync active alarms from vCenter"""
         try:
             self.log("Fetching alarm manager...")
@@ -602,7 +612,7 @@ class VCenterMixin:
             total_entities = len(container.view)
             self.log(f"Checking {total_entities} entities for alarms...")
             
-            for entity in container.view:
+            for i, entity in enumerate(container.view):
                 try:
                     if hasattr(entity, 'triggeredAlarmState'):
                         for alarm_state in entity.triggeredAlarmState:
@@ -655,6 +665,11 @@ class VCenterMixin:
                                 
                 except Exception as e:
                     continue
+                
+                # Report progress every 100 entities
+                if progress_callback and i % 100 == 0:
+                    pct = int((i + 1) / total_entities * 100)
+                    progress_callback(pct, f"Checked {i+1}/{total_entities} entities, found {synced} alarms")
             
             container.Destroy()
             self.log(f"  Synced {synced} active alarms")
@@ -666,7 +681,7 @@ class VCenterMixin:
             self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
             return {'synced': 0, 'error': str(e)}
 
-    def sync_vcenter_hosts(self, content, source_vcenter_id: str) -> Dict:
+    def sync_vcenter_hosts(self, content, source_vcenter_id: str, progress_callback=None) -> Dict:
         """Sync ESXi hosts from vCenter and auto-link to servers"""
         try:
             self.log("Creating host container view...")
@@ -680,7 +695,7 @@ class VCenterMixin:
             synced = 0
             auto_linked = 0
             
-            for host in container.view:
+            for i, host in enumerate(container.view):
                 try:
                     runtime = host.runtime if hasattr(host, 'runtime') else None
                     config = host.config if hasattr(host, 'config') else None
@@ -796,6 +811,11 @@ class VCenterMixin:
                                         self.log(f"  Auto-linked {host.name} to server {server['hostname']}")
                         
                         self.log(f"  Synced host: {host.name}")
+                        
+                        # Report progress
+                        if progress_callback:
+                            pct = int((i + 1) / total_hosts * 100)
+                            progress_callback(pct, f"Synced {i+1}/{total_hosts} hosts, auto-linked {auto_linked}")
                     
                 except Exception as e:
                     self.log(f"  Error syncing host {host.name}: {e}", "WARNING")

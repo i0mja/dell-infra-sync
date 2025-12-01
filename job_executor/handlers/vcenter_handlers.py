@@ -135,7 +135,13 @@ class VCenterHandlers(BaseHandler):
             if not self.executor.check_vcenter_connection(content):
                 raise Exception("vCenter connection lost before datastore sync")
             
-            datastores_result = self.executor.sync_vcenter_datastores(content, source_vcenter_id)
+            # Create progress callback for datastores
+            def datastore_progress(pct, msg):
+                if 'datastores' in phase_tasks:
+                    self.update_task_status(phase_tasks['datastores'], 'running', log=msg, progress=pct)
+                self.update_job_status(job['id'], 'running', details={'current_step': msg})
+            
+            datastores_result = self.executor.sync_vcenter_datastores(content, source_vcenter_id, progress_callback=datastore_progress)
             self.log(f"✓ Datastores synced: {datastores_result.get('synced', 0)}")
             
             if 'datastores' in phase_tasks:
@@ -173,7 +179,13 @@ class VCenterHandlers(BaseHandler):
             if not self.executor.check_vcenter_connection(content):
                 raise Exception("vCenter connection lost before alarm sync")
             
-            alarms_result = self.executor.sync_vcenter_alarms(content, source_vcenter_id)
+            # Create progress callback for alarms
+            def alarm_progress(pct, msg):
+                if 'alarms' in phase_tasks:
+                    self.update_task_status(phase_tasks['alarms'], 'running', log=msg, progress=pct)
+                self.update_job_status(job['id'], 'running', details={'current_step': msg})
+            
+            alarms_result = self.executor.sync_vcenter_alarms(content, source_vcenter_id, progress_callback=alarm_progress)
             self.log(f"✓ Alarms synced: {alarms_result.get('synced', 0)}")
             
             if 'alarms' in phase_tasks:
@@ -192,7 +204,13 @@ class VCenterHandlers(BaseHandler):
             if not self.executor.check_vcenter_connection(content):
                 raise Exception("vCenter connection lost before host sync")
             
-            hosts_result = self.executor.sync_vcenter_hosts(content, source_vcenter_id)
+            # Create progress callback for hosts
+            def host_progress(pct, msg):
+                if 'hosts' in phase_tasks:
+                    self.update_task_status(phase_tasks['hosts'], 'running', log=msg, progress=pct)
+                self.update_job_status(job['id'], 'running', details={'current_step': msg})
+            
+            hosts_result = self.executor.sync_vcenter_hosts(content, source_vcenter_id, progress_callback=host_progress)
             self.log(f"✓ Hosts synced: {hosts_result.get('synced', 0)}, auto-linked: {hosts_result.get('auto_linked', 0)}")
             
             if 'hosts' in phase_tasks:
