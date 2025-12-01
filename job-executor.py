@@ -534,22 +534,100 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
         target: str = "ALL",
         server_id: str = None,
         job_id: str = None,
-        user_id: str = None
+        user_id: str = None,
+        backup_name: str = None
     ) -> Dict:
         """
-        Export SCP via Dell Redfish API.
-        Wrapper that delegates to DellOperations.export_scp()
+        Export SCP via Dell Redfish API and save to database.
+        Returns standardized response with success/error fields.
         """
-        dell_ops = self._get_dell_operations()
-        return dell_ops.export_scp(
-            ip=ip,
-            username=username,
-            password=password,
-            target=target,
-            job_id=job_id,
-            server_id=server_id,
-            user_id=user_id
-        )
+        import hashlib
+        from datetime import datetime
+        
+        try:
+            dell_ops = self._get_dell_operations()
+            result = dell_ops.export_scp(
+                ip=ip,
+                username=username,
+                password=password,
+                target=target,
+                job_id=job_id,
+                server_id=server_id,
+                user_id=user_id
+            )
+            
+            scp_content = result.get('scp_content')
+            if not scp_content:
+                return {'success': False, 'error': 'SCP export returned no content'}
+            
+            # Serialize for storage
+            if isinstance(scp_content, (dict, list)):
+                import json
+                serialized = json.dumps(scp_content, indent=2)
+                serialized_for_checksum = json.dumps(scp_content, separators=(',', ':'))
+            else:
+                serialized = str(scp_content)
+                serialized_for_checksum = serialized
+            
+            file_size = len(serialized.encode('utf-8'))
+            checksum = hashlib.sha256(serialized_for_checksum.encode()).hexdigest()
+            
+            # Generate backup name
+            if not backup_name:
+                backup_name = f"backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            
+            # Save to database
+            backup_data = {
+                'server_id': server_id,
+                'export_job_id': job_id,
+                'backup_name': backup_name,
+                'scp_content': scp_content,
+                'scp_file_size_bytes': file_size,
+                'include_bios': 'BIOS' in target or target == 'ALL',
+                'include_idrac': 'IDRAC' in target or target == 'ALL',
+                'include_nic': 'NIC' in target or target == 'ALL',
+                'include_raid': 'RAID' in target or target == 'ALL',
+                'checksum': checksum,
+                'scp_checksum': checksum,
+                'exported_at': datetime.now().isoformat(),
+                'created_by': user_id,
+                'is_valid': True
+            }
+            
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json',
+                'Prefer': 'return=representation'
+            }
+            
+            db_response = requests.post(
+                f"{SUPABASE_URL}/rest/v1/scp_backups",
+                headers=headers,
+                json=backup_data,
+                timeout=30
+            )
+            
+            if db_response.status_code not in [200, 201]:
+                return {'success': False, 'error': f'Failed to save backup: {db_response.text}'}
+            
+            backup_record = db_response.json()
+            backup_id = backup_record[0]['id'] if isinstance(backup_record, list) else backup_record.get('id')
+            
+            self.log(f"SCP backup saved: {backup_name} ({file_size/1024:.1f} KB)")
+            
+            return {
+                'success': True,
+                'backup_id': backup_id,
+                'backup_name': backup_name,
+                'file_size_bytes': file_size,
+                'checksum': checksum,
+                'scp_content': scp_content
+            }
+            
+        except Exception as e:
+            self.log(f"SCP export failed: {str(e)}", "ERROR")
+            return {'success': False, 'error': str(e)}
 
     def import_scp(
         self,
