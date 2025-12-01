@@ -8,8 +8,10 @@ interface MinimizedJob {
 
 interface MinimizedJobsContextType {
   minimizedJobs: MinimizedJob[];
+  maximizedJob: MinimizedJob | null;
   minimizeJob: (jobId: string, jobType: string) => void;
   maximizeJob: (jobId: string) => void;
+  closeMaximizedJob: () => void;
   removeJob: (jobId: string) => void;
   isMinimized: (jobId: string) => boolean;
 }
@@ -21,6 +23,7 @@ const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 export const MinimizedJobsProvider = ({ children }: { children: ReactNode }) => {
   const [minimizedJobs, setMinimizedJobs] = useState<MinimizedJob[]>([]);
+  const [maximizedJob, setMaximizedJob] = useState<MinimizedJob | null>(null);
 
   // Load from localStorage on mount
   useEffect(() => {
@@ -61,7 +64,15 @@ export const MinimizedJobsProvider = ({ children }: { children: ReactNode }) => 
   };
 
   const maximizeJob = (jobId: string) => {
+    const job = minimizedJobs.find(j => j.jobId === jobId);
+    if (job) {
+      setMaximizedJob(job);
+    }
     setMinimizedJobs(prev => prev.filter(j => j.jobId !== jobId));
+  };
+
+  const closeMaximizedJob = () => {
+    setMaximizedJob(null);
   };
 
   const removeJob = (jobId: string) => {
@@ -76,8 +87,10 @@ export const MinimizedJobsProvider = ({ children }: { children: ReactNode }) => 
     <MinimizedJobsContext.Provider
       value={{
         minimizedJobs,
+        maximizedJob,
         minimizeJob,
         maximizeJob,
+        closeMaximizedJob,
         removeJob,
         isMinimized,
       }}
