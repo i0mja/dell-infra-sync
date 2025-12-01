@@ -1,7 +1,7 @@
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { Server, Database, Activity, LogOut, Menu, Settings, LayoutDashboard, ChevronRight, Palette, Mail, MessageSquare, Bell, Shield, Network, Calendar } from "lucide-react";
+import { Server, Database, Activity, LogOut, Menu, Settings, LayoutDashboard, ChevronRight, FileBarChart, Calendar } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
 import {
@@ -59,6 +59,7 @@ const Layout = () => {
     { name: "vCenter", href: "/vcenter", icon: Database },
     { name: "Maintenance Planner", href: "/maintenance-planner", icon: Calendar },
     { name: "Activity Monitor", href: "/activity", icon: Activity },
+    { name: "Reports", href: "/reports", icon: FileBarChart },
   ];
 
   const settingsNavigation = getSettingsNavigation();
@@ -142,7 +143,7 @@ const Layout = () => {
     </>
   );
 
-  const edgeToEdgeRoutes = ["/servers", "/vcenter", "/activity", "/maintenance-planner", "/settings"];
+  const edgeToEdgeRoutes = ["/servers", "/vcenter", "/activity", "/maintenance-planner", "/reports", "/settings"];
   const useEdgeToEdgeLayout = edgeToEdgeRoutes.some((path) =>
     location.pathname.startsWith(path)
   );
