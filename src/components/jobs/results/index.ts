@@ -7,3 +7,6 @@ export { GenericResults } from './GenericResults';
 export { JobTimingCard } from './JobTimingCard';
 export { EsxiUpgradeResults } from './EsxiUpgradeResults';
 export { EsxiPreflightResults } from './EsxiPreflightResults';
+export { JobProgressHeader } from './JobProgressHeader';
+export { JobTasksTimeline } from './JobTasksTimeline';
+export { JobConsoleLog } from './JobConsoleLog';

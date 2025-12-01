@@ -18,7 +18,10 @@ import {
   GenericResults,
   JobTimingCard,
   EsxiUpgradeResults,
-  EsxiPreflightResults
+  EsxiPreflightResults,
+  JobProgressHeader,
+  JobTasksTimeline,
+  JobConsoleLog
 } from "./results";
 
 interface Job {
@@ -250,16 +253,27 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
             </div>
           </DialogHeader>
 
-          <Tabs defaultValue="overview" className="w-full">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="overview">Overview</TabsTrigger>
+          <Tabs defaultValue="progress" className="w-full">
+            <TabsList className="grid w-full grid-cols-4">
+              <TabsTrigger value="progress">Progress</TabsTrigger>
+              <TabsTrigger value="console">Console</TabsTrigger>
+              <TabsTrigger value="results">Results</TabsTrigger>
               <TabsTrigger value="api-calls">
                 <Activity className="h-4 w-4 mr-2" />
                 API Activity
               </TabsTrigger>
             </TabsList>
 
-            <TabsContent value="overview" className="space-y-6 mt-4">
+            <TabsContent value="progress" className="space-y-4 mt-4">
+              <JobProgressHeader job={job} />
+              <JobTasksTimeline jobId={job.id} />
+            </TabsContent>
+
+            <TabsContent value="console" className="mt-4">
+              <JobConsoleLog jobId={job.id} />
+            </TabsContent>
+
+            <TabsContent value="results" className="space-y-6 mt-4">
               {/* Job Timing */}
               <JobTimingCard job={job} />
 
