@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useMaintenanceData } from "@/hooks/useMaintenanceData";
 import { useSafetyStatus } from "@/hooks/useSafetyStatus";
 import { useActiveJobs } from "@/hooks/useActiveJobs";
@@ -88,6 +89,25 @@ export default function MaintenancePlanner() {
   const { activeJobs } = useActiveJobs();
   const { windows: optimalWindows } = useOptimalWindows(clusters);
 
+  // Fetch servers for target name resolution
+  const { data: servers } = useQuery({
+    queryKey: ['maintenance-planner-servers'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('servers')
+        .select('id, hostname, ip_address, service_tag');
+      if (error) throw error;
+      return data || [];
+    }
+  });
+
+  // Create lookup map for quick server resolution
+  const serverLookup = useMemo(() => {
+    const map = new Map<string, { hostname: string | null; ip_address: string }>();
+    servers?.forEach(s => map.set(s.id, { hostname: s.hostname, ip_address: s.ip_address }));
+    return map;
+  }, [servers]);
+
   // Fetch jobs
   useEffect(() => {
     const fetchJobs = async () => {
@@ -142,6 +162,35 @@ export default function MaintenancePlanner() {
     return labels[type] || type;
   };
 
+  // Helper function to format server targets with actual names
+  const formatServerTarget = (serverIds: string[]) => {
+    if (!serverIds || serverIds.length === 0) return 'N/A';
+    
+    if (serverIds.length === 1) {
+      const server = serverLookup.get(serverIds[0]);
+      if (server) {
+        return server.hostname || server.ip_address;
+      }
+      return '1 server';
+    }
+    
+    // For multiple servers, show first 2 names + count
+    const names = serverIds
+      .slice(0, 2)
+      .map(id => {
+        const server = serverLookup.get(id);
+        return server ? (server.hostname?.split('.')[0] || server.ip_address) : null;
+      })
+      .filter(Boolean);
+    
+    if (names.length === 0) return `${serverIds.length} servers`;
+    
+    const remaining = serverIds.length - names.length;
+    return remaining > 0 
+      ? `${names.join(', ')} +${remaining} more`
+      : names.join(', ');
+  };
+
   // Combine jobs and windows into operations
   const operations = useMemo<Operation[]>(() => {
     const jobOps: Operation[] = jobs.map(j => ({
@@ -150,8 +199,8 @@ export default function MaintenancePlanner() {
       title: getJobTypeLabel(j.job_type),
       status: mapJobStatus(j),
       timestamp: new Date(j.started_at || j.created_at),
-      target: j.target_scope?.server_ids 
-        ? `${j.target_scope.server_ids.length} servers`
+      target: j.target_scope?.server_ids?.length > 0
+        ? formatServerTarget(j.target_scope.server_ids)
         : j.target_scope?.cluster_name || 'N/A',
       data: j
     }));
@@ -162,7 +211,13 @@ export default function MaintenancePlanner() {
       title: w.title,
       status: mapWindowStatus(w),
       timestamp: new Date(w.planned_start),
-      target: `${w.cluster_ids?.length || 0} clusters, ${w.server_group_ids?.length || 0} groups`,
+      target: [
+        ...(w.cluster_ids || []),
+        ...(w.server_group_ids || []).map(id => {
+          const group = serverGroups.find(g => g.id === id);
+          return group?.name;
+        }).filter(Boolean)
+      ].join(', ') || 'No targets',
       data: w
     }));
 
@@ -177,7 +232,7 @@ export default function MaintenancePlanner() {
       if (aOrder !== bOrder) return aOrder - bOrder;
       return b.timestamp.getTime() - a.timestamp.getTime();
     });
-  }, [jobs, windows]);
+  }, [jobs, windows, serverLookup, serverGroups]);
 
   const handleOperationClick = (operation: Operation) => {
     if (operation.type === 'job') {
