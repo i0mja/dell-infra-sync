@@ -761,6 +761,35 @@ class ClusterHandler(BaseHandler):
                     workflow_results['hosts_failed'] += 1
                     self.log(f"  [X] Host {host['name']} update failed: {e}", "ERROR")
                     
+                    # Log the failed step to workflow_executions
+                    # Determine which step failed based on what was completed
+                    failed_step_num = base_step + len(host_result.get('steps', [])) + 1
+                    failed_step_name = "Unknown step"
+                    
+                    # Map step numbers to step names
+                    step_map = {
+                        base_step + 1: f"Pre-flight check: {host['name']}",
+                        base_step + 2: f"SCP backup: {host['name']}",
+                        base_step + 3: f"Enter maintenance mode: {host['name']}",
+                        base_step + 4: f"Apply firmware updates: {host['name']}",
+                        base_step + 5: f"Reboot and verify: {host['name']}",
+                        base_step + 6: f"Verify update: {host['name']}",
+                        base_step + 7: f"Exit maintenance mode: {host['name']}"
+                    }
+                    
+                    if failed_step_num in step_map:
+                        failed_step_name = step_map[failed_step_num]
+                    
+                    self._log_workflow_step(
+                        job['id'], 'rolling_cluster_update',
+                        step_number=failed_step_num,
+                        step_name=failed_step_name,
+                        status='failed',
+                        server_id=host['server_id'],
+                        step_error=str(e),
+                        step_completed_at=datetime.now().isoformat()
+                    )
+                    
                     if not continue_on_failure:
                         break
                 
