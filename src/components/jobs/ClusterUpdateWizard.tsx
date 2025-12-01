@@ -45,6 +45,7 @@ interface ClusterUpdateWizardProps {
     id?: string;
     ids?: string[];
   };
+  onClusterExpansionRequest?: (clusterName: string) => void;
 }
 
 interface FirmwareUpdate {
@@ -82,7 +83,8 @@ export const ClusterUpdateWizard = ({
   open,
   onOpenChange,
   preSelectedCluster,
-  preSelectedTarget
+  preSelectedTarget,
+  onClusterExpansionRequest
 }: ClusterUpdateWizardProps) => {
   const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -373,31 +375,22 @@ export const ClusterUpdateWizard = ({
     }
   };
 
-  const handleAcknowledgeClusterExpansion = async () => {
+  const handleAcknowledgeClusterExpansion = () => {
     if (!clusterConflict) return;
     
-    // Fetch clusters FIRST before switching tabs
-    const { data } = await supabase
-      .from("vcenter_hosts")
-      .select("cluster")
-      .not("cluster", "is", null);
+    const clusterName = clusterConflict.clusterName;
     
-    if (data) {
-      const uniqueClusters = [...new Set(data.map(h => h.cluster).filter(Boolean))];
-      setClusters(uniqueClusters as string[]);
+    // If parent provides callback, use it (close and re-open wizard)
+    if (onClusterExpansionRequest) {
+      onClusterExpansionRequest(clusterName);
+    } else {
+      // Fallback: close wizard with toast
+      onOpenChange(false);
+      toast({
+        title: "Cluster Detected",
+        description: `Please select the "${clusterName}" cluster from the Update Wizard.`,
+      });
     }
-    
-    // Now switch to cluster mode and preselect
-    setTargetType('cluster');
-    setSelectedCluster(clusterConflict.clusterName);
-    setSelectedServerIds([]);
-    setClusterConflict(null);
-    setSafetyCheckPassed(false);
-    
-    toast({
-      title: "Target Updated",
-      description: `Now targeting all hosts in "${clusterConflict.clusterName}" cluster.`,
-    });
   };
 
   const runSafetyCheck = async () => {

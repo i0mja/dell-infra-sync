@@ -80,6 +80,7 @@ export default function VCenter() {
   const [testDialogOpen, setTestDialogOpen] = useState(false);
   const [clusterUpdateOpen, setClusterUpdateOpen] = useState(false);
   const [selectedClusterForUpdate, setSelectedClusterForUpdate] = useState<string | undefined>();
+  const [preSelectedClusterForUpdate, setPreSelectedClusterForUpdate] = useState<string | undefined>();
   const [syncing, setSyncing] = useState(false);
   const [testing, setTesting] = useState(false);
   const [vcenterHost, setVcenterHost] = useState("");
@@ -783,8 +784,24 @@ export default function VCenter() {
 
       <ClusterUpdateWizard
         open={clusterUpdateOpen}
-        onOpenChange={setClusterUpdateOpen}
-        preSelectedCluster={selectedClusterForUpdate}
+        onOpenChange={(open) => {
+          setClusterUpdateOpen(open);
+          if (!open) {
+            setSelectedClusterForUpdate(undefined);
+            setPreSelectedClusterForUpdate(undefined);
+          }
+        }}
+        preSelectedCluster={preSelectedClusterForUpdate || selectedClusterForUpdate}
+        onClusterExpansionRequest={(clusterName) => {
+          setClusterUpdateOpen(false);
+          setSelectedClusterForUpdate(undefined);
+          setPreSelectedClusterForUpdate(clusterName);
+          
+          // Re-open wizard after a short delay with cluster pre-selected
+          setTimeout(() => {
+            setClusterUpdateOpen(true);
+          }, 100);
+        }}
       />
     </div>
   );

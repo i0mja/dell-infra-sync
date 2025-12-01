@@ -86,6 +86,7 @@ export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) =>
   const [loading, setLoading] = useState(true);
   
   const [updateWizardOpen, setUpdateWizardOpen] = useState(false);
+  const [preSelectedClusterForUpdate, setPreSelectedClusterForUpdate] = useState<string | undefined>();
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
   const [subJobCounts, setSubJobCounts] = useState<Record<string, number>>({});
@@ -349,6 +350,17 @@ export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) =>
         variant: "destructive",
       });
     }
+  };
+
+  // Handle cluster expansion request from wizard
+  const handleClusterExpansionRequest = (clusterName: string) => {
+    setUpdateWizardOpen(false);
+    setPreSelectedClusterForUpdate(clusterName);
+    
+    // Re-open wizard after a short delay with cluster pre-selected
+    setTimeout(() => {
+      setUpdateWizardOpen(true);
+    }, 100);
   };
 
   const handleViewDetails = (job: Job) => {
@@ -694,7 +706,12 @@ export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) =>
 
       <ClusterUpdateWizard
         open={updateWizardOpen}
-        onOpenChange={setUpdateWizardOpen}
+        onOpenChange={(open) => {
+          setUpdateWizardOpen(open);
+          if (!open) setPreSelectedClusterForUpdate(undefined);
+        }}
+        preSelectedCluster={preSelectedClusterForUpdate}
+        onClusterExpansionRequest={handleClusterExpansionRequest}
       />
 
       {selectedJob && (
