@@ -168,6 +168,22 @@ class FirmwareHandler(BaseHandler):
                     start_time = time.time()
                     
                     while progress < 100:
+                        # Check for cancellation
+                        if self.check_cancelled(job['id']):
+                            self.log(f"  Job cancelled - clearing iDRAC job queue")
+                            dell_ops = self.executor._get_dell_operations()
+                            try:
+                                dell_ops.clear_idrac_job_queue(ip, username, password, force=True, server_id=server['id'])
+                            except Exception as clear_error:
+                                self.log(f"  Warning: Failed to clear job queue: {clear_error}", "WARN")
+                            
+                            self.update_task_status(
+                                task['id'], 'failed',
+                                log="✗ Job cancelled by user",
+                                completed_at=datetime.now().isoformat()
+                            )
+                            raise Exception("Job cancelled by user")
+                        
                         if time.time() - start_time > FIRMWARE_UPDATE_TIMEOUT:
                             raise Exception("Firmware update timed out")
                         

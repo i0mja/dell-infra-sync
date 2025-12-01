@@ -346,3 +346,31 @@ class DatabaseMixin:
         except Exception as e:
             self.log(f"Error creating task: {e}", "ERROR")
             return None
+
+    def is_job_cancelled(self, job_id: str) -> bool:
+        """
+        Check if a job has been cancelled by the user.
+        Call this periodically during long-running operations.
+        
+        Args:
+            job_id: Job UUID to check
+            
+        Returns:
+            True if job status is 'cancelled', False otherwise
+        """
+        try:
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/jobs?id=eq.{job_id}&select=status",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL,
+                timeout=5
+            )
+            if response.status_code == 200:
+                jobs = _safe_json_parse(response)
+                if jobs and jobs[0].get('status') == 'cancelled':
+                    return True
+            return False
+        except Exception:
+            return False  # Assume not cancelled on error
