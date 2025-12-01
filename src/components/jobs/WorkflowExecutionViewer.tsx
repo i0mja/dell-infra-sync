@@ -297,6 +297,48 @@ export const WorkflowExecutionViewer = ({
           <Progress value={progress} className="h-2" />
         </div>
 
+        {/* Job-Level Error Alert - Show when job failed */}
+        {overallStatus === 'failed' && jobDetails?.error && (
+          <>
+            <Separator />
+            <Alert variant="destructive">
+              <XCircle className="h-4 w-4" />
+              <AlertDescription className="mt-2">
+                <div className="font-semibold mb-1">Job Failed</div>
+                <div className="font-mono text-xs whitespace-pre-wrap">
+                  {jobDetails.error}
+                </div>
+              </AlertDescription>
+            </Alert>
+          </>
+        )}
+
+        {/* Host-Specific Errors from workflow_results */}
+        {overallStatus === 'failed' && jobDetails?.workflow_results?.host_results && (
+          <>
+            <Separator />
+            <Card className="border-destructive/50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-destructive">Failed Hosts</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {jobDetails.workflow_results.host_results
+                  .filter((h: any) => h.status === 'failed')
+                  .map((host: any, idx: number) => (
+                    <div key={idx} className="p-2 rounded bg-destructive/10 border border-destructive/20">
+                      <div className="font-medium text-sm">{host.host_name}</div>
+                      {host.error && (
+                        <div className="text-xs font-mono mt-1 text-destructive">
+                          {host.error}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+              </CardContent>
+            </Card>
+          </>
+        )}
+
         <Separator />
 
         {/* Workflow Steps Timeline */}
