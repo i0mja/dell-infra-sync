@@ -491,7 +491,7 @@ export function OperationsTable({
                               </Link>
                             ) : op.targetMeta?.type === 'cluster' ? (
                               <Link 
-                                to="/vcenter?tab=clusters"
+                                to={`/vcenter?tab=clusters&cluster=${encodeURIComponent(op.targetMeta?.clusterName || '')}`}
                                 className="text-primary hover:underline"
                               >
                                 {op.target}
