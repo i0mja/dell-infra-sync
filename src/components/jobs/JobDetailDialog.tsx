@@ -242,7 +242,12 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
               Workflow execution details for job {job.id}
             </DialogDescription>
           </DialogHeader>
-          <WorkflowExecutionViewer jobId={job.id} workflowType={job.job_type} />
+          <WorkflowExecutionViewer 
+            jobId={job.id} 
+            workflowType={job.job_type}
+            jobStatus={job.status}
+            jobDetails={job.details}
+          />
         </DialogContent>
       ) : (
         <DialogContent className="max-w-4xl max-h-[90vh]">

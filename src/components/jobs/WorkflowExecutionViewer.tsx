@@ -22,6 +22,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 interface WorkflowExecutionViewerProps {
   jobId: string;
   workflowType: string;
+  jobStatus?: string;
+  jobDetails?: any;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }
@@ -46,6 +48,8 @@ interface WorkflowStep {
 export const WorkflowExecutionViewer = ({ 
   jobId, 
   workflowType,
+  jobStatus,
+  jobDetails,
   open,
   onOpenChange 
 }: WorkflowExecutionViewerProps) => {
@@ -147,7 +151,11 @@ export const WorkflowExecutionViewer = ({
   };
 
   const getOverallStatus = () => {
-    if (steps.length === 0) return 'pending';
+    // If parent job has a terminal status, use it (especially important when no steps exist)
+    if (jobStatus && ['failed', 'completed', 'cancelled'].includes(jobStatus)) {
+      return jobStatus;
+    }
+    if (steps.length === 0) return jobStatus || 'pending';
     if (steps.some(s => s.step_status === 'failed')) return 'failed';
     if (steps.some(s => s.step_status === 'running')) return 'running';
     if (steps.every(s => ['completed', 'skipped'].includes(s.step_status))) return 'completed';
@@ -288,11 +296,24 @@ export const WorkflowExecutionViewer = ({
         </div>
 
         {steps.length === 0 && (
-          <Alert>
-            <AlertDescription>
-              No workflow steps recorded yet. The workflow may not have started.
-            </AlertDescription>
-          </Alert>
+          <>
+            {jobStatus === 'failed' && jobDetails?.error && (
+              <Alert variant="destructive">
+                <XCircle className="h-4 w-4" />
+                <AlertDescription>
+                  <strong>Job failed before workflow started:</strong>
+                  <div className="mt-2 font-mono text-sm">{jobDetails.error}</div>
+                </AlertDescription>
+              </Alert>
+            )}
+            {jobStatus !== 'failed' && (
+              <Alert>
+                <AlertDescription>
+                  No workflow steps recorded yet. The workflow may not have started.
+                </AlertDescription>
+              </Alert>
+            )}
+          </>
         )}
       </CardContent>
     </Card>
