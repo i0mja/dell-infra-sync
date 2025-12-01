@@ -348,6 +348,7 @@ class ScpMixin:
         start_time = time.time()
         last_state = None
         last_response = None
+        last_percent = -1
 
         while time.time() - start_time < timeout_seconds:
             poll_start = time.time()
@@ -363,6 +364,20 @@ class ScpMixin:
             task_state = self._extract_task_state(data)
             messages = self._extract_task_messages(data)
             last_response = (response, response_time_ms, data, task_state, messages)
+            
+            # Report progress if available
+            percent_complete = data.get('PercentComplete', 0) if isinstance(data, dict) else 0
+            if percent_complete > 0 and percent_complete != last_percent:
+                self.update_job_status(
+                    job['id'],
+                    'running',
+                    details={
+                        **job.get('details', {}),
+                        'current_step': f'SCP Export {percent_complete}%',
+                        'scp_progress': percent_complete
+                    }
+                )
+                last_percent = percent_complete
 
             # Some iDRAC versions return the SCP content directly when polling the
             # task monitor (e.g., GET .../Tasks/<id>/$value). In those cases the
