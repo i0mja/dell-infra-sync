@@ -11,6 +11,194 @@ from .base import BaseHandler
 class ClusterHandler(BaseHandler):
     """Handles cluster safety checks and update workflows"""
     
+    def _execute_batch_preflight_checks(
+        self, 
+        job: Dict, 
+        eligible_hosts: List[Dict],
+        cleanup_state: Dict
+    ) -> Dict[str, Dict]:
+        """
+        Phase 0: Test iDRAC connectivity for ALL hosts before proceeding.
+        Returns dict mapping server_id -> {credentials, session_validated, server}
+        Raises exception if ANY host fails pre-flight.
+        """
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        from job_executor.utils import _safe_json_parse
+        import requests
+        
+        self.log("=" * 80)
+        self.log("PHASE 0: PRE-FLIGHT CHECKS (ALL HOSTS)")
+        self.log("=" * 80)
+        
+        host_credentials = {}
+        failed_hosts = []
+        
+        for idx, host in enumerate(eligible_hosts, 1):
+            # Check for cancellation
+            if self._check_and_handle_cancellation(job, cleanup_state):
+                raise Exception("Job cancelled during pre-flight checks")
+            
+            self.log(f"  [{idx}/{len(eligible_hosts)}] Checking {host['name']}...")
+            
+            try:
+                # Fetch server details
+                server = self._fetch_server_details(host['server_id'])
+                if not server:
+                    raise Exception("Server not found in database")
+                
+                if not server.get('ip_address'):
+                    raise Exception("Server has no IP address configured")
+                
+                # Get credentials
+                username, password = self.executor.get_credentials_for_server(server)
+                if not username or not password:
+                    raise Exception("No credentials available")
+                
+                # Test iDRAC connectivity (quick session create/delete)
+                session = self.executor.create_idrac_session(
+                    server['ip_address'], username, password,
+                    log_to_db=True, server_id=host['server_id'], job_id=job['id']
+                )
+                
+                if not session:
+                    raise Exception("Failed to create iDRAC session")
+                
+                # Cleanup test session immediately
+                self.executor.delete_idrac_session(
+                    session, server['ip_address'], host['server_id'], job['id']
+                )
+                
+                host_credentials[host['server_id']] = {
+                    'username': username,
+                    'password': password,
+                    'server': server,
+                    'validated': True
+                }
+                self.log(f"    ✓ iDRAC connectivity OK")
+                
+            except Exception as e:
+                self.log(f"    ✗ FAILED: {e}", "ERROR")
+                failed_hosts.append({'host': host['name'], 'error': str(e)})
+        
+        if failed_hosts:
+            error_summary = ", ".join([f"{h['host']}: {h['error']}" for h in failed_hosts])
+            raise Exception(f"Pre-flight checks failed for {len(failed_hosts)} hosts: {error_summary}")
+        
+        self.log(f"  ✓ All {len(eligible_hosts)} hosts passed pre-flight checks")
+        return host_credentials
+    
+    def _export_single_scp(
+        self,
+        job: Dict,
+        host: Dict,
+        creds: Dict
+    ) -> Dict:
+        """Export SCP for a single host. Used by batch backup."""
+        server = creds['server']
+        username = creds['username']
+        password = creds['password']
+        
+        try:
+            scp_result = self.executor.export_scp(
+                server['ip_address'],
+                username,
+                password,
+                server_id=host['server_id'],
+                job_id=job['id']
+            )
+            
+            return {
+                'success': scp_result.get('success', False),
+                'backup_id': scp_result.get('backup_id'),
+                'size_kb': scp_result.get('size_kb', 0),
+                'error': scp_result.get('error')
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+    
+    def _execute_batch_scp_backups(
+        self,
+        job: Dict,
+        eligible_hosts: List[Dict],
+        host_credentials: Dict[str, Dict],
+        cleanup_state: Dict,
+        parallel: bool = False,
+        max_parallel: int = 3
+    ) -> Dict[str, Dict]:
+        """
+        Phase 1: Export SCP backups from ALL hosts before any updates.
+        
+        Args:
+            parallel: If True, run SCP exports concurrently (up to max_parallel)
+            max_parallel: Max concurrent SCP exports when parallel=True
+            
+        Returns dict mapping server_id -> {backup_id, success, error}
+        """
+        self.log("=" * 80)
+        self.log(f"PHASE 1: SCP BACKUPS ({'PARALLEL' if parallel else 'SEQUENTIAL'})")
+        self.log("=" * 80)
+        
+        backup_results = {}
+        
+        if parallel:
+            # Parallel execution using ThreadPoolExecutor
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            
+            self.log(f"  Running up to {max_parallel} backups concurrently...")
+            
+            with ThreadPoolExecutor(max_workers=max_parallel) as executor:
+                future_to_host = {
+                    executor.submit(
+                        self._export_single_scp,
+                        job, host, host_credentials[host['server_id']]
+                    ): host
+                    for host in eligible_hosts
+                }
+                
+                completed = 0
+                for future in as_completed(future_to_host):
+                    host = future_to_host[future]
+                    completed += 1
+                    
+                    try:
+                        result = future.result()
+                        backup_results[host['server_id']] = result
+                        if result['success']:
+                            self.log(f"  [{completed}/{len(eligible_hosts)}] ✓ {host['name']}: Backup completed ({result.get('size_kb', 0):.1f} KB)")
+                        else:
+                            self.log(f"  [{completed}/{len(eligible_hosts)}] ✗ {host['name']}: {result['error']}", "WARN")
+                    except Exception as e:
+                        backup_results[host['server_id']] = {'success': False, 'error': str(e)}
+                        self.log(f"  [{completed}/{len(eligible_hosts)}] ✗ {host['name']}: {e}", "WARN")
+        else:
+            # Sequential execution
+            for idx, host in enumerate(eligible_hosts, 1):
+                if self._check_and_handle_cancellation(job, cleanup_state):
+                    raise Exception("Job cancelled during SCP backups")
+                
+                self.log(f"  [{idx}/{len(eligible_hosts)}] Backing up {host['name']}...")
+                
+                try:
+                    result = self._export_single_scp(
+                        job, host, host_credentials[host['server_id']]
+                    )
+                    backup_results[host['server_id']] = result
+                    
+                    if result['success']:
+                        self.log(f"    ✓ Backup completed ({result.get('size_kb', 0):.1f} KB)")
+                    else:
+                        self.log(f"    ✗ Backup failed: {result['error']}", "WARN")
+                        
+                except Exception as e:
+                    backup_results[host['server_id']] = {'success': False, 'error': str(e)}
+                    self.log(f"    ✗ Backup failed: {e}", "WARN")
+        
+        # Summarize results
+        successful = sum(1 for r in backup_results.values() if r.get('success'))
+        self.log(f"  SCP Backup Summary: {successful}/{len(eligible_hosts)} successful")
+        
+        return backup_results
+    
     def _check_and_handle_cancellation(self, job: Dict, cleanup_state: Dict) -> bool:
         """
         Check if job was cancelled and perform cleanup if needed.
@@ -287,7 +475,27 @@ class ClusterHandler(BaseHandler):
             )
     
     def execute_rolling_cluster_update(self, job: Dict):
-        """Workflow: Orchestrate firmware updates across entire cluster"""
+        """
+        Execute a phased rolling firmware update across a vCenter cluster.
+        
+        Workflow:
+        - Phase 0: Pre-flight checks (all hosts validated upfront, fail fast)
+        - Phase 1: Batch SCP backups (all hosts backed up before any changes, optional parallel)
+        - Phase 2: Sequential per-host updates (only one host in maintenance at a time)
+        
+        Supports:
+        - Multiple firmware packages per server
+        - Cluster-wide coordination
+        - Server groups and individual servers
+        - Parallel SCP backups (configurable concurrency)
+        - Continue on failure option
+        
+        Job details parameters:
+        - backup_scp (bool): Enable SCP backups (default: True)
+        - parallel_backups (bool): Run SCP backups in parallel (default: False)
+        - max_parallel_backups (int): Max concurrent SCP exports (default: 3)
+        - continue_on_failure (bool): Continue to next host if one fails (default: False)
+        """
         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
         from job_executor.utils import _safe_json_parse
         
@@ -432,9 +640,50 @@ class ClusterHandler(BaseHandler):
                 'current_server': None
             }
             
-            # Update each host sequentially
+            # =================================================================
+            # PHASE 0: PRE-FLIGHT CHECKS (ALL HOSTS)
+            # =================================================================
+            self._log_workflow_step(job['id'], 'rolling_cluster_update', 0,
+                f"Pre-flight checks ({len(eligible_hosts)} hosts)", 'running')
+            
+            host_credentials = self._execute_batch_preflight_checks(
+                job, eligible_hosts, cleanup_state
+            )
+            
+            self._log_workflow_step(job['id'], 'rolling_cluster_update', 0,
+                f"Pre-flight checks ({len(eligible_hosts)} hosts)", 'completed')
+            
+            # =================================================================
+            # PHASE 1: BATCH SCP BACKUPS (ALL HOSTS)
+            # =================================================================
+            backup_results = {}
+            if backup_scp:
+                parallel_backups = details.get('parallel_backups', False)
+                max_parallel_backups = details.get('max_parallel_backups', 3)
+                
+                self._log_workflow_step(job['id'], 'rolling_cluster_update', 1,
+                    f"SCP backups ({len(eligible_hosts)} hosts)", 'running')
+                
+                backup_results = self._execute_batch_scp_backups(
+                    job, eligible_hosts, host_credentials, cleanup_state,
+                    parallel=parallel_backups,
+                    max_parallel=max_parallel_backups
+                )
+                
+                successful_backups = sum(1 for r in backup_results.values() if r.get('success'))
+                self._log_workflow_step(job['id'], 'rolling_cluster_update', 1,
+                    f"SCP backups ({len(eligible_hosts)} hosts)", 'completed',
+                    step_details={'successful': successful_backups, 'total': len(eligible_hosts)})
+            
+            # =================================================================
+            # PHASE 2: SEQUENTIAL HOST UPDATES
+            # =================================================================
+            self._log_workflow_step(job['id'], 'rolling_cluster_update', 2,
+                f"Sequential updates ({len(eligible_hosts)} hosts)", 'running')
+            
+            # Update each host sequentially (one at a time)
             for host_index, host in enumerate(eligible_hosts, 1):
-                # CHECK 1: Before processing each host
+                # Check cancellation before each host
                 if self._check_and_handle_cancellation(job, cleanup_state):
                     self.update_job_status(job['id'], 'cancelled', details={
                         'cancelled_at_host': host_index,
@@ -448,42 +697,32 @@ class ClusterHandler(BaseHandler):
                     'host_name': host['name'],
                     'server_id': host['server_id'],
                     'status': 'pending',
-                    'steps': []
+                    'steps': [],
+                    'backup_completed': backup_results.get(host['server_id'], {}).get('success', False)
                 }
                 
                 try:
-                    self.log(f"Processing host {host_index}/{len(eligible_hosts)}: {host['name']}")
-                    self.log("=" * 60)
+                    self.log(f"\n[HOST {host_index}/{len(eligible_hosts)}] {host['name']}")
+                    self.log("-" * 60)
                     
-                    base_step = host_index * 100  # Steps 100, 200, 300... per host
+                    base_step = 1000 + (host_index * 10)  # Steps 1010, 1020, 1030...
                     
-                    # Get server details
-                    response = requests.get(
-                        f"{DSM_URL}/rest/v1/servers?id=eq.{host['server_id']}&select=*",
-                        headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
-                        verify=VERIFY_SSL
-                    )
-                    if response.status_code != 200:
-                        raise Exception(f"Failed to fetch server details: {response.status_code}")
+                    # Get credentials from pre-flight phase
+                    creds = host_credentials[host['server_id']]
+                    server = creds['server']
+                    username = creds['username']
+                    password = creds['password']
+                    vcenter_host_id = server.get('vcenter_host_id')
                     
-                    servers = _safe_json_parse(response)
-                    if not servers:
-                        raise Exception("Server not found")
-                    server = servers[0]
+                    # Track current server for cleanup
+                    cleanup_state['current_server'] = {
+                        'ip': server['ip_address'],
+                        'username': username,
+                        'password': password,
+                        'server_id': host['server_id']
+                    }
                     
-                    # STEP 1: Pre-flight check - Create iDRAC session and validate connectivity
-                    self._log_workflow_step(
-                        job['id'], 'rolling_cluster_update',
-                        step_number=base_step + 1,
-                        step_name=f"Pre-flight check: {host['name']}",
-                        status='running',
-                        server_id=host['server_id'],
-                        step_started_at=datetime.now().isoformat()
-                    )
-                    
-                    self.log(f"  [1/7] Pre-flight check...")
-                    username, password = self.executor.get_credentials_for_server(server)
-                    
+                    # Create iDRAC session for this host
                     session = self.executor.create_idrac_session(
                         server['ip_address'], username, password,
                         log_to_db=True, server_id=host['server_id'], job_id=job['id']
@@ -492,70 +731,12 @@ class ClusterHandler(BaseHandler):
                     if not session:
                         raise Exception("Failed to create iDRAC session")
                     
-                    self.log(f"  [OK] iDRAC session established")
-                    self._log_workflow_step(
-                        job['id'], 'rolling_cluster_update',
-                        step_number=base_step + 1,
-                        step_name=f"Pre-flight check: {host['name']}",
-                        status='completed',
-                        server_id=host['server_id'],
-                        step_details={'connectivity': True, 'credentials': True},
-                        step_completed_at=datetime.now().isoformat()
-                    )
-                    host_result['steps'].append('preflight')
-                    
                     try:
-                        # STEP 2: SCP Backup (if enabled)
-                        if backup_scp:
-                            self._log_workflow_step(
-                                job['id'], 'rolling_cluster_update',
-                                step_number=base_step + 2,
-                                step_name=f"SCP backup: {host['name']}",
-                                status='running',
-                                server_id=host['server_id'],
-                                step_started_at=datetime.now().isoformat()
-                            )
-                            
-                            self.log(f"  [2/7] Exporting SCP backup...")
-                            scp_result = self.executor.export_scp(
-                                server['ip_address'], 
-                                username, 
-                                password,
-                                server_id=host['server_id'],
-                                job_id=job['id']
-                            )
-                            
-                            if scp_result.get('success'):
-                                self.log(f"  [OK] SCP backup completed")
-                                self._log_workflow_step(
-                                    job['id'], 'rolling_cluster_update',
-                                    step_number=base_step + 2,
-                                    step_name=f"SCP backup: {host['name']}",
-                                    status='completed',
-                                    server_id=host['server_id'],
-                                    step_details={'backup_id': scp_result.get('backup_id')},
-                                    step_completed_at=datetime.now().isoformat()
-                                )
-                                host_result['steps'].append('scp_backup')
-                            else:
-                                raise Exception(f"SCP backup failed: {scp_result.get('error')}")
-                        else:
-                            self._log_workflow_step(
-                                job['id'], 'rolling_cluster_update',
-                                step_number=base_step + 2,
-                                step_name=f"SCP backup: {host['name']}",
-                                status='skipped',
-                                server_id=host['server_id'],
-                                step_details={'reason': 'Not requested'}
-                            )
-                            self.log(f"  [2/7] SCP backup skipped")
-                        
-                        # STEP 3: Enter maintenance mode (if vCenter linked)
-                        vcenter_host_id = server.get('vcenter_host_id')
+                        # STEP 1: Enter maintenance mode (if vCenter linked)
                         if vcenter_host_id:
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
-                                step_number=base_step + 3,
+                                step_number=base_step + 1,
                                 step_name=f"Enter maintenance mode: {host['name']}",
                                 status='running',
                                 server_id=host['server_id'],
@@ -563,7 +744,7 @@ class ClusterHandler(BaseHandler):
                                 step_started_at=datetime.now().isoformat()
                             )
                             
-                            self.log(f"  [3/7] Entering vCenter maintenance mode...")
+                            self.log(f"  [1/5] Entering maintenance mode...")
                             maintenance_timeout = details.get('maintenance_timeout', 600)
                             maintenance_result = self.executor.enter_vcenter_maintenance_mode(
                                 vcenter_host_id, 
@@ -574,12 +755,12 @@ class ClusterHandler(BaseHandler):
                                 raise Exception(f"Failed to enter maintenance mode: {maintenance_result.get('error')}")
                             
                             vms_evacuated = maintenance_result.get('vms_evacuated', 0)
-                            self.log(f"  [OK] Maintenance mode active ({vms_evacuated} VMs evacuated)")
-                            # Track for cleanup
                             cleanup_state['hosts_in_maintenance'].append(vcenter_host_id)
+                            self.log(f"    ✓ Maintenance mode active ({vms_evacuated} VMs evacuated)")
+                            
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
-                                step_number=base_step + 3,
+                                step_number=base_step + 1,
                                 step_name=f"Enter maintenance mode: {host['name']}",
                                 status='completed',
                                 server_id=host['server_id'],
@@ -589,35 +770,19 @@ class ClusterHandler(BaseHandler):
                             )
                             host_result['steps'].append('enter_maintenance')
                         else:
-                            self._log_workflow_step(
-                                job['id'], 'rolling_cluster_update',
-                                step_number=base_step + 3,
-                                step_name=f"Enter maintenance mode: {host['name']}",
-                                status='skipped',
-                                server_id=host['server_id'],
-                                step_details={'reason': 'No vCenter host linked'}
-                            )
-                            self.log(f"  [3/7] Maintenance mode skipped (no vCenter)")
+                            self.log(f"  [1/5] Maintenance mode skipped (no vCenter link)")
                         
-                        # STEP 4: Apply firmware updates
+                        # STEP 2: Apply firmware updates
                         self._log_workflow_step(
                             job['id'], 'rolling_cluster_update',
-                            step_number=base_step + 4,
+                            step_number=base_step + 2,
                             step_name=f"Apply firmware updates: {host['name']}",
                             status='running',
                             server_id=host['server_id'],
                             step_started_at=datetime.now().isoformat()
                         )
                         
-                        self.log(f"  [4/7] Applying firmware updates...")
-                        
-                        # Track current server for cleanup
-                        cleanup_state['current_server'] = {
-                            'ip': server['ip_address'],
-                            'username': username,
-                            'password': password,
-                            'server_id': host['server_id']
-                        }
+                        self.log(f"  [2/5] Applying firmware updates...")
                         
                         # Initialize Dell operations
                         from job_executor.dell_redfish import DellOperations, DellRedfishAdapter
@@ -632,10 +797,8 @@ class ClusterHandler(BaseHandler):
                         firmware_source = details.get('firmware_source', 'manual_repository')
                         
                         if firmware_source == 'dell_online_catalog':
-                            # Use catalog-based update
                             dell_catalog_url = details.get('dell_catalog_url', 'https://downloads.dell.com/catalog/Catalog.xml')
                             component_filter = details.get('component', None)
-                            targets = [component_filter] if component_filter and not auto_select_latest else None
                             
                             self.log(f"    Using Dell online catalog: {dell_catalog_url}")
                             update_result = dell_ops.update_firmware_from_catalog(
@@ -646,10 +809,9 @@ class ClusterHandler(BaseHandler):
                                 apply_update=True,
                                 reboot_needed=True,
                                 server_id=host['server_id'],
-                                user_id=user_id
+                                user_id=job['created_by']
                             )
                         else:
-                            # Use manual firmware package
                             firmware_uri = details.get('firmware_uri')
                             if not firmware_uri and firmware_updates:
                                 firmware_uri = firmware_updates[0].get('firmware_uri')
@@ -671,10 +833,10 @@ class ClusterHandler(BaseHandler):
                         if not update_result.get('success'):
                             raise Exception(f"Firmware update failed: {update_result.get('error')}")
                         
-                        self.log(f"  [OK] Firmware update initiated")
+                        self.log(f"    ✓ Firmware update initiated")
                         self._log_workflow_step(
                             job['id'], 'rolling_cluster_update',
-                            step_number=base_step + 4,
+                            step_number=base_step + 2,
                             step_name=f"Apply firmware updates: {host['name']}",
                             status='completed',
                             server_id=host['server_id'],
@@ -683,23 +845,23 @@ class ClusterHandler(BaseHandler):
                         )
                         host_result['steps'].append('firmware_update')
                         
-                        # STEP 5: Reboot and wait for system to come online
+                        # STEP 3: Reboot and wait for system to come online
                         self._log_workflow_step(
                             job['id'], 'rolling_cluster_update',
-                            step_number=base_step + 5,
+                            step_number=base_step + 3,
                             step_name=f"Reboot and wait: {host['name']}",
                             status='running',
                             server_id=host['server_id'],
                             step_started_at=datetime.now().isoformat()
                         )
                         
-                        self.log(f"  [5/7] Waiting for system reboot...")
+                        self.log(f"  [3/5] Waiting for system reboot...")
                         time.sleep(120)  # Wait 2 minutes for reboot to start
                         
                         # Wait for system to come back online
-                        max_attempts = 24  # 4 minutes (24 * 10s)
+                        max_attempts = 36  # 6 minutes (36 * 10s)
                         for attempt in range(max_attempts):
-                            # CHECK 2: During reboot wait loop
+                            # Check for cancellation during reboot wait
                             if self._check_and_handle_cancellation(job, cleanup_state):
                                 self.update_job_status(job['id'], 'cancelled', details={
                                     'cancelled_during': 'reboot_wait',
@@ -711,7 +873,7 @@ class ClusterHandler(BaseHandler):
                             try:
                                 test_session = self.executor.create_idrac_session(
                                     server['ip_address'], username, password,
-                                    log_to_db=False
+                                    log_to_db=False, timeout=10
                                 )
                                 if test_session:
                                     self.executor.delete_idrac_session(
@@ -720,7 +882,7 @@ class ClusterHandler(BaseHandler):
                                         host['server_id'], 
                                         job['id']
                                     )
-                                    self.log(f"  [OK] System back online")
+                                    self.log(f"    ✓ System back online")
                                     break
                             except:
                                 pass
@@ -728,7 +890,7 @@ class ClusterHandler(BaseHandler):
                         
                         self._log_workflow_step(
                             job['id'], 'rolling_cluster_update',
-                            step_number=base_step + 5,
+                            step_number=base_step + 3,
                             step_name=f"Reboot and wait: {host['name']}",
                             status='completed',
                             server_id=host['server_id'],
@@ -736,17 +898,17 @@ class ClusterHandler(BaseHandler):
                         )
                         host_result['steps'].append('reboot')
                         
-                        # STEP 6: Verify firmware update
+                        # STEP 4: Verify firmware update
                         self._log_workflow_step(
                             job['id'], 'rolling_cluster_update',
-                            step_number=base_step + 6,
+                            step_number=base_step + 4,
                             step_name=f"Verify update: {host['name']}",
                             status='running',
                             server_id=host['server_id'],
                             step_started_at=datetime.now().isoformat()
                         )
                         
-                        self.log(f"  [6/7] Verifying firmware update...")
+                        self.log(f"  [4/5] Verifying firmware update...")
                         
                         # Create new session for verification
                         verify_session = self.executor.create_idrac_session(
@@ -770,11 +932,11 @@ class ClusterHandler(BaseHandler):
                                 job['id']
                             )
                             
-                            self.log(f"  [OK] Firmware inventory updated")
+                            self.log(f"    ✓ Firmware inventory refreshed")
                         
                         self._log_workflow_step(
                             job['id'], 'rolling_cluster_update',
-                            step_number=base_step + 6,
+                            step_number=base_step + 4,
                             step_name=f"Verify update: {host['name']}",
                             status='completed',
                             server_id=host['server_id'],
@@ -783,11 +945,11 @@ class ClusterHandler(BaseHandler):
                         )
                         host_result['steps'].append('verify')
                         
-                        # STEP 7: Exit maintenance mode (if applicable)
+                        # STEP 5: Exit maintenance mode (if applicable)
                         if vcenter_host_id:
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
-                                step_number=base_step + 7,
+                                step_number=base_step + 5,
                                 step_name=f"Exit maintenance mode: {host['name']}",
                                 status='running',
                                 server_id=host['server_id'],
@@ -795,20 +957,20 @@ class ClusterHandler(BaseHandler):
                                 step_started_at=datetime.now().isoformat()
                             )
                             
-                            self.log(f"  [7/7] Exiting vCenter maintenance mode...")
+                            self.log(f"  [5/5] Exiting maintenance mode...")
                             exit_result = self.executor.exit_vcenter_maintenance_mode(vcenter_host_id)
                             
                             if not exit_result.get('success'):
-                                self.log(f"  [WARN] Failed to exit maintenance mode: {exit_result.get('error')}", "WARN")
+                                self.log(f"    ⚠ Warning: Failed to exit maintenance: {exit_result.get('error')}", "WARN")
                             else:
-                                self.log(f"  [OK] Maintenance mode exited")
+                                self.log(f"    ✓ Maintenance mode exited")
                                 # Remove from cleanup tracking
                                 if vcenter_host_id in cleanup_state['hosts_in_maintenance']:
                                     cleanup_state['hosts_in_maintenance'].remove(vcenter_host_id)
                             
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
-                                step_number=base_step + 7,
+                                step_number=base_step + 5,
                                 step_name=f"Exit maintenance mode: {host['name']}",
                                 status='completed' if exit_result.get('success') else 'failed',
                                 server_id=host['server_id'],
@@ -819,19 +981,14 @@ class ClusterHandler(BaseHandler):
                             )
                             host_result['steps'].append('exit_maintenance')
                         else:
-                            self._log_workflow_step(
-                                job['id'], 'rolling_cluster_update',
-                                step_number=base_step + 7,
-                                step_name=f"Exit maintenance mode: {host['name']}",
-                                status='skipped',
-                                server_id=host['server_id'],
-                                step_details={'reason': 'No vCenter host linked'}
-                            )
-                            self.log(f"  [7/7] Exit maintenance mode skipped (no vCenter)")
+                            self.log(f"  [5/5] Exit maintenance skipped (no vCenter link)")
+                        
+                        # Clear current server tracking
+                        cleanup_state['current_server'] = None
                         
                         workflow_results['hosts_updated'] += 1
                         host_result['status'] = 'completed'
-                        self.log(f"[OK] Host {host['name']} update completed successfully")
+                        self.log(f"  ✓ Host {host['name']} update completed successfully")
                         
                     finally:
                         # Always cleanup iDRAC session
@@ -842,60 +999,59 @@ class ClusterHandler(BaseHandler):
                                 host['server_id'], 
                                 job['id']
                             )
-                    
+                
                 except Exception as e:
                     host_result['status'] = 'failed'
                     host_result['error'] = str(e)
                     workflow_results['hosts_failed'] += 1
-                    self.log(f"  [X] Host {host['name']} update failed: {e}", "ERROR")
+                    self.log(f"  ✗ Host {host['name']} update failed: {e}", "ERROR")
                     
-                    # Log the failed step to workflow_executions
-                    # Determine which step failed based on what was completed
-                    failed_step_num = base_step + len(host_result.get('steps', [])) + 1
-                    failed_step_name = "Unknown step"
-                    
-                    # Map step numbers to step names
-                    step_map = {
-                        base_step + 1: f"Pre-flight check: {host['name']}",
-                        base_step + 2: f"SCP backup: {host['name']}",
-                        base_step + 3: f"Enter maintenance mode: {host['name']}",
-                        base_step + 4: f"Apply firmware updates: {host['name']}",
-                        base_step + 5: f"Reboot and verify: {host['name']}",
-                        base_step + 6: f"Verify update: {host['name']}",
-                        base_step + 7: f"Exit maintenance mode: {host['name']}"
-                    }
-                    
-                    if failed_step_num in step_map:
-                        failed_step_name = step_map[failed_step_num]
-                    
-                    self._log_workflow_step(
-                        job['id'], 'rolling_cluster_update',
-                        step_number=failed_step_num,
-                        step_name=failed_step_name,
-                        status='failed',
-                        server_id=host['server_id'],
-                        step_error=str(e),
-                        step_completed_at=datetime.now().isoformat()
-                    )
+                    # Clear current server tracking
+                    cleanup_state['current_server'] = None
                     
                     if not continue_on_failure:
-                        break
+                        workflow_results['host_results'].append(host_result)
+                        raise
                 
                 workflow_results['host_results'].append(host_result)
             
+            # Mark Phase 2 complete
+            self._log_workflow_step(job['id'], 'rolling_cluster_update', 2,
+                f"Sequential updates ({len(eligible_hosts)} hosts)", 'completed')
+            
             workflow_results['total_time_seconds'] = int(time.time() - workflow_start)
             
-            final_status = 'failed' if workflow_results['hosts_updated'] == 0 else 'completed'
+            final_details = {
+                'workflow_results': workflow_results,
+                'backup_mode': 'parallel' if details.get('parallel_backups', False) else 'sequential',
+                'backup_scp_enabled': backup_scp,
+                'phased_approach': True
+            }
             
-            self.update_job_status(
-                job['id'],
-                final_status,
-                completed_at=datetime.now().isoformat(),
-                details={'workflow_results': workflow_results}
-            )
+            if workflow_results['hosts_failed'] > 0 and not continue_on_failure:
+                self.update_job_status(
+                    job['id'],
+                    'failed',
+                    completed_at=datetime.now().isoformat(),
+                    details=final_details
+                )
+            else:
+                final_status = 'completed' if workflow_results['hosts_updated'] > 0 else 'failed'
+                self.update_job_status(
+                    job['id'],
+                    final_status,
+                    completed_at=datetime.now().isoformat(),
+                    details=final_details
+                )
+                
+                self.log(f"✓ Phased rolling cluster update completed:")
+                self.log(f"  - Hosts updated: {workflow_results['hosts_updated']}/{workflow_results['total_hosts']}")
+                if backup_scp:
+                    successful_backups = sum(1 for r in backup_results.values() if r.get('success'))
+                    self.log(f"  - SCP backups: {successful_backups}/{workflow_results['total_hosts']}")
             
         except Exception as e:
-            self.log(f"Rolling cluster update workflow failed: {e}", "ERROR")
+            self.log(f"Phased rolling cluster update workflow failed: {e}", "ERROR")
             self.update_job_status(
                 job['id'],
                 'failed',
