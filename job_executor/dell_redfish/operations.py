@@ -2093,6 +2093,7 @@ class DellOperations:
         job_id = response.get('Id') or response.get('JobID')
         
         return {
+            'success': True,
             'task_uri': task_uri,
             'job_id': job_id,
             'status': 'initiated',
