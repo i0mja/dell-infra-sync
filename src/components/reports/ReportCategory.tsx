@@ -1,28 +1,26 @@
-import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ReportFilters } from "./ReportFilters";
 import { ReportChart } from "./ReportChart";
 import { ReportTable } from "./ReportTable";
 import { useReports } from "@/hooks/useReports";
 import { ReportType, REPORTS } from "@/config/reports-config";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
-import { subDays } from "date-fns";
-import { Loader2 } from "lucide-react";
+import { Loader2, Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
 interface ReportCategoryProps {
   reportType: ReportType;
+  dateRange: { from: Date; to: Date };
 }
 
-export function ReportCategory({ reportType }: ReportCategoryProps) {
+export function ReportCategory({ reportType, dateRange }: ReportCategoryProps) {
   const report = REPORTS[reportType];
-  const [dateRange, setDateRange] = useState({
-    start: subDays(new Date(), 30),
-    end: new Date(),
-  });
 
-  const { data, isLoading, error } = useReports(reportType, dateRange);
+  // Convert dateRange format for useReports hook
+  const { data, isLoading, error } = useReports(reportType, {
+    start: dateRange.from,
+    end: dateRange.to,
+  });
 
   const handleExport = () => {
     if (!data?.rows) return;
@@ -43,59 +41,56 @@ export function ReportCategory({ reportType }: ReportCategoryProps) {
   }
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <report.icon className="h-5 w-5" />
-                {report.name}
-              </CardTitle>
-              <CardDescription>{report.description}</CardDescription>
-            </div>
-            <ReportFilters
-              onDateRangeChange={setDateRange}
-              onExport={handleExport}
-              isExporting={false}
-            />
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <report.icon className="h-5 w-5" />
+              {report.name}
+            </CardTitle>
+            <CardDescription>{report.description}</CardDescription>
           </div>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="flex items-center justify-center h-48">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {/* Summary Stats */}
-              {data?.summary && (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {Object.entries(data.summary).map(([key, value]) => (
-                    <div key={key} className="space-y-1">
-                      <p className="text-sm text-muted-foreground capitalize">
-                        {key.replace(/([A-Z])/g, " $1").trim()}
-                      </p>
-                      <p className="text-2xl font-bold">{value as React.ReactNode}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
+          <Button variant="outline" size="sm" onClick={handleExport}>
+            <Download className="mr-2 h-4 w-4" />
+            Export CSV
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="flex items-center justify-center h-48">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {/* Summary Stats */}
+            {data?.summary && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {Object.entries(data.summary).map(([key, value]) => (
+                  <div key={key} className="space-y-1">
+                    <p className="text-sm text-muted-foreground capitalize">
+                      {key.replace(/([A-Z])/g, " $1").trim()}
+                    </p>
+                    <p className="text-2xl font-bold">{value as React.ReactNode}</p>
+                  </div>
+                ))}
+              </div>
+            )}
 
-              {/* Chart */}
-              {data?.chartData && data.chartData.length > 0 && (
-                <ReportChart type={report.chartType} data={data.chartData} />
-              )}
+            {/* Chart */}
+            {data?.chartData && data.chartData.length > 0 && (
+              <ReportChart type={report.chartType} data={data.chartData} />
+            )}
 
-              {/* Data Table */}
-              {data?.rows && (
-                <ReportTable data={data.rows} columns={getTableColumns(reportType)} />
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+            {/* Data Table */}
+            {data?.rows && (
+              <ReportTable data={data.rows} columns={getTableColumns(reportType)} />
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
