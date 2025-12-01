@@ -546,7 +546,7 @@ class ClusterHandler(BaseHandler):
                         from job_executor.dell_redfish import DellOperations, DellRedfishAdapter
                         adapter = DellRedfishAdapter(
                             self.executor.throttler, 
-                            self.logger, 
+                            self.executor._get_dell_logger(), 
                             self.executor.log_idrac_command
                         )
                         dell_ops = DellOperations(adapter)
