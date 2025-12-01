@@ -170,3 +170,16 @@ class BaseHandler:
             True if successful
         """
         return self.update_job_status(job['id'], "failed", details=details, error=error)
+    
+    def check_cancelled(self, job_id: str) -> bool:
+        """
+        Check if job has been cancelled.
+        Use this during long-running operations.
+        
+        Args:
+            job_id: Job UUID
+            
+        Returns:
+            True if job cancelled, False otherwise
+        """
+        return self.executor.is_job_cancelled(job_id)

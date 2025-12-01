@@ -1855,6 +1855,126 @@ class DellOperations:
             '@odata.id': response.get('@odata.id')
         }
     
+    def delete_idrac_job(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        idrac_job_id: str,
+        server_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Delete a specific job from the iDRAC job queue.
+        
+        Dell Redfish endpoint: DELETE /redfish/v1/Managers/iDRAC.Embedded.1/Jobs/{JobId}
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            idrac_job_id: Dell job ID (e.g., JID_123456789012)
+            server_id: Optional server UUID for logging
+            user_id: Optional user UUID for logging
+            
+        Returns:
+            Dict with success status and deleted job ID
+        """
+        response = self.adapter.make_request(
+            method='DELETE',
+            ip=ip,
+            endpoint=f'/redfish/v1/Managers/iDRAC.Embedded.1/Jobs/{idrac_job_id}',
+            username=username,
+            password=password,
+            operation_name='Delete iDRAC Job',
+            server_id=server_id,
+            user_id=user_id
+        )
+        return {'success': True, 'deleted_job_id': idrac_job_id}
+
+    def clear_idrac_job_queue(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        force: bool = False,
+        server_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Clear the entire iDRAC job queue.
+        
+        Dell Redfish OEM endpoint: POST /redfish/v1/Dell/Managers/iDRAC.Embedded.1/DellJobService/Actions/DellJobService.DeleteJobQueue
+        
+        Use force=True to clear even running jobs (JID_CLEARALL_FORCE)
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            force: If True, clear all jobs including running ones
+            server_id: Optional server UUID for logging
+            user_id: Optional user UUID for logging
+            
+        Returns:
+            Dict with success status
+        """
+        job_id = "JID_CLEARALL_FORCE" if force else "JID_CLEARALL"
+        
+        response = self.adapter.make_request(
+            method='POST',
+            ip=ip,
+            endpoint='/redfish/v1/Dell/Managers/iDRAC.Embedded.1/DellJobService/Actions/DellJobService.DeleteJobQueue',
+            username=username,
+            password=password,
+            payload={"JobID": job_id},
+            operation_name='Clear iDRAC Job Queue',
+            server_id=server_id,
+            user_id=user_id
+        )
+        return {'success': True, 'cleared': True, 'force': force}
+
+    def get_idrac_job_queue(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        server_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Get all jobs in the iDRAC job queue.
+        
+        Dell Redfish endpoint: GET /redfish/v1/Managers/iDRAC.Embedded.1/Jobs
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            server_id: Optional server UUID for logging
+            user_id: Optional user UUID for logging
+            
+        Returns:
+            Dict with list of jobs and count
+        """
+        response = self.adapter.make_request(
+            method='GET',
+            ip=ip,
+            endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Jobs',
+            username=username,
+            password=password,
+            operation_name='Get iDRAC Job Queue',
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        members = response.get('Members', [])
+        return {
+            'success': True,
+            'jobs': members,
+            'count': len(members)
+        }
+
     def set_bios_attributes(
         self,
         ip: str,

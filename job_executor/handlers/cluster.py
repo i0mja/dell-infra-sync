@@ -11,6 +11,57 @@ from .base import BaseHandler
 class ClusterHandler(BaseHandler):
     """Handles cluster safety checks and update workflows"""
     
+    def _check_and_handle_cancellation(self, job: Dict, cleanup_state: Dict) -> bool:
+        """
+        Check if job was cancelled and perform cleanup if needed.
+        
+        Args:
+            job: Current job dict
+            cleanup_state: Dict tracking state needing cleanup:
+                - hosts_in_maintenance: List of vcenter_host_ids currently in maintenance
+                - current_server: Dict with ip, username, password for current server
+                
+        Returns:
+            True if job was cancelled and cleanup performed, False otherwise
+        """
+        if not self.executor.is_job_cancelled(job['id']):
+            return False
+        
+        self.log("⚠️ CANCELLATION DETECTED - Starting cleanup...", "WARN")
+        
+        # Exit maintenance mode for any hosts we put in maintenance
+        for host_id in cleanup_state.get('hosts_in_maintenance', []):
+            try:
+                self.log(f"  Cleaning up: Exiting maintenance mode for host {host_id}")
+                self.executor.exit_vcenter_maintenance_mode(host_id)
+            except Exception as e:
+                self.log(f"  Warning: Failed to exit maintenance mode for {host_id}: {e}", "WARN")
+        
+        # Clear iDRAC job queue for current server if applicable
+        current_server = cleanup_state.get('current_server')
+        if current_server:
+            try:
+                self.log(f"  Cleaning up: Clearing iDRAC job queue for {current_server.get('ip')}")
+                from job_executor.dell_redfish import DellOperations, DellRedfishAdapter
+                adapter = DellRedfishAdapter(
+                    self.executor.throttler, 
+                    self.executor._get_dell_logger(), 
+                    self.executor.log_idrac_command
+                )
+                dell_ops = DellOperations(adapter)
+                dell_ops.clear_idrac_job_queue(
+                    ip=current_server['ip'],
+                    username=current_server['username'],
+                    password=current_server['password'],
+                    force=True,
+                    server_id=current_server.get('server_id')
+                )
+            except Exception as e:
+                self.log(f"  Warning: Failed to clear iDRAC job queue: {e}", "WARN")
+        
+        self.log("✓ Cleanup completed", "INFO")
+        return True
+    
     def _log_workflow_step(self, job_id: str, workflow_type: str, step_number: int, 
                            step_name: str, status: str, server_id: str = None, 
                            host_id: str = None, cluster_id: str = None,
@@ -375,8 +426,23 @@ class ClusterHandler(BaseHandler):
                 step_completed_at=datetime.now().isoformat()
             )
             
+            # Initialize cleanup state tracking
+            cleanup_state = {
+                'hosts_in_maintenance': [],
+                'current_server': None
+            }
+            
             # Update each host sequentially
             for host_index, host in enumerate(eligible_hosts, 1):
+                # CHECK 1: Before processing each host
+                if self._check_and_handle_cancellation(job, cleanup_state):
+                    self.update_job_status(job['id'], 'cancelled', details={
+                        'cancelled_at_host': host_index,
+                        'cleanup_performed': True,
+                        'workflow_results': workflow_results
+                    })
+                    return
+                
                 host_result = {
                     'host_id': host['id'],
                     'host_name': host['name'],
@@ -509,6 +575,8 @@ class ClusterHandler(BaseHandler):
                             
                             vms_evacuated = maintenance_result.get('vms_evacuated', 0)
                             self.log(f"  [OK] Maintenance mode active ({vms_evacuated} VMs evacuated)")
+                            # Track for cleanup
+                            cleanup_state['hosts_in_maintenance'].append(vcenter_host_id)
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
                                 step_number=base_step + 3,
@@ -542,6 +610,14 @@ class ClusterHandler(BaseHandler):
                         )
                         
                         self.log(f"  [4/7] Applying firmware updates...")
+                        
+                        # Track current server for cleanup
+                        cleanup_state['current_server'] = {
+                            'ip': server['ip_address'],
+                            'username': username,
+                            'password': password,
+                            'server_id': host['server_id']
+                        }
                         
                         # Initialize Dell operations
                         from job_executor.dell_redfish import DellOperations, DellRedfishAdapter
@@ -623,6 +699,15 @@ class ClusterHandler(BaseHandler):
                         # Wait for system to come back online
                         max_attempts = 24  # 4 minutes (24 * 10s)
                         for attempt in range(max_attempts):
+                            # CHECK 2: During reboot wait loop
+                            if self._check_and_handle_cancellation(job, cleanup_state):
+                                self.update_job_status(job['id'], 'cancelled', details={
+                                    'cancelled_during': 'reboot_wait',
+                                    'cleanup_performed': True,
+                                    'workflow_results': workflow_results
+                                })
+                                return
+                            
                             try:
                                 test_session = self.executor.create_idrac_session(
                                     server['ip_address'], username, password,
@@ -717,6 +802,9 @@ class ClusterHandler(BaseHandler):
                                 self.log(f"  [WARN] Failed to exit maintenance mode: {exit_result.get('error')}", "WARN")
                             else:
                                 self.log(f"  [OK] Maintenance mode exited")
+                                # Remove from cleanup tracking
+                                if vcenter_host_id in cleanup_state['hosts_in_maintenance']:
+                                    cleanup_state['hosts_in_maintenance'].remove(vcenter_host_id)
                             
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
