@@ -295,78 +295,198 @@ class IdracMixin:
         job_id: str = None
     ) -> Optional[Dict]:
         """
-        Create/validate an iDRAC session by testing connectivity.
-        Returns session info dict on success, None on failure.
+        Create a Redfish session with iDRAC using Dell's official session endpoint.
         
-        Note: Dell iDRAC supports both session-based and basic auth.
-        This implementation uses basic auth for simplicity and consistency
-        with other IdracMixin methods.
+        Uses: POST /redfish/v1/SessionService/Sessions
+        
+        Returns session dict with:
+        - token: X-Auth-Token for subsequent requests
+        - location: Session URI for deletion
+        - ip: iDRAC IP address
+        - username: Username used
+        - authenticated: True if successful
+        - timestamp: ISO timestamp of session creation
+        
+        Returns None on failure.
         """
-        url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
+        url = f"https://{ip}/redfish/v1/SessionService/Sessions"
+        payload = {
+            "UserName": username,
+            "Password": password
+        }
         
         try:
             response, response_time_ms = self.throttler.request_with_safety(
-                method='GET',
+                method='POST',
                 url=url,
                 ip=ip,
                 logger=self.log,
-                auth=(username, password),
-                timeout=(5, 15)
+                json=payload,
+                timeout=(5, 15),
+                headers={'Content-Type': 'application/json'}
             )
             
+            # Log to idrac_commands table
             if log_to_db:
+                # Sanitize request body for logging
+                sanitized_payload = {
+                    "UserName": username,
+                    "Password": "***"
+                }
+                
                 self.log_idrac_command(
                     server_id=server_id,
                     job_id=job_id,
                     task_id=None,
-                    command_type='GET',
-                    endpoint='/redfish/v1/Systems/System.Embedded.1',
+                    command_type='POST',
+                    endpoint='/redfish/v1/SessionService/Sessions',
                     full_url=url,
-                    request_headers={'Authorization': f'Basic {username}:***'},
-                    request_body=None,
+                    request_headers={'Content-Type': 'application/json'},
+                    request_body=sanitized_payload,
                     status_code=response.status_code if response else None,
                     response_time_ms=response_time_ms,
-                    response_body=None,  # Don't log full response
-                    success=(response and response.status_code == 200),
-                    error_message=None if (response and response.status_code == 200) 
+                    response_body=None,  # Don't log response (contains token)
+                    success=(response and response.status_code in [200, 201]),
+                    error_message=None if (response and response.status_code in [200, 201]) 
                                  else f"HTTP {response.status_code}" if response else "Connection failed",
-                    operation_type='session_validation'
+                    operation_type='session_create'
                 )
             
-            if response and response.status_code == 200:
-                self.throttler.record_success(ip)
-                return {
-                    'ip': ip,
-                    'username': username,
-                    'authenticated': True,
-                    'timestamp': datetime.now().isoformat()
-                }
+            if response and response.status_code in [200, 201]:
+                # Extract session token and location from response headers
+                token = response.headers.get('X-Auth-Token')
+                location = response.headers.get('Location')
+                
+                if token and location:
+                    self.throttler.record_success(ip)
+                    self.log(f"  ✓ Redfish session created for {ip}", "INFO")
+                    return {
+                        'token': token,
+                        'location': location,
+                        'ip': ip,
+                        'username': username,
+                        'authenticated': True,
+                        'timestamp': datetime.now().isoformat()
+                    }
+                else:
+                    self.log(f"  Session created but missing token or location headers", "ERROR")
+                    return None
             else:
                 if response and response.status_code in [401, 403]:
                     self.throttler.record_failure(ip, response.status_code, self.log)
+                self.log(f"  Session creation failed: HTTP {response.status_code if response else 'no response'}", "ERROR")
                 return None
                 
         except Exception as e:
             self.throttler.record_failure(ip, None, self.log)
             if log_to_db:
+                sanitized_payload = {
+                    "UserName": username,
+                    "Password": "***"
+                }
                 self.log_idrac_command(
                     server_id=server_id,
                     job_id=job_id,
                     task_id=None,
-                    command_type='GET',
-                    endpoint='/redfish/v1/Systems/System.Embedded.1',
+                    command_type='POST',
+                    endpoint='/redfish/v1/SessionService/Sessions',
                     full_url=url,
-                    request_headers={'Authorization': f'Basic {username}:***'},
-                    request_body=None,
+                    request_headers={'Content-Type': 'application/json'},
+                    request_body=sanitized_payload,
                     status_code=None,
                     response_time_ms=0,
                     response_body=None,
                     success=False,
                     error_message=str(e),
-                    operation_type='session_validation'
+                    operation_type='session_create'
                 )
-            self.log(f"  Session validation failed for {ip}: {e}", "ERROR")
+            self.log(f"  Session creation failed for {ip}: {e}", "ERROR")
             return None
+    
+    def delete_idrac_session(
+        self,
+        session: Dict,
+        ip: str = None,
+        server_id: str = None,
+        job_id: str = None
+    ) -> bool:
+        """
+        Delete a Redfish session (logout) to free up iDRAC resources.
+        
+        Uses: DELETE /redfish/v1/SessionService/Sessions/{SessionId}
+        with X-Auth-Token header
+        
+        Args:
+            session: Session dict from create_idrac_session() containing token and location
+            ip: iDRAC IP (optional, extracted from session if not provided)
+            server_id: For logging
+            job_id: For logging
+            
+        Returns:
+            bool: True if deleted successfully or nothing to delete, False on error
+        """
+        if not session:
+            self.log(f"  No session to delete (None provided)", "DEBUG")
+            return True  # Nothing to delete
+        
+        # Handle both session dict formats (with token or basic auth)
+        if not session.get('token') or not session.get('location'):
+            # Session was created with basic auth, nothing to delete
+            self.log(f"  Session cleanup: No token-based session to delete", "DEBUG")
+            return True
+        
+        session_ip = ip or session.get('ip')
+        location = session['location']
+        token = session['token']
+        
+        # Build delete URL from location header
+        if location.startswith('http'):
+            delete_url = location
+        else:
+            # Location is relative path, build full URL
+            delete_url = f"https://{session_ip}{location}"
+        
+        try:
+            response, response_time_ms = self.throttler.request_with_safety(
+                method='DELETE',
+                url=delete_url,
+                ip=session_ip,
+                logger=self.log,
+                headers={'X-Auth-Token': token},
+                timeout=(5, 10)
+            )
+            
+            # Log to idrac_commands table
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                task_id=None,
+                command_type='DELETE',
+                endpoint=location,
+                full_url=delete_url,
+                request_headers={'X-Auth-Token': '[REDACTED]'},
+                request_body=None,
+                status_code=response.status_code if response else None,
+                response_time_ms=response_time_ms,
+                response_body=None,
+                success=(response and response.status_code in [200, 204]),
+                error_message=None if (response and response.status_code in [200, 204])
+                             else f"HTTP {response.status_code}" if response else "Connection failed",
+                operation_type='session_delete'
+            )
+            
+            if response and response.status_code in [200, 204]:
+                self.log(f"  ✓ Redfish session deleted for {session_ip}", "INFO")
+                return True
+            else:
+                self.log(f"  Session deletion returned {response.status_code if response else 'no response'}", "WARN")
+                # Don't return False - session cleanup is best-effort
+                return True
+                
+        except Exception as e:
+            self.log(f"  Session deletion failed for {session_ip}: {e}", "WARN")
+            # Don't raise - session cleanup is best-effort, don't fail the job
+            return True
 
     def _fetch_health_status(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None) -> Optional[Dict]:
         """Fetch comprehensive health status from multiple Redfish endpoints"""
