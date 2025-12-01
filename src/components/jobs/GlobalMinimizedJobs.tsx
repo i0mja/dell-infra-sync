@@ -1,8 +1,32 @@
 import { useMinimizedJobs } from '@/contexts/MinimizedJobsContext';
 import { MinimizedJobMonitor } from './MinimizedJobMonitor';
+import { JobDetailDialog } from './JobDetailDialog';
+import { useState, useEffect } from 'react';
+import { supabase } from '@/integrations/supabase/client';
 
 export const GlobalMinimizedJobs = () => {
-  const { minimizedJobs, maximizeJob, removeJob } = useMinimizedJobs();
+  const { minimizedJobs, maximizedJob, maximizeJob, removeJob, closeMaximizedJob } = useMinimizedJobs();
+  const [maximizedJobData, setMaximizedJobData] = useState<any>(null);
+
+  // Fetch full job data when maximizedJob changes
+  useEffect(() => {
+    if (maximizedJob) {
+      const fetchJob = async () => {
+        const { data } = await supabase
+          .from('jobs')
+          .select('*')
+          .eq('id', maximizedJob.jobId)
+          .single();
+        
+        if (data) {
+          setMaximizedJobData(data);
+        }
+      };
+      fetchJob();
+    } else {
+      setMaximizedJobData(null);
+    }
+  }, [maximizedJob]);
 
   return (
     <>
@@ -24,6 +48,15 @@ export const GlobalMinimizedJobs = () => {
           />
         </div>
       ))}
+
+      {/* Maximized job detail dialog */}
+      <JobDetailDialog
+        job={maximizedJobData}
+        open={!!maximizedJob}
+        onOpenChange={(open) => {
+          if (!open) closeMaximizedJob();
+        }}
+      />
     </>
   );
 };
