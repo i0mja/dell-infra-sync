@@ -28,7 +28,9 @@ param(
     [switch]$Force,
     [switch]$NewKey,
     [switch]$SkipBackup,
-    [switch]$GitClone
+    [switch]$GitClone,
+    [switch]$QuickUpdate,    # NEW: Git pull + restart services only
+    [switch]$SkipBuild       # NEW: Skip npm install/build
 )
 
 # Set encoding and error handling
@@ -47,6 +49,44 @@ Write-Host "===============================================" -ForegroundColor Cy
 Write-Host "  Dell Server Manager - Quick Reinstall (Cloud)" -ForegroundColor Cyan
 Write-Host "===============================================" -ForegroundColor Cyan
 Write-Host ""
+
+# FASTEST PATH: Quick update (git pull + restart services)
+if ($QuickUpdate) {
+    Write-Host "===============================================" -ForegroundColor Yellow
+    Write-Host "  Quick Update Mode (git pull + restart)" -ForegroundColor Yellow
+    Write-Host "===============================================" -ForegroundColor Yellow
+    
+    if (-not (Test-Path "$AppDir\.git")) {
+        Write-Host "✗ Quick update requires git repository. Run with -GitClone first." -ForegroundColor Red
+        exit 1
+    }
+    
+    # Stop services
+    Write-Host "Stopping services..." -ForegroundColor Yellow
+    nssm stop DellServerManager 2>&1 | Out-Null
+    nssm stop DellServerManagerJobExecutor 2>&1 | Out-Null
+    Write-Host "  ✓ Services stopped" -ForegroundColor Green
+    
+    # Git pull
+    Write-Host "Pulling latest changes..." -ForegroundColor Yellow
+    Set-Location $AppDir
+    git pull origin main 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  ⚠ Git pull had warnings (continuing anyway)" -ForegroundColor Yellow
+    } else {
+        Write-Host "  ✓ Git pull complete" -ForegroundColor Green
+    }
+    
+    # Start services
+    Write-Host "Starting services..." -ForegroundColor Yellow
+    nssm start DellServerManager 2>&1 | Out-Null
+    nssm start DellServerManagerJobExecutor 2>&1 | Out-Null
+    Write-Host "  ✓ Services started" -ForegroundColor Green
+    
+    Write-Host "`n✓ Quick update complete!" -ForegroundColor Green
+    Write-Host "Application URL: http://localhost:3000" -ForegroundColor Cyan
+    exit 0
+}
 
 # Function: Get cached SERVICE_ROLE_KEY
 function Get-CachedServiceRoleKey {
@@ -138,16 +178,6 @@ function Invoke-Cleanup {
         }
     }
     
-    # Stop Docker containers
-    if (Get-Command docker -ErrorAction SilentlyContinue) {
-        Write-Host "Cleaning Docker artifacts..." -ForegroundColor Yellow
-        docker ps -q | ForEach-Object { docker stop $_ 2>$null | Out-Null }
-        docker ps -aq | ForEach-Object { docker rm $_ 2>$null | Out-Null }
-        docker volume ls -q | Where-Object { $_ -like "*supabase*" } | ForEach-Object { 
-            docker volume rm $_ 2>$null | Out-Null 
-        }
-        Write-Host "  ✓ Docker cleaned" -ForegroundColor Green
-    }
     
     Start-Sleep -Seconds 5
     
@@ -238,21 +268,50 @@ function Invoke-Reinstall {
         New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
     }
     
-    # Install dependencies
-    Write-Host "Installing dependencies..." -ForegroundColor Yellow
-    npm install
-    if ($LASTEXITCODE -ne 0) {
-        throw "npm install failed with exit code $LASTEXITCODE"
+    if ($SkipBuild) {
+        Write-Host "Skipping build (using existing dist/)..." -ForegroundColor Gray
+        if (-not (Test-Path "$AppDir\dist")) {
+            Write-Host "  ⚠ Warning: No dist/ folder found. Build may be required." -ForegroundColor Yellow
+        }
     }
-    Write-Host "  ✓ npm install complete" -ForegroundColor Green
-    
-    # Build application
-    Write-Host "Building application..." -ForegroundColor Yellow
-    npm run build
-    if ($LASTEXITCODE -ne 0) {
-        throw "npm run build failed with exit code $LASTEXITCODE"
+    else {
+        # Smart npm install - only if package-lock.json changed
+        $lockfileHash = "$AppDir\.npm-lock-hash"
+        $currentHash = $null
+        if (Test-Path "$AppDir\package-lock.json") {
+            $currentHash = (Get-FileHash "$AppDir\package-lock.json" -Algorithm MD5).Hash
+        }
+        
+        $needsInstall = $true
+        if ($currentHash -and (Test-Path $lockfileHash)) {
+            $cachedHash = Get-Content $lockfileHash -Raw -ErrorAction SilentlyContinue
+            if ($cachedHash -and $cachedHash.Trim() -eq $currentHash) {
+                Write-Host "Skipping npm install (dependencies unchanged)..." -ForegroundColor Gray
+                $needsInstall = $false
+            }
+        }
+        
+        if ($needsInstall) {
+            Write-Host "Installing dependencies..." -ForegroundColor Yellow
+            npm install
+            if ($LASTEXITCODE -ne 0) {
+                throw "npm install failed with exit code $LASTEXITCODE"
+            }
+            # Cache the hash for next time
+            if ($currentHash) {
+                $currentHash | Set-Content $lockfileHash -NoNewline
+            }
+            Write-Host "  ✓ npm install complete" -ForegroundColor Green
+        }
+        
+        # Build application
+        Write-Host "Building application..." -ForegroundColor Yellow
+        npm run build
+        if ($LASTEXITCODE -ne 0) {
+            throw "npm run build failed with exit code $LASTEXITCODE"
+        }
+        Write-Host "  ✓ Build complete" -ForegroundColor Green
     }
-    Write-Host "  ✓ Build complete" -ForegroundColor Green
     
     # Create .env file
     Write-Host "Creating .env file..." -ForegroundColor Yellow

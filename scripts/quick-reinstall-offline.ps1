@@ -19,6 +19,11 @@
 
 param(
     [switch]$Force,
+    [switch]$NewCredentials,  # NEW: Force re-entry of cached credentials
+    [switch]$SkipBackup,      # NEW: Skip backing up source files
+    [switch]$GitClone,        # NEW: Clone from GitHub instead of file copy
+    [switch]$QuickUpdate,     # NEW: Git pull + restart services only
+    [switch]$SkipBuild,       # NEW: Skip npm install/build
     [string]$AdminEmail = ""
 )
 
@@ -29,11 +34,96 @@ $ErrorActionPreference = "Stop"
 
 # Constants
 $AppDir = "C:\dell-server-manager"
+$GitHubRepo = "https://github.com/i0mja/dell-infra-sync.git"
+$OfflineConfigPath = "$env:APPDATA\DellServerManager\offline-config.json"
+
+# Function: Get cached offline config (admin credentials)
+function Get-CachedOfflineConfig {
+    if (Test-Path $OfflineConfigPath) {
+        try {
+            return Get-Content $OfflineConfigPath -Raw | ConvertFrom-Json
+        }
+        catch {
+            return $null
+        }
+    }
+    return $null
+}
+
+# Function: Save offline config securely
+function Save-OfflineConfig {
+    param(
+        [string]$AdminEmail,
+        [string]$AdminPassword
+    )
+    
+    $config = @{
+        AdminEmail = $AdminEmail
+        AdminPassword = $AdminPassword
+        LastUpdated = (Get-Date).ToString("o")
+    } | ConvertTo-Json
+    
+    $cacheDir = Split-Path $OfflineConfigPath -Parent
+    if (-not (Test-Path $cacheDir)) {
+        New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
+    }
+    
+    $config | Set-Content $OfflineConfigPath
+    
+    # Set permissions: current user only
+    $acl = Get-Acl $OfflineConfigPath
+    $acl.SetAccessRuleProtection($true, $false)
+    $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        $env:USERNAME, "FullControl", "Allow"
+    )
+    $acl.SetAccessRule($accessRule)
+    Set-Acl $OfflineConfigPath $acl
+    
+    Write-Host "  ✓ Credentials cached for next time" -ForegroundColor Green
+}
 
 Write-Host "===============================================" -ForegroundColor Cyan
 Write-Host "  Dell Server Manager - Quick Reinstall (Offline)" -ForegroundColor Cyan
 Write-Host "===============================================" -ForegroundColor Cyan
 Write-Host ""
+
+# FASTEST PATH: Quick update (git pull + restart services)
+if ($QuickUpdate) {
+    Write-Host "===============================================" -ForegroundColor Yellow
+    Write-Host "  Quick Update Mode (git pull + restart)" -ForegroundColor Yellow
+    Write-Host "===============================================" -ForegroundColor Yellow
+    
+    if (-not (Test-Path "$AppDir\.git")) {
+        Write-Host "✗ Quick update requires git repository. Run with -GitClone first." -ForegroundColor Red
+        exit 1
+    }
+    
+    # Stop services
+    Write-Host "Stopping services..." -ForegroundColor Yellow
+    nssm stop DellServerManager 2>&1 | Out-Null
+    nssm stop DellServerManagerJobExecutor 2>&1 | Out-Null
+    Write-Host "  ✓ Services stopped" -ForegroundColor Green
+    
+    # Git pull
+    Write-Host "Pulling latest changes..." -ForegroundColor Yellow
+    Set-Location $AppDir
+    git pull origin main 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  ⚠ Git pull had warnings (continuing anyway)" -ForegroundColor Yellow
+    } else {
+        Write-Host "  ✓ Git pull complete" -ForegroundColor Green
+    }
+    
+    # Start services
+    Write-Host "Starting services..." -ForegroundColor Yellow
+    nssm start DellServerManager 2>&1 | Out-Null
+    nssm start DellServerManagerJobExecutor 2>&1 | Out-Null
+    Write-Host "  ✓ Services started" -ForegroundColor Green
+    
+    Write-Host "`n✓ Quick update complete!" -ForegroundColor Green
+    Write-Host "Application URL: http://localhost:3000" -ForegroundColor Cyan
+    exit 0
+}
 
 # Function: Wait for Docker to be ready
 function Wait-Docker {
@@ -242,27 +332,100 @@ function Invoke-AppSetup {
     
     # Setup directory
     Write-Host "Setting up application directory..." -ForegroundColor Yellow
-    if (-not (Test-Path $AppDir)) {
-        New-Item -ItemType Directory -Path $AppDir -Force | Out-Null
+
+    if ($GitClone) {
+        # Fast path: Clone directly from GitHub
+        Write-Host "  Cloning from GitHub: $GitHubRepo" -ForegroundColor Yellow
+        $parentDir = Split-Path $AppDir -Parent
+        Set-Location $parentDir
+        
+        if (Test-Path $AppDir) {
+            Remove-Item $AppDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        
+        $appDirName = Split-Path $AppDir -Leaf
+        git clone $GitHubRepo $appDirName 2>&1 | Out-Null
+        
+        if ($LASTEXITCODE -ne 0) {
+            throw "git clone failed. Ensure git is installed and GitHub is accessible."
+        }
+        Write-Host "  ✓ Git clone complete" -ForegroundColor Green
     }
-    
-    # Copy files
-    $sourceDir = $PSScriptRoot | Split-Path -Parent
-    Write-Host "  Copying files from $sourceDir..."
-    Copy-Item "$sourceDir\*" $AppDir -Recurse -Force -Exclude @('.git', 'node_modules', 'dist', '.vite')
-    Write-Host "  ✓ Files copied" -ForegroundColor Green
+    else {
+        # Original path: Copy from local source
+        if (-not (Test-Path $AppDir)) {
+            New-Item -ItemType Directory -Path $AppDir -Force | Out-Null
+        }
+        $sourceDir = $PSScriptRoot | Split-Path -Parent
+        Write-Host "  Copying files from $sourceDir..."
+        Copy-Item "$sourceDir\*" $AppDir -Recurse -Force -Exclude @('.git', 'node_modules', 'dist', '.vite')
+        Write-Host "  ✓ Files copied" -ForegroundColor Green
+    }
     
     Set-Location $AppDir
     
-    # Install dependencies
-    Write-Host "Installing dependencies..." -ForegroundColor Yellow
-    npm install 2>&1 | Out-Null
-    Write-Host "  ✓ npm install complete" -ForegroundColor Green
-    
-    # Build application
-    Write-Host "Building application..." -ForegroundColor Yellow
-    npm run build 2>&1 | Out-Null
-    Write-Host "  ✓ Build complete" -ForegroundColor Green
+    if ($SkipBuild) {
+        Write-Host "Skipping build (using existing dist/)..." -ForegroundColor Gray
+        if (-not (Test-Path "$AppDir\dist")) {
+            Write-Host "  ⚠ Warning: No dist/ folder found. Build may be required." -ForegroundColor Yellow
+        }
+    }
+    else {
+        # Smart npm install - only if package-lock.json changed
+        $lockfileHash = "$AppDir\.npm-lock-hash"
+        $currentHash = $null
+        if (Test-Path "$AppDir\package-lock.json") {
+            $currentHash = (Get-FileHash "$AppDir\package-lock.json" -Algorithm MD5).Hash
+        }
+        
+        $needsInstall = $true
+        if ($currentHash -and (Test-Path $lockfileHash)) {
+            $cachedHash = Get-Content $lockfileHash -Raw -ErrorAction SilentlyContinue
+            if ($cachedHash -and $cachedHash.Trim() -eq $currentHash) {
+                Write-Host "Skipping npm install (dependencies unchanged)..." -ForegroundColor Gray
+                $needsInstall = $false
+            }
+        }
+        
+        if ($needsInstall) {
+            Write-Host "Installing dependencies..." -ForegroundColor Yellow
+            npm install 2>&1 | Out-Null
+            if ($currentHash) {
+                $currentHash | Set-Content $lockfileHash -NoNewline
+            }
+            Write-Host "  ✓ npm install complete" -ForegroundColor Green
+        }
+        
+        # Build application
+        Write-Host "Building application..." -ForegroundColor Yellow
+        npm run build 2>&1 | Out-Null
+        Write-Host "  ✓ Build complete" -ForegroundColor Green
+    }
+
+    # Smart pip install - only if requirements.txt changed
+    $pipHash = "$AppDir\.pip-requirements-hash"
+    $currentPipHash = $null
+    if (Test-Path "$AppDir\requirements.txt") {
+        $currentPipHash = (Get-FileHash "$AppDir\requirements.txt" -Algorithm MD5).Hash
+    }
+
+    $needsPip = $true
+    if ($currentPipHash -and (Test-Path $pipHash)) {
+        $cachedPipHash = Get-Content $pipHash -Raw -ErrorAction SilentlyContinue
+        if ($cachedPipHash -and $cachedPipHash.Trim() -eq $currentPipHash) {
+            Write-Host "Skipping pip install (requirements unchanged)..." -ForegroundColor Gray
+            $needsPip = $false
+        }
+    }
+
+    if ($needsPip) {
+        Write-Host "Installing Python dependencies..." -ForegroundColor Yellow
+        pip install -r requirements.txt 2>&1 | Out-Null
+        if ($currentPipHash) {
+            $currentPipHash | Set-Content $pipHash -NoNewline
+        }
+        Write-Host "  ✓ Python dependencies installed" -ForegroundColor Green
+    }
     
     # Create .env file
     Write-Host "Creating .env file..." -ForegroundColor Yellow
@@ -271,11 +434,6 @@ VITE_SUPABASE_URL=$($SupabaseConfig.Url)
 VITE_SUPABASE_PUBLISHABLE_KEY=$($SupabaseConfig.AnonKey)
 "@ | Set-Content "$AppDir\.env"
     Write-Host "  ✓ .env created" -ForegroundColor Green
-    
-    # Install Python dependencies
-    Write-Host "Installing Python dependencies..." -ForegroundColor Yellow
-    pip install -r requirements.txt 2>&1 | Out-Null
-    Write-Host "  ✓ Python dependencies installed" -ForegroundColor Green
     
     # Install services
     Write-Host "Installing services..." -ForegroundColor Yellow
@@ -336,22 +494,57 @@ try {
     # Setup Supabase
     $supabaseConfig = Invoke-SupabaseSetup
     
-    # Get admin credentials
-    if (-not $AdminEmail) {
-        Write-Host ""
-        $AdminEmail = Read-Host "Enter admin email (default: admin@local.test)"
-        if (-not $AdminEmail) {
-            $AdminEmail = "admin@local.test"
+    # Get admin credentials (check cache first)
+    $adminPasswordPlain = $null
+
+    if (-not $NewCredentials) {
+        $cachedConfig = Get-CachedOfflineConfig
+        if ($cachedConfig -and $cachedConfig.AdminEmail -and $cachedConfig.AdminPassword) {
+            Write-Host "Found cached credentials for: $($cachedConfig.AdminEmail)" -ForegroundColor Green
+            
+            if ($Force) {
+                $AdminEmail = $cachedConfig.AdminEmail
+                $adminPasswordPlain = $cachedConfig.AdminPassword
+                Write-Host "  Using cached credentials (Force mode)" -ForegroundColor Gray
+            }
+            else {
+                $choice = Read-Host "Use cached credentials? (y=yes, n=abort, new=enter new)"
+                switch ($choice.ToLower()) {
+                    "y" { 
+                        $AdminEmail = $cachedConfig.AdminEmail
+                        $adminPasswordPlain = $cachedConfig.AdminPassword 
+                    }
+                    "yes" { 
+                        $AdminEmail = $cachedConfig.AdminEmail
+                        $adminPasswordPlain = $cachedConfig.AdminPassword 
+                    }
+                    "new" { }  # Fall through to prompt
+                    default {
+                        Write-Host "Aborted." -ForegroundColor Red
+                        exit 1
+                    }
+                }
+            }
         }
     }
-    
-    Write-Host "Enter admin password (default: admin123)" -ForegroundColor Yellow
-    $adminPassword = Read-Host -AsSecureString
-    $adminPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminPassword)
-    )
-    if (-not $adminPasswordPlain) {
-        $adminPasswordPlain = "admin123"
+
+    # Prompt if not cached
+    if (-not $AdminEmail -or -not $adminPasswordPlain) {
+        Write-Host ""
+        if (-not $AdminEmail) {
+            $AdminEmail = Read-Host "Enter admin email (default: admin@local.test)"
+            if (-not $AdminEmail) { $AdminEmail = "admin@local.test" }
+        }
+        
+        Write-Host "Enter admin password (default: admin123)" -ForegroundColor Yellow
+        $adminPassword = Read-Host -AsSecureString
+        $adminPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+            [Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminPassword)
+        )
+        if (-not $adminPasswordPlain) { $adminPasswordPlain = "admin123" }
+        
+        # Save for next time
+        Save-OfflineConfig -AdminEmail $AdminEmail -AdminPassword $adminPasswordPlain
     }
     
     # Create admin user
