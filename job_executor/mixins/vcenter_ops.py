@@ -912,7 +912,7 @@ class VCenterMixin:
                     
                     # Upsert host
                     response = requests.post(
-                        f"{DSM_URL}/rest/v1/vcenter_hosts?on_conflict=name,source_vcenter_id",
+                        f"{DSM_URL}/rest/v1/vcenter_hosts?on_conflict=vcenter_id,source_vcenter_id",
                         headers={
                             'apikey': SERVICE_ROLE_KEY,
                             'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
