@@ -43,6 +43,21 @@ class DellRedfishAdapter:
         self.log_command = log_command_fn
         self.verify_ssl = verify_ssl
     
+    def _log(self, message: str, level: str = "INFO"):
+        """
+        Wrapper to use self.logger (logging.Logger) with the callable signature
+        expected by IdracThrottler: logger(message, level)
+        """
+        level_map = {
+            "DEBUG": self.logger.debug,
+            "INFO": self.logger.info,
+            "WARN": self.logger.warning,
+            "WARNING": self.logger.warning,
+            "ERROR": self.logger.error,
+        }
+        log_fn = level_map.get(level.upper(), self.logger.info)
+        log_fn(message)
+    
     def make_request(
         self,
         method: str,
@@ -104,7 +119,7 @@ class DellRedfishAdapter:
         
         # Execute with throttler safety
         with self.throttler.locks[ip]:
-            self.throttler.wait_for_rate_limit(ip, self.logger)
+            self.throttler.wait_for_rate_limit(ip, self._log)
             
             with self.throttler.global_semaphore:
                 start_time = time.time()
@@ -174,7 +189,7 @@ class DellRedfishAdapter:
                     status_code = getattr(response, 'status_code', None) if response else None
                     
                     # Record failure
-                    self.throttler.record_failure(ip, status_code, self.logger)
+                    self.throttler.record_failure(ip, status_code, self._log)
                     
                     # Try to extract Dell error info
                     error_data = None
@@ -285,7 +300,7 @@ class DellRedfishAdapter:
         
         # Acquire per-IP lock and wait for rate limit
         with self.throttler.locks[ip]:
-            self.throttler.wait_for_rate_limit(ip, self.logger)
+            self.throttler.wait_for_rate_limit(ip, self._log)
             
             # Acquire global concurrency semaphore
             with self.throttler.global_semaphore:
@@ -306,7 +321,7 @@ class DellRedfishAdapter:
                     status_code = getattr(e, "status_code", 500)
                     
                     # Record failure
-                    self.throttler.record_failure(ip, status_code, self.logger)
+                    self.throttler.record_failure(ip, status_code, self._log)
                     
                     self.logger.error(f"Dell operation failed: {operation_name} on {ip}: {str(e)}")
                     
