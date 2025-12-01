@@ -75,6 +75,23 @@ class VCenterMixin:
             # Don't let logging failures break job execution
             self.log(f"vCenter logging exception: {e}", "DEBUG")
 
+    def get_vcenter_settings(self, vcenter_id: str) -> Optional[Dict]:
+        """Fetch vCenter connection settings from database by ID"""
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenters?id=eq.{vcenter_id}&select=*",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL
+            )
+            if response.status_code == 200:
+                vcenters = _safe_json_parse(response)
+                if vcenters:
+                    return vcenters[0]
+            return None
+        except Exception as e:
+            self.log(f"Failed to fetch vCenter settings: {e}", "ERROR")
+            return None
+
     def connect_vcenter(self, settings=None):
         """Connect to vCenter if not already connected"""
         if self.vcenter_conn:
@@ -1058,8 +1075,22 @@ class VCenterMixin:
             vcenter_id = host_data.get('vcenter_id')
             host_name = host_data.get('name', host_id)
 
+            # Fetch vCenter settings from database
+            source_vcenter_id = host_data.get('source_vcenter_id')
+            vcenter_settings = None
+            if source_vcenter_id:
+                vcenter_settings = self.get_vcenter_settings(source_vcenter_id)
+                if not vcenter_settings:
+                    self.log_vcenter_activity(
+                        operation="enter_maintenance_mode",
+                        endpoint=host_name,
+                        success=False,
+                        error=f'vCenter settings not found for ID {source_vcenter_id}'
+                    )
+                    return {'success': False, 'error': f'vCenter settings not found for ID {source_vcenter_id}'}
+
             # Connect to vCenter
-            vc = self.connect_vcenter()
+            vc = self.connect_vcenter(settings=vcenter_settings)
             if not vc:
                 self.log_vcenter_activity(
                     operation="enter_maintenance_mode",
@@ -1206,8 +1237,22 @@ class VCenterMixin:
             vcenter_id = host_data.get('vcenter_id')
             host_name = host_data.get('name', host_id)
 
+            # Fetch vCenter settings from database
+            source_vcenter_id = host_data.get('source_vcenter_id')
+            vcenter_settings = None
+            if source_vcenter_id:
+                vcenter_settings = self.get_vcenter_settings(source_vcenter_id)
+                if not vcenter_settings:
+                    self.log_vcenter_activity(
+                        operation="exit_maintenance_mode",
+                        endpoint=host_name,
+                        success=False,
+                        error=f'vCenter settings not found for ID {source_vcenter_id}'
+                    )
+                    return {'success': False, 'error': f'vCenter settings not found for ID {source_vcenter_id}'}
+
             # Connect to vCenter
-            vc = self.connect_vcenter()
+            vc = self.connect_vcenter(settings=vcenter_settings)
             if not vc:
                 self.log_vcenter_activity(
                     operation="exit_maintenance_mode",
