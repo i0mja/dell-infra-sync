@@ -42,6 +42,7 @@ export function VCenterManagementDialog({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [pendingSyncVCenter, setPendingSyncVCenter] = useState<{id: string, name: string} | null>(null);
 
   const editingVCenter = vcenters.find((vc) => vc.id === editingId);
 
@@ -51,40 +52,9 @@ export function VCenterManagementDialog({
       setIsAdding(false);
       onVCenterAdded?.();
       
-      // Auto-trigger initial sync if sync is enabled
+      // Show confirmation dialog if sync is enabled
       if (result.id && data.sync_enabled) {
-        try {
-          toast({
-            title: "Starting initial sync...",
-            description: `Automatically syncing ${data.name}`,
-          });
-
-          const { error } = await supabase.functions.invoke("create-job", {
-            body: {
-              job_type: "vcenter_sync",
-              target_scope: { vcenter_ids: [result.id] },
-              details: { 
-                vcenter_id: result.id,
-                vcenter_name: data.name,
-                is_initial_sync: true,
-              },
-            },
-          });
-
-          if (error) throw error;
-
-          toast({
-            title: "Sync initiated",
-            description: "Initial sync job created. Check the Jobs panel for progress.",
-          });
-        } catch (error: any) {
-          console.error("Error starting auto-sync:", error);
-          toast({
-            title: "Sync Warning",
-            description: "vCenter added but auto-sync failed. You can manually sync from the list.",
-            variant: "destructive",
-          });
-        }
+        setPendingSyncVCenter({ id: result.id, name: data.name });
       }
     }
     return result.success;
@@ -185,6 +155,42 @@ export function VCenterManagementDialog({
     }
   };
 
+  const handleInitialSync = async () => {
+    if (!pendingSyncVCenter) return;
+    
+    toast({
+      title: "Starting initial sync...",
+      description: `Syncing ${pendingSyncVCenter.name}`,
+    });
+
+    const { error } = await supabase.functions.invoke("create-job", {
+      body: {
+        job_type: "vcenter_sync",
+        target_scope: { vcenter_ids: [pendingSyncVCenter.id] },
+        details: { 
+          vcenter_id: pendingSyncVCenter.id,
+          vcenter_name: pendingSyncVCenter.name,
+          is_initial_sync: true,
+        },
+      },
+    });
+
+    if (error) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to start initial sync",
+        variant: "destructive",
+      });
+    } else {
+      toast({
+        title: "Sync initiated",
+        description: "Initial sync job created. Check the Jobs panel for progress.",
+      });
+    }
+    
+    setPendingSyncVCenter(null);
+  };
+
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -268,6 +274,25 @@ export function VCenterManagementDialog({
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground">
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Initial Sync Confirmation Dialog */}
+      <AlertDialog open={!!pendingSyncVCenter} onOpenChange={(open) => !open && setPendingSyncVCenter(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Run Initial Sync?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Would you like to sync {pendingSyncVCenter?.name} now? This will import clusters, 
+              datastores, VMs, alarms, and ESXi hosts from vCenter.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Skip for Now</AlertDialogCancel>
+            <AlertDialogAction onClick={handleInitialSync}>
+              Yes, Sync Now
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
