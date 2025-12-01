@@ -666,6 +666,150 @@ class VCenterMixin:
             self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
             return {'synced': 0, 'error': str(e)}
 
+    def sync_vcenter_hosts(self, content, source_vcenter_id: str) -> Dict:
+        """Sync ESXi hosts from vCenter and auto-link to servers"""
+        try:
+            self.log("Creating host container view...")
+            container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.HostSystem], True
+            )
+            
+            total_hosts = len(container.view)
+            self.log(f"Found {total_hosts} ESXi hosts in vCenter")
+            
+            synced = 0
+            auto_linked = 0
+            
+            for host in container.view:
+                try:
+                    runtime = host.runtime if hasattr(host, 'runtime') else None
+                    config = host.config if hasattr(host, 'config') else None
+                    hardware = host.hardware if hasattr(host, 'hardware') else None
+                    summary = host.summary if hasattr(host, 'summary') else None
+                    
+                    # Get cluster name
+                    cluster_name = None
+                    if host.parent and isinstance(host.parent, vim.ClusterComputeResource):
+                        cluster_name = host.parent.name
+                    
+                    # Extract serial number from hardware
+                    serial_number = None
+                    if hardware and hasattr(hardware, 'systemInfo'):
+                        serial_number = hardware.systemInfo.serialNumber if hasattr(hardware.systemInfo, 'serialNumber') else None
+                    
+                    # Extract ESXi version
+                    esxi_version = None
+                    if config and hasattr(config, 'product'):
+                        product = config.product
+                        if hasattr(product, 'version') and hasattr(product, 'build'):
+                            esxi_version = f"{product.version} (build {product.build})"
+                    
+                    # Determine status
+                    status = 'unknown'
+                    if runtime:
+                        if hasattr(runtime, 'connectionState'):
+                            conn_state = str(runtime.connectionState)
+                            if conn_state == 'connected':
+                                status = 'online'
+                            elif conn_state == 'disconnected':
+                                status = 'offline'
+                            elif conn_state == 'notResponding':
+                                status = 'unreachable'
+                    
+                    # Check maintenance mode
+                    in_maintenance = runtime.inMaintenanceMode if runtime and hasattr(runtime, 'inMaintenanceMode') else False
+                    
+                    host_data = {
+                        'name': host.name,
+                        'vcenter_id': str(host._moId),
+                        'source_vcenter_id': source_vcenter_id,
+                        'cluster': cluster_name,
+                        'serial_number': serial_number,
+                        'esxi_version': esxi_version,
+                        'status': status,
+                        'maintenance_mode': in_maintenance,
+                        'last_sync': datetime.now().isoformat()
+                    }
+                    
+                    # Upsert host
+                    response = requests.post(
+                        f"{DSM_URL}/rest/v1/vcenter_hosts?on_conflict=name,source_vcenter_id",
+                        headers={
+                            'apikey': SERVICE_ROLE_KEY,
+                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                            'Content-Type': 'application/json',
+                            'Prefer': 'resolution=merge-duplicates,return=representation'
+                        },
+                        json=host_data,
+                        verify=VERIFY_SSL
+                    )
+                    
+                    if response.status_code in [200, 201]:
+                        synced += 1
+                        host_result = _safe_json_parse(response)
+                        
+                        # Auto-link to server if serial number matches
+                        if serial_number and host_result:
+                            host_id = host_result[0]['id']
+                            
+                            # Find matching server by service_tag (Dell's serial number)
+                            server_response = requests.get(
+                                f"{DSM_URL}/rest/v1/servers?select=id,hostname&service_tag=eq.{serial_number}&vcenter_host_id=is.null",
+                                headers={
+                                    'apikey': SERVICE_ROLE_KEY,
+                                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                                },
+                                verify=VERIFY_SSL
+                            )
+                            
+                            if server_response.status_code == 200:
+                                servers = _safe_json_parse(server_response)
+                                if servers:
+                                    server = servers[0]
+                                    # Link server to vCenter host
+                                    link_response = requests.patch(
+                                        f"{DSM_URL}/rest/v1/servers?id=eq.{server['id']}",
+                                        headers={
+                                            'apikey': SERVICE_ROLE_KEY,
+                                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                            'Content-Type': 'application/json',
+                                            'Prefer': 'return=minimal'
+                                        },
+                                        json={'vcenter_host_id': host_id},
+                                        verify=VERIFY_SSL
+                                    )
+                                    
+                                    if link_response.status_code == 204:
+                                        # Also update vcenter_host with server_id
+                                        requests.patch(
+                                            f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{host_id}",
+                                            headers={
+                                                'apikey': SERVICE_ROLE_KEY,
+                                                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                                'Content-Type': 'application/json',
+                                                'Prefer': 'return=minimal'
+                                            },
+                                            json={'server_id': server['id']},
+                                            verify=VERIFY_SSL
+                                        )
+                                        auto_linked += 1
+                                        self.log(f"  Auto-linked {host.name} to server {server['hostname']}")
+                        
+                        self.log(f"  Synced host: {host.name}")
+                    
+                except Exception as e:
+                    self.log(f"  Error syncing host {host.name}: {e}", "WARNING")
+            
+            container.Destroy()
+            self.log(f"  Synced {synced}/{total_hosts} hosts, auto-linked {auto_linked}")
+            return {'synced': synced, 'total': total_hosts, 'auto_linked': auto_linked}
+            
+        except Exception as e:
+            self.log(f"Failed to sync hosts: {e}", "ERROR")
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
+            return {'synced': 0, 'auto_linked': 0, 'error': str(e)}
+
     def enter_vcenter_maintenance_mode(self, host_id: str, timeout: int = 600) -> dict:
         """Put ESXi host into maintenance mode"""
         start_time = time.time()

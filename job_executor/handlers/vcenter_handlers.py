@@ -127,8 +127,81 @@ class VCenterHandlers(BaseHandler):
                     progress=100
                 )
             
-            # Continue syncing other entities (datastores, VMs, alarms, hosts)...
-            # Similar pattern for each phase
+            # Sync datastores
+            self.log("📦 Syncing datastores...")
+            if 'datastores' in phase_tasks:
+                self.update_task_status(phase_tasks['datastores'], 'running', log='Syncing datastores...', progress=0)
+            
+            if not self.executor.check_vcenter_connection(content):
+                raise Exception("vCenter connection lost before datastore sync")
+            
+            datastores_result = self.executor.sync_vcenter_datastores(content, source_vcenter_id)
+            self.log(f"✓ Datastores synced: {datastores_result.get('synced', 0)}")
+            
+            if 'datastores' in phase_tasks:
+                self.update_task_status(
+                    phase_tasks['datastores'],
+                    'completed',
+                    log=f'✓ Synced {datastores_result.get("synced", 0)} datastores',
+                    progress=100
+                )
+            
+            # Sync VMs
+            self.log("🖥️ Syncing VMs...")
+            if 'vms' in phase_tasks:
+                self.update_task_status(phase_tasks['vms'], 'running', log='Syncing VMs...', progress=0)
+            
+            if not self.executor.check_vcenter_connection(content):
+                raise Exception("vCenter connection lost before VM sync")
+            
+            vms_result = self.executor.sync_vcenter_vms(content, source_vcenter_id, job['id'])
+            self.log(f"✓ VMs synced: {vms_result.get('synced', 0)}")
+            
+            if 'vms' in phase_tasks:
+                self.update_task_status(
+                    phase_tasks['vms'],
+                    'completed',
+                    log=f'✓ Synced {vms_result.get("synced", 0)} VMs',
+                    progress=100
+                )
+            
+            # Sync alarms
+            self.log("🚨 Syncing alarms...")
+            if 'alarms' in phase_tasks:
+                self.update_task_status(phase_tasks['alarms'], 'running', log='Syncing alarms...', progress=0)
+            
+            if not self.executor.check_vcenter_connection(content):
+                raise Exception("vCenter connection lost before alarm sync")
+            
+            alarms_result = self.executor.sync_vcenter_alarms(content, source_vcenter_id)
+            self.log(f"✓ Alarms synced: {alarms_result.get('synced', 0)}")
+            
+            if 'alarms' in phase_tasks:
+                self.update_task_status(
+                    phase_tasks['alarms'],
+                    'completed',
+                    log=f'✓ Synced {alarms_result.get("synced", 0)} alarms',
+                    progress=100
+                )
+            
+            # Sync ESXi hosts
+            self.log("🖥️ Syncing ESXi hosts...")
+            if 'hosts' in phase_tasks:
+                self.update_task_status(phase_tasks['hosts'], 'running', log='Syncing hosts...', progress=0)
+            
+            if not self.executor.check_vcenter_connection(content):
+                raise Exception("vCenter connection lost before host sync")
+            
+            hosts_result = self.executor.sync_vcenter_hosts(content, source_vcenter_id)
+            self.log(f"✓ Hosts synced: {hosts_result.get('synced', 0)}, auto-linked: {hosts_result.get('auto_linked', 0)}")
+            
+            if 'hosts' in phase_tasks:
+                self.update_task_status(
+                    phase_tasks['hosts'],
+                    'completed',
+                    log=f'✓ Synced {hosts_result.get("synced", 0)} hosts, auto-linked {hosts_result.get("auto_linked", 0)}',
+                    progress=100
+                )
             
             # Complete job
             sync_duration = int(time.time() - sync_start)
@@ -139,6 +212,11 @@ class VCenterHandlers(BaseHandler):
                 'vcenter_host': vcenter_host,
                 'sync_duration_seconds': sync_duration,
                 'clusters': clusters_result.get('synced', 0),
+                'datastores': datastores_result.get('synced', 0),
+                'vms': vms_result.get('synced', 0),
+                'alarms': alarms_result.get('synced', 0),
+                'hosts': hosts_result.get('synced', 0),
+                'auto_linked': hosts_result.get('auto_linked', 0),
                 'errors': sync_errors if sync_errors else None
             }
             
