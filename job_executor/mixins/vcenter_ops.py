@@ -160,8 +160,18 @@ class VCenterMixin:
 
     def sync_vcenter_clusters(self, content, source_vcenter_id: str) -> Dict:
         """Sync cluster statistics from vCenter"""
+        start_time = time.time()
         try:
             self.log("Creating cluster container view...")
+            
+            # Log start
+            self.log_vcenter_activity(
+                operation="sync_clusters_start",
+                endpoint="vCenter Clusters",
+                success=True,
+                details={"source_vcenter_id": source_vcenter_id}
+            )
+            
             container = content.viewManager.CreateContainerView(
                 content.rootFolder, [vim.ClusterComputeResource], True
             )
@@ -215,18 +225,48 @@ class VCenterMixin:
             
             container.Destroy()
             self.log(f"  Synced {synced}/{total_clusters} clusters")
+            
+            # Log completion
+            response_time = int((time.time() - start_time) * 1000)
+            self.log_vcenter_activity(
+                operation="sync_clusters_complete",
+                endpoint="vCenter Clusters",
+                success=True,
+                response_time_ms=response_time,
+                details={"synced": synced, "total": total_clusters}
+            )
+            
             return {'synced': synced, 'total': total_clusters}
             
         except Exception as e:
             self.log(f"Failed to sync clusters: {e}", "ERROR")
             import traceback
             self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
+            
+            # Log error
+            self.log_vcenter_activity(
+                operation="sync_clusters_error",
+                endpoint="vCenter Clusters",
+                success=False,
+                error=str(e)
+            )
+            
             return {'synced': 0, 'error': str(e)}
 
     def sync_vcenter_vms(self, content, source_vcenter_id: str, job_id: str = None) -> Dict:
         """Sync VM inventory from vCenter with batch processing and OS distribution tracking"""
+        start_time = time.time()
         try:
             self.log("Creating VM container view...")
+            
+            # Log start
+            self.log_vcenter_activity(
+                operation="sync_vms_start",
+                endpoint="vCenter VMs",
+                success=True,
+                details={"source_vcenter_id": source_vcenter_id}
+            )
+            
             container = content.viewManager.CreateContainerView(
                 content.rootFolder, [vim.VirtualMachine], True
             )
@@ -400,6 +440,20 @@ class VCenterMixin:
             self.log(f"  Synced {synced}/{total_vms} VMs")
             self.log(f"  VM OS distribution: {dict(sorted(os_counts.items(), key=lambda x: x[1], reverse=True)[:10])}")
             
+            # Log completion
+            response_time = int((time.time() - start_time) * 1000)
+            self.log_vcenter_activity(
+                operation="sync_vms_complete",
+                endpoint="vCenter VMs",
+                success=True,
+                response_time_ms=response_time,
+                details={
+                    "synced": synced,
+                    "total": total_vms,
+                    "os_distribution_sample": dict(list(os_counts.items())[:5])
+                }
+            )
+            
             return {
                 'synced': synced,
                 'total': total_vms,
@@ -410,6 +464,15 @@ class VCenterMixin:
             self.log(f"Failed to sync VMs: {e}", "ERROR")
             import traceback
             self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
+            
+            # Log error
+            self.log_vcenter_activity(
+                operation="sync_vms_error",
+                endpoint="vCenter VMs",
+                success=False,
+                error=str(e)
+            )
+            
             return {'synced': 0, 'error': str(e)}
     
     def _upsert_vm_batch(self, batch: List[Dict]) -> int:
@@ -465,8 +528,18 @@ class VCenterMixin:
 
     def sync_vcenter_datastores(self, content, source_vcenter_id: str, progress_callback=None) -> Dict:
         """Sync datastore information from vCenter"""
+        start_time = time.time()
         try:
             self.log("Creating datastore container view...")
+            
+            # Log start
+            self.log_vcenter_activity(
+                operation="sync_datastores_start",
+                endpoint="vCenter Datastores",
+                success=True,
+                details={"source_vcenter_id": source_vcenter_id}
+            )
+            
             container = content.viewManager.CreateContainerView(
                 content.rootFolder, [vim.Datastore], True
             )
@@ -574,18 +647,52 @@ class VCenterMixin:
             
             container.Destroy()
             self.log(f"  Synced {synced}/{total_datastores} datastores, {host_mount_synced} host mounts")
+            
+            # Log completion
+            response_time = int((time.time() - start_time) * 1000)
+            self.log_vcenter_activity(
+                operation="sync_datastores_complete",
+                endpoint="vCenter Datastores",
+                success=True,
+                response_time_ms=response_time,
+                details={
+                    "synced": synced,
+                    "total": total_datastores,
+                    "host_mounts": host_mount_synced
+                }
+            )
+            
             return {'synced': synced, 'total': total_datastores, 'host_mounts': host_mount_synced}
             
         except Exception as e:
             self.log(f"Failed to sync datastores: {e}", "ERROR")
             import traceback
             self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
+            
+            # Log error
+            self.log_vcenter_activity(
+                operation="sync_datastores_error",
+                endpoint="vCenter Datastores",
+                success=False,
+                error=str(e)
+            )
+            
             return {'synced': 0, 'error': str(e)}
 
     def sync_vcenter_alarms(self, content, source_vcenter_id: str, progress_callback=None) -> Dict:
         """Sync active alarms from vCenter"""
+        start_time = time.time()
         try:
             self.log("Fetching alarm manager...")
+            
+            # Log start
+            self.log_vcenter_activity(
+                operation="sync_alarms_start",
+                endpoint="vCenter Alarms",
+                success=True,
+                details={"source_vcenter_id": source_vcenter_id}
+            )
+            
             alarm_manager = content.alarmManager
             if not alarm_manager:
                 self.log("  No alarm manager available")
@@ -673,18 +780,51 @@ class VCenterMixin:
             
             container.Destroy()
             self.log(f"  Synced {synced} active alarms")
+            
+            # Log completion
+            response_time = int((time.time() - start_time) * 1000)
+            self.log_vcenter_activity(
+                operation="sync_alarms_complete",
+                endpoint="vCenter Alarms",
+                success=True,
+                response_time_ms=response_time,
+                details={
+                    "synced": synced,
+                    "total_entities_checked": total_entities
+                }
+            )
+            
             return {'synced': synced}
             
         except Exception as e:
             self.log(f"Failed to sync alarms: {e}", "ERROR")
             import traceback
             self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
+            
+            # Log error
+            self.log_vcenter_activity(
+                operation="sync_alarms_error",
+                endpoint="vCenter Alarms",
+                success=False,
+                error=str(e)
+            )
+            
             return {'synced': 0, 'error': str(e)}
 
     def sync_vcenter_hosts(self, content, source_vcenter_id: str, progress_callback=None) -> Dict:
         """Sync ESXi hosts from vCenter and auto-link to servers"""
+        start_time = time.time()
         try:
             self.log("Creating host container view...")
+            
+            # Log start
+            self.log_vcenter_activity(
+                operation="sync_hosts_start",
+                endpoint="vCenter ESXi Hosts",
+                success=True,
+                details={"source_vcenter_id": source_vcenter_id}
+            )
+            
             container = content.viewManager.CreateContainerView(
                 content.rootFolder, [vim.HostSystem], True
             )
@@ -822,12 +962,36 @@ class VCenterMixin:
             
             container.Destroy()
             self.log(f"  Synced {synced}/{total_hosts} hosts, auto-linked {auto_linked}")
+            
+            # Log completion
+            response_time = int((time.time() - start_time) * 1000)
+            self.log_vcenter_activity(
+                operation="sync_hosts_complete",
+                endpoint="vCenter ESXi Hosts",
+                success=True,
+                response_time_ms=response_time,
+                details={
+                    "synced": synced,
+                    "total": total_hosts,
+                    "auto_linked": auto_linked
+                }
+            )
+            
             return {'synced': synced, 'total': total_hosts, 'auto_linked': auto_linked}
             
         except Exception as e:
             self.log(f"Failed to sync hosts: {e}", "ERROR")
             import traceback
             self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
+            
+            # Log error
+            self.log_vcenter_activity(
+                operation="sync_hosts_error",
+                endpoint="vCenter ESXi Hosts",
+                success=False,
+                error=str(e)
+            )
+            
             return {'synced': 0, 'auto_linked': 0, 'error': str(e)}
 
     def enter_vcenter_maintenance_mode(self, host_id: str, timeout: int = 600) -> dict:
