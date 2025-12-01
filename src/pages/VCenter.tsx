@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { VCenterStatsBar } from "@/components/vcenter/VCenterStatsBar";
 import { HostsTable } from "@/components/vcenter/HostsTable";
@@ -91,6 +91,7 @@ export default function VCenter() {
   
   const navigate = useNavigate();
   const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
   
   const { vcenters } = useVCenters();
   const { vms, clusters, datastores, alarms, loading: vmsLoading, refetch: refetchVCenterData } = useVCenterData(
@@ -172,6 +173,32 @@ export default function VCenter() {
       channel.unsubscribe();
     };
   }, [selectedVCenterId]);
+
+  // Handle URL params for tab and cluster selection
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    const clusterParam = searchParams.get('cluster');
+    
+    // Set active tab from URL param
+    if (tabParam && ['hosts', 'vms', 'clusters', 'datastores', 'esxi-profiles'].includes(tabParam)) {
+      setActiveTab(tabParam);
+    }
+    
+    // Auto-select cluster by name or ID
+    if (clusterParam && clusters.length > 0) {
+      // Try to find by exact name match first, then by ID
+      const cluster = clusters.find(c => 
+        c.cluster_name === clusterParam || c.id === clusterParam
+      );
+      
+      if (cluster) {
+        setSelectedClusterId(cluster.id);
+        // Clear the cluster param after selecting (keep tab param)
+        searchParams.delete('cluster');
+        setSearchParams(searchParams, { replace: true });
+      }
+    }
+  }, [searchParams, clusters]);
 
   const filteredHosts = hosts.filter((host) => {
     const matchesSearch =
