@@ -43,4 +43,5 @@ CANONICAL_REDFISH_ENDPOINTS = {
     "/redfish/v1/TaskService/Tasks/JID_123",
     "/redfish/v1/UpdateService/Actions/UpdateService.SimpleUpdate",
     "/redfish/v1/UpdateService/FirmwareInventory",
+    "/redfish/v1/Dell/Systems/System.Embedded.1/DellSoftwareInstallationService/Actions/DellSoftwareInstallationService.InstallFromRepository",
 }

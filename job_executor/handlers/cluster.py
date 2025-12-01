@@ -567,11 +567,10 @@ class ClusterHandler(BaseHandler):
                                 username=username,
                                 password=password,
                                 catalog_url=dell_catalog_url,
-                                targets=targets,
-                                apply_update='Now',
-                                reboot_job_type='GracefulRebootWithForcedShutdown',
-                                job_id=job['id'],
-                                server_id=host['server_id']
+                                apply_update=True,
+                                reboot_needed=True,
+                                server_id=host['server_id'],
+                                user_id=user_id
                             )
                         else:
                             # Use manual firmware package

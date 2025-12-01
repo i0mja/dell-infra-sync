@@ -70,8 +70,9 @@ class DellRedfishAdapter:
         timeout: Tuple[int, int] = (5, 30),
         job_id: str = None,
         server_id: str = None,
-        user_id: str = None
-    ) -> Dict[str, Any]:
+        user_id: str = None,
+        return_response: bool = False
+    ):
         """
         Unified request method for all Dell Redfish API calls.
         Integrates throttling, logging, circuit breaking, and error mapping.
@@ -88,9 +89,10 @@ class DellRedfishAdapter:
             job_id: Optional job ID for logging
             server_id: Optional server ID for logging
             user_id: Optional user ID for logging
+            return_response: If True, return raw Response object instead of parsed JSON
             
         Returns:
-            dict: Response JSON data
+            Union[dict, requests.Response]: Response JSON data or raw Response if return_response=True
             
         Raises:
             CircuitBreakerOpenError: If circuit breaker is open for this IP
@@ -182,6 +184,9 @@ class DellRedfishAdapter:
                         user_id=user_id
                     )
                     
+                    # Return raw response or parsed data
+                    if return_response:
+                        return response
                     return response_data
                     
                 except requests.exceptions.RequestException as e:

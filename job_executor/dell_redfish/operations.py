@@ -1392,7 +1392,7 @@ class DellOperations:
             endpoint='/redfish/v1/SessionService/Sessions',
             username=username,
             password=password,
-            json_data=payload,
+            payload=payload,
             operation_name='Create Session',
             server_id=server_id,
             user_id=user_id,
@@ -1705,7 +1705,7 @@ class DellOperations:
             endpoint=f'/redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia/{device_id}/Actions/VirtualMedia.InsertMedia',
             username=username,
             password=password,
-            json_data=payload,
+            payload=payload,
             operation_name='Mount Virtual Media',
             server_id=server_id,
             user_id=user_id
@@ -1912,23 +1912,26 @@ class DellOperations:
         username: str,
         password: str,
         catalog_url: str,
-        targets: Optional[List[str]] = None,
-        apply_time: str = 'OnReset',
+        apply_update: bool = True,
+        reboot_needed: bool = True,
         server_id: str = None,
         user_id: str = None
     ) -> Dict[str, Any]:
         """
-        Update firmware from Dell catalog URL.
+        Update firmware from Dell catalog repository using official OEM API.
         
-        Dell endpoint: POST /redfish/v1/UpdateService/Actions/UpdateService.SimpleUpdate
+        Dell OEM endpoint: POST /redfish/v1/Dell/Systems/System.Embedded.1/
+            DellSoftwareInstallationService/Actions/DellSoftwareInstallationService.InstallFromRepository
+        
+        Reference: https://github.com/dell/iDRAC-Redfish-Scripting
         
         Args:
             ip: iDRAC IP address
             username: iDRAC username
             password: iDRAC password
-            catalog_url: URL to Dell catalog.xml or catalog.gz
-            targets: Optional list of component targets (e.g., ['BIOS', 'iDRAC'])
-            apply_time: 'Immediate', 'OnReset', or 'AtMaintenanceWindowStart'
+            catalog_url: URL to Dell catalog (e.g., https://downloads.dell.com/catalog/Catalog.xml)
+            apply_update: If True, apply updates immediately (default True)
+            reboot_needed: If True, allow reboot for updates requiring it (default True)
             server_id: Optional server ID for logging
             user_id: Optional user ID for logging
             
@@ -1938,39 +1941,42 @@ class DellOperations:
         Raises:
             DellRedfishError: On update initiation failure
         """
-        payload = {
-            'ImageURI': catalog_url,
-            '@Redfish.OperationApplyTime': apply_time
-        }
+        # Parse catalog URL into components Dell API expects
+        from urllib.parse import urlparse
+        parsed = urlparse(catalog_url)
         
-        if targets:
-            payload['Targets'] = targets
+        # Build payload for Dell OEM InstallFromRepository
+        payload = {
+            'IPAddress': parsed.netloc,
+            'ShareType': parsed.scheme.upper(),  # HTTP, HTTPS, NFS, CIFS
+            'ShareName': parsed.path.rsplit('/', 1)[0] or '/',  # Directory path
+            'CatalogFile': parsed.path.rsplit('/', 1)[-1] or 'Catalog.xml',
+            'ApplyUpdate': '1' if apply_update else '0',  # Dell expects string '1' or '0'
+            'RebootNeeded': reboot_needed
+        }
         
         response = self.adapter.make_request(
             method='POST',
             ip=ip,
-            endpoint='/redfish/v1/UpdateService/Actions/UpdateService.SimpleUpdate',
+            endpoint='/redfish/v1/Dell/Systems/System.Embedded.1/DellSoftwareInstallationService/Actions/DellSoftwareInstallationService.InstallFromRepository',
             username=username,
             password=password,
-            json_data=payload,
-            operation_name='Catalog Firmware Update',
+            payload=payload,
+            operation_name='Repository Firmware Update',
+            timeout=(10, 300),  # Longer timeout for catalog scan
             server_id=server_id,
-            user_id=user_id,
-            return_response=True
+            user_id=user_id
         )
         
-        # Extract task URI from response
-        task_uri = None
-        if response.status_code == 202:
-            task_uri = response.headers.get('Location')
-        
-        response_data = response.json() if response.content else {}
+        # Extract task/job information
+        task_uri = response.get('_location_header') or response.get('@odata.id')
+        job_id = response.get('Id') or response.get('JobID')
         
         return {
             'task_uri': task_uri,
-            'job_id': response_data.get('Id'),
+            'job_id': job_id,
             'status': 'initiated',
             'catalog_url': catalog_url,
-            'targets': targets,
-            'apply_time': apply_time
+            'apply_update': apply_update,
+            'reboot_needed': reboot_needed
         }
