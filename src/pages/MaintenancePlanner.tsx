@@ -53,6 +53,12 @@ interface Operation {
   status: 'active' | 'planned' | 'completed' | 'failed';
   timestamp: Date;
   target: string;
+  targetMeta?: {
+    type: 'server' | 'servers' | 'cluster' | 'groups' | 'none';
+    serverIds?: string[];
+    clusterName?: string;
+    groupIds?: string[];
+  };
   data: Job | MaintenanceWindow;
 }
 
@@ -193,33 +199,51 @@ export default function MaintenancePlanner() {
 
   // Combine jobs and windows into operations
   const operations = useMemo<Operation[]>(() => {
-    const jobOps: Operation[] = jobs.map(j => ({
-      type: 'job' as const,
-      id: j.id,
-      title: getJobTypeLabel(j.job_type),
-      status: mapJobStatus(j),
-      timestamp: new Date(j.started_at || j.created_at),
-      target: j.target_scope?.server_ids?.length > 0
-        ? formatServerTarget(j.target_scope.server_ids)
-        : j.target_scope?.cluster_name || 'N/A',
-      data: j
-    }));
+    const jobOps: Operation[] = jobs.map(j => {
+      const serverIds = j.target_scope?.server_ids || [];
+      
+      return {
+        type: 'job' as const,
+        id: j.id,
+        title: getJobTypeLabel(j.job_type),
+        status: mapJobStatus(j),
+        timestamp: new Date(j.started_at || j.created_at),
+        target: serverIds.length > 0
+          ? formatServerTarget(serverIds)
+          : j.target_scope?.cluster_name || 'N/A',
+        targetMeta: {
+          type: serverIds.length === 1 ? 'server' : serverIds.length > 1 ? 'servers' : 
+                j.target_scope?.cluster_name ? 'cluster' : 'none',
+          serverIds: serverIds.length > 0 ? serverIds : undefined,
+          clusterName: j.target_scope?.cluster_name,
+        },
+        data: j
+      };
+    });
 
-    const windowOps: Operation[] = windows.map(w => ({
-      type: 'maintenance' as const,
-      id: w.id,
-      title: w.title,
-      status: mapWindowStatus(w),
-      timestamp: new Date(w.planned_start),
-      target: [
-        ...(w.cluster_ids || []),
-        ...(w.server_group_ids || []).map(id => {
-          const group = serverGroups.find(g => g.id === id);
-          return group?.name;
-        }).filter(Boolean)
-      ].join(', ') || 'No targets',
-      data: w
-    }));
+    const windowOps: Operation[] = windows.map(w => {
+      const groupNames = (w.server_group_ids || [])
+        .map(id => serverGroups.find(g => g.id === id)?.name)
+        .filter(Boolean);
+      
+      return {
+        type: 'maintenance' as const,
+        id: w.id,
+        title: w.title,
+        status: mapWindowStatus(w),
+        timestamp: new Date(w.planned_start),
+        target: [
+          ...(w.cluster_ids || []),
+          ...groupNames
+        ].join(', ') || 'No targets',
+        targetMeta: {
+          type: (w.cluster_ids?.length || 0) > 0 || (w.server_group_ids?.length || 0) > 0 ? 'groups' : 'none',
+          clusterName: w.cluster_ids?.[0],
+          groupIds: w.server_group_ids || undefined,
+        },
+        data: w
+      };
+    });
 
     const all = [...jobOps, ...windowOps];
     
