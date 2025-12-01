@@ -4,6 +4,7 @@ from typing import Dict
 from datetime import datetime
 import time
 import requests
+from urllib.parse import quote
 from .base import BaseHandler
 
 
@@ -336,7 +337,7 @@ class ClusterHandler(BaseHandler):
                 
                 # Existing cluster logic - fetch from vcenter_hosts
                 response = requests.get(
-                    f"{DSM_URL}/rest/v1/vcenter_hosts?cluster=eq.{cluster_id}&select=*",
+                    f"{DSM_URL}/rest/v1/vcenter_hosts?cluster=eq.{quote(cluster_id)}&select=*",
                     headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
                     verify=VERIFY_SSL
                 )
