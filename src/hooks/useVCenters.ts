@@ -62,7 +62,7 @@ export function useVCenters() {
     }
   };
 
-  const addVCenter = async (data: VCenterFormData) => {
+  const addVCenter = async (data: VCenterFormData): Promise<{ success: boolean; id?: string }> => {
     try {
       // Insert without password first
       const { data: newVCenter, error } = await supabase.from("vcenters").insert([
@@ -103,7 +103,7 @@ export function useVCenters() {
       });
 
       await fetchVCenters();
-      return true;
+      return { success: true, id: newVCenter.id };
     } catch (error: any) {
       console.error("Error adding vCenter:", error);
       toast({
@@ -111,7 +111,7 @@ export function useVCenters() {
         description: error.message || "Failed to add vCenter connection",
         variant: "destructive",
       });
-      return false;
+      return { success: false };
     }
   };
 

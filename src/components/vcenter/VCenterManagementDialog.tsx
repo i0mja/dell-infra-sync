@@ -46,12 +46,48 @@ export function VCenterManagementDialog({
   const editingVCenter = vcenters.find((vc) => vc.id === editingId);
 
   const handleAdd = async (data: VCenterFormData) => {
-    const success = await addVCenter(data);
-    if (success) {
+    const result = await addVCenter(data);
+    if (result.success) {
       setIsAdding(false);
       onVCenterAdded?.();
+      
+      // Auto-trigger initial sync if sync is enabled
+      if (result.id && data.sync_enabled) {
+        try {
+          toast({
+            title: "Starting initial sync...",
+            description: `Automatically syncing ${data.name}`,
+          });
+
+          const { error } = await supabase.functions.invoke("create-job", {
+            body: {
+              job_type: "vcenter_sync",
+              target_scope: { vcenter_ids: [result.id] },
+              details: { 
+                vcenter_id: result.id,
+                vcenter_name: data.name,
+                is_initial_sync: true,
+              },
+            },
+          });
+
+          if (error) throw error;
+
+          toast({
+            title: "Sync initiated",
+            description: "Initial sync job created. Check the Jobs panel for progress.",
+          });
+        } catch (error: any) {
+          console.error("Error starting auto-sync:", error);
+          toast({
+            title: "Sync Warning",
+            description: "vCenter added but auto-sync failed. You can manually sync from the list.",
+            variant: "destructive",
+          });
+        }
+      }
     }
-    return success;
+    return result.success;
   };
 
   const handleEdit = async (data: VCenterFormData) => {
