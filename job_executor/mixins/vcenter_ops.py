@@ -158,18 +158,19 @@ class VCenterMixin:
             self.log(f"vCenter connection lost: {e}", "ERROR")
             return False
 
-    def sync_vcenter_clusters(self, content, source_vcenter_id: str) -> Dict:
+    def sync_vcenter_clusters(self, content, source_vcenter_id: str, vcenter_name: str = None) -> Dict:
         """Sync cluster statistics from vCenter"""
         start_time = time.time()
         try:
             self.log("Creating cluster container view...")
             
             # Log start
+            endpoint_prefix = f"{vcenter_name} - " if vcenter_name else ""
             self.log_vcenter_activity(
                 operation="sync_clusters_start",
-                endpoint="vCenter Clusters",
+                endpoint=f"{endpoint_prefix}Clusters",
                 success=True,
-                details={"source_vcenter_id": source_vcenter_id}
+                details={"source_vcenter_id": source_vcenter_id, "vcenter_name": vcenter_name}
             )
             
             container = content.viewManager.CreateContainerView(
@@ -228,9 +229,10 @@ class VCenterMixin:
             
             # Log completion
             response_time = int((time.time() - start_time) * 1000)
+            endpoint_prefix = f"{vcenter_name} - " if vcenter_name else ""
             self.log_vcenter_activity(
                 operation="sync_clusters_complete",
-                endpoint="vCenter Clusters",
+                endpoint=f"{endpoint_prefix}Clusters",
                 success=True,
                 response_time_ms=response_time,
                 details={"synced": synced, "total": total_clusters}
@@ -244,27 +246,29 @@ class VCenterMixin:
             self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
             
             # Log error
+            endpoint_prefix = f"{vcenter_name} - " if vcenter_name else ""
             self.log_vcenter_activity(
                 operation="sync_clusters_error",
-                endpoint="vCenter Clusters",
+                endpoint=f"{endpoint_prefix}Clusters",
                 success=False,
                 error=str(e)
             )
             
             return {'synced': 0, 'error': str(e)}
 
-    def sync_vcenter_vms(self, content, source_vcenter_id: str, job_id: str = None) -> Dict:
+    def sync_vcenter_vms(self, content, source_vcenter_id: str, job_id: str = None, vcenter_name: str = None) -> Dict:
         """Sync VM inventory from vCenter with batch processing and OS distribution tracking"""
         start_time = time.time()
         try:
             self.log("Creating VM container view...")
             
             # Log start
+            endpoint_prefix = f"{vcenter_name} - " if vcenter_name else ""
             self.log_vcenter_activity(
                 operation="sync_vms_start",
-                endpoint="vCenter VMs",
+                endpoint=f"{endpoint_prefix}VMs",
                 success=True,
-                details={"source_vcenter_id": source_vcenter_id}
+                details={"source_vcenter_id": source_vcenter_id, "vcenter_name": vcenter_name}
             )
             
             container = content.viewManager.CreateContainerView(
@@ -325,9 +329,10 @@ class VCenterMixin:
                         
                         # Log progress to activity monitor
                         if i % 100 == 0:
+                            endpoint_prefix = f"{vcenter_name} - " if vcenter_name else ""
                             self.log_vcenter_activity(
                                 operation="vcenter_vm_sync_progress",
-                                endpoint="vCenter VM Inventory",
+                                endpoint=f"{endpoint_prefix}VM Inventory",
                                 success=True,
                                 response_time_ms=0,
                                 details={
@@ -442,9 +447,10 @@ class VCenterMixin:
             
             # Log completion
             response_time = int((time.time() - start_time) * 1000)
+            endpoint_prefix = f"{vcenter_name} - " if vcenter_name else ""
             self.log_vcenter_activity(
                 operation="sync_vms_complete",
-                endpoint="vCenter VMs",
+                endpoint=f"{endpoint_prefix}VMs",
                 success=True,
                 response_time_ms=response_time,
                 details={
@@ -466,9 +472,10 @@ class VCenterMixin:
             self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
             
             # Log error
+            endpoint_prefix = f"{vcenter_name} - " if vcenter_name else ""
             self.log_vcenter_activity(
                 operation="sync_vms_error",
-                endpoint="vCenter VMs",
+                endpoint=f"{endpoint_prefix}VMs",
                 success=False,
                 error=str(e)
             )
@@ -526,18 +533,19 @@ class VCenterMixin:
             self.log(f"  Traceback: {traceback.format_exc()}", "ERROR")
             return 0
 
-    def sync_vcenter_datastores(self, content, source_vcenter_id: str, progress_callback=None) -> Dict:
+    def sync_vcenter_datastores(self, content, source_vcenter_id: str, progress_callback=None, vcenter_name: str = None) -> Dict:
         """Sync datastore information from vCenter"""
         start_time = time.time()
         try:
             self.log("Creating datastore container view...")
             
             # Log start
+            endpoint_prefix = f"{vcenter_name} - " if vcenter_name else ""
             self.log_vcenter_activity(
                 operation="sync_datastores_start",
-                endpoint="vCenter Datastores",
+                endpoint=f"{endpoint_prefix}Datastores",
                 success=True,
-                details={"source_vcenter_id": source_vcenter_id}
+                details={"source_vcenter_id": source_vcenter_id, "vcenter_name": vcenter_name}
             )
             
             container = content.viewManager.CreateContainerView(
@@ -652,7 +660,7 @@ class VCenterMixin:
             response_time = int((time.time() - start_time) * 1000)
             self.log_vcenter_activity(
                 operation="sync_datastores_complete",
-                endpoint="vCenter Datastores",
+                endpoint=f"{endpoint_prefix}Datastores",
                 success=True,
                 response_time_ms=response_time,
                 details={
@@ -670,27 +678,29 @@ class VCenterMixin:
             self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
             
             # Log error
+            endpoint_prefix = f"{vcenter_name} - " if vcenter_name else ""
             self.log_vcenter_activity(
                 operation="sync_datastores_error",
-                endpoint="vCenter Datastores",
+                endpoint=f"{endpoint_prefix}Datastores",
                 success=False,
                 error=str(e)
             )
             
             return {'synced': 0, 'error': str(e)}
 
-    def sync_vcenter_alarms(self, content, source_vcenter_id: str, progress_callback=None) -> Dict:
+    def sync_vcenter_alarms(self, content, source_vcenter_id: str, progress_callback=None, vcenter_name: str = None) -> Dict:
         """Sync active alarms from vCenter"""
         start_time = time.time()
         try:
             self.log("Fetching alarm manager...")
             
             # Log start
+            endpoint_prefix = f"{vcenter_name} - " if vcenter_name else ""
             self.log_vcenter_activity(
                 operation="sync_alarms_start",
-                endpoint="vCenter Alarms",
+                endpoint=f"{endpoint_prefix}Alarms",
                 success=True,
-                details={"source_vcenter_id": source_vcenter_id}
+                details={"source_vcenter_id": source_vcenter_id, "vcenter_name": vcenter_name}
             )
             
             alarm_manager = content.alarmManager
@@ -783,9 +793,10 @@ class VCenterMixin:
             
             # Log completion
             response_time = int((time.time() - start_time) * 1000)
+            endpoint_prefix = f"{vcenter_name} - " if vcenter_name else ""
             self.log_vcenter_activity(
                 operation="sync_alarms_complete",
-                endpoint="vCenter Alarms",
+                endpoint=f"{endpoint_prefix}Alarms",
                 success=True,
                 response_time_ms=response_time,
                 details={
@@ -802,27 +813,29 @@ class VCenterMixin:
             self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
             
             # Log error
+            endpoint_prefix = f"{vcenter_name} - " if vcenter_name else ""
             self.log_vcenter_activity(
                 operation="sync_alarms_error",
-                endpoint="vCenter Alarms",
+                endpoint=f"{endpoint_prefix}Alarms",
                 success=False,
                 error=str(e)
             )
             
             return {'synced': 0, 'error': str(e)}
 
-    def sync_vcenter_hosts(self, content, source_vcenter_id: str, progress_callback=None) -> Dict:
+    def sync_vcenter_hosts(self, content, source_vcenter_id: str, progress_callback=None, vcenter_name: str = None) -> Dict:
         """Sync ESXi hosts from vCenter and auto-link to servers"""
         start_time = time.time()
         try:
             self.log("Creating host container view...")
             
             # Log start
+            endpoint_prefix = f"{vcenter_name} - " if vcenter_name else ""
             self.log_vcenter_activity(
                 operation="sync_hosts_start",
-                endpoint="vCenter ESXi Hosts",
+                endpoint=f"{endpoint_prefix}ESXi Hosts",
                 success=True,
-                details={"source_vcenter_id": source_vcenter_id}
+                details={"source_vcenter_id": source_vcenter_id, "vcenter_name": vcenter_name}
             )
             
             container = content.viewManager.CreateContainerView(
@@ -965,9 +978,10 @@ class VCenterMixin:
             
             # Log completion
             response_time = int((time.time() - start_time) * 1000)
+            endpoint_prefix = f"{vcenter_name} - " if vcenter_name else ""
             self.log_vcenter_activity(
                 operation="sync_hosts_complete",
-                endpoint="vCenter ESXi Hosts",
+                endpoint=f"{endpoint_prefix}ESXi Hosts",
                 success=True,
                 response_time_ms=response_time,
                 details={
@@ -985,9 +999,10 @@ class VCenterMixin:
             self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
             
             # Log error
+            endpoint_prefix = f"{vcenter_name} - " if vcenter_name else ""
             self.log_vcenter_activity(
                 operation="sync_hosts_error",
-                endpoint="vCenter ESXi Hosts",
+                endpoint=f"{endpoint_prefix}ESXi Hosts",
                 success=False,
                 error=str(e)
             )
