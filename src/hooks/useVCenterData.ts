@@ -78,44 +78,178 @@ export function useVCenterData(selectedVCenterId?: string | null) {
   const [datastoreCount, setDatastoreCount] = useState<number>(0);
   const [alarmCount, setAlarmCount] = useState<number>(0);
 
+  // Helper to fetch VMs in batches
+  const fetchVMsInBatches = async (filterValue?: string): Promise<{ data: VCenterVM[], count: number }> => {
+    const allData: VCenterVM[] = [];
+    let from = 0;
+    const batchSize = 1000;
+    let totalCount = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      let query = supabase
+        .from("vcenter_vms")
+        .select("*", { count: from === 0 ? 'exact' : undefined })
+        .order("name", { ascending: true })
+        .range(from, from + batchSize - 1);
+
+      if (filterValue && filterValue !== "all") {
+        query = query.eq("source_vcenter_id", filterValue);
+      }
+
+      const { data, count, error } = await query;
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        allData.push(...data);
+        if (from === 0 && count !== null) {
+          totalCount = count;
+        }
+        hasMore = data.length === batchSize;
+        from += batchSize;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    return { data: allData, count: totalCount || allData.length };
+  };
+
+  // Helper to fetch Clusters in batches
+  const fetchClustersInBatches = async (filterValue?: string): Promise<{ data: VCenterCluster[], count: number }> => {
+    const allData: VCenterCluster[] = [];
+    let from = 0;
+    const batchSize = 1000;
+    let totalCount = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      let query = supabase
+        .from("vcenter_clusters")
+        .select("*", { count: from === 0 ? 'exact' : undefined })
+        .order("cluster_name", { ascending: true })
+        .range(from, from + batchSize - 1);
+
+      if (filterValue && filterValue !== "all") {
+        query = query.eq("source_vcenter_id", filterValue);
+      }
+
+      const { data, count, error } = await query;
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        allData.push(...data);
+        if (from === 0 && count !== null) {
+          totalCount = count;
+        }
+        hasMore = data.length === batchSize;
+        from += batchSize;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    return { data: allData, count: totalCount || allData.length };
+  };
+
+  // Helper to fetch Datastores in batches
+  const fetchDatastoresInBatches = async (filterValue?: string): Promise<{ data: VCenterDatastore[], count: number }> => {
+    const allData: VCenterDatastore[] = [];
+    let from = 0;
+    const batchSize = 1000;
+    let totalCount = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      let query = supabase
+        .from("vcenter_datastores")
+        .select("*", { count: from === 0 ? 'exact' : undefined })
+        .order("name", { ascending: true })
+        .range(from, from + batchSize - 1);
+
+      if (filterValue && filterValue !== "all") {
+        query = query.eq("source_vcenter_id", filterValue);
+      }
+
+      const { data, count, error } = await query;
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        allData.push(...data);
+        if (from === 0 && count !== null) {
+          totalCount = count;
+        }
+        hasMore = data.length === batchSize;
+        from += batchSize;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    return { data: allData, count: totalCount || allData.length };
+  };
+
+  // Helper to fetch Alarms in batches
+  const fetchAlarmsInBatches = async (filterValue?: string): Promise<{ data: VCenterAlarm[], count: number }> => {
+    const allData: VCenterAlarm[] = [];
+    let from = 0;
+    const batchSize = 1000;
+    let totalCount = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      let query = supabase
+        .from("vcenter_alarms")
+        .select("*", { count: from === 0 ? 'exact' : undefined })
+        .order("triggered_at", { ascending: false })
+        .range(from, from + batchSize - 1);
+
+      if (filterValue && filterValue !== "all") {
+        query = query.eq("source_vcenter_id", filterValue);
+      }
+
+      const { data, count, error } = await query;
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        allData.push(...data);
+        if (from === 0 && count !== null) {
+          totalCount = count;
+        }
+        hasMore = data.length === batchSize;
+        from += batchSize;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    return { data: allData, count: totalCount || allData.length };
+  };
+
   const fetchData = async () => {
     try {
       setLoading(true);
       
-      // Build queries with optional vCenter filtering and explicit ranges
-      let vmsQuery = supabase.from("vcenter_vms").select("*", { count: "exact" });
-      let clustersQuery = supabase.from("vcenter_clusters").select("*", { count: "exact" });
-      let datastoresQuery = supabase.from("vcenter_datastores").select("*", { count: "exact" });
-      let alarmsQuery = supabase.from("vcenter_alarms").select("*", { count: "exact" });
+      const filterValue = selectedVCenterId && selectedVCenterId !== "all" 
+        ? selectedVCenterId 
+        : undefined;
 
-      // Apply filter if a specific vCenter is selected
-      if (selectedVCenterId && selectedVCenterId !== "all") {
-        vmsQuery = vmsQuery.eq("source_vcenter_id", selectedVCenterId);
-        clustersQuery = clustersQuery.eq("source_vcenter_id", selectedVCenterId);
-        datastoresQuery = datastoresQuery.eq("source_vcenter_id", selectedVCenterId);
-        alarmsQuery = alarmsQuery.eq("source_vcenter_id", selectedVCenterId);
-      }
-
+      // Fetch all data in batches (handles >1000 rows)
       const [vmsResult, clustersResult, datastoresResult, alarmsResult] = await Promise.all([
-        vmsQuery.range(0, 9999).order("name"),
-        clustersQuery.range(0, 9999).order("cluster_name"),
-        datastoresQuery.range(0, 9999).order("name"),
-        alarmsQuery.range(0, 9999).order("triggered_at", { ascending: false }),
+        fetchVMsInBatches(filterValue),
+        fetchClustersInBatches(filterValue),
+        fetchDatastoresInBatches(filterValue),
+        fetchAlarmsInBatches(filterValue),
       ]);
 
-      if (vmsResult.error) throw vmsResult.error;
-      if (clustersResult.error) throw clustersResult.error;
-      if (datastoresResult.error) throw datastoresResult.error;
-      if (alarmsResult.error) throw alarmsResult.error;
-
-      setVms(vmsResult.data || []);
-      setClusters(clustersResult.data || []);
-      setDatastores(datastoresResult.data || []);
-      setAlarms(alarmsResult.data || []);
-      setVmCount(vmsResult.count || 0);
-      setClusterCount(clustersResult.count || 0);
-      setDatastoreCount(datastoresResult.count || 0);
-      setAlarmCount(alarmsResult.count || 0);
+      setVms(vmsResult.data);
+      setClusters(clustersResult.data);
+      setDatastores(datastoresResult.data);
+      setAlarms(alarmsResult.data);
+      setVmCount(vmsResult.count);
+      setClusterCount(clustersResult.count);
+      setDatastoreCount(datastoresResult.count);
+      setAlarmCount(alarmsResult.count);
     } catch (error) {
       console.error("Error fetching vCenter data:", error);
     } finally {
