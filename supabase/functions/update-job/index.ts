@@ -91,6 +91,23 @@ serve(async (req) => {
         } else {
           console.log(`Cascaded ${job.status} status to child jobs of ${jobId}`);
         }
+
+        // Also cascade status to workflow execution steps
+        const { error: workflowError } = await supabase
+          .from('workflow_executions')
+          .update({
+            step_status: job.status === 'cancelled' ? 'cancelled' : 'failed',
+            step_completed_at: new Date().toISOString(),
+            step_error: `Auto-${job.status}: parent job ${job.status}`
+          })
+          .eq('job_id', jobId)
+          .eq('step_status', 'running');
+
+        if (workflowError) {
+          console.error('Error cascading status to workflow steps:', workflowError);
+        } else {
+          console.log(`Cascaded ${job.status} status to workflow steps of ${jobId}`);
+        }
       }
 
       // Trigger notification if status changed to completed, failed, or running
