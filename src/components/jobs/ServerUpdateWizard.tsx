@@ -59,6 +59,14 @@ interface ServerMembership {
   serverGroup?: { id: string; name: string };
 }
 
+interface ClusterConflict {
+  detected: boolean;
+  clusterName: string;
+  selectedServers: string[];
+  allClusterHostIds: string[];
+  acknowledged: boolean;
+}
+
 const STEPS = [
   { id: 1, name: 'Target Selection', icon: Server },
   { id: 2, name: 'Firmware Selection', icon: Shield },
@@ -89,7 +97,7 @@ export const ServerUpdateWizard = ({
   const [safetyCheckLoading, setSafetyCheckLoading] = useState(false);
   const [safetyCheckPassed, setSafetyCheckPassed] = useState(false);
   const [serverMemberships, setServerMemberships] = useState<ServerMembership[]>([]);
-  const [acknowledgedRisk, setAcknowledgedRisk] = useState(false);
+  const [clusterConflict, setClusterConflict] = useState<ClusterConflict | null>(null);
   
   // Step 2: Firmware Selection
   const [firmwareSource, setFirmwareSource] = useState<'local_repository' | 'dell_online_catalog' | 'manual'>('local_repository');
@@ -130,7 +138,7 @@ export const ServerUpdateWizard = ({
       fetchGroupInfo();
     } else if (targetType === 'servers' && selectedServerIds.length > 0) {
       fetchServersInfo();
-      fetchServerMemberships();
+      checkClusterMembership();
     }
   }, [targetType, selectedCluster, selectedGroup, selectedServerIds]);
 
@@ -209,41 +217,65 @@ export const ServerUpdateWizard = ({
     }
   };
 
-  const fetchServerMemberships = async () => {
-    const { data } = await supabase
-      .from("servers")
-      .select(`
-        id, hostname, ip_address,
-        vcenter_hosts!vcenter_hosts_server_id_fkey(cluster, name),
-        server_group_members(server_group_id, server_groups(id, name))
-      `)
-      .in("id", selectedServerIds);
+  const checkClusterMembership = async () => {
+    if (selectedServerIds.length === 0) {
+      setClusterConflict(null);
+      return;
+    }
+
+    // Check if any selected server belongs to a cluster
+    const { data: linkedHosts } = await supabase
+      .from("vcenter_hosts")
+      .select("id, server_id, cluster, name")
+      .in("server_id", selectedServerIds)
+      .not("cluster", "is", null);
     
-    if (data) {
-      const memberships = data
-        .filter((s: any) => s.vcenter_hosts?.length > 0 || s.server_group_members?.length > 0)
-        .map((s: any) => ({
-          serverId: s.id,
-          serverName: s.hostname || s.ip_address,
-          vcenterCluster: s.vcenter_hosts?.[0]?.cluster,
-          serverGroup: s.server_group_members?.[0]?.server_groups
-        }));
-      setServerMemberships(memberships);
+    if (linkedHosts && linkedHosts.length > 0) {
+      const clusterName = linkedHosts[0].cluster;
+      
+      // Get ALL hosts in this cluster
+      const { data: allClusterHosts } = await supabase
+        .from("vcenter_hosts")
+        .select("server_id, name")
+        .eq("cluster", clusterName)
+        .not("server_id", "is", null);
+      
+      const allClusterServerIds = allClusterHosts?.map(h => h.server_id).filter(Boolean) || [];
+      
+      // Check if user selected all hosts (no conflict) or partial (conflict)
+      const selectedAllHosts = allClusterServerIds.length > 0 && 
+        allClusterServerIds.every(id => selectedServerIds.includes(id));
+      
+      if (!selectedAllHosts && allClusterServerIds.length > selectedServerIds.length) {
+        setClusterConflict({
+          detected: true,
+          clusterName,
+          selectedServers: selectedServerIds,
+          allClusterHostIds: allClusterServerIds as string[],
+          acknowledged: false
+        });
+      } else {
+        setClusterConflict(null);
+      }
+    } else {
+      setClusterConflict(null);
     }
   };
 
-  const switchToDetectedTarget = (membership: ServerMembership) => {
-    if (membership.vcenterCluster) {
-      setTargetType('cluster');
-      setSelectedCluster(membership.vcenterCluster);
-      setSelectedServerIds([]);
-    } else if (membership.serverGroup) {
-      setTargetType('group');
-      setSelectedGroup(membership.serverGroup.id);
-      setSelectedServerIds([]);
-    }
+  const handleAcknowledgeClusterExpansion = () => {
+    if (!clusterConflict) return;
+    
+    // Switch to cluster mode with the detected cluster
+    setTargetType('cluster');
+    setSelectedCluster(clusterConflict.clusterName);
+    setSelectedServerIds([]);
+    setClusterConflict(null);
     setSafetyCheckPassed(false);
-    setAcknowledgedRisk(false);
+    
+    toast({
+      title: "Plan Updated",
+      description: `Now targeting all hosts in "${clusterConflict.clusterName}" cluster.`,
+    });
   };
 
   const runSafetyCheck = async () => {
@@ -322,7 +354,9 @@ export const ServerUpdateWizard = ({
         const hasTarget = (targetType === 'cluster' && selectedCluster) ||
                          (targetType === 'group' && selectedGroup) ||
                          (targetType === 'servers' && selectedServerIds.length > 0);
-        return hasTarget && targetInfo && safetyCheckPassed;
+        // Block if cluster conflict exists and not acknowledged
+        const noConflict = !clusterConflict || clusterConflict.acknowledged;
+        return hasTarget && targetInfo && safetyCheckPassed && noConflict;
       case 2:
         if (firmwareSource === 'manual') {
           return firmwareUpdates.length > 0 && 
@@ -476,7 +510,6 @@ export const ServerUpdateWizard = ({
                                 ? [...selectedServerIds, server.id]
                                 : selectedServerIds.filter(id => id !== server.id)
                             );
-                            setAcknowledgedRisk(false);
                             setSafetyCheckPassed(false);
                           }}
                         />
@@ -491,34 +524,38 @@ export const ServerUpdateWizard = ({
                   </div>
                 </div>
 
-                {serverMemberships.length > 0 && !acknowledgedRisk && (
-                  <Alert variant="destructive">
-                    <AlertTriangle className="h-4 w-4" />
-                    <AlertTitle>Server Belongs to {serverMemberships[0].vcenterCluster ? 'Cluster' : 'Group'}</AlertTitle>
-                    <AlertDescription>
-                      <p className="mb-2">
-                        <strong>{serverMemberships[0].serverName}</strong> is part of{' '}
-                        <strong>"{serverMemberships[0].vcenterCluster || serverMemberships[0].serverGroup?.name}"</strong>.
+                {clusterConflict && clusterConflict.detected && !clusterConflict.acknowledged && (
+                  <Alert variant="destructive" className="border-2">
+                    <AlertTriangle className="h-5 w-5" />
+                    <AlertTitle className="text-lg">Cannot Update Cluster Hosts Individually</AlertTitle>
+                    <AlertDescription className="space-y-3">
+                      <p>
+                        <strong>{clusterConflict.selectedServers.length} selected server(s)</strong> belong to 
+                        vCenter cluster <strong>"{clusterConflict.clusterName}"</strong>.
                       </p>
-                      <p className="text-sm mb-3">
-                        Updating servers individually may affect {serverMemberships[0].vcenterCluster ? 'cluster' : 'group'} availability. 
-                        We recommend updating the entire {serverMemberships[0].vcenterCluster ? 'cluster' : 'group'} for safety.
-                      </p>
-                      <div className="flex gap-2">
-                        <Button 
-                          size="sm" 
-                          onClick={() => switchToDetectedTarget(serverMemberships[0])}
-                        >
-                          Update {serverMemberships[0].vcenterCluster || serverMemberships[0].serverGroup?.name} Instead
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          variant="outline" 
-                          onClick={() => setAcknowledgedRisk(true)}
-                        >
-                          Continue Anyway
-                        </Button>
+                      
+                      <div className="bg-destructive/10 p-3 rounded-md text-sm space-y-1">
+                        <p className="font-medium">Why is this dangerous?</p>
+                        <ul className="list-disc list-inside space-y-0.5">
+                          <li>Cluster HA/DRS may fail to migrate VMs if hosts have different firmware versions</li>
+                          <li>vCenter may flag hosts as incompatible with each other</li>
+                          <li>EVC mode violations can cause VM migration failures</li>
+                          <li>Partial updates leave your cluster in an inconsistent state</li>
+                        </ul>
                       </div>
+                      
+                      <p className="text-sm">
+                        The update plan will be adjusted to include <strong>all {clusterConflict.allClusterHostIds.length} hosts</strong> 
+                        in cluster "{clusterConflict.clusterName}".
+                      </p>
+                      
+                      <Button 
+                        onClick={handleAcknowledgeClusterExpansion}
+                        className="w-full"
+                      >
+                        <CheckCircle className="mr-2 h-4 w-4" />
+                        OK - Update Entire Cluster Instead
+                      </Button>
                     </AlertDescription>
                   </Alert>
                 )}
@@ -548,7 +585,7 @@ export const ServerUpdateWizard = ({
                   <Separator className="my-3" />
                   <Button 
                     onClick={runSafetyCheck} 
-                    disabled={safetyCheckLoading || safetyCheckPassed}
+                    disabled={safetyCheckLoading || safetyCheckPassed || (clusterConflict?.detected && !clusterConflict.acknowledged)}
                     className="w-full"
                   >
                     {safetyCheckLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
