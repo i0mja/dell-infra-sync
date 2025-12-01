@@ -176,6 +176,20 @@ class ClusterHandler(BaseHandler):
                 if self._check_and_handle_cancellation(job, cleanup_state):
                     raise Exception("Job cancelled during SCP backups")
                 
+                # Update job with current backup progress
+                self.executor.update_job_status(
+                    job['id'],
+                    'running',
+                    details={
+                        **job.get('details', {}),
+                        'current_step': f'SCP Backup: {host["name"]}',
+                        'current_host': host['name'],
+                        'hosts_backed_up': idx - 1,
+                        'total_hosts': len(eligible_hosts),
+                        'scp_batch_progress': int(((idx - 1) / len(eligible_hosts)) * 100)
+                    }
+                )
+                
                 self.log(f"  [{idx}/{len(eligible_hosts)}] Backing up {host['name']}...")
                 
                 try:

@@ -56,12 +56,13 @@ export const WorkflowExecutionViewer = ({
   const [steps, setSteps] = useState<WorkflowStep[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
+  const [currentOperation, setCurrentOperation] = useState<any>(null);
 
   useEffect(() => {
     fetchSteps();
     
-    // Subscribe to realtime updates
-    const channel = supabase
+    // Subscribe to realtime updates on workflow steps
+    const workflowChannel = supabase
       .channel(`workflow-${jobId}`)
       .on(
         'postgres_changes',
@@ -77,9 +78,29 @@ export const WorkflowExecutionViewer = ({
         }
       )
       .subscribe();
+    
+    // Subscribe to job details for real-time progress
+    const jobChannel = supabase
+      .channel(`job-details-${jobId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'jobs',
+          filter: `id=eq.${jobId}`
+        },
+        (payload) => {
+          if (payload.new && payload.new.details) {
+            setCurrentOperation(payload.new.details);
+          }
+        }
+      )
+      .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(workflowChannel);
+      supabase.removeChannel(jobChannel);
     };
   }, [jobId]);
 
@@ -209,6 +230,62 @@ export const WorkflowExecutionViewer = ({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Current Operation - Real-time Progress */}
+        {currentOperation && overallStatus === 'running' && (
+          <>
+            <Card className="bg-primary/5 border-primary/20">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  Current Operation
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {/* Current Step */}
+                {currentOperation.current_step && (
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">{currentOperation.current_step}</p>
+                  </div>
+                )}
+                
+                {/* SCP Progress Bar */}
+                {currentOperation.scp_progress !== undefined && currentOperation.scp_progress > 0 && (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>Export Progress</span>
+                      <span>{currentOperation.scp_progress}%</span>
+                    </div>
+                    <Progress value={currentOperation.scp_progress} className="h-1.5" />
+                  </div>
+                )}
+                
+                {/* Batch SCP Progress */}
+                {currentOperation.hosts_backed_up !== undefined && currentOperation.total_hosts && (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>Hosts Backed Up</span>
+                      <span>{currentOperation.hosts_backed_up}/{currentOperation.total_hosts}</span>
+                    </div>
+                    <Progress 
+                      value={currentOperation.scp_batch_progress || ((currentOperation.hosts_backed_up / currentOperation.total_hosts) * 100)} 
+                      className="h-1.5" 
+                    />
+                  </div>
+                )}
+                
+                {/* Current Host */}
+                {currentOperation.current_host && (
+                  <div className="text-xs">
+                    <span className="text-muted-foreground">Current Host: </span>
+                    <span className="font-medium">{currentOperation.current_host}</span>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+            <Separator />
+          </>
+        )}
+
         {/* Progress Summary */}
         <div className="space-y-2">
           <div className="flex items-center justify-between text-sm">
