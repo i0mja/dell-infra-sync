@@ -345,7 +345,7 @@ class ClusterHandler(BaseHandler):
                     raise Exception(f"Failed to fetch cluster hosts: {response.status_code}")
                 
                 cluster_hosts = _safe_json_parse(response)
-                eligible_hosts = [h for h in cluster_hosts if h.get('server_id') and h.get('status') == 'connected']
+                eligible_hosts = [h for h in cluster_hosts if h.get('server_id') and h.get('status') in ['connected', 'online']]
             
             workflow_results['total_hosts'] = len(eligible_hosts)
             

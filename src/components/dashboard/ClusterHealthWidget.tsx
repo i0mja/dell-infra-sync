@@ -30,7 +30,7 @@ export const ClusterHealthWidget = () => {
   const clusterStats = clusters?.map(cluster => {
     const clusterHosts = hosts?.filter(h => h.cluster === cluster.cluster_name) || [];
     const healthyHosts = clusterHosts.filter(h => 
-      h.status === 'green' || h.status === 'Connected'
+      h.status === 'green' || h.status === 'Connected' || h.status === 'online'
     ).length;
     
     return {
