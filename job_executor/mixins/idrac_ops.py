@@ -284,6 +284,89 @@ class IdracMixin:
             self.log(f"  system_data keys: {list(system_data.keys()) if system_data else 'None'}", "DEBUG")
             self.log(f"  manager_data keys: {list(manager_data.keys()) if manager_data else 'None'}", "DEBUG")
             return None
+    
+    def create_idrac_session(
+        self, 
+        ip: str, 
+        username: str, 
+        password: str, 
+        log_to_db: bool = True,
+        server_id: str = None,
+        job_id: str = None
+    ) -> Optional[Dict]:
+        """
+        Create/validate an iDRAC session by testing connectivity.
+        Returns session info dict on success, None on failure.
+        
+        Note: Dell iDRAC supports both session-based and basic auth.
+        This implementation uses basic auth for simplicity and consistency
+        with other IdracMixin methods.
+        """
+        url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
+        
+        try:
+            response, response_time_ms = self.throttler.request_with_safety(
+                method='GET',
+                url=url,
+                ip=ip,
+                logger=self.log,
+                auth=(username, password),
+                timeout=(5, 15)
+            )
+            
+            if log_to_db:
+                self.log_idrac_command(
+                    server_id=server_id,
+                    job_id=job_id,
+                    task_id=None,
+                    command_type='GET',
+                    endpoint='/redfish/v1/Systems/System.Embedded.1',
+                    full_url=url,
+                    request_headers={'Authorization': f'Basic {username}:***'},
+                    request_body=None,
+                    status_code=response.status_code if response else None,
+                    response_time_ms=response_time_ms,
+                    response_body=None,  # Don't log full response
+                    success=(response and response.status_code == 200),
+                    error_message=None if (response and response.status_code == 200) 
+                                 else f"HTTP {response.status_code}" if response else "Connection failed",
+                    operation_type='session_validation'
+                )
+            
+            if response and response.status_code == 200:
+                self.throttler.record_success(ip)
+                return {
+                    'ip': ip,
+                    'username': username,
+                    'authenticated': True,
+                    'timestamp': datetime.now().isoformat()
+                }
+            else:
+                if response and response.status_code in [401, 403]:
+                    self.throttler.record_failure(ip, response.status_code, self.log)
+                return None
+                
+        except Exception as e:
+            self.throttler.record_failure(ip, None, self.log)
+            if log_to_db:
+                self.log_idrac_command(
+                    server_id=server_id,
+                    job_id=job_id,
+                    task_id=None,
+                    command_type='GET',
+                    endpoint='/redfish/v1/Systems/System.Embedded.1',
+                    full_url=url,
+                    request_headers={'Authorization': f'Basic {username}:***'},
+                    request_body=None,
+                    status_code=None,
+                    response_time_ms=0,
+                    response_body=None,
+                    success=False,
+                    error_message=str(e),
+                    operation_type='session_validation'
+                )
+            self.log(f"  Session validation failed for {ip}: {e}", "ERROR")
+            return None
 
     def _fetch_health_status(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None) -> Optional[Dict]:
         """Fetch comprehensive health status from multiple Redfish endpoints"""
