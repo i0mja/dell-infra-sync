@@ -10,6 +10,70 @@ from .base import BaseHandler
 class ClusterHandler(BaseHandler):
     """Handles cluster safety checks and update workflows"""
     
+    def _log_workflow_step(self, job_id: str, workflow_type: str, step_number: int, 
+                           step_name: str, status: str, server_id: str = None, 
+                           host_id: str = None, cluster_id: str = None,
+                           step_details: dict = None, step_error: str = None, 
+                           step_started_at: str = None, step_completed_at: str = None):
+        """Insert or update workflow execution step in database for real-time UI updates"""
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        
+        try:
+            # Check if step exists
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/workflow_executions?job_id=eq.{job_id}&step_number=eq.{step_number}",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL
+            )
+            
+            step_data = {
+                'job_id': job_id,
+                'workflow_type': workflow_type,
+                'step_number': step_number,
+                'step_name': step_name,
+                'step_status': status,
+                'server_id': server_id,
+                'host_id': host_id,
+                'cluster_id': cluster_id,
+                'step_details': step_details,
+                'step_error': step_error,
+                'step_started_at': step_started_at,
+                'step_completed_at': step_completed_at
+            }
+            
+            # Remove None values
+            step_data = {k: v for k, v in step_data.items() if v is not None}
+            
+            if response.status_code == 200 and response.json():
+                # Update existing step
+                step_id = response.json()[0]['id']
+                requests.patch(
+                    f"{DSM_URL}/rest/v1/workflow_executions?id=eq.{step_id}",
+                    headers={
+                        'apikey': SERVICE_ROLE_KEY, 
+                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    },
+                    json=step_data,
+                    verify=VERIFY_SSL
+                )
+            else:
+                # Insert new step
+                requests.post(
+                    f"{DSM_URL}/rest/v1/workflow_executions",
+                    headers={
+                        'apikey': SERVICE_ROLE_KEY,
+                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    },
+                    json=step_data,
+                    verify=VERIFY_SSL
+                )
+        except Exception as e:
+            self.log(f"Failed to log workflow step: {e}", "WARN")
+    
     def execute_prepare_host_for_update(self, job: Dict):
         """Workflow: Prepare ESXi host for firmware updates"""
         workflow_results = {
@@ -198,6 +262,7 @@ class ClusterHandler(BaseHandler):
             backup_scp = details.get('backup_scp', True)
             min_healthy_hosts = details.get('min_healthy_hosts', 2)
             continue_on_failure = details.get('continue_on_failure', False)
+            auto_select_latest = details.get('auto_select_latest', True)
             
             workflow_results['update_scope'] = update_scope
             
@@ -292,6 +357,23 @@ class ClusterHandler(BaseHandler):
             
             self.log(f"  [OK] Found {len(eligible_hosts)} eligible hosts/servers")
             
+            # Log workflow initialization step
+            self._log_workflow_step(
+                job['id'], 
+                'rolling_cluster_update',
+                step_number=0,
+                step_name=f"Initialize workflow ({len(eligible_hosts)} hosts)",
+                status='completed',
+                cluster_id=workflow_results.get('cluster_id'),
+                step_details={
+                    'total_hosts': len(eligible_hosts),
+                    'target_type': workflow_results.get('target_type'),
+                    'update_scope': update_scope
+                },
+                step_started_at=datetime.now().isoformat(),
+                step_completed_at=datetime.now().isoformat()
+            )
+            
             # Update each host sequentially
             for host_index, host in enumerate(eligible_hosts, 1):
                 host_result = {
@@ -304,10 +386,374 @@ class ClusterHandler(BaseHandler):
                 
                 try:
                     self.log(f"Processing host {host_index}/{len(eligible_hosts)}: {host['name']}")
+                    self.log("=" * 60)
                     
-                    # Prepare host, update firmware, return to service...
-                    workflow_results['hosts_updated'] += 1
-                    host_result['status'] = 'completed'
+                    base_step = host_index * 100  # Steps 100, 200, 300... per host
+                    
+                    # Get server details
+                    response = requests.get(
+                        f"{DSM_URL}/rest/v1/servers?id=eq.{host['server_id']}&select=*",
+                        headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                        verify=VERIFY_SSL
+                    )
+                    if response.status_code != 200:
+                        raise Exception(f"Failed to fetch server details: {response.status_code}")
+                    
+                    servers = _safe_json_parse(response)
+                    if not servers:
+                        raise Exception("Server not found")
+                    server = servers[0]
+                    
+                    # STEP 1: Pre-flight check - Create iDRAC session and validate connectivity
+                    self._log_workflow_step(
+                        job['id'], 'rolling_cluster_update',
+                        step_number=base_step + 1,
+                        step_name=f"Pre-flight check: {host['name']}",
+                        status='running',
+                        server_id=host['server_id'],
+                        step_started_at=datetime.now().isoformat()
+                    )
+                    
+                    self.log(f"  [1/7] Pre-flight check...")
+                    username, password = self.executor.get_credentials_for_server(server)
+                    
+                    session = self.executor.create_idrac_session(
+                        server['ip_address'], username, password,
+                        log_to_db=True, server_id=host['server_id'], job_id=job['id']
+                    )
+                    
+                    if not session:
+                        raise Exception("Failed to create iDRAC session")
+                    
+                    self.log(f"  [OK] iDRAC session established")
+                    self._log_workflow_step(
+                        job['id'], 'rolling_cluster_update',
+                        step_number=base_step + 1,
+                        step_name=f"Pre-flight check: {host['name']}",
+                        status='completed',
+                        server_id=host['server_id'],
+                        step_details={'connectivity': True, 'credentials': True},
+                        step_completed_at=datetime.now().isoformat()
+                    )
+                    host_result['steps'].append('preflight')
+                    
+                    try:
+                        # STEP 2: SCP Backup (if enabled)
+                        if backup_scp:
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=base_step + 2,
+                                step_name=f"SCP backup: {host['name']}",
+                                status='running',
+                                server_id=host['server_id'],
+                                step_started_at=datetime.now().isoformat()
+                            )
+                            
+                            self.log(f"  [2/7] Exporting SCP backup...")
+                            scp_result = self.executor.export_scp(
+                                server['ip_address'], 
+                                username, 
+                                password,
+                                server_id=host['server_id'],
+                                job_id=job['id']
+                            )
+                            
+                            if scp_result.get('success'):
+                                self.log(f"  [OK] SCP backup completed")
+                                self._log_workflow_step(
+                                    job['id'], 'rolling_cluster_update',
+                                    step_number=base_step + 2,
+                                    step_name=f"SCP backup: {host['name']}",
+                                    status='completed',
+                                    server_id=host['server_id'],
+                                    step_details={'backup_id': scp_result.get('backup_id')},
+                                    step_completed_at=datetime.now().isoformat()
+                                )
+                                host_result['steps'].append('scp_backup')
+                            else:
+                                raise Exception(f"SCP backup failed: {scp_result.get('error')}")
+                        else:
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=base_step + 2,
+                                step_name=f"SCP backup: {host['name']}",
+                                status='skipped',
+                                server_id=host['server_id'],
+                                step_details={'reason': 'Not requested'}
+                            )
+                            self.log(f"  [2/7] SCP backup skipped")
+                        
+                        # STEP 3: Enter maintenance mode (if vCenter linked)
+                        vcenter_host_id = server.get('vcenter_host_id')
+                        if vcenter_host_id:
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=base_step + 3,
+                                step_name=f"Enter maintenance mode: {host['name']}",
+                                status='running',
+                                server_id=host['server_id'],
+                                host_id=vcenter_host_id,
+                                step_started_at=datetime.now().isoformat()
+                            )
+                            
+                            self.log(f"  [3/7] Entering vCenter maintenance mode...")
+                            maintenance_timeout = details.get('maintenance_timeout', 600)
+                            maintenance_result = self.executor.enter_vcenter_maintenance_mode(
+                                vcenter_host_id, 
+                                timeout=maintenance_timeout
+                            )
+                            
+                            if not maintenance_result.get('success'):
+                                raise Exception(f"Failed to enter maintenance mode: {maintenance_result.get('error')}")
+                            
+                            vms_evacuated = maintenance_result.get('vms_evacuated', 0)
+                            self.log(f"  [OK] Maintenance mode active ({vms_evacuated} VMs evacuated)")
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=base_step + 3,
+                                step_name=f"Enter maintenance mode: {host['name']}",
+                                status='completed',
+                                server_id=host['server_id'],
+                                host_id=vcenter_host_id,
+                                step_details=maintenance_result,
+                                step_completed_at=datetime.now().isoformat()
+                            )
+                            host_result['steps'].append('enter_maintenance')
+                        else:
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=base_step + 3,
+                                step_name=f"Enter maintenance mode: {host['name']}",
+                                status='skipped',
+                                server_id=host['server_id'],
+                                step_details={'reason': 'No vCenter host linked'}
+                            )
+                            self.log(f"  [3/7] Maintenance mode skipped (no vCenter)")
+                        
+                        # STEP 4: Apply firmware updates
+                        self._log_workflow_step(
+                            job['id'], 'rolling_cluster_update',
+                            step_number=base_step + 4,
+                            step_name=f"Apply firmware updates: {host['name']}",
+                            status='running',
+                            server_id=host['server_id'],
+                            step_started_at=datetime.now().isoformat()
+                        )
+                        
+                        self.log(f"  [4/7] Applying firmware updates...")
+                        
+                        # Initialize Dell operations
+                        from job_executor.dell_redfish import DellOperations, DellRedfishAdapter
+                        adapter = DellRedfishAdapter(
+                            self.executor.throttler, 
+                            self.logger, 
+                            self.executor.log_idrac_command
+                        )
+                        dell_ops = DellOperations(adapter)
+                        
+                        # Apply firmware based on source
+                        firmware_source = details.get('firmware_source', 'manual_repository')
+                        
+                        if firmware_source == 'dell_online_catalog':
+                            # Use catalog-based update
+                            dell_catalog_url = details.get('dell_catalog_url', 'https://downloads.dell.com/catalog/Catalog.xml')
+                            component_filter = details.get('component', None)
+                            targets = [component_filter] if component_filter and not auto_select_latest else None
+                            
+                            self.log(f"    Using Dell online catalog: {dell_catalog_url}")
+                            update_result = dell_ops.update_firmware_from_catalog(
+                                ip=server['ip_address'],
+                                username=username,
+                                password=password,
+                                catalog_url=dell_catalog_url,
+                                targets=targets,
+                                apply_update='Now',
+                                reboot_job_type='GracefulRebootWithForcedShutdown',
+                                job_id=job['id'],
+                                server_id=host['server_id']
+                            )
+                        else:
+                            # Use manual firmware package
+                            firmware_uri = details.get('firmware_uri')
+                            if not firmware_uri and firmware_updates:
+                                firmware_uri = firmware_updates[0].get('firmware_uri')
+                            
+                            if not firmware_uri:
+                                raise Exception("No firmware URI specified")
+                            
+                            self.log(f"    Using firmware package: {firmware_uri}")
+                            update_result = dell_ops.update_firmware_simple(
+                                ip=server['ip_address'],
+                                username=username,
+                                password=password,
+                                firmware_uri=firmware_uri,
+                                apply_time='Immediate',
+                                job_id=job['id'],
+                                server_id=host['server_id']
+                            )
+                        
+                        if not update_result.get('success'):
+                            raise Exception(f"Firmware update failed: {update_result.get('error')}")
+                        
+                        self.log(f"  [OK] Firmware update initiated")
+                        self._log_workflow_step(
+                            job['id'], 'rolling_cluster_update',
+                            step_number=base_step + 4,
+                            step_name=f"Apply firmware updates: {host['name']}",
+                            status='completed',
+                            server_id=host['server_id'],
+                            step_details=update_result,
+                            step_completed_at=datetime.now().isoformat()
+                        )
+                        host_result['steps'].append('firmware_update')
+                        
+                        # STEP 5: Reboot and wait for system to come online
+                        self._log_workflow_step(
+                            job['id'], 'rolling_cluster_update',
+                            step_number=base_step + 5,
+                            step_name=f"Reboot and wait: {host['name']}",
+                            status='running',
+                            server_id=host['server_id'],
+                            step_started_at=datetime.now().isoformat()
+                        )
+                        
+                        self.log(f"  [5/7] Waiting for system reboot...")
+                        time.sleep(120)  # Wait 2 minutes for reboot to start
+                        
+                        # Wait for system to come back online
+                        max_attempts = 24  # 4 minutes (24 * 10s)
+                        for attempt in range(max_attempts):
+                            try:
+                                test_session = self.executor.create_idrac_session(
+                                    server['ip_address'], username, password,
+                                    log_to_db=False
+                                )
+                                if test_session:
+                                    self.executor.delete_idrac_session(
+                                        test_session, 
+                                        server['ip_address'], 
+                                        host['server_id'], 
+                                        job['id']
+                                    )
+                                    self.log(f"  [OK] System back online")
+                                    break
+                            except:
+                                pass
+                            time.sleep(10)
+                        
+                        self._log_workflow_step(
+                            job['id'], 'rolling_cluster_update',
+                            step_number=base_step + 5,
+                            step_name=f"Reboot and wait: {host['name']}",
+                            status='completed',
+                            server_id=host['server_id'],
+                            step_completed_at=datetime.now().isoformat()
+                        )
+                        host_result['steps'].append('reboot')
+                        
+                        # STEP 6: Verify firmware update
+                        self._log_workflow_step(
+                            job['id'], 'rolling_cluster_update',
+                            step_number=base_step + 6,
+                            step_name=f"Verify update: {host['name']}",
+                            status='running',
+                            server_id=host['server_id'],
+                            step_started_at=datetime.now().isoformat()
+                        )
+                        
+                        self.log(f"  [6/7] Verifying firmware update...")
+                        
+                        # Create new session for verification
+                        verify_session = self.executor.create_idrac_session(
+                            server['ip_address'], username, password,
+                            log_to_db=True, server_id=host['server_id'], job_id=job['id']
+                        )
+                        
+                        if verify_session:
+                            new_fw_inventory = dell_ops.get_firmware_inventory(
+                                ip=server['ip_address'],
+                                username=username,
+                                password=password,
+                                server_id=host['server_id'],
+                                job_id=job['id']
+                            )
+                            
+                            self.executor.delete_idrac_session(
+                                verify_session, 
+                                server['ip_address'], 
+                                host['server_id'], 
+                                job['id']
+                            )
+                            
+                            self.log(f"  [OK] Firmware inventory updated")
+                        
+                        self._log_workflow_step(
+                            job['id'], 'rolling_cluster_update',
+                            step_number=base_step + 6,
+                            step_name=f"Verify update: {host['name']}",
+                            status='completed',
+                            server_id=host['server_id'],
+                            step_details={'verified': True},
+                            step_completed_at=datetime.now().isoformat()
+                        )
+                        host_result['steps'].append('verify')
+                        
+                        # STEP 7: Exit maintenance mode (if applicable)
+                        if vcenter_host_id:
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=base_step + 7,
+                                step_name=f"Exit maintenance mode: {host['name']}",
+                                status='running',
+                                server_id=host['server_id'],
+                                host_id=vcenter_host_id,
+                                step_started_at=datetime.now().isoformat()
+                            )
+                            
+                            self.log(f"  [7/7] Exiting vCenter maintenance mode...")
+                            exit_result = self.executor.exit_vcenter_maintenance_mode(vcenter_host_id)
+                            
+                            if not exit_result.get('success'):
+                                self.log(f"  [WARN] Failed to exit maintenance mode: {exit_result.get('error')}", "WARN")
+                            else:
+                                self.log(f"  [OK] Maintenance mode exited")
+                            
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=base_step + 7,
+                                step_name=f"Exit maintenance mode: {host['name']}",
+                                status='completed' if exit_result.get('success') else 'failed',
+                                server_id=host['server_id'],
+                                host_id=vcenter_host_id,
+                                step_details=exit_result,
+                                step_error=exit_result.get('error') if not exit_result.get('success') else None,
+                                step_completed_at=datetime.now().isoformat()
+                            )
+                            host_result['steps'].append('exit_maintenance')
+                        else:
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=base_step + 7,
+                                step_name=f"Exit maintenance mode: {host['name']}",
+                                status='skipped',
+                                server_id=host['server_id'],
+                                step_details={'reason': 'No vCenter host linked'}
+                            )
+                            self.log(f"  [7/7] Exit maintenance mode skipped (no vCenter)")
+                        
+                        workflow_results['hosts_updated'] += 1
+                        host_result['status'] = 'completed'
+                        self.log(f"[OK] Host {host['name']} update completed successfully")
+                        
+                    finally:
+                        # Always cleanup iDRAC session
+                        if session:
+                            self.executor.delete_idrac_session(
+                                session, 
+                                server['ip_address'], 
+                                host['server_id'], 
+                                job['id']
+                            )
                     
                 except Exception as e:
                     host_result['status'] = 'failed'
