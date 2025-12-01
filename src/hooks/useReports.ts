@@ -185,20 +185,39 @@ async function fetchApiActivity(dateRange: { start: Date; end: Date }): Promise<
 async function fetchFirmwareStatus(): Promise<ReportData> {
   const { data: servers, error } = await supabase
     .from("servers")
-    .select("hostname, model, connection_status")
+    .select("hostname, model, bios_version, idrac_firmware, redfish_version, connection_status, last_seen")
     .order("hostname");
 
   if (error) throw error;
 
   const rows = servers || [];
+  
+  // Calculate firmware coverage
+  const withFirmwareData = rows.filter(s => 
+    s.bios_version || s.idrac_firmware || s.redfish_version
+  ).length;
+  const missingFirmwareData = rows.length - withFirmwareData;
+
+  // Count unique versions
+  const uniqueBiosVersions = new Set(
+    rows.filter(s => s.bios_version).map(s => s.bios_version)
+  ).size;
+  const uniqueIdracVersions = new Set(
+    rows.filter(s => s.idrac_firmware).map(s => s.idrac_firmware)
+  ).size;
+
   const summary = {
     total: rows.length,
-    online: rows.filter(s => s.connection_status === "online").length,
+    withFirmware: withFirmwareData,
+    missingFirmware: missingFirmwareData,
+    uniqueBiosVersions,
+    uniqueIdracVersions,
   };
 
+  // Chart data: Firmware coverage pie chart
   const chartData = [
-    { name: "Online", value: summary.online },
-    { name: "Offline", value: summary.total - summary.online },
+    { name: "With Firmware Data", value: withFirmwareData },
+    { name: "Missing Firmware Data", value: missingFirmwareData },
   ];
 
   return { rows, summary, chartData };

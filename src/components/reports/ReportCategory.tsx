@@ -163,6 +163,80 @@ function getTableColumns(reportType: ReportType) {
         { key: "timestamp", label: "Timestamp", format: (value: string) => new Date(value).toLocaleString() },
       ];
 
+    case "firmware_status":
+      return [
+        { key: "hostname", label: "Hostname" },
+        { key: "model", label: "Model" },
+        { key: "bios_version", label: "BIOS Version" },
+        { key: "idrac_firmware", label: "iDRAC Version" },
+        { key: "redfish_version", label: "Redfish Version" },
+        { 
+          key: "connection_status", 
+          label: "Status",
+          format: (value: string) => (
+            <Badge variant={value === "online" ? "default" : "secondary"}>
+              {value || "unknown"}
+            </Badge>
+          )
+        },
+        { key: "last_seen", label: "Last Seen", format: (value: string) => value ? new Date(value).toLocaleString() : "-" },
+      ];
+
+    case "credential_coverage":
+      return [
+        { key: "hostname", label: "Hostname" },
+        { key: "ip_address", label: "IP Address" },
+        { 
+          key: "credential_set_id", 
+          label: "Credentials",
+          format: (value: string) => value ? "✓" : "✗"
+        },
+        { 
+          key: "connection_status", 
+          label: "Status",
+          format: (value: string) => (
+            <Badge variant={value === "online" ? "default" : "secondary"}>
+              {value || "unknown"}
+            </Badge>
+          )
+        },
+      ];
+
+    case "maintenance_history":
+      return [
+        { key: "title", label: "Maintenance Window" },
+        { key: "maintenance_type", label: "Type" },
+        { 
+          key: "status", 
+          label: "Status",
+          format: (value: string) => (
+            <Badge variant={value === "completed" ? "default" : value === "in_progress" ? "secondary" : "outline"}>
+              {value}
+            </Badge>
+          )
+        },
+        { key: "planned_start", label: "Planned Start", format: (value: string) => new Date(value).toLocaleString() },
+        { key: "planned_end", label: "Planned End", format: (value: string) => new Date(value).toLocaleString() },
+      ];
+
+    case "cluster_safety":
+      return [
+        { key: "cluster_id", label: "Cluster ID" },
+        { 
+          key: "safe_to_proceed", 
+          label: "Safe",
+          format: (value: boolean) => (
+            <Badge variant={value ? "default" : "destructive"}>
+              {value ? "Safe" : "Unsafe"}
+            </Badge>
+          )
+        },
+        { key: "total_hosts", label: "Total Hosts" },
+        { key: "healthy_hosts", label: "Healthy Hosts" },
+        { key: "min_required_hosts", label: "Min Required" },
+        { key: "check_timestamp", label: "Check Time", format: (value: string) => new Date(value).toLocaleString() },
+      ];
+
     default:
       return [];
   }
