@@ -1,10 +1,11 @@
-import { createPortal } from 'react-dom';
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Loader2, Maximize2, X } from "lucide-react";
+import { Loader2, Maximize2, X, CheckCircle2, XCircle } from "lucide-react";
 import { useJobProgress } from "@/hooks/useJobProgress";
 import { useEffect, useState } from "react";
+import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
+import { supabase } from "@/integrations/supabase/client";
 
 interface MinimizedJobMonitorProps {
   jobId: string;
@@ -19,27 +20,73 @@ export const MinimizedJobMonitor = ({
   onMaximize, 
   onClose 
 }: MinimizedJobMonitorProps) => {
-  const [isMounted, setIsMounted] = useState(false);
   const { data: progress } = useJobProgress(jobId, true);
+  const { removeJob } = useMinimizedJobs();
+  const [jobStatus, setJobStatus] = useState<string | null>(null);
 
+  // Subscribe to job status changes
   useEffect(() => {
-    setIsMounted(true);
-  }, []);
+    const fetchStatus = async () => {
+      const { data } = await supabase
+        .from('jobs')
+        .select('status')
+        .eq('id', jobId)
+        .single();
+      
+      if (data) {
+        setJobStatus(data.status);
+      }
+    };
+
+    fetchStatus();
+
+    const channel = supabase
+      .channel(`job-status-${jobId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'jobs',
+          filter: `id=eq.${jobId}`
+        },
+        (payload) => {
+          const newStatus = (payload.new as any).status;
+          setJobStatus(newStatus);
+          
+          // Auto-remove from minimized when completed or failed
+          if (newStatus === 'completed' || newStatus === 'failed') {
+            setTimeout(() => {
+              removeJob(jobId);
+            }, 5000); // Keep visible for 5 seconds after completion
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [jobId, removeJob]);
 
   const getJobTypeLabel = (type: string) => {
     return type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
   };
 
-  // Don't render until mounted to avoid portal context issues
-  if (!isMounted) {
-    return null;
-  }
+  const getStatusIcon = () => {
+    if (jobStatus === 'completed') {
+      return <CheckCircle2 className="h-4 w-4 text-success" />;
+    } else if (jobStatus === 'failed') {
+      return <XCircle className="h-4 w-4 text-destructive" />;
+    }
+    return <Loader2 className="h-4 w-4 animate-spin text-primary" />;
+  };
 
-  return createPortal(
-    <Card className="fixed bottom-4 right-4 w-80 shadow-lg z-50 border-2">
+  return (
+    <Card className="w-80 shadow-lg border-2">
       <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
         <div className="flex items-center gap-2">
-          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          {getStatusIcon()}
           <span className="text-sm font-medium">{getJobTypeLabel(jobType)}</span>
         </div>
         <div className="flex gap-1">
@@ -69,7 +116,6 @@ export const MinimizedJobMonitor = ({
           )}
         </div>
       </CardContent>
-    </Card>,
-    document.body
+    </Card>
   );
 };
