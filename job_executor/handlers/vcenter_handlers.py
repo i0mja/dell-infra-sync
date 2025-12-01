@@ -117,7 +117,7 @@ class VCenterHandlers(BaseHandler):
             if not self.executor.check_vcenter_connection(content):
                 raise Exception("vCenter connection lost before cluster sync")
             
-            clusters_result = self.executor.sync_vcenter_clusters(content, source_vcenter_id, vcenter_name=vcenter_name)
+            clusters_result = self.executor.sync_vcenter_clusters(content, source_vcenter_id, vcenter_name=vcenter_name, job_id=job['id'])
             self.log(f"✓ Clusters synced: {clusters_result.get('synced', 0)}")
             
             if 'clusters' in phase_tasks:
@@ -142,7 +142,7 @@ class VCenterHandlers(BaseHandler):
                     self.update_task_status(phase_tasks['datastores'], 'running', log=msg, progress=pct)
                 self.update_job_status(job['id'], 'running', details={'current_step': msg})
             
-            datastores_result = self.executor.sync_vcenter_datastores(content, source_vcenter_id, progress_callback=datastore_progress, vcenter_name=vcenter_name)
+            datastores_result = self.executor.sync_vcenter_datastores(content, source_vcenter_id, progress_callback=datastore_progress, vcenter_name=vcenter_name, job_id=job['id'])
             self.log(f"✓ Datastores synced: {datastores_result.get('synced', 0)}")
             
             if 'datastores' in phase_tasks:
@@ -186,7 +186,7 @@ class VCenterHandlers(BaseHandler):
                     self.update_task_status(phase_tasks['alarms'], 'running', log=msg, progress=pct)
                 self.update_job_status(job['id'], 'running', details={'current_step': msg})
             
-            alarms_result = self.executor.sync_vcenter_alarms(content, source_vcenter_id, progress_callback=alarm_progress, vcenter_name=vcenter_name)
+            alarms_result = self.executor.sync_vcenter_alarms(content, source_vcenter_id, progress_callback=alarm_progress, vcenter_name=vcenter_name, job_id=job['id'])
             self.log(f"✓ Alarms synced: {alarms_result.get('synced', 0)}")
             
             if 'alarms' in phase_tasks:
@@ -211,7 +211,7 @@ class VCenterHandlers(BaseHandler):
                     self.update_task_status(phase_tasks['hosts'], 'running', log=msg, progress=pct)
                 self.update_job_status(job['id'], 'running', details={'current_step': msg})
             
-            hosts_result = self.executor.sync_vcenter_hosts(content, source_vcenter_id, progress_callback=host_progress, vcenter_name=vcenter_name)
+            hosts_result = self.executor.sync_vcenter_hosts(content, source_vcenter_id, progress_callback=host_progress, vcenter_name=vcenter_name, job_id=job['id'])
             self.log(f"✓ Hosts synced: {hosts_result.get('synced', 0)}, auto-linked: {hosts_result.get('auto_linked', 0)}")
             
             if 'hosts' in phase_tasks:

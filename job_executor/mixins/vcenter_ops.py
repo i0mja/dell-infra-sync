@@ -31,13 +31,14 @@ class VCenterMixin:
         status_code: int = None,
         response_time_ms: int = 0,
         error: str = None,
-        details: Dict = None
+        details: Dict = None,
+        job_id: str = None
     ):
         """Log vCenter API activity to idrac_commands table with operation_type='vcenter_api'"""
         try:
             log_entry = {
                 'server_id': None,  # vCenter operations aren't server-specific
-                'job_id': None,
+                'job_id': job_id,
                 'task_id': None,
                 'command_type': operation,
                 'endpoint': endpoint,
@@ -158,7 +159,7 @@ class VCenterMixin:
             self.log(f"vCenter connection lost: {e}", "ERROR")
             return False
 
-    def sync_vcenter_clusters(self, content, source_vcenter_id: str, vcenter_name: str = None) -> Dict:
+    def sync_vcenter_clusters(self, content, source_vcenter_id: str, vcenter_name: str = None, job_id: str = None) -> Dict:
         """Sync cluster statistics from vCenter"""
         start_time = time.time()
         try:
@@ -170,7 +171,8 @@ class VCenterMixin:
                 operation="sync_clusters_start",
                 endpoint=f"{endpoint_prefix}Clusters",
                 success=True,
-                details={"source_vcenter_id": source_vcenter_id, "vcenter_name": vcenter_name}
+                details={"source_vcenter_id": source_vcenter_id, "vcenter_name": vcenter_name},
+                job_id=job_id
             )
             
             container = content.viewManager.CreateContainerView(
@@ -235,7 +237,8 @@ class VCenterMixin:
                 endpoint=f"{endpoint_prefix}Clusters",
                 success=True,
                 response_time_ms=response_time,
-                details={"synced": synced, "total": total_clusters}
+                details={"synced": synced, "total": total_clusters},
+                job_id=job_id
             )
             
             return {'synced': synced, 'total': total_clusters}
@@ -251,7 +254,8 @@ class VCenterMixin:
                 operation="sync_clusters_error",
                 endpoint=f"{endpoint_prefix}Clusters",
                 success=False,
-                error=str(e)
+                error=str(e),
+                job_id=job_id
             )
             
             return {'synced': 0, 'error': str(e)}
@@ -533,7 +537,7 @@ class VCenterMixin:
             self.log(f"  Traceback: {traceback.format_exc()}", "ERROR")
             return 0
 
-    def sync_vcenter_datastores(self, content, source_vcenter_id: str, progress_callback=None, vcenter_name: str = None) -> Dict:
+    def sync_vcenter_datastores(self, content, source_vcenter_id: str, progress_callback=None, vcenter_name: str = None, job_id: str = None) -> Dict:
         """Sync datastore information from vCenter"""
         start_time = time.time()
         try:
@@ -545,7 +549,8 @@ class VCenterMixin:
                 operation="sync_datastores_start",
                 endpoint=f"{endpoint_prefix}Datastores",
                 success=True,
-                details={"source_vcenter_id": source_vcenter_id, "vcenter_name": vcenter_name}
+                details={"source_vcenter_id": source_vcenter_id, "vcenter_name": vcenter_name},
+                job_id=job_id
             )
             
             container = content.viewManager.CreateContainerView(
@@ -667,7 +672,8 @@ class VCenterMixin:
                     "synced": synced,
                     "total": total_datastores,
                     "host_mounts": host_mount_synced
-                }
+                },
+                job_id=job_id
             )
             
             return {'synced': synced, 'total': total_datastores, 'host_mounts': host_mount_synced}
@@ -683,12 +689,13 @@ class VCenterMixin:
                 operation="sync_datastores_error",
                 endpoint=f"{endpoint_prefix}Datastores",
                 success=False,
-                error=str(e)
+                error=str(e),
+                job_id=job_id
             )
             
             return {'synced': 0, 'error': str(e)}
 
-    def sync_vcenter_alarms(self, content, source_vcenter_id: str, progress_callback=None, vcenter_name: str = None) -> Dict:
+    def sync_vcenter_alarms(self, content, source_vcenter_id: str, progress_callback=None, vcenter_name: str = None, job_id: str = None) -> Dict:
         """Sync active alarms from vCenter"""
         start_time = time.time()
         try:
@@ -700,7 +707,8 @@ class VCenterMixin:
                 operation="sync_alarms_start",
                 endpoint=f"{endpoint_prefix}Alarms",
                 success=True,
-                details={"source_vcenter_id": source_vcenter_id, "vcenter_name": vcenter_name}
+                details={"source_vcenter_id": source_vcenter_id, "vcenter_name": vcenter_name},
+                job_id=job_id
             )
             
             alarm_manager = content.alarmManager
@@ -802,7 +810,8 @@ class VCenterMixin:
                 details={
                     "synced": synced,
                     "total_entities_checked": total_entities
-                }
+                },
+                job_id=job_id
             )
             
             return {'synced': synced}
@@ -818,12 +827,13 @@ class VCenterMixin:
                 operation="sync_alarms_error",
                 endpoint=f"{endpoint_prefix}Alarms",
                 success=False,
-                error=str(e)
+                error=str(e),
+                job_id=job_id
             )
             
             return {'synced': 0, 'error': str(e)}
 
-    def sync_vcenter_hosts(self, content, source_vcenter_id: str, progress_callback=None, vcenter_name: str = None) -> Dict:
+    def sync_vcenter_hosts(self, content, source_vcenter_id: str, progress_callback=None, vcenter_name: str = None, job_id: str = None) -> Dict:
         """Sync ESXi hosts from vCenter and auto-link to servers"""
         start_time = time.time()
         try:
@@ -835,7 +845,8 @@ class VCenterMixin:
                 operation="sync_hosts_start",
                 endpoint=f"{endpoint_prefix}ESXi Hosts",
                 success=True,
-                details={"source_vcenter_id": source_vcenter_id, "vcenter_name": vcenter_name}
+                details={"source_vcenter_id": source_vcenter_id, "vcenter_name": vcenter_name},
+                job_id=job_id
             )
             
             container = content.viewManager.CreateContainerView(
@@ -988,7 +999,8 @@ class VCenterMixin:
                     "synced": synced,
                     "total": total_hosts,
                     "auto_linked": auto_linked
-                }
+                },
+                job_id=job_id
             )
             
             return {'synced': synced, 'total': total_hosts, 'auto_linked': auto_linked}
@@ -1004,7 +1016,8 @@ class VCenterMixin:
                 operation="sync_hosts_error",
                 endpoint=f"{endpoint_prefix}ESXi Hosts",
                 success=False,
-                error=str(e)
+                error=str(e),
+                job_id=job_id
             )
             
             return {'synced': 0, 'auto_linked': 0, 'error': str(e)}
