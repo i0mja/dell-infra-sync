@@ -258,7 +258,7 @@ export const ClusterUpdateWizard = ({
         if (error) throw error;
 
         if (hosts) {
-          const connected = hosts.filter((h: any) => h.status === 'connected').length;
+          const connected = hosts.filter((h: any) => h.status === 'connected' || h.status === 'online').length;
           setTargetInfo({
             name: selectedCluster,
             total: hosts.length,
