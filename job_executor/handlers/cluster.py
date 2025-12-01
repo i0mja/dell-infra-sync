@@ -11,6 +11,16 @@ from .base import BaseHandler
 class ClusterHandler(BaseHandler):
     """Handles cluster safety checks and update workflows"""
     
+    def _check_esxi_accessible(self, ip: str, timeout: int = 5) -> bool:
+        """Check if ESXi is accessible on HTTPS port 443"""
+        import socket
+        try:
+            sock = socket.create_connection((ip, 443), timeout=timeout)
+            sock.close()
+            return True
+        except:
+            return False
+    
     def _execute_batch_preflight_checks(
         self, 
         job: Dict, 
@@ -870,10 +880,14 @@ class ClusterHandler(BaseHandler):
                         )
                         
                         self.log(f"  [3/5] Waiting for system reboot...")
-                        time.sleep(120)  # Wait 2 minutes for reboot to start
+                        self.log(f"    Initial wait: 3 minutes for BIOS POST and reboot...")
+                        time.sleep(180)  # Wait 3 minutes for reboot to start (BIOS POST can be slow)
                         
-                        # Wait for system to come back online
-                        max_attempts = 36  # 6 minutes (36 * 10s)
+                        # Wait for system to come back online - phase 1: iDRAC, phase 2: ESXi
+                        max_attempts = 180  # 30 minutes (180 * 10s) - enough for BIOS updates
+                        idrac_online = False
+                        esxi_online = False
+                        
                         for attempt in range(max_attempts):
                             # Check for cancellation during reboot wait
                             if self._check_and_handle_cancellation(job, cleanup_state):
@@ -884,23 +898,42 @@ class ClusterHandler(BaseHandler):
                                 })
                                 return
                             
-                            try:
-                                test_session = self.executor.create_idrac_session(
-                                    server['ip_address'], username, password,
-                                    log_to_db=False, timeout=10
-                                )
-                                if test_session:
-                                    self.executor.delete_idrac_session(
-                                        test_session, 
-                                        server['ip_address'], 
-                                        host['server_id'], 
-                                        job['id']
+                            # Phase 1: Wait for iDRAC to come back online
+                            if not idrac_online:
+                                try:
+                                    test_session = self.executor.create_idrac_session(
+                                        server['ip_address'], username, password,
+                                        log_to_db=False, timeout=10
                                     )
-                                    self.log(f"    ✓ System back online")
+                                    if test_session:
+                                        self.executor.delete_idrac_session(
+                                            test_session, 
+                                            server['ip_address'], 
+                                            host['server_id'], 
+                                            job['id']
+                                        )
+                                        idrac_online = True
+                                        self.log(f"    ✓ iDRAC back online (attempt {attempt+1}/{max_attempts})")
+                                except:
+                                    pass
+                            
+                            # Phase 2: Wait for ESXi to be accessible (only after iDRAC is up)
+                            if idrac_online and not esxi_online:
+                                if self._check_esxi_accessible(server['ip_address'], timeout=5):
+                                    esxi_online = True
+                                    self.log(f"    ✓ ESXi accessible on port 443")
                                     break
-                            except:
-                                pass
+                            
+                            # Progress logging every 30 seconds
+                            if attempt > 0 and attempt % 3 == 0:
+                                elapsed = (attempt + 1) * 10
+                                status = "Waiting for iDRAC..." if not idrac_online else "Waiting for ESXi..."
+                                self.log(f"    [{elapsed}s] {status}")
+                            
                             time.sleep(10)
+                        
+                        if not esxi_online:
+                            raise Exception(f"Timeout waiting for host to come online after {max_attempts * 10}s")
                         
                         self._log_workflow_step(
                             job['id'], 'rolling_cluster_update',
@@ -970,6 +1003,16 @@ class ClusterHandler(BaseHandler):
                                 host_id=vcenter_host_id,
                                 step_started_at=datetime.now().isoformat()
                             )
+                            
+                            self.log(f"  [5/5] Waiting for vCenter to see host as connected...")
+                            vcenter_ready = self.executor.wait_for_vcenter_host_connected(
+                                vcenter_host_id, 
+                                timeout=300  # 5 minutes
+                            )
+                            if vcenter_ready:
+                                self.log(f"    ✓ Host connected in vCenter")
+                            else:
+                                self.log(f"    ⚠ Warning: Host not showing connected in vCenter yet", "WARN")
                             
                             self.log(f"  [5/5] Exiting maintenance mode...")
                             exit_result = self.executor.exit_vcenter_maintenance_mode(vcenter_host_id)
