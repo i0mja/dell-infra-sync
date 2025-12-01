@@ -815,8 +815,9 @@ class ScpMixin:
                 except:
                     pass
             
-            # Accept non-empty strings as potential SCP content
-            return bool(stripped)
+            # CRITICAL FIX: Reject ALL other strings - they are NOT valid SCP content
+            # This includes success messages like "Successfully exported Server Configuration Profile"
+            return False
         
         return False
 
