@@ -67,6 +67,7 @@ export default function Servers() {
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
   const [updateWizardOpen, setUpdateWizardOpen] = useState(false);
   const [bulkUpdateServerIds, setBulkUpdateServerIds] = useState<string[]>([]);
+  const [preSelectedClusterForUpdate, setPreSelectedClusterForUpdate] = useState<string | undefined>();
   const [launchingConsole, setLaunchingConsole] = useState(false);
 
   // Hooks
@@ -241,6 +242,18 @@ export default function Servers() {
     } finally {
       setLaunchingConsole(false);
     }
+  };
+
+  // Handle cluster expansion request from wizard
+  const handleClusterExpansionRequest = (clusterName: string) => {
+    setUpdateWizardOpen(false);
+    setBulkUpdateServerIds([]);
+    setPreSelectedClusterForUpdate(clusterName);
+    
+    // Re-open wizard after a short delay with cluster pre-selected
+    setTimeout(() => {
+      setUpdateWizardOpen(true);
+    }, 100);
   };
 
   // Get selected group data
@@ -444,14 +457,22 @@ export default function Servers() {
         open={updateWizardOpen}
         onOpenChange={(open) => {
           setUpdateWizardOpen(open);
-          if (!open) setBulkUpdateServerIds([]);
+          if (!open) {
+            setBulkUpdateServerIds([]);
+            setPreSelectedClusterForUpdate(undefined);
+          }
         }}
-        preSelectedTarget={{
+        preSelectedCluster={preSelectedClusterForUpdate}
+        preSelectedTarget={preSelectedClusterForUpdate ? {
+          type: 'cluster',
+          id: preSelectedClusterForUpdate
+        } : {
           type: 'servers',
           ids: bulkUpdateServerIds.length > 0 
             ? bulkUpdateServerIds 
             : (selectedServer ? [selectedServer.id] : [])
         }}
+        onClusterExpansionRequest={handleClusterExpansionRequest}
       />
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

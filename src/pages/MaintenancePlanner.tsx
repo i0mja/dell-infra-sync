@@ -83,6 +83,7 @@ export default function MaintenancePlanner() {
   const [operationsToDelete, setOperationsToDelete] = useState<string[]>([]);
   const [trendChartOpen, setTrendChartOpen] = useState(false);
   const [updateWizardOpen, setUpdateWizardOpen] = useState(false);
+  const [preSelectedClusterForUpdate, setPreSelectedClusterForUpdate] = useState<string | undefined>();
   const [jobs, setJobs] = useState<Job[]>([]);
   const { toast } = useToast();
   const { userRole } = useAuth();
@@ -421,6 +422,17 @@ export default function MaintenancePlanner() {
     }
   };
 
+  // Handle cluster expansion request from wizard
+  const handleClusterExpansionRequest = (clusterName: string) => {
+    setUpdateWizardOpen(false);
+    setPreSelectedClusterForUpdate(clusterName);
+    
+    // Re-open wizard after a short delay with cluster pre-selected
+    setTimeout(() => {
+      setUpdateWizardOpen(true);
+    }, 100);
+  };
+
   const failedJobs = jobs.filter(j => j.status === 'failed').length;
 
   // Quick action handlers for OperationsTable
@@ -575,7 +587,12 @@ export default function MaintenancePlanner() {
 
       <ClusterUpdateWizard 
         open={updateWizardOpen}
-        onOpenChange={setUpdateWizardOpen}
+        onOpenChange={(open) => {
+          setUpdateWizardOpen(open);
+          if (!open) setPreSelectedClusterForUpdate(undefined);
+        }}
+        preSelectedCluster={preSelectedClusterForUpdate}
+        onClusterExpansionRequest={handleClusterExpansionRequest}
       />
 
       <AlertDialog open={bulkCancelDialogOpen} onOpenChange={setBulkCancelDialogOpen}>
