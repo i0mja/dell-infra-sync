@@ -321,6 +321,7 @@ class DellRedfishHelpers:
         Extract task URI from response headers or body.
         
         Dell pattern: Task URI returned in Location header or @odata.id field.
+        For 202 responses, adapter injects Location header as _location_header.
         
         Args:
             response: Response dict from make_request
@@ -328,6 +329,10 @@ class DellRedfishHelpers:
         Returns:
             str: Task URI if found, None otherwise
         """
+        # Check for Location header injected by adapter (highest priority)
+        if '_location_header' in response:
+            return response['_location_header']
+        
         # Check @odata.id in response body (common for task responses)
         if '@odata.id' in response:
             return response['@odata.id']
@@ -335,6 +340,11 @@ class DellRedfishHelpers:
         # Check for task in nested structure
         if 'Task' in response and '@odata.id' in response['Task']:
             return response['Task']['@odata.id']
+        
+        # Check other common fields Dell might use
+        for field in ('TaskUri', 'Location', 'task', 'JobUri'):
+            if field in response and response[field]:
+                return response[field]
 
         return None
 

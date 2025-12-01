@@ -135,6 +135,16 @@ class DellRedfishAdapter:
                         # Handle non-JSON responses (e.g., XML SCP exports)
                         response_data = self._handle_non_json_response(response.text, content_type)
                     
+                    # CRITICAL: Include Location header for async operations (202 responses)
+                    # Dell returns task URI in Location header, not body
+                    if response.status_code == 202:
+                        location = response.headers.get('Location')
+                        if location:
+                            response_data['_location_header'] = location
+                            # Also set common field names that helpers check
+                            if '@odata.id' not in response_data:
+                                response_data['@odata.id'] = location
+                    
                     # Check for HTTP errors
                     response.raise_for_status()
                     
