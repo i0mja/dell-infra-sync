@@ -3,7 +3,8 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Loader2, Maximize2, X } from "lucide-react";
-import { useJobProgress, formatElapsed } from "@/hooks/useJobProgress";
+import { useJobProgress } from "@/hooks/useJobProgress";
+import { useEffect, useState } from "react";
 
 interface MinimizedJobMonitorProps {
   jobId: string;
@@ -18,11 +19,21 @@ export const MinimizedJobMonitor = ({
   onMaximize, 
   onClose 
 }: MinimizedJobMonitorProps) => {
+  const [isMounted, setIsMounted] = useState(false);
   const { data: progress } = useJobProgress(jobId, true);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   const getJobTypeLabel = (type: string) => {
     return type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
   };
+
+  // Don't render until mounted to avoid portal context issues
+  if (!isMounted) {
+    return null;
+  }
 
   return createPortal(
     <Card className="fixed bottom-4 right-4 w-80 shadow-lg z-50 border-2">
