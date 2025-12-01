@@ -2071,7 +2071,7 @@ class DellOperations:
             'ShareType': parsed.scheme.upper(),  # HTTP, HTTPS, NFS, CIFS
             'ShareName': parsed.path.rsplit('/', 1)[0] or '/',  # Directory path
             'CatalogFile': parsed.path.rsplit('/', 1)[-1] or 'Catalog.xml',
-            'ApplyUpdate': '1' if apply_update else '0',  # Dell expects string '1' or '0'
+            'ApplyUpdate': 'True' if apply_update else 'False',  # Dell expects "True" or "False" (case-sensitive)
             'RebootNeeded': reboot_needed
         }
         
