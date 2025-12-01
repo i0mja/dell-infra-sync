@@ -526,6 +526,58 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
     # get_pending_jobs moved to DatabaseMixin
     # get_job_tasks moved to DatabaseMixin
 
+    def export_scp(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        target: str = "ALL",
+        server_id: str = None,
+        job_id: str = None,
+        user_id: str = None
+    ) -> Dict:
+        """
+        Export SCP via Dell Redfish API.
+        Wrapper that delegates to DellOperations.export_scp()
+        """
+        dell_ops = self._get_dell_operations()
+        return dell_ops.export_scp(
+            ip=ip,
+            username=username,
+            password=password,
+            target=target,
+            job_id=job_id,
+            server_id=server_id,
+            user_id=user_id
+        )
+
+    def import_scp(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        scp_content: str,
+        shutdown_type: str = "Graceful",
+        server_id: str = None,
+        job_id: str = None,
+        user_id: str = None
+    ) -> Dict:
+        """
+        Import SCP via Dell Redfish API.
+        Wrapper that delegates to DellOperations.import_scp()
+        """
+        dell_ops = self._get_dell_operations()
+        return dell_ops.import_scp(
+            ip=ip,
+            username=username,
+            password=password,
+            scp_content=scp_content,
+            shutdown_type=shutdown_type,
+            job_id=job_id,
+            server_id=server_id,
+            user_id=user_id
+        )
+
     def update_job_status(self, job_id: str, status: str, **kwargs):
         """Update job status in the cloud"""
         try:

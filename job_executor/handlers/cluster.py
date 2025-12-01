@@ -94,21 +94,21 @@ class ClusterHandler(BaseHandler):
             maintenance_timeout = details.get('maintenance_timeout', 600)
             
             # STEP 1: Validate server exists
-            self.executor.log_workflow_step(job['id'], 'prepare', 1, 'Validate Server', 'running', server_id=server_id)
+            self._log_workflow_step(job['id'], 'prepare', 1, 'Validate Server', 'running', server_id=server_id)
             
             server = self.get_server_by_id(server_id)
             if not server:
-                self.executor.log_workflow_step(job['id'], 'prepare', 1, 'Validate Server', 'failed',
+                self._log_workflow_step(job['id'], 'prepare', 1, 'Validate Server', 'failed',
                                       server_id=server_id, step_error='Server not found')
                 raise Exception(f"Server {server_id} not found")
             
             self.log(f"  [OK] Server validated: {server.get('hostname', server['ip_address'])}")
-            self.executor.log_workflow_step(job['id'], 'prepare', 1, 'Validate Server', 'completed',
+            self._log_workflow_step(job['id'], 'prepare', 1, 'Validate Server', 'completed',
                                   server_id=server_id, step_details={'hostname': server.get('hostname')})
             workflow_results['steps_completed'].append('validate_server')
             
             # STEP 2: Test iDRAC connectivity
-            self.executor.log_workflow_step(job['id'], 'prepare', 2, 'Test iDRAC Connectivity', 'running', server_id=server_id)
+            self._log_workflow_step(job['id'], 'prepare', 2, 'Test iDRAC Connectivity', 'running', server_id=server_id)
             
             username, password = self.executor.get_credentials_for_server(server)
             session = self.executor.create_idrac_session(
@@ -117,53 +117,53 @@ class ClusterHandler(BaseHandler):
             )
             
             if not session:
-                self.executor.log_workflow_step(job['id'], 'prepare', 2, 'Test iDRAC Connectivity', 'failed',
+                self._log_workflow_step(job['id'], 'prepare', 2, 'Test iDRAC Connectivity', 'failed',
                                       server_id=server_id, step_error='Failed to create iDRAC session')
                 raise Exception("Failed to connect to iDRAC")
             
             self.log(f"  [OK] iDRAC connectivity confirmed")
-            self.executor.log_workflow_step(job['id'], 'prepare', 2, 'Test iDRAC Connectivity', 'completed', server_id=server_id)
+            self._log_workflow_step(job['id'], 'prepare', 2, 'Test iDRAC Connectivity', 'completed', server_id=server_id)
             workflow_results['steps_completed'].append('test_idrac')
             
             # STEP 3: Enter maintenance mode (if vCenter linked)
             if vcenter_host_id:
-                self.executor.log_workflow_step(job['id'], 'prepare', 3, 'Enter Maintenance Mode', 'running',
+                self._log_workflow_step(job['id'], 'prepare', 3, 'Enter Maintenance Mode', 'running',
                                       server_id=server_id, host_id=vcenter_host_id)
                 
                 self.log(f"  Entering vCenter maintenance mode (timeout: {maintenance_timeout}s)...")
                 maintenance_result = self.executor.enter_vcenter_maintenance_mode(vcenter_host_id, maintenance_timeout)
                 
                 if not maintenance_result['success']:
-                    self.executor.log_workflow_step(job['id'], 'prepare', 3, 'Enter Maintenance Mode', 'failed',
+                    self._log_workflow_step(job['id'], 'prepare', 3, 'Enter Maintenance Mode', 'failed',
                                           server_id=server_id, host_id=vcenter_host_id,
                                           step_error=maintenance_result.get('error'))
                     raise Exception(f"Failed to enter maintenance mode: {maintenance_result.get('error')}")
                 
                 self.log(f"  [OK] Maintenance mode active ({maintenance_result.get('vms_evacuated', 0)} VMs evacuated)")
-                self.executor.log_workflow_step(job['id'], 'prepare', 3, 'Enter Maintenance Mode', 'completed',
+                self._log_workflow_step(job['id'], 'prepare', 3, 'Enter Maintenance Mode', 'completed',
                                       server_id=server_id, host_id=vcenter_host_id,
                                       step_details=maintenance_result)
                 workflow_results['steps_completed'].append('enter_maintenance')
                 workflow_results['vms_evacuated'] = maintenance_result.get('vms_evacuated', 0)
             else:
                 self.log("  -> No vCenter host linked, skipping maintenance mode")
-                self.executor.log_workflow_step(job['id'], 'prepare', 3, 'Enter Maintenance Mode', 'skipped',
+                self._log_workflow_step(job['id'], 'prepare', 3, 'Enter Maintenance Mode', 'skipped',
                                       server_id=server_id, step_details={'reason': 'No vCenter host linked'})
             
             # STEP 4: Export SCP backup (if requested)
             if backup_scp:
-                self.executor.log_workflow_step(job['id'], 'prepare', 4, 'Export SCP Backup', 'running', server_id=server_id)
+                self._log_workflow_step(job['id'], 'prepare', 4, 'Export SCP Backup', 'running', server_id=server_id)
                 self.log(f"  Exporting SCP backup...")
                 
                 # Note: SCP export is complex - this is a simplified version
                 # In production, you'd call execute_scp_export or implement inline
                 self.log(f"  [OK] SCP backup export queued")
-                self.executor.log_workflow_step(job['id'], 'prepare', 4, 'Export SCP Backup', 'completed',
+                self._log_workflow_step(job['id'], 'prepare', 4, 'Export SCP Backup', 'completed',
                                       server_id=server_id)
                 workflow_results['steps_completed'].append('scp_export')
             else:
                 self.log("  -> SCP backup not requested, skipping")
-                self.executor.log_workflow_step(job['id'], 'prepare', 4, 'Export SCP Backup', 'skipped',
+                self._log_workflow_step(job['id'], 'prepare', 4, 'Export SCP Backup', 'skipped',
                                       server_id=server_id, step_details={'reason': 'Not requested'})
             
             # Cleanup session
