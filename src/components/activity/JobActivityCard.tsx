@@ -3,7 +3,8 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
-import { ChevronDown, ChevronUp, Clock, CheckCircle2, XCircle, Loader2, Server, Network, Settings } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { ChevronDown, ChevronUp, Clock, CheckCircle2, XCircle, Loader2, Server, Network, Settings, AlertCircle } from "lucide-react";
 import { useJobProgress } from "@/hooks/useJobProgress";
 import { ApiCallStream } from "@/components/jobs/ApiCallStream";
 import { cn } from "@/lib/utils";
@@ -191,6 +192,16 @@ export function JobActivityCard({ job }: JobActivityCardProps) {
           <div className="rounded-md bg-muted/50 p-2 text-xs font-mono text-muted-foreground">
             {progress.currentStep}
           </div>
+        )}
+
+        {/* Error Message */}
+        {job.status === 'failed' && job.details?.error && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription className="text-xs font-mono">
+              {job.details.error}
+            </AlertDescription>
+          </Alert>
         )}
 
         {/* Expandable API Stream */}

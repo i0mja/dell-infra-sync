@@ -1020,6 +1020,17 @@ class ClusterHandler(BaseHandler):
                     workflow_results['hosts_failed'] += 1
                     self.log(f"  ✗ Host {host['name']} update failed: {e}", "ERROR")
                     
+                    # Log failed workflow step with actual error message
+                    self._log_workflow_step(
+                        job['id'], 'rolling_cluster_update',
+                        step_number=base_step + 2,
+                        step_name=f"Apply firmware updates: {host['name']}",
+                        status='failed',
+                        server_id=host['server_id'],
+                        step_error=str(e),
+                        step_completed_at=datetime.now().isoformat()
+                    )
+                    
                     # Clear current server tracking
                     cleanup_state['current_server'] = None
                     
