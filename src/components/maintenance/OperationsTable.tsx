@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -102,6 +103,13 @@ interface MaintenanceWindow {
   server_group_ids: string[] | null;
 }
 
+interface TargetMeta {
+  type: 'server' | 'servers' | 'cluster' | 'groups' | 'none';
+  serverIds?: string[];
+  clusterName?: string;
+  groupIds?: string[];
+}
+
 interface Operation {
   type: 'job' | 'maintenance';
   id: string;
@@ -109,6 +117,7 @@ interface Operation {
   status: 'active' | 'planned' | 'completed' | 'failed';
   timestamp: Date;
   target: string;
+  targetMeta?: TargetMeta;
   data: Job | MaintenanceWindow;
 }
 
@@ -457,15 +466,39 @@ export function OperationsTable({
                         <TableCell className="text-sm text-muted-foreground">
                           {op.type === 'job' ? 'Job' : 'Window'}
                         </TableCell>
-                        <TableCell className="text-sm">
+                        <TableCell className="text-sm" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-1.5">
                             {job?.target_scope?.server_ids?.length > 0 && (
                               <>
                                 <Server className="h-3 w-3 text-muted-foreground" />
-                                <span>{job.target_scope.server_ids.length}</span>
+                                <span className="text-muted-foreground">{job.target_scope.server_ids.length}</span>
                               </>
                             )}
-                            {op.target}
+                            {op.targetMeta?.type === 'server' && op.targetMeta.serverIds?.[0] ? (
+                              <Link 
+                                to={`/servers?server=${op.targetMeta.serverIds[0]}`}
+                                className="text-primary hover:underline"
+                              >
+                                {op.target}
+                              </Link>
+                            ) : op.targetMeta?.type === 'servers' && op.targetMeta.serverIds?.length ? (
+                              <Link 
+                                to="/servers"
+                                className="text-primary hover:underline"
+                                title={`View ${op.targetMeta.serverIds.length} servers`}
+                              >
+                                {op.target}
+                              </Link>
+                            ) : op.targetMeta?.type === 'cluster' ? (
+                              <Link 
+                                to="/vcenter?tab=clusters"
+                                className="text-primary hover:underline"
+                              >
+                                {op.target}
+                              </Link>
+                            ) : (
+                              <span>{op.target}</span>
+                            )}
                           </div>
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { useServers } from "@/hooks/useServers";
@@ -33,6 +33,7 @@ import type { Server } from "@/hooks/useServers";
 
 export default function Servers() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
   const { user } = useAuth();
 
@@ -88,6 +89,20 @@ export default function Servers() {
   const isLocalMode =
     import.meta.env.VITE_SUPABASE_URL?.includes("127.0.0.1") ||
     import.meta.env.VITE_SUPABASE_URL?.includes("localhost");
+
+  // Auto-select server from URL param
+  useEffect(() => {
+    const serverId = searchParams.get('server');
+    if (serverId && filteredServers.length > 0) {
+      const server = filteredServers.find(s => s.id === serverId);
+      if (server) {
+        setSelectedServer(server);
+        // Clear the param after selecting
+        searchParams.delete('server');
+        setSearchParams(searchParams, { replace: true });
+      }
+    }
+  }, [searchParams, filteredServers, setSearchParams]);
 
   // Bulk refresh handler
   const [bulkRefreshing, setBulkRefreshing] = useState(false);
