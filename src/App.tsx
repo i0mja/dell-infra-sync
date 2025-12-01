@@ -6,7 +6,9 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { ThemeProvider } from "next-themes";
 import { AuthProvider } from "@/hooks/useAuth";
 import { NotificationProvider } from "@/contexts/NotificationContext";
+import { MinimizedJobsProvider } from "@/contexts/MinimizedJobsContext";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { GlobalMinimizedJobs } from "@/components/jobs/GlobalMinimizedJobs";
 import Layout from "@/components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Auth from "./pages/Auth";
@@ -28,20 +30,23 @@ const App = () => (
           <Sonner />
           <BrowserRouter>
             <AuthProvider>
-              <NotificationProvider>
-                <Routes>
-                <Route path="/auth" element={<Auth />} />
-                <Route path="/" element={<Layout />}>
-                  <Route index element={<Dashboard />} />
-          <Route path="servers" element={<Servers />} />
-          <Route path="vcenter" element={<VCenter />} />
-          <Route path="maintenance-planner" element={<MaintenancePlanner />} />
-          <Route path="activity" element={<ActivityMonitor />} />
-          <Route path="settings" element={<Settings />} />
-                </Route>
-                <Route path="*" element={<NotFound />} />
-                </Routes>
-              </NotificationProvider>
+              <MinimizedJobsProvider>
+                <NotificationProvider>
+                  <GlobalMinimizedJobs />
+                  <Routes>
+                  <Route path="/auth" element={<Auth />} />
+                  <Route path="/" element={<Layout />}>
+                    <Route index element={<Dashboard />} />
+            <Route path="servers" element={<Servers />} />
+            <Route path="vcenter" element={<VCenter />} />
+            <Route path="maintenance-planner" element={<MaintenancePlanner />} />
+            <Route path="activity" element={<ActivityMonitor />} />
+            <Route path="settings" element={<Settings />} />
+                  </Route>
+                  <Route path="*" element={<NotFound />} />
+                  </Routes>
+                </NotificationProvider>
+              </MinimizedJobsProvider>
             </AuthProvider>
           </BrowserRouter>
         </TooltipProvider>

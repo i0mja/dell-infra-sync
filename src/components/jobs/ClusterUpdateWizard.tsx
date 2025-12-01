@@ -31,8 +31,8 @@ import {
   Minimize2
 } from "lucide-react";
 import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
-import { MinimizedJobMonitor } from "./MinimizedJobMonitor";
 import { FirmwareSourceSelector } from "@/components/common/FirmwareSourceSelector";
+import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
 import { RecurrenceConfig, getNextExecutionsFromConfig, getHumanReadableSchedule } from "@/lib/cron-utils";
 import { addHours, addDays, format } from "date-fns";
 
@@ -78,7 +78,7 @@ export const ClusterUpdateWizard = ({
 }: ClusterUpdateWizardProps) => {
   const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(false);
-  const [isMinimized, setIsMinimized] = useState(false);
+  const { minimizeJob, isMinimized } = useMinimizedJobs();
   
   // Step 1: Target Selection
   const [targetType, setTargetType] = useState<'cluster' | 'group' | 'servers'>(
@@ -1401,11 +1401,6 @@ export const ClusterUpdateWizard = ({
         );
 
       case 6:
-        // If minimized, show the floating monitor instead of the dialog content
-        if (isMinimized && jobId) {
-          return null; // The MinimizedJobMonitor will be rendered outside the dialog
-        }
-        
         return (
           <div className="space-y-4">
             {jobId && (
@@ -1422,12 +1417,15 @@ export const ClusterUpdateWizard = ({
     }
   };
 
+  const jobIsMinimized = jobId ? isMinimized(jobId) : false;
+
   return (
     <>
-      <Dialog open={open && !isMinimized} onOpenChange={(newOpen) => {
+      <Dialog open={open && !jobIsMinimized} onOpenChange={(newOpen) => {
         if (!newOpen && currentStep === 6 && jobId) {
           // Don't close if on step 6 with active job, minimize instead
-          setIsMinimized(true);
+          minimizeJob(jobId, 'rolling_cluster_update');
+          onOpenChange(false);
         } else {
           onOpenChange(newOpen);
         }
@@ -1445,7 +1443,10 @@ export const ClusterUpdateWizard = ({
                 <Button 
                   variant="ghost" 
                   size="icon"
-                  onClick={() => setIsMinimized(true)}
+                  onClick={() => {
+                    minimizeJob(jobId, 'rolling_cluster_update');
+                    onOpenChange(false);
+                  }}
                   className="ml-2"
                 >
                   <Minimize2 className="h-4 w-4" />
@@ -1511,19 +1512,6 @@ export const ClusterUpdateWizard = ({
         </div>
       </DialogContent>
     </Dialog>
-    
-    {/* Minimized Job Monitor - renders when minimized */}
-    {isMinimized && jobId && (
-      <MinimizedJobMonitor
-        jobId={jobId}
-        jobType="rolling_cluster_update"
-        onMaximize={() => setIsMinimized(false)}
-        onClose={() => {
-          setIsMinimized(false);
-          onOpenChange(false);
-        }}
-      />
-    )}
   </>
   );
 };
