@@ -36,5 +36,8 @@ verify_jwt = true  # Requires admin/operator authentication for password encrypt
 [functions.idm-authenticate]
 verify_jwt = false  # Public endpoint - users logging in aren't authenticated yet
 
+[functions.idm-provision]
+verify_jwt = false  # Public endpoint - called after Job Executor auth succeeds
+
 [functions.get-service-key]
 verify_jwt = true  # Requires admin authentication to retrieve service role key
