@@ -3208,7 +3208,11 @@ export type Database = {
         | "firmware_inventory_scan"
         | "idm_search_groups"
         | "idm_test_auth"
-      operation_type: "idrac_api" | "vcenter_api" | "openmanage_api"
+      operation_type:
+        | "idrac_api"
+        | "vcenter_api"
+        | "openmanage_api"
+        | "ldap_api"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -3380,7 +3384,12 @@ export const Constants = {
         "idm_search_groups",
         "idm_test_auth",
       ],
-      operation_type: ["idrac_api", "vcenter_api", "openmanage_api"],
+      operation_type: [
+        "idrac_api",
+        "vcenter_api",
+        "openmanage_api",
+        "ldap_api",
+      ],
     },
   },
 } as const

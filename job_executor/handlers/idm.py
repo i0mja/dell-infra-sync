@@ -12,7 +12,6 @@ class IDMHandler(BaseHandler):
     def _log_ldap_operation(
         self,
         job_id: str,
-        operation_type: str,
         endpoint: str,
         full_url: str,
         success: bool,
@@ -26,7 +25,7 @@ class IDMHandler(BaseHandler):
         try:
             self.executor.supabase.table('idrac_commands').insert({
                 'job_id': job_id,
-                'operation_type': operation_type,
+                'operation_type': 'ldap_api',  # Use valid enum value
                 'endpoint': endpoint,
                 'full_url': full_url,
                 'command_type': command_type,
