@@ -56,7 +56,16 @@ serve(async (req) => {
     const sessionTimeoutMinutes = idmSettings?.session_timeout_minutes || 480;
 
     // Check if user exists by idm_uid
-    const idmUid = user_info?.uid || username;
+    // Extract clean username (remove domain/realm if present)
+    const cleanUsername = username.includes('@') 
+      ? username.split('@')[0] 
+      : username.includes('\\') 
+        ? username.split('\\').pop() || username
+        : username;
+    
+    const idmUid = user_info?.uid || cleanUsername;
+    console.log(`[IDM Provision] Clean username: ${cleanUsername}, idmUid: ${idmUid}`);
+    
     const { data: existingProfile } = await supabase
       .from('profiles')
       .select('id, email')
@@ -91,8 +100,17 @@ serve(async (req) => {
       // JIT user provisioning - create new user
       console.log(`[IDM Provision] Creating new user via JIT provisioning`);
       
-      email = user_info?.email || `${idmUid}@idm.local`;
-      const fullName = user_info?.full_name || idmUid;
+      // Generate a valid email for Supabase Auth
+      // Use user_info.email if valid, otherwise create synthetic email with .local TLD
+      let generatedEmail = user_info?.email;
+      if (!generatedEmail || !generatedEmail.includes('@') || generatedEmail.endsWith('.grp')) {
+        // Create synthetic email that Supabase will accept
+        generatedEmail = `${cleanUsername}@idm.local`;
+      }
+      email = generatedEmail;
+      console.log(`[IDM Provision] Using email for provisioning: ${email}`);
+      
+      const fullName = user_info?.full_name || cleanUsername;
 
       const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
         email,
