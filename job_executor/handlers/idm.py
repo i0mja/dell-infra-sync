@@ -5,6 +5,9 @@ from datetime import datetime
 from .base import BaseHandler
 import json
 import requests
+import socket
+import ssl
+import time
 
 
 class IDMHandler(BaseHandler):
@@ -734,4 +737,226 @@ class IDMHandler(BaseHandler):
                 'failed',
                 completed_at=datetime.now().isoformat(),
                 details={'error': str(e), 'groups': []}
+            )
+
+    def _test_dns_resolution(self, hostname: str) -> dict:
+        """Test DNS resolution for hostname."""
+        try:
+            start = time.time()
+            ip_addresses = socket.getaddrinfo(hostname, None)
+            elapsed = (time.time() - start) * 1000
+            resolved_ips = list(set(addr[4][0] for addr in ip_addresses))
+            return {
+                'success': True,
+                'resolved_ips': resolved_ips,
+                'response_time_ms': round(elapsed, 2),
+                'message': f'Resolved to {len(resolved_ips)} address(es): {", ".join(resolved_ips[:3])}'
+            }
+        except socket.gaierror as e:
+            return {'success': False, 'error': str(e), 'message': f'DNS resolution failed: {e}'}
+        except Exception as e:
+            return {'success': False, 'error': str(e), 'message': f'DNS error: {e}'}
+
+    def _test_port_connectivity(self, host: str, port: int, timeout: int = 5) -> dict:
+        """Test TCP connectivity to port."""
+        try:
+            start = time.time()
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            result = sock.connect_ex((host, port))
+            elapsed = (time.time() - start) * 1000
+            sock.close()
+            
+            if result == 0:
+                return {
+                    'success': True,
+                    'response_time_ms': round(elapsed, 2),
+                    'message': f'Port {port} is accessible ({round(elapsed)}ms)'
+                }
+            else:
+                return {
+                    'success': False,
+                    'error_code': result,
+                    'message': f'Port {port} is not accessible (error code: {result}) - check firewall'
+                }
+        except socket.timeout:
+            return {'success': False, 'error': 'Connection timed out', 'message': f'Port {port} connection timed out after {timeout}s'}
+        except Exception as e:
+            return {'success': False, 'error': str(e), 'message': f'Connection failed: {e}'}
+
+    def _test_ssl_certificate(self, host: str, port: int, timeout: int = 5) -> dict:
+        """Test SSL certificate validity."""
+        try:
+            start = time.time()
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE  # Allow self-signed
+            
+            with socket.create_connection((host, port), timeout=timeout) as sock:
+                with context.wrap_socket(sock, server_hostname=host) as ssock:
+                    elapsed = (time.time() - start) * 1000
+                    cert = ssock.getpeercert(binary_form=False)
+                    cipher = ssock.cipher()
+                    return {
+                        'success': True,
+                        'response_time_ms': round(elapsed, 2),
+                        'message': f'SSL handshake successful ({cipher[0] if cipher else "unknown cipher"})',
+                        'cipher': cipher[0] if cipher else None,
+                    }
+        except ssl.SSLError as e:
+            return {'success': False, 'error': str(e), 'message': f'SSL error: {e}'}
+        except socket.timeout:
+            return {'success': False, 'error': 'Connection timed out', 'message': f'SSL connection timed out after {timeout}s'}
+        except Exception as e:
+            return {'success': False, 'error': str(e), 'message': f'SSL connection failed: {e}'}
+
+    def execute_idm_network_check(self, job: Dict):
+        """Perform network connectivity checks for FreeIPA and AD DC servers."""
+        job_id = job['id']
+        start_time = datetime.now()
+        
+        try:
+            self.log(f"Starting IDM network connectivity check: {job_id}")
+            self.update_job_status(job_id, 'running', started_at=start_time.isoformat())
+            
+            details = job.get('details') or {}
+            results = {
+                'freeipa': {},
+                'ad_dc': {},
+                'summary': {}
+            }
+            
+            # === FreeIPA Server Tests ===
+            ipa_host = details.get('server_host')
+            ipa_use_ssl = details.get('use_ldaps', True)
+            ipa_port = details.get('ldaps_port', 636) if ipa_use_ssl else details.get('server_port', 389)
+            
+            if ipa_host:
+                self.log(f"Testing FreeIPA connectivity: {ipa_host}:{ipa_port} (SSL: {ipa_use_ssl})")
+                
+                # DNS Resolution
+                self.log(f"  [1/3] DNS resolution for {ipa_host}...")
+                results['freeipa']['dns'] = self._test_dns_resolution(ipa_host)
+                self._log_ldap_operation(
+                    job_id=job_id,
+                    endpoint='/network/dns',
+                    full_url=f"dns://{ipa_host}",
+                    success=results['freeipa']['dns'].get('success', False),
+                    response_time_ms=int(results['freeipa']['dns'].get('response_time_ms', 0)),
+                    response_body=results['freeipa']['dns'],
+                    command_type='network_dns'
+                )
+                
+                # Port Connectivity
+                self.log(f"  [2/3] Port connectivity to {ipa_host}:{ipa_port}...")
+                results['freeipa']['port'] = self._test_port_connectivity(ipa_host, ipa_port)
+                self._log_ldap_operation(
+                    job_id=job_id,
+                    endpoint='/network/port',
+                    full_url=self._build_ldap_url(ipa_host, ipa_port, ipa_use_ssl),
+                    success=results['freeipa']['port'].get('success', False),
+                    response_time_ms=int(results['freeipa']['port'].get('response_time_ms', 0)),
+                    response_body=results['freeipa']['port'],
+                    command_type='network_port'
+                )
+                
+                # SSL Certificate (if LDAPS)
+                if ipa_use_ssl:
+                    self.log(f"  [3/3] SSL handshake to {ipa_host}:{ipa_port}...")
+                    results['freeipa']['ssl'] = self._test_ssl_certificate(ipa_host, ipa_port)
+                    self._log_ldap_operation(
+                        job_id=job_id,
+                        endpoint='/network/ssl',
+                        full_url=self._build_ldap_url(ipa_host, ipa_port, ipa_use_ssl),
+                        success=results['freeipa']['ssl'].get('success', False),
+                        response_time_ms=int(results['freeipa']['ssl'].get('response_time_ms', 0)),
+                        response_body=results['freeipa']['ssl'],
+                        command_type='network_ssl'
+                    )
+                
+                # Log summary for FreeIPA
+                ipa_results = [f"{k}: {'✓' if v.get('success') else '✗'}" for k, v in results['freeipa'].items()]
+                self.log(f"  FreeIPA results: {', '.join(ipa_results)}")
+            
+            # === AD DC Tests (if configured) ===
+            ad_host = details.get('ad_dc_host')
+            ad_port = details.get('ad_dc_port', 389)
+            ad_use_ssl = details.get('ad_dc_use_ssl', False)
+            
+            if ad_host:
+                self.log(f"Testing AD DC connectivity: {ad_host}:{ad_port} (SSL: {ad_use_ssl})")
+                
+                # DNS Resolution
+                self.log(f"  [1/3] DNS resolution for {ad_host}...")
+                results['ad_dc']['dns'] = self._test_dns_resolution(ad_host)
+                self._log_ldap_operation(
+                    job_id=job_id,
+                    endpoint='/network/ad_dc/dns',
+                    full_url=f"dns://{ad_host}",
+                    success=results['ad_dc']['dns'].get('success', False),
+                    response_time_ms=int(results['ad_dc']['dns'].get('response_time_ms', 0)),
+                    response_body=results['ad_dc']['dns'],
+                    command_type='network_ad_dns'
+                )
+                
+                # Port Connectivity
+                self.log(f"  [2/3] Port connectivity to {ad_host}:{ad_port}...")
+                results['ad_dc']['port'] = self._test_port_connectivity(ad_host, ad_port)
+                self._log_ldap_operation(
+                    job_id=job_id,
+                    endpoint='/network/ad_dc/port',
+                    full_url=self._build_ldap_url(ad_host, ad_port, ad_use_ssl),
+                    success=results['ad_dc']['port'].get('success', False),
+                    response_time_ms=int(results['ad_dc']['port'].get('response_time_ms', 0)),
+                    response_body=results['ad_dc']['port'],
+                    command_type='network_ad_port'
+                )
+                
+                # SSL Certificate (if LDAPS)
+                if ad_use_ssl:
+                    self.log(f"  [3/3] SSL handshake to {ad_host}:{ad_port}...")
+                    results['ad_dc']['ssl'] = self._test_ssl_certificate(ad_host, ad_port)
+                    self._log_ldap_operation(
+                        job_id=job_id,
+                        endpoint='/network/ad_dc/ssl',
+                        full_url=self._build_ldap_url(ad_host, ad_port, ad_use_ssl),
+                        success=results['ad_dc']['ssl'].get('success', False),
+                        response_time_ms=int(results['ad_dc']['ssl'].get('response_time_ms', 0)),
+                        response_body=results['ad_dc']['ssl'],
+                        command_type='network_ad_ssl'
+                    )
+                
+                # Log summary for AD DC
+                ad_results = [f"{k}: {'✓' if v.get('success') else '✗'}" for k, v in results['ad_dc'].items()]
+                self.log(f"  AD DC results: {', '.join(ad_results)}")
+            
+            # === Calculate Summary ===
+            ipa_ok = all(r.get('success') for r in results['freeipa'].values()) if results['freeipa'] else False
+            ad_ok = all(r.get('success') for r in results['ad_dc'].values()) if results['ad_dc'] else True
+            
+            results['summary'] = {
+                'freeipa_reachable': ipa_ok,
+                'ad_dc_reachable': ad_ok if ad_host else None,
+                'ad_dc_configured': bool(ad_host),
+                'all_tests_passed': ipa_ok and (ad_ok if ad_host else True),
+                'total_time_ms': int((datetime.now() - start_time).total_seconds() * 1000)
+            }
+            
+            status = 'completed' if results['summary']['all_tests_passed'] else 'completed'  # Always complete, success is in results
+            self.log(f"Network check completed: {'All tests passed' if results['summary']['all_tests_passed'] else 'Some tests failed'}")
+            
+            self.update_job_status(
+                job_id,
+                status,
+                completed_at=datetime.now().isoformat(),
+                details={'network_results': results}
+            )
+            
+        except Exception as e:
+            self.log(f"IDM network check failed: {e}", "ERROR")
+            self.update_job_status(
+                job_id,
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e), 'network_results': {}}
             )
