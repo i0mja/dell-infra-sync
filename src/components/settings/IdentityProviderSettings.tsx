@@ -97,6 +97,25 @@ export function IdentityProviderSettings() {
     setBindPassword(''); // Clear password field after save
   };
 
+  const handleTestConnection = () => {
+    testConnection({
+      server_host: serverHost,
+      server_port: serverPort,
+      ldaps_port: ldapsPort,
+      use_ldaps: useLdaps,
+      verify_certificate: verifyCertificate,
+      base_dn: baseDn,
+      user_search_base: userSearchBase,
+      group_search_base: groupSearchBase,
+      bind_dn: bindDn,
+      bind_password: bindPassword,
+      ca_certificate: caCertificate,
+      connection_timeout_seconds: connectionTimeout,
+    });
+  };
+
+  const canTestConnection = serverHost && bindDn && bindPassword && baseDn;
+
   const handleCreateMapping = async () => {
     await createMapping(mappingForm);
     setMappingForm({
@@ -237,7 +256,11 @@ export function IdentityProviderSettings() {
                 </div>
               )}
 
-              <Button onClick={testConnection} variant="outline">
+              <Button 
+                onClick={handleTestConnection} 
+                variant="outline"
+                disabled={!canTestConnection}
+              >
                 <TestTube className="mr-2 h-4 w-4" />
                 Test Connection
               </Button>
