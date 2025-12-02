@@ -89,6 +89,8 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._handle_connectivity_test()
             elif self.path == '/api/browse-datastore':
                 self._handle_browse_datastore()
+            elif self.path == '/api/idm-authenticate':
+                self._handle_idm_authenticate()
             else:
                 self._send_error(f'Unknown endpoint: {self.path}', 404)
         except Exception as e:
@@ -535,6 +537,123 @@ class APIHandler(BaseHTTPRequestHandler):
             
             self._send_error(str(e), 500)
     
+    def _handle_idm_authenticate(self):
+        """Authenticate user against FreeIPA/AD directly (synchronous)"""
+        start_time = datetime.now()
+        data = self._read_json_body()
+        username = data.get('username')
+        password = data.get('password')
+        
+        if not username or not password:
+            self._send_error('username and password are required', 400)
+            return
+        
+        self.executor.log(f"API: IDM authenticate for {username}")
+        
+        try:
+            # Load IDM settings from database
+            idm_settings = self.executor.get_idm_settings()
+            if not idm_settings:
+                self._send_error('IDM authentication not configured', 503)
+                return
+            
+            if idm_settings.get('auth_mode') == 'local_only':
+                self._send_error('IDM authentication not enabled', 403)
+                return
+            
+            # Initialize FreeIPA authenticator
+            from job_executor.ldap_auth import FreeIPAAuthenticator, LDAP3_AVAILABLE
+            
+            if not LDAP3_AVAILABLE:
+                self._send_error('LDAP3 library not installed on Job Executor', 503)
+                return
+            
+            authenticator = FreeIPAAuthenticator(
+                server_host=idm_settings.get('server_host'),
+                base_dn=idm_settings.get('base_dn'),
+                user_search_base=idm_settings.get('user_search_base', 'cn=users,cn=accounts'),
+                group_search_base=idm_settings.get('group_search_base', 'cn=groups,cn=accounts'),
+                use_ldaps=idm_settings.get('use_ldaps', True),
+                ldaps_port=idm_settings.get('ldaps_port', 636),
+                ldap_port=idm_settings.get('server_port', 389),
+                verify_certificate=idm_settings.get('verify_certificate', False),
+                ca_certificate=idm_settings.get('ca_certificate'),
+                connection_timeout=idm_settings.get('connection_timeout_seconds', 10),
+                trusted_domains=idm_settings.get('trusted_domains', []),
+                ad_dc_host=idm_settings.get('ad_dc_host'),
+                ad_dc_port=idm_settings.get('ad_dc_port', 636),
+                ad_dc_use_ssl=idm_settings.get('ad_dc_use_ssl', True),
+                ad_domain_fqdn=idm_settings.get('ad_domain_fqdn'),
+            )
+            
+            # Perform authentication
+            auth_result = authenticator.authenticate(username, password)
+            
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            
+            # Log operation to activity monitor
+            self._log_operation(
+                server_id=None,
+                operation_name='idm_authenticate',
+                endpoint='/api/idm-authenticate',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/idm-authenticate',
+                request_body={'username': username},  # Don't log password
+                status_code=200 if auth_result.get('success') else 401,
+                response_time_ms=response_time_ms,
+                response_body={
+                    'success': auth_result.get('success'),
+                    'user_dn': auth_result.get('user_dn'),
+                    'is_ad_trust_user': auth_result.get('is_ad_trust_user', False),
+                },
+                success=auth_result.get('success', False),
+                error_message=auth_result.get('error') if not auth_result.get('success') else None,
+                operation_type='idm_api'
+            )
+            
+            if auth_result.get('success'):
+                # Return auth result for provisioning
+                response = {
+                    'success': True,
+                    'user_dn': auth_result.get('user_dn'),
+                    'user_info': auth_result.get('user_info', {}),
+                    'groups': auth_result.get('groups', []),
+                    'is_ad_trust_user': auth_result.get('is_ad_trust_user', False),
+                    'ad_domain': auth_result.get('ad_domain'),
+                    'realm': auth_result.get('realm'),
+                    'canonical_principal': auth_result.get('canonical_principal'),
+                    'response_time_ms': response_time_ms,
+                }
+                self._send_json(response)
+            else:
+                self._send_json({
+                    'success': False,
+                    'error': auth_result.get('error', 'Authentication failed'),
+                    'error_details': auth_result.get('error_details'),
+                    'response_time_ms': response_time_ms,
+                }, 401)
+                
+        except Exception as e:
+            self.executor.log(f"IDM authenticate failed: {e}", "ERROR")
+            self.executor.log(f"Traceback: {traceback.format_exc()}", "ERROR")
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            
+            # Log failed operation
+            self._log_operation(
+                server_id=None,
+                operation_name='idm_authenticate',
+                endpoint='/api/idm-authenticate',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/idm-authenticate',
+                request_body={'username': username},
+                status_code=500,
+                response_time_ms=response_time_ms,
+                response_body={'error': str(e)},
+                success=False,
+                error_message=str(e),
+                operation_type='idm_api'
+            )
+            
+            self._send_error(str(e), 500)
+    
     def log_message(self, format, *args):
         """Override to suppress default request logging"""
         pass
@@ -565,6 +684,7 @@ class APIServer:
             self.executor.log(f"  POST /api/power-control")
             self.executor.log(f"  POST /api/connectivity-test")
             self.executor.log(f"  POST /api/browse-datastore")
+            self.executor.log(f"  POST /api/idm-authenticate")
         except Exception as e:
             self.executor.log(f"Failed to start API server: {e}", "ERROR")
             raise

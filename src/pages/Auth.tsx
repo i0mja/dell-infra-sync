@@ -105,47 +105,124 @@ const Auth = () => {
     setLoading(true);
 
     try {
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/idm-authenticate`,
+      // Step 1: Check rate limits first via edge function
+      const rateLimitResponse = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/idm-provision`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, password }),
+          body: JSON.stringify({ check_rate_limit: true, username }),
         }
       );
 
-      const result = await response.json();
+      // Step 2: Authenticate directly via Job Executor API (synchronous)
+      const jobExecutorUrl = localStorage.getItem('job_executor_url') || 'http://localhost:8081';
+      
+      let authResult;
+      try {
+        const authResponse = await fetch(`${jobExecutorUrl}/api/idm-authenticate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        authResult = await authResponse.json();
+      } catch (networkError) {
+        // Job Executor not reachable - fallback to edge function (job-based)
+        console.warn('Job Executor not reachable, falling back to edge function');
+        const fallbackResponse = await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/idm-authenticate`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+          }
+        );
+        
+        const fallbackResult = await fallbackResponse.json();
+        
+        if (fallbackResponse.status === 429) {
+          setLockoutRemaining(fallbackResult.lockout_remaining_seconds);
+          toast({
+            title: "Account Locked",
+            description: fallbackResult.error || `Too many failed attempts. Please try again in ${Math.ceil(fallbackResult.lockout_remaining_seconds / 60)} minutes.`,
+            variant: "destructive",
+          });
+          setLoading(false);
+          return;
+        }
+        
+        if (fallbackResult.success) {
+          await supabase.auth.setSession({
+            access_token: fallbackResult.access_token,
+            refresh_token: fallbackResult.refresh_token,
+          });
+          toast({
+            title: "Welcome",
+            description: "Authenticated via FreeIPA",
+          });
+          navigate("/");
+        } else {
+          toast({
+            title: "Authentication Failed",
+            description: fallbackResult.error || 'Invalid username or password',
+            variant: "destructive",
+          });
+        }
+        setLoading(false);
+        return;
+      }
 
-      if (response.status === 429) {
-        // Rate limited
-        setLockoutRemaining(result.lockout_remaining_seconds);
-        toast({
-          title: "Account Locked",
-          description: result.error || `Too many failed attempts. Please try again in ${Math.ceil(result.lockout_remaining_seconds / 60)} minutes.`,
-          variant: "destructive",
-        });
-      } else if (result.success) {
-        // Set session using returned tokens
-        await supabase.auth.setSession({
-          access_token: result.access_token,
-          refresh_token: result.refresh_token,
-        });
-        toast({
-          title: "Welcome",
-          description: "Authenticated via FreeIPA",
-        });
-        navigate("/");
+      // Step 3: If auth succeeded, provision user via edge function
+      if (authResult.success) {
+        const provisionResponse = await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/idm-provision`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              username,
+              user_dn: authResult.user_dn,
+              user_info: authResult.user_info,
+              groups: authResult.groups,
+              is_ad_trust_user: authResult.is_ad_trust_user,
+              ad_domain: authResult.ad_domain,
+              realm: authResult.realm,
+              canonical_principal: authResult.canonical_principal,
+            }),
+          }
+        );
+
+        const provisionResult = await provisionResponse.json();
+
+        if (provisionResult.success) {
+          await supabase.auth.setSession({
+            access_token: provisionResult.access_token,
+            refresh_token: provisionResult.refresh_token,
+          });
+          toast({
+            title: "Welcome",
+            description: `Authenticated via ${authResult.is_ad_trust_user ? 'Active Directory' : 'FreeIPA'}`,
+          });
+          navigate("/");
+        } else {
+          toast({
+            title: "Provisioning Failed",
+            description: provisionResult.error || 'Failed to create user session',
+            variant: "destructive",
+          });
+        }
       } else {
         toast({
           title: "Authentication Failed",
-          description: result.error || 'Invalid username or password',
+          description: authResult.error || 'Invalid username or password',
           variant: "destructive",
         });
       }
     } catch (error: any) {
+      console.error('IDM Auth error:', error);
       toast({
         title: "Connection Error",
-        description: "Unable to reach authentication service",
+        description: "Unable to reach authentication service. Ensure Job Executor is running.",
         variant: "destructive",
       });
     }
