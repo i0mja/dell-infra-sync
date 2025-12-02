@@ -868,6 +868,212 @@ class IDMHandler(BaseHandler):
                 details={'error': str(e), 'users': []}
             )
 
+    def execute_idm_test_ad_connection(self, job: Dict):
+        """Test AD connection with service account credentials."""
+        try:
+            self.log(f"Starting AD connection test job: {job['id']}")
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            details = job.get('details') or {}
+            
+            # Get AD DC settings from job details (form values) or IDM settings (saved values)
+            idm_settings = self.executor.get_idm_settings() or {}
+            
+            ad_dc_host = details.get('ad_dc_host') or idm_settings.get('ad_dc_host')
+            ad_dc_port = details.get('ad_dc_port') or idm_settings.get('ad_dc_port', 636)
+            ad_dc_use_ssl = details.get('ad_dc_use_ssl', idm_settings.get('ad_dc_use_ssl', True))
+            ad_bind_dn = details.get('ad_bind_dn') or idm_settings.get('ad_bind_dn')
+            
+            # Password priority: from job details (new password), otherwise from saved encrypted
+            ad_bind_password = details.get('ad_bind_password')
+            if not ad_bind_password and idm_settings.get('ad_bind_password_encrypted'):
+                ad_bind_password = self.executor.decrypt_bind_password(
+                    idm_settings.get('ad_bind_password_encrypted')
+                )
+            
+            test_result = {
+                'ad_dc_host': ad_dc_host,
+                'ad_dc_port': ad_dc_port,
+                'ad_dc_use_ssl': ad_dc_use_ssl,
+                'ad_bind_dn': ad_bind_dn,
+                'tests': {},
+                'success': False
+            }
+            
+            # Validate required settings
+            if not ad_dc_host:
+                raise ValueError("AD DC host not configured")
+            if not ad_bind_dn:
+                raise ValueError("AD Bind DN not configured")
+            if not ad_bind_password:
+                raise ValueError("AD Bind password not configured. Enter password and save settings first.")
+            
+            self.log(f"Testing AD connection to {ad_dc_host}:{ad_dc_port} as {ad_bind_dn}")
+            
+            # Test 1: DNS resolution
+            self.log("Step 1: Testing DNS resolution...")
+            dns_result = self._test_dns_resolution(ad_dc_host)
+            test_result['tests']['dns'] = dns_result
+            
+            # Test 2: Port connectivity
+            self.log(f"Step 2: Testing port {ad_dc_port} connectivity...")
+            port_result = self._test_port_connectivity(ad_dc_host, ad_dc_port)
+            test_result['tests']['port'] = port_result
+            
+            # Test 3: SSL certificate (if using LDAPS)
+            if ad_dc_use_ssl:
+                self.log(f"Step 3: Testing SSL certificate...")
+                ssl_result = self._test_ssl_certificate(ad_dc_host, ad_dc_port)
+                test_result['tests']['ssl'] = ssl_result
+            
+            # Test 4: LDAP bind with credentials
+            self.log(f"Step 4: Testing LDAP bind with service account...")
+            bind_result = self._test_ad_ldap_bind(
+                ad_dc_host, ad_dc_port, ad_dc_use_ssl, ad_bind_dn, ad_bind_password
+            )
+            test_result['tests']['bind'] = bind_result
+            
+            # Determine overall success
+            all_passed = (
+                dns_result.get('success', False) and
+                port_result.get('success', False) and
+                bind_result.get('success', False)
+            )
+            if ad_dc_use_ssl:
+                # SSL is optional but should be considered
+                ssl_ok = test_result['tests'].get('ssl', {}).get('success', True)
+                all_passed = all_passed and ssl_ok
+            
+            test_result['success'] = all_passed
+            
+            if all_passed:
+                self.log(f"[OK] AD connection test passed - credentials are valid")
+            else:
+                failed_tests = [k for k, v in test_result['tests'].items() if not v.get('success', False)]
+                self.log(f"[FAIL] AD connection test failed: {', '.join(failed_tests)}")
+            
+            self.update_job_status(
+                job['id'],
+                'completed',
+                completed_at=datetime.now().isoformat(),
+                details={'test_result': test_result}
+            )
+            
+        except Exception as e:
+            self.log(f"AD connection test failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e), 'test_result': {'success': False, 'error': str(e)}}
+            )
+    
+    def _test_ad_ldap_bind(self, host: str, port: int, use_ssl: bool, bind_dn: str, bind_password: str) -> dict:
+        """Test LDAP bind to AD with provided credentials."""
+        try:
+            import ldap3
+            from ldap3 import Server, Connection, SIMPLE, AUTO_BIND_NO_TLS, SUBTREE
+            from ldap3.core.exceptions import LDAPBindError, LDAPSocketOpenError, LDAPException
+            
+            start_time = time.time()
+            
+            # Build LDAP URL
+            protocol = 'ldaps' if use_ssl else 'ldap'
+            ldap_url = f"{protocol}://{host}:{port}"
+            self.log(f"Connecting to {ldap_url} as {bind_dn}")
+            
+            # Create server and connection
+            server = Server(host, port=port, use_ssl=use_ssl, get_info='ALL', connect_timeout=10)
+            conn = Connection(
+                server,
+                user=bind_dn,
+                password=bind_password,
+                authentication=SIMPLE,
+                raise_exceptions=True,
+                receive_timeout=10
+            )
+            
+            # Attempt to bind
+            bind_success = conn.bind()
+            elapsed_ms = round((time.time() - start_time) * 1000)
+            
+            if bind_success:
+                # Get some server info for verification
+                server_info = {}
+                if conn.server.info:
+                    server_info['naming_contexts'] = list(conn.server.info.naming_contexts or [])[:3]
+                    server_info['vendor_name'] = getattr(conn.server.info, 'vendor_name', None)
+                
+                conn.unbind()
+                
+                return {
+                    'success': True,
+                    'response_time_ms': elapsed_ms,
+                    'message': f'LDAP bind successful ({elapsed_ms}ms)',
+                    'server_info': server_info,
+                    'authenticated_as': bind_dn
+                }
+            else:
+                return {
+                    'success': False,
+                    'response_time_ms': elapsed_ms,
+                    'message': 'LDAP bind failed - invalid credentials',
+                    'error': str(conn.result) if hasattr(conn, 'result') else 'Unknown error'
+                }
+                
+        except LDAPBindError as e:
+            error_msg = str(e)
+            # Parse AD-specific error codes
+            error_details = self._parse_ad_error(error_msg)
+            return {
+                'success': False,
+                'error': error_msg,
+                'error_code': error_details.get('code'),
+                'error_reason': error_details.get('reason'),
+                'message': error_details.get('message', f'LDAP bind failed: {error_msg}')
+            }
+        except LDAPSocketOpenError as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'message': f'Cannot connect to AD server: {e}'
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'message': f'LDAP bind error: {e}'
+            }
+    
+    def _parse_ad_error(self, error_msg: str) -> dict:
+        """Parse AD LDAP error codes to human-readable messages."""
+        # AD error codes: https://ldapwiki.com/wiki/Common%20Active%20Directory%20Bind%20Errors
+        error_codes = {
+            '52e': {'reason': 'invalid_credentials', 'message': 'Invalid username or password'},
+            '525': {'reason': 'user_not_found', 'message': 'User not found in AD'},
+            '530': {'reason': 'not_permitted_to_logon', 'message': 'User not permitted to log on at this time'},
+            '531': {'reason': 'restricted_to_workstations', 'message': 'User restricted to specific workstations'},
+            '532': {'reason': 'password_expired', 'message': 'Password has expired'},
+            '533': {'reason': 'account_disabled', 'message': 'Account is disabled'},
+            '701': {'reason': 'account_expired', 'message': 'Account has expired'},
+            '773': {'reason': 'must_change_password', 'message': 'User must change password'},
+            '775': {'reason': 'account_locked', 'message': 'Account is locked out'},
+        }
+        
+        result = {'code': None, 'reason': 'unknown', 'message': error_msg}
+        
+        # Look for "data XYZ" pattern in error message
+        import re
+        match = re.search(r'data\s+([0-9a-fA-F]+)', error_msg)
+        if match:
+            code = match.group(1).lower()
+            result['code'] = code
+            if code in error_codes:
+                result['reason'] = error_codes[code]['reason']
+                result['message'] = error_codes[code]['message']
+        
+        return result
+
     def _test_dns_resolution(self, hostname: str) -> dict:
         """Test DNS resolution for hostname."""
         try:

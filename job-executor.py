@@ -854,6 +854,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             'esxi_preflight_check': self.esxi_handler.execute_esxi_preflight_check,
             'idm_authenticate': self.idm_handler.execute_idm_authenticate,
             'idm_test_connection': self.idm_handler.execute_idm_test_connection,
+            'idm_test_ad_connection': self.idm_handler.execute_idm_test_ad_connection,
             'idm_sync_users': self.idm_handler.execute_idm_sync_users,
             'idm_search_groups': self.idm_handler.execute_idm_search_groups,
             'idm_search_ad_groups': self.idm_handler.execute_idm_search_ad_groups,
