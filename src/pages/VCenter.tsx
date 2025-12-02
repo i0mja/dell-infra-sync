@@ -785,10 +785,6 @@ export default function VCenter() {
               toolsFilter={vmsToolsFilter}
               osFilter={vmsOsFilter}
               visibleColumns={vmsColumnVisibility.visibleColumns}
-              onSelectionChange={(ids) => {
-                setSelectedVmIds(ids);
-                setVmsSelectedCount(ids.size);
-              }}
             />
           </TabsContent>
 
@@ -803,10 +799,6 @@ export default function VCenter() {
               haFilter={clustersHaFilter}
               drsFilter={clustersDrsFilter}
               visibleColumns={clustersColumnVisibility.visibleColumns}
-              onSelectionChange={(ids) => {
-                setSelectedClusterIds(ids);
-                setClustersSelectedCount(ids.size);
-              }}
             />
           </TabsContent>
 
@@ -821,10 +813,6 @@ export default function VCenter() {
               accessFilter={datastoresAccessFilter}
               capacityFilter={datastoresCapacityFilter}
               visibleColumns={datastoresColumnVisibility.visibleColumns}
-              onSelectionChange={(ids) => {
-                setSelectedDatastoreIds(ids);
-                setDatastoresSelectedCount(ids.size);
-              }}
             />
           </TabsContent>
 

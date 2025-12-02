@@ -225,16 +225,7 @@ export function HostsTable({
     toast({ title: "Export successful", description: `Exported ${hostsToExport.length} hosts` });
   };
 
-  const handleSaveView = () => {
-    if (!viewName.trim()) {
-      toast({ title: "Enter view name", variant: "destructive" });
-      return;
-    }
-    saveView(viewName, {}, sortField || undefined, sortDirection, visibleColumns);
-    toast({ title: "View saved", description: `"${viewName}" saved successfully` });
-    setSaveDialogOpen(false);
-    setViewName("");
-  };
+  // Save view handled by filter toolbar
 
   const handleSyncSelected = () => {
     const selected = allHosts.filter((h) => selectedHosts.has(h.id));
@@ -305,16 +296,10 @@ export function HostsTable({
           <Server className="h-12 w-12 mx-auto mb-3 opacity-50" />
           <p className="text-lg font-medium mb-2">No hosts found</p>
           <p className="text-sm mb-4">Try adjusting your filters or sync vCenter data</p>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={clearView}>
-              <X className="mr-1 h-4 w-4" />
-              Clear View
-            </Button>
-            <Button variant="default" size="sm" onClick={() => onSync?.()}>
-              <RefreshCcw className="mr-1 h-4 w-4" />
-              Sync Now
-            </Button>
-          </div>
+          <Button variant="default" size="sm" onClick={() => onSync?.()}>
+            <RefreshCcw className="mr-1 h-4 w-4" />
+            Sync Now
+          </Button>
         </div>
       </div>
     );
@@ -322,64 +307,23 @@ export function HostsTable({
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* Toolbar */}
-      <div className="flex items-center justify-between gap-2 px-4 py-2 border-b">
-        <div className="flex items-center gap-2">
-          {selectedHosts.size > 0 && (
-            <>
-              <span className="text-sm text-muted-foreground">{selectedHosts.size} selected</span>
-              <Button variant="ghost" size="sm" onClick={handleSyncSelected}>
-                <RefreshCcw className="h-3.5 w-3.5 mr-1" />
-                Sync Selected
-              </Button>
-              {onBulkDelete && (
-                <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive"
-                  onClick={() => onBulkDelete(Array.from(selectedHosts))}>
-                  <Trash2 className="h-3.5 w-3.5 mr-1" />
-                  Remove ({selectedHosts.size})
-                </Button>
-              )}
-            </>
+      {/* Selection info */}
+      {selectedHosts.size > 0 && (
+        <div className="flex items-center gap-2 px-4 py-2 border-b bg-muted/30">
+          <span className="text-sm text-muted-foreground">{selectedHosts.size} selected</span>
+          <Button variant="ghost" size="sm" onClick={handleSyncSelected}>
+            <RefreshCcw className="h-3.5 w-3.5 mr-1" />
+            Sync Selected
+          </Button>
+          {onBulkDelete && (
+            <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive"
+              onClick={() => onBulkDelete(Array.from(selectedHosts))}>
+              <Trash2 className="h-3.5 w-3.5 mr-1" />
+              Remove ({selectedHosts.size})
+            </Button>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">
-                <Columns3 className="mr-1 h-4 w-4" /> Columns
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuCheckboxItem checked={isColumnVisible("name")} onCheckedChange={() => toggleColumn("name")}>
-                Hostname
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColumnVisible("status")} onCheckedChange={() => toggleColumn("status")}>
-                Status
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColumnVisible("esxi")} onCheckedChange={() => toggleColumn("esxi")}>
-                ESXi Version
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColumnVisible("serial")} onCheckedChange={() => toggleColumn("serial")}>
-                Serial Number
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColumnVisible("linked")} onCheckedChange={() => toggleColumn("linked")}>
-                Linked
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColumnVisible("sync")} onCheckedChange={() => toggleColumn("sync")}>
-                Last Sync
-              </DropdownMenuCheckboxItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button variant="outline" size="sm" onClick={handleExportCSV}>
-            <Download className="mr-1 h-4 w-4" /> Export
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setSaveDialogOpen(true)}>
-            <Save className="mr-1 h-4 w-4" /> Save View
-          </Button>
-        </div>
-      </div>
+      )}
       
       {/* Table */}
       <div className="overflow-auto flex-1">
@@ -566,32 +510,6 @@ export function HostsTable({
         canGoPrev={pagination.canGoPrev}
       />
 
-      {/* Save View Dialog */}
-      <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Save Current View</DialogTitle>
-            <DialogDescription>Give your view a name to save the current sort and column settings</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div>
-              <Label htmlFor="view-name">View Name</Label>
-              <Input
-                id="view-name"
-                value={viewName}
-                onChange={(e) => setViewName(e.target.value)}
-                placeholder="e.g., 'Connected Hosts', 'Unlinked Only'"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSaveDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSaveView}>Save View</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
