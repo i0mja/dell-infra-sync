@@ -50,7 +50,7 @@ export function NotificationCenter() {
   };
 
   const handleViewAllJobs = () => {
-    navigate('/maintenance-planner?tab=jobs');
+    navigate('/activity');
     setOpen(false);
   };
 
