@@ -25,6 +25,91 @@ echo "Creating Offline Installation Package"
 echo "========================================="
 echo ""
 
+# Check prerequisites
+echo_step "Checking prerequisites..."
+
+MISSING_PREREQS=0
+RED='\033[0;31m'
+
+# Check npm
+if ! command -v npm &> /dev/null; then
+  echo -e "${RED}[MISSING]${NC} npm is not installed"
+  echo "         Install with: dnf module enable nodejs:18 && dnf install nodejs -y"
+  MISSING_PREREQS=1
+else
+  echo_info "npm found: $(npm --version)"
+fi
+
+# Check docker
+if ! command -v docker &> /dev/null; then
+  echo -e "${RED}[MISSING]${NC} docker is not installed"
+  echo "         Install Docker CE: https://docs.docker.com/engine/install/rhel/"
+  echo "         Or quick install:"
+  echo "           dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo"
+  echo "           dnf install docker-ce docker-ce-cli containerd.io docker-compose-plugin -y"
+  MISSING_PREREQS=1
+elif ! docker info &> /dev/null 2>&1; then
+  echo -e "${RED}[MISSING]${NC} Docker daemon is not running"
+  echo "         Start with: systemctl start docker"
+  echo "         Enable on boot: systemctl enable docker"
+  MISSING_PREREQS=1
+else
+  echo_info "docker found: $(docker --version | cut -d' ' -f3 | tr -d ',')"
+fi
+
+# Check pip3
+if ! command -v pip3 &> /dev/null; then
+  echo -e "${RED}[MISSING]${NC} pip3 is not installed"
+  echo "         Install with: dnf install python3-pip -y"
+  MISSING_PREREQS=1
+else
+  echo_info "pip3 found: $(pip3 --version | cut -d' ' -f2)"
+fi
+
+# Check rsync
+if ! command -v rsync &> /dev/null; then
+  echo -e "${RED}[MISSING]${NC} rsync is not installed"
+  echo "         Install with: dnf install rsync -y"
+  MISSING_PREREQS=1
+else
+  echo_info "rsync found"
+fi
+
+# Check tar (usually always present, but verify)
+if ! command -v tar &> /dev/null; then
+  echo -e "${RED}[MISSING]${NC} tar is not installed"
+  echo "         Install with: dnf install tar -y"
+  MISSING_PREREQS=1
+fi
+
+# Exit if prerequisites missing
+if [ $MISSING_PREREQS -eq 1 ]; then
+  echo ""
+  echo -e "${RED}=========================================${NC}"
+  echo -e "${RED}   Missing Prerequisites - Cannot Continue${NC}"
+  echo -e "${RED}=========================================${NC}"
+  echo ""
+  echo "Please install the missing tools and try again."
+  echo ""
+  echo "Quick install all prerequisites on RHEL 9:"
+  echo "  # Enable Node.js 18"
+  echo "  dnf module enable nodejs:18 -y"
+  echo ""
+  echo "  # Install tools"
+  echo "  dnf install nodejs python3-pip rsync tar -y"
+  echo ""
+  echo "  # Install Docker (requires internet or offline repo)"
+  echo "  dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo"
+  echo "  dnf install docker-ce docker-ce-cli containerd.io docker-compose-plugin -y"
+  echo "  systemctl enable --now docker"
+  echo ""
+  exit 1
+fi
+
+echo ""
+echo_info "All prerequisites found - continuing with package creation"
+echo ""
+
 # Create package directory structure
 echo_step "Creating package directory structure..."
 mkdir -p "$PACKAGE_DIR/$PACKAGE_NAME"/{docker-images,npm-packages,python-packages,app,docs}
