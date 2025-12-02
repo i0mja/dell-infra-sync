@@ -54,6 +54,10 @@ export function IdmConnectionSettings() {
   const [networkCheckStatus, setNetworkCheckStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [networkCheckResult, setNetworkCheckResult] = useState<any>(null);
   
+  // AD Connection test state
+  const [adTestStatus, setAdTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [adTestResult, setAdTestResult] = useState<any>(null);
+  
   // AD Trust domains
   const [trustedDomains, setTrustedDomains] = useState<string[]>([]);
   const [newTrustedDomain, setNewTrustedDomain] = useState('');
@@ -386,9 +390,75 @@ export function IdmConnectionSettings() {
     poll();
   };
 
+  const handleTestAdConnection = async () => {
+    setAdTestStatus('testing');
+    setAdTestResult(null);
+    
+    const { data: job, error } = await supabase
+      .from('jobs')
+      .insert({
+        job_type: 'idm_test_ad_connection' as any,
+        status: 'pending',
+        details: {
+          ad_dc_host: adDcHost,
+          ad_dc_port: adDcPort,
+          ad_dc_use_ssl: adDcUseSsl,
+          ad_bind_dn: adBindDn,
+          ad_bind_password: adBindPassword || undefined,
+          use_saved_password: !adBindPassword && !!settings?.ad_bind_password_encrypted,
+        },
+        created_by: (await supabase.auth.getUser()).data.user?.id || '',
+      })
+      .select()
+      .single();
+    
+    if (error || !job) {
+      setAdTestStatus('error');
+      setAdTestResult({ error: 'Failed to create AD connection test job' });
+      return;
+    }
+    
+    pollAdTestStatus(job.id);
+  };
+  
+  const pollAdTestStatus = async (jobId: string) => {
+    const maxAttempts = 30;
+    let attempts = 0;
+    
+    const poll = async () => {
+      attempts++;
+      
+      const { data: job } = await supabase
+        .from('jobs')
+        .select('*')
+        .eq('id', jobId)
+        .single();
+      
+      if (!job) return;
+      
+      if (job.status === 'completed' || job.status === 'failed') {
+        const details = job.details as any;
+        const result = details?.test_result || details || {};
+        setAdTestResult(result);
+        setAdTestStatus(result.success ? 'success' : 'error');
+        return;
+      }
+      
+      if (attempts < maxAttempts && (job.status === 'pending' || job.status === 'running')) {
+        setTimeout(poll, 1000);
+      } else {
+        setAdTestStatus('error');
+        setAdTestResult({ error: 'AD connection test timed out' });
+      }
+    };
+    
+    poll();
+  };
+
   const canTestConnection = serverHost && bindDn && (bindPassword || settings?.bind_password_encrypted) && baseDn;
   const canTestAuth = testAuthUsername && testAuthPassword && authMode !== 'local_only';
   const canNetworkCheck = serverHost;
+  const canTestAdConnection = adDcHost && adBindDn && (adBindPassword || settings?.ad_bind_password_encrypted);
 
   if (loading) {
     return (
@@ -862,6 +932,115 @@ export function IdmConnectionSettings() {
                         </AlertDescription>
                       </Alert>
                     )}
+
+                    {/* Test AD Connection */}
+                    <div className="pt-4 border-t space-y-3">
+                      <Button 
+                        onClick={handleTestAdConnection} 
+                        variant="outline"
+                        disabled={!canTestAdConnection || adTestStatus === 'testing'}
+                      >
+                        {adTestStatus === 'testing' ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Testing AD Connection...
+                          </>
+                        ) : (
+                          <>
+                            <TestTube className="mr-2 h-4 w-4" />
+                            Test AD Connection
+                          </>
+                        )}
+                      </Button>
+
+                      {!canTestAdConnection && (
+                        <p className="text-sm text-muted-foreground">
+                          Configure AD DC Host, Bind DN, and Password to test connection
+                        </p>
+                      )}
+
+                      {adTestResult && (
+                        <div className="space-y-3">
+                          {/* Test Results Grid */}
+                          {adTestResult.tests && (
+                            <div className="grid grid-cols-4 gap-2 text-sm">
+                              {adTestResult.tests.dns && (
+                                <div className={`p-2 rounded ${adTestResult.tests.dns.success ? 'bg-green-50 dark:bg-green-950/20' : 'bg-red-50 dark:bg-red-950/20'}`}>
+                                  <div className="flex items-center gap-1">
+                                    {adTestResult.tests.dns.success ? <CheckCircle className="h-3 w-3 text-green-600" /> : <XCircle className="h-3 w-3 text-red-600" />}
+                                    <span className="font-medium">DNS</span>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground mt-1 truncate">{adTestResult.tests.dns.message}</p>
+                                </div>
+                              )}
+                              {adTestResult.tests.port && (
+                                <div className={`p-2 rounded ${adTestResult.tests.port.success ? 'bg-green-50 dark:bg-green-950/20' : 'bg-red-50 dark:bg-red-950/20'}`}>
+                                  <div className="flex items-center gap-1">
+                                    {adTestResult.tests.port.success ? <CheckCircle className="h-3 w-3 text-green-600" /> : <XCircle className="h-3 w-3 text-red-600" />}
+                                    <span className="font-medium">Port</span>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground mt-1 truncate">{adTestResult.tests.port.message}</p>
+                                </div>
+                              )}
+                              {adTestResult.tests.ssl && (
+                                <div className={`p-2 rounded ${adTestResult.tests.ssl.success ? 'bg-green-50 dark:bg-green-950/20' : 'bg-red-50 dark:bg-red-950/20'}`}>
+                                  <div className="flex items-center gap-1">
+                                    {adTestResult.tests.ssl.success ? <CheckCircle className="h-3 w-3 text-green-600" /> : <XCircle className="h-3 w-3 text-red-600" />}
+                                    <span className="font-medium">SSL</span>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground mt-1 truncate">{adTestResult.tests.ssl.message}</p>
+                                </div>
+                              )}
+                              {adTestResult.tests.bind && (
+                                <div className={`p-2 rounded ${adTestResult.tests.bind.success ? 'bg-green-50 dark:bg-green-950/20' : 'bg-red-50 dark:bg-red-950/20'}`}>
+                                  <div className="flex items-center gap-1">
+                                    {adTestResult.tests.bind.success ? <CheckCircle className="h-3 w-3 text-green-600" /> : <XCircle className="h-3 w-3 text-red-600" />}
+                                    <span className="font-medium">LDAP Bind</span>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground mt-1 truncate">{adTestResult.tests.bind.message}</p>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Summary */}
+                          {adTestResult.success !== undefined && (
+                            <Alert className={adTestResult.success ? 'border-green-500 bg-green-50 dark:bg-green-950/20' : 'border-red-500 bg-red-50 dark:bg-red-950/20'}>
+                              {adTestResult.success ? (
+                                <CheckCircle className="h-4 w-4 text-green-600" />
+                              ) : (
+                                <XCircle className="h-4 w-4 text-red-600" />
+                              )}
+                              <AlertDescription>
+                                {adTestResult.success 
+                                  ? 'AD connection test passed! Service account credentials are valid.'
+                                  : `AD connection test failed. ${adTestResult.tests?.bind?.message || adTestResult.error || 'Check credentials and try again.'}`}
+                              </AlertDescription>
+                            </Alert>
+                          )}
+
+                          {/* Detailed bind error */}
+                          {adTestResult.tests?.bind?.error_reason && !adTestResult.success && (
+                            <Alert variant="destructive">
+                              <AlertCircle className="h-4 w-4" />
+                              <AlertDescription>
+                                <strong>Error Code {adTestResult.tests.bind.error_code}:</strong> {adTestResult.tests.bind.message}
+                                <p className="text-xs mt-1 opacity-80">
+                                  {adTestResult.tests.bind.error_reason === 'invalid_credentials' && 
+                                    'Double-check the username format (user@domain.com or full DN) and password.'}
+                                  {adTestResult.tests.bind.error_reason === 'user_not_found' && 
+                                    'The service account username was not found in AD.'}
+                                  {adTestResult.tests.bind.error_reason === 'account_disabled' && 
+                                    'The service account is disabled in AD.'}
+                                  {adTestResult.tests.bind.error_reason === 'account_locked' && 
+                                    'The service account is locked out due to too many failed attempts.'}
+                                </p>
+                              </AlertDescription>
+                            </Alert>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
