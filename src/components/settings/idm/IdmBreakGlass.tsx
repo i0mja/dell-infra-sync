@@ -47,16 +47,8 @@ export function IdmBreakGlass() {
   }
 
   return (
-    <div className="space-y-6">
-      <Alert>
-        <ShieldAlert className="h-4 w-4" />
-        <AlertDescription>
-          <strong>Break-Glass Administrators</strong> are emergency local admin accounts that bypass IDM authentication. 
-          They should only be used when FreeIPA is unavailable or during emergencies. All usage is logged for audit purposes.
-        </AlertDescription>
-      </Alert>
-
-      <Card>
+    <div className="space-y-4">
+      <Card className="border-0 shadow-none">
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>

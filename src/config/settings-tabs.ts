@@ -75,31 +75,19 @@ export const settingsTabs: SettingsTab[] = [
       {
         id: 'connection',
         name: 'Connection',
-        description: 'FreeIPA server and LDAP configuration',
+        description: 'FreeIPA server, AD integration, and directory structure',
         icon: Server,
       },
       {
-        id: 'directory',
-        name: 'Directory',
-        description: 'LDAP structure and service account',
+        id: 'users-access',
+        name: 'Users & Access',
+        description: 'Manage users and group-to-role mappings',
         icon: Users,
       },
       {
-        id: 'role-mappings',
-        name: 'Role Mappings',
-        description: 'Map FreeIPA groups to application roles',
-        icon: Shield,
-      },
-      {
-        id: 'security-policies',
-        name: 'Security Policies',
-        description: 'Rate limits, lockouts, and session timeouts',
-        icon: Shield,
-      },
-      {
-        id: 'break-glass',
-        name: 'Break-Glass Admins',
-        description: 'Emergency local administrator accounts',
+        id: 'security',
+        name: 'Security',
+        description: 'Rate limits, sessions, and break-glass admins',
         icon: Shield,
       },
     ],
@@ -262,6 +250,12 @@ export const mapLegacyTabId = (oldTabId: string): { tab: string; section?: strin
     'activity': { tab: 'system', section: 'activity' },
     'activity-monitor': { tab: 'system', section: 'activity' },
     'jobs': { tab: 'system', section: 'jobs' },
+    // IDM legacy mappings (old 7-tab structure to new 4-tab structure)
+    'directory': { tab: 'identity-management', section: 'connection' },
+    'user-manager': { tab: 'identity-management', section: 'users-access' },
+    'role-mappings': { tab: 'identity-management', section: 'users-access' },
+    'security-policies': { tab: 'identity-management', section: 'security' },
+    'break-glass': { tab: 'identity-management', section: 'security' },
   };
   
   return mapping[oldTabId] || { tab: 'general' };

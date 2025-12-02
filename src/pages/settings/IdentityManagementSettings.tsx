@@ -1,13 +1,11 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useSearchParams } from 'react-router-dom';
+import { Activity, Link, Users, Shield } from 'lucide-react';
 import {
   IdmOverview,
-  IdmConnectionSettings,
-  IdmDirectorySettings,
-  IdmRoleMappings,
-  IdmSecurityPolicies,
-  IdmBreakGlass,
-  IdmUserManager,
+  IdmConnectionTab,
+  IdmUsersAndAccess,
+  IdmSecurityTab,
 } from '@/components/settings/idm';
 
 export function IdentityManagementSettings() {
@@ -22,14 +20,23 @@ export function IdentityManagementSettings() {
 
   return (
     <Tabs value={section} onValueChange={handleTabChange} className="space-y-6">
-      <TabsList className="grid w-full grid-cols-7">
-        <TabsTrigger value="overview">Overview</TabsTrigger>
-        <TabsTrigger value="connection">Connection</TabsTrigger>
-        <TabsTrigger value="user-manager">User Manager</TabsTrigger>
-        <TabsTrigger value="directory">Directory</TabsTrigger>
-        <TabsTrigger value="role-mappings">Role Mappings</TabsTrigger>
-        <TabsTrigger value="security-policies">Security</TabsTrigger>
-        <TabsTrigger value="break-glass">Break-Glass</TabsTrigger>
+      <TabsList className="grid w-full grid-cols-4">
+        <TabsTrigger value="overview" className="flex items-center gap-2">
+          <Activity className="h-4 w-4" />
+          <span className="hidden sm:inline">Overview</span>
+        </TabsTrigger>
+        <TabsTrigger value="connection" className="flex items-center gap-2">
+          <Link className="h-4 w-4" />
+          <span className="hidden sm:inline">Connection</span>
+        </TabsTrigger>
+        <TabsTrigger value="users-access" className="flex items-center gap-2">
+          <Users className="h-4 w-4" />
+          <span className="hidden sm:inline">Users & Access</span>
+        </TabsTrigger>
+        <TabsTrigger value="security" className="flex items-center gap-2">
+          <Shield className="h-4 w-4" />
+          <span className="hidden sm:inline">Security</span>
+        </TabsTrigger>
       </TabsList>
 
       <TabsContent value="overview">
@@ -37,27 +44,15 @@ export function IdentityManagementSettings() {
       </TabsContent>
 
       <TabsContent value="connection">
-        <IdmConnectionSettings />
+        <IdmConnectionTab />
       </TabsContent>
 
-      <TabsContent value="user-manager">
-        <IdmUserManager />
+      <TabsContent value="users-access">
+        <IdmUsersAndAccess />
       </TabsContent>
 
-      <TabsContent value="directory">
-        <IdmDirectorySettings />
-      </TabsContent>
-
-      <TabsContent value="role-mappings">
-        <IdmRoleMappings />
-      </TabsContent>
-
-      <TabsContent value="security-policies">
-        <IdmSecurityPolicies />
-      </TabsContent>
-
-      <TabsContent value="break-glass">
-        <IdmBreakGlass />
+      <TabsContent value="security">
+        <IdmSecurityTab />
       </TabsContent>
     </Tabs>
   );
