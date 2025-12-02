@@ -675,6 +675,67 @@ class FreeIPAAuthenticator:
                 "response_time_ms": elapsed_ms,
             }
     
+    def _ldap_escape(self, value: str) -> str:
+        """
+        Escape special characters for LDAP search filters.
+        
+        RFC 4515 requires escaping: * ( ) \ NUL
+        """
+        escape_chars = {
+            '\\': r'\5c',
+            '*': r'\2a',
+            '(': r'\28',
+            ')': r'\29',
+            '\x00': r'\00',
+        }
+        result = value
+        for char, escaped in escape_chars.items():
+            result = result.replace(char, escaped)
+        return result
+    
+    def _extract_username_variants(self, username: str) -> List[str]:
+        """
+        Extract all possible username variants for LDAP search.
+        
+        Given NEOPOSTAD\\adm_jalexander or adm_jalexander@neopost.ad,
+        returns list of variants to search.
+        """
+        variants = set()
+        
+        # Add original username
+        variants.add(username)
+        variants.add(username.lower())
+        
+        # Extract clean username from NT-style (DOMAIN\\user)
+        if '\\' in username:
+            parts = username.split('\\')
+            if len(parts) == 2:
+                domain, clean = parts
+                variants.add(clean)
+                variants.add(clean.lower())
+                # Also try domain\\user format with lowercase
+                variants.add(f"{domain.lower()}\\{clean.lower()}")
+                
+        # Extract clean username from UPN (user@domain)
+        if '@' in username:
+            parts = username.split('@')
+            if len(parts) == 2:
+                clean, domain = parts
+                variants.add(clean)
+                variants.add(clean.lower())
+        
+        # Also check for AD trust user format
+        is_ad_user, clean_username, domain = self._is_ad_trust_user(username)
+        if is_ad_user and clean_username:
+            variants.add(clean_username)
+            variants.add(clean_username.lower())
+            if domain:
+                # Try UPN format
+                variants.add(f"{clean_username}@{domain}")
+                variants.add(f"{clean_username.lower()}@{domain.lower()}")
+        
+        return list(variants)
+    
     def _lookup_ad_trust_groups_via_service_account(
         self,
         username: str,
@@ -700,8 +761,13 @@ class FreeIPAAuthenticator:
             logger.warning("No service account configured for group lookup after AD DC auth")
             return groups
         
+        logger.info(f"[GROUP LOOKUP] Starting FreeIPA group lookup for AD trust user: {username}")
+        logger.debug(f"[GROUP LOOKUP] Using service account: {service_bind_dn}")
+        
         try:
             server = self._get_server()
+            logger.debug(f"[GROUP LOOKUP] Connecting to FreeIPA server: {self.server_host}:{self.server_port}")
+            
             conn = Connection(
                 server,
                 user=service_bind_dn,
@@ -709,13 +775,24 @@ class FreeIPAAuthenticator:
                 auto_bind=True,
             )
             
-            # Search compat groups tree
+            logger.info(f"[GROUP LOOKUP] Service account bind successful")
+            
+            # Search compat groups tree with multiple username variants
             groups = self._search_ad_trust_groups(conn, username)
             
             conn.unbind()
             
+            if groups:
+                logger.info(f"[GROUP LOOKUP] Found {len(groups)} group(s) for {username}")
+                for g in groups:
+                    logger.debug(f"[GROUP LOOKUP]   - {g}")
+            else:
+                logger.warning(f"[GROUP LOOKUP] No groups found for {username} in FreeIPA compat tree")
+            
         except Exception as e:
-            logger.warning(f"Error looking up groups for AD trust user {username}: {e}")
+            logger.error(f"[GROUP LOOKUP] Error looking up groups for AD trust user {username}: {e}")
+            import traceback
+            logger.debug(f"[GROUP LOOKUP] Traceback: {traceback.format_exc()}")
         
         return groups
     
@@ -726,6 +803,8 @@ class FreeIPAAuthenticator:
         AD trust users may have group memberships in cn=groups,cn=compat
         rather than (or in addition to) memberOf attribute.
         
+        Searches with multiple username formats to ensure we find all groups.
+        
         Args:
             conn: Active LDAP connection
             username: Full username with domain (user@domain)
@@ -733,29 +812,84 @@ class FreeIPAAuthenticator:
         Returns:
             List of group DNs
         """
-        groups = []
+        groups = set()  # Use set to avoid duplicates
+        
         try:
             compat_groups_base = f"cn=groups,cn=compat,{self.base_dn}"
-            # Search for groups where the user is a member
-            group_filter = f"(memberUid={username})"
+            logger.info(f"[GROUP SEARCH] Searching in: {compat_groups_base}")
             
-            conn.search(
-                search_base=compat_groups_base,
-                search_filter=group_filter,
-                search_scope=SUBTREE,
-                attributes=["cn", "dn"],
-            )
+            # Get all username variants to search
+            username_variants = self._extract_username_variants(username)
+            logger.info(f"[GROUP SEARCH] Will search with {len(username_variants)} username variants:")
+            for variant in username_variants:
+                logger.debug(f"[GROUP SEARCH]   - '{variant}'")
             
-            for entry in conn.entries:
-                groups.append(str(entry.entry_dn))
+            # Search for each username variant
+            for variant in username_variants:
+                escaped_variant = self._ldap_escape(variant)
+                group_filter = f"(memberUid={escaped_variant})"
+                
+                logger.debug(f"[GROUP SEARCH] Trying filter: {group_filter}")
+                
+                conn.search(
+                    search_base=compat_groups_base,
+                    search_filter=group_filter,
+                    search_scope=SUBTREE,
+                    attributes=["cn", "dn"],
+                )
+                
+                for entry in conn.entries:
+                    group_dn = str(entry.entry_dn)
+                    if group_dn not in groups:
+                        groups.add(group_dn)
+                        logger.info(f"[GROUP SEARCH] Found group with '{variant}': {group_dn}")
+            
+            if not groups:
+                # Try a broader search - look for any memberUid containing the clean username
+                is_ad_user, clean_username, domain = self._is_ad_trust_user(username)
+                if is_ad_user and clean_username:
+                    # Try substring search
+                    escaped_clean = self._ldap_escape(clean_username.lower())
+                    broad_filter = f"(memberUid=*{escaped_clean}*)"
+                    logger.info(f"[GROUP SEARCH] Trying broad substring search: {broad_filter}")
+                    
+                    conn.search(
+                        search_base=compat_groups_base,
+                        search_filter=broad_filter,
+                        search_scope=SUBTREE,
+                        attributes=["cn", "dn", "memberUid"],
+                    )
+                    
+                    for entry in conn.entries:
+                        group_dn = str(entry.entry_dn)
+                        member_uids = entry.memberUid.values if hasattr(entry, 'memberUid') else []
+                        logger.debug(f"[GROUP SEARCH] Broad search found group {group_dn}, memberUids: {list(member_uids)[:5]}...")
+                        groups.add(group_dn)
             
             if groups:
-                logger.info(f"Found {len(groups)} group(s) for AD trust user in compat tree")
+                logger.info(f"[GROUP SEARCH] Total: Found {len(groups)} unique group(s) for AD trust user")
+            else:
+                logger.warning(f"[GROUP SEARCH] No groups found with any username variant")
+                # Log what memberUid values exist in some groups for debugging
+                logger.debug(f"[GROUP SEARCH] Sampling compat groups to see memberUid format...")
+                conn.search(
+                    search_base=compat_groups_base,
+                    search_filter="(objectClass=posixGroup)",
+                    search_scope=SUBTREE,
+                    attributes=["cn", "memberUid"],
+                    size_limit=3,
+                )
+                for entry in conn.entries:
+                    cn = entry.cn.value if hasattr(entry, 'cn') else 'unknown'
+                    member_uids = list(entry.memberUid.values)[:5] if hasattr(entry, 'memberUid') else []
+                    logger.debug(f"[GROUP SEARCH] Sample group '{cn}' memberUids: {member_uids}")
                 
         except Exception as e:
-            logger.warning(f"Error searching compat groups for {username}: {e}")
+            logger.error(f"[GROUP SEARCH] Error searching compat groups for {username}: {e}")
+            import traceback
+            logger.debug(f"[GROUP SEARCH] Traceback: {traceback.format_exc()}")
         
-        return groups
+        return list(groups)
     
     def get_user_groups(
         self,
