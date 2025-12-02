@@ -64,10 +64,128 @@ class IDMHandler(BaseHandler):
                 'failed',
                 completed_at=datetime.now().isoformat(),
                 details={
-                    'error': str(e),
-                    'auth_result': {'success': False, 'error': str(e)}
-                }
+            'error': str(e),
+            'auth_result': {'success': False, 'error': str(e)}
+        }
+    )
+
+def execute_idm_test_auth(self, job: Dict):
+    """Test IDM authentication with username/password and simulate role mapping."""
+    try:
+        self.log(f"Starting IDM test authentication job: {job['id']}")
+        self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+        
+        details = job.get('details') or {}
+        username = details.get('username')
+        password = details.get('password')
+        
+        if not username or not password:
+            raise ValueError("Username and password required")
+        
+        # Get IDM settings
+        idm_settings = self.executor.get_idm_settings()
+        if not idm_settings:
+            raise ValueError("IDM not configured")
+        
+        # Create authenticator
+        authenticator = self.executor.create_freeipa_authenticator(idm_settings)
+        if not authenticator:
+            raise ValueError("Failed to initialize FreeIPA authenticator")
+        
+        # Authenticate user
+        self.log(f"Testing authentication for user '{username}'")
+        auth_result = authenticator.authenticate_user(username, password)
+        
+        if not auth_result['success']:
+            self.log(f"[X] Test authentication failed: {auth_result.get('error')}", "WARN")
+            self.update_job_status(
+                job['id'],
+                'completed',
+                completed_at=datetime.now().isoformat(),
+                details={'test_result': auth_result, 'username': username}
             )
+            return
+        
+        self.log(f"[OK] Test authentication successful for '{username}'")
+        self.log(f"  User DN: {auth_result.get('user_dn')}")
+        self.log(f"  Full Name: {auth_result.get('full_name', 'N/A')}")
+        self.log(f"  Email: {auth_result.get('email', 'N/A')}")
+        self.log(f"  Groups: {len(auth_result.get('groups', []))} group(s)")
+        
+        # Simulate role mapping (read from idm_group_mappings)
+        user_groups = auth_result.get('groups', [])
+        mapped_role = None
+        matched_group = None
+        
+        if user_groups:
+            self.log("Simulating role mapping...")
+            group_mappings = self.executor.get_idm_group_mappings()
+            
+            # Sort by priority (lower number = higher priority)
+            sorted_mappings = sorted(
+                group_mappings,
+                key=lambda x: x.get('priority', 999)
+            )
+            
+            for mapping in sorted_mappings:
+                if not mapping.get('is_active'):
+                    continue
+                    
+                mapping_group_dn = mapping.get('idm_group_dn', '')
+                
+                # Check if user's groups contain this mapping's group DN
+                for user_group_dn in user_groups:
+                    if mapping_group_dn.lower() in user_group_dn.lower():
+                        mapped_role = mapping.get('app_role')
+                        matched_group = mapping.get('idm_group_name')
+                        self.log(f"[OK] Matched group '{matched_group}' → role '{mapped_role}'")
+                        break
+                
+                if mapped_role:
+                    break
+            
+            if not mapped_role:
+                self.log("[WARN] No matching group mappings found, would default to 'viewer'")
+                mapped_role = 'viewer'
+        else:
+            self.log("[WARN] User has no groups, would default to 'viewer'")
+            mapped_role = 'viewer'
+        
+        # Prepare test result
+        test_result = {
+            'success': True,
+            'user_dn': auth_result.get('user_dn'),
+            'full_name': auth_result.get('full_name'),
+            'email': auth_result.get('email'),
+            'title': auth_result.get('title'),
+            'department': auth_result.get('department'),
+            'groups': user_groups,
+            'group_count': len(user_groups),
+            'mapped_role': mapped_role,
+            'matched_group': matched_group,
+            'is_test': True,
+        }
+        
+        self.log(f"[OK] Test completed - would assign role: {mapped_role}")
+        
+        self.update_job_status(
+            job['id'],
+            'completed',
+            completed_at=datetime.now().isoformat(),
+            details={'test_result': test_result, 'username': username}
+        )
+        
+    except Exception as e:
+        self.log(f"IDM test authentication failed: {e}", "ERROR")
+        self.update_job_status(
+            job['id'],
+            'failed',
+            completed_at=datetime.now().isoformat(),
+            details={
+                'error': str(e),
+                'test_result': {'success': False, 'error': str(e)}
+            }
+        )
     
     def execute_idm_test_connection(self, job: Dict):
         """Test FreeIPA LDAP connection with service account."""
