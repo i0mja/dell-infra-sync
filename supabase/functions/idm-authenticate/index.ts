@@ -247,7 +247,18 @@ serve(async (req) => {
         
         if (groupMappings && groupMappings.length > 0) {
           for (const mapping of groupMappings) {
-            if (userGroups.some((group: string) => group.toLowerCase().includes(mapping.idm_group_name.toLowerCase()))) {
+        // Improved group matching: normalize both sides for comparison
+        const mappingGroupName = (mapping.idm_group_dn || mapping.idm_group_name || '').toLowerCase();
+        const normalizedMappingName = mappingGroupName.includes('cn=') 
+          ? mappingGroupName.match(/cn=([^,]+)/i)?.[1]?.toLowerCase() || mappingGroupName
+          : mappingGroupName.split('\\').pop()?.toLowerCase() || mappingGroupName;
+        
+        if (userGroups.some((group: string) => {
+          const normalizedGroup = group.toLowerCase().includes('cn=')
+            ? group.match(/cn=([^,]+)/i)?.[1]?.toLowerCase() || group.toLowerCase()
+            : group.split('\\').pop()?.toLowerCase() || group.toLowerCase();
+          return normalizedGroup === normalizedMappingName || normalizedGroup.includes(normalizedMappingName) || normalizedMappingName.includes(normalizedGroup);
+        })) {
               mappedRole = mapping.app_role;
               console.log(`[IDM Auth] Mapped to role '${mappedRole}' via group '${mapping.idm_group_name}'`);
               break;

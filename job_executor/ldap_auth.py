@@ -11,6 +11,7 @@ against on-premise FreeIPA LDAP servers via the local network, supporting:
 - Service account-based user sync operations
 - AD Trust users (users from trusted Active Directory domains)
 - AD DC pass-through authentication for AD Trust users
+- Identity normalization across multiple formats (bare, UPN, NT-style)
 """
 
 import ssl
@@ -26,6 +27,13 @@ try:
     LDAP3_AVAILABLE = True
 except ImportError:
     LDAP3_AVAILABLE = False
+
+# Import identity normalizer
+try:
+    from job_executor.identity import IdentityNormalizer, NormalizedIdentity, normalize_group_name, groups_match
+    IDENTITY_AVAILABLE = True
+except ImportError:
+    IDENTITY_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +117,28 @@ class FreeIPAAuthenticator:
             if part.lower().startswith('dc='):
                 parts.append(part[3:])
         return '.'.join(parts).lower()
+    
+    def _derive_realm_from_base_dn(self, base_dn: str) -> str:
+        """Derive Kerberos realm from LDAP base DN."""
+        # Parse dc=idm,dc=neopost,dc=grp -> IDM.NEOPOST.GRP
+        parts = []
+        for component in base_dn.split(','):
+            component = component.strip()
+            if component.lower().startswith('dc='):
+                parts.append(component[3:].upper())
+        return '.'.join(parts) if parts else 'LOCALDOMAIN'
+    
+    def normalize_identity(self, username: str) -> NormalizedIdentity:
+        """
+        Normalize a username to canonical form.
+        
+        Args:
+            username: Username in any format (bare, UPN, NT-style)
+            
+        Returns:
+            NormalizedIdentity with canonical principal, realm, etc.
+        """
+        return self.identity_normalizer.normalize(username)
     
     def _get_server(self) -> Server:
         """Get or create LDAP server connection."""
