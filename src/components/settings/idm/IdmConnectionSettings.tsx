@@ -63,6 +63,10 @@ export function IdmConnectionSettings() {
   const [adDcPort, setAdDcPort] = useState(636);
   const [adDcUseSsl, setAdDcUseSsl] = useState(true);
   const [adDomainFqdn, setAdDomainFqdn] = useState('');
+  
+  // AD Service Account credentials (for AD operations like user search)
+  const [adBindDn, setAdBindDn] = useState('');
+  const [adBindPassword, setAdBindPassword] = useState('');
 
   useEffect(() => {
     if (settings) {
@@ -80,6 +84,7 @@ export function IdmConnectionSettings() {
       setAdDcPort(settings.ad_dc_port || 636);
       setAdDcUseSsl(settings.ad_dc_use_ssl ?? true);
       setAdDomainFqdn(settings.ad_domain_fqdn || '');
+      setAdBindDn(settings.ad_bind_dn || '');
       
       // If there's a saved bind_dn, extract username for display
       if (settings.bind_dn) {
@@ -113,6 +118,7 @@ export function IdmConnectionSettings() {
       ad_dc_port: adDcPort,
       ad_dc_use_ssl: adDcUseSsl,
       ad_domain_fqdn: adDomainFqdn || null,
+      ad_bind_dn: adBindDn || null,
     };
 
     if (bindPassword) {
@@ -121,6 +127,22 @@ export function IdmConnectionSettings() {
 
     await saveSettings(updates);
     setBindPassword('');
+    
+    // Handle AD bind password separately (different encryption type)
+    if (adBindPassword && settings?.id) {
+      try {
+        await supabase.functions.invoke('encrypt-credentials', {
+          body: {
+            type: 'idm_ad_bind',
+            idm_settings_id: settings.id,
+            password: adBindPassword,
+          },
+        });
+        setAdBindPassword('');
+      } catch (error) {
+        console.error('Failed to encrypt AD bind password:', error);
+      }
+    }
   };
 
   const handleAddTrustedDomain = () => {
@@ -782,6 +804,65 @@ export function IdmConnectionSettings() {
                       then group lookups will use FreeIPA's compat tree.
                     </AlertDescription>
                   </Alert>
+                )}
+
+                {/* AD Service Account for AD operations */}
+                {adDcHost && (
+                  <div className="pt-4 border-t space-y-4">
+                    <div>
+                      <Label className="text-base font-medium">AD Service Account</Label>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Service account credentials for AD operations (user search, group lookup). 
+                        This account needs read access to the AD directory.
+                      </p>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>AD Bind DN / Username</Label>
+                        <Input
+                          placeholder="svc_ldap@neopost.ad or CN=svc_ldap,CN=Users,DC=neopost,DC=ad"
+                          value={adBindDn}
+                          onChange={(e) => setAdBindDn(e.target.value)}
+                        />
+                        <p className="text-sm text-muted-foreground">
+                          UPN format (user@domain) or full DN
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>AD Bind Password</Label>
+                        <Input
+                          type="password"
+                          placeholder={settings?.ad_bind_password_encrypted ? '••••••••' : 'Enter password'}
+                          value={adBindPassword}
+                          onChange={(e) => setAdBindPassword(e.target.value)}
+                        />
+                        <p className="text-sm text-muted-foreground">
+                          {settings?.ad_bind_password_encrypted ? 'Password saved (enter new to change)' : 'Required for AD user search'}
+                        </p>
+                      </div>
+                    </div>
+
+                    {!adBindDn && !settings?.ad_bind_dn && (
+                      <Alert variant="destructive">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>
+                          <strong>AD Service Account Required:</strong> You must configure an AD service account 
+                          to use the User Manager and search AD users. The FreeIPA service account cannot 
+                          authenticate against AD.
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
+                    {(adBindDn || settings?.ad_bind_dn) && (
+                      <Alert className="border-green-500 bg-green-50 dark:bg-green-950/20">
+                        <CheckCircle className="h-4 w-4 text-green-600" />
+                        <AlertDescription className="text-green-800 dark:text-green-200">
+                          AD Service Account configured. You can now search AD users in the User Manager.
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  </div>
                 )}
               </div>
             </CardContent>

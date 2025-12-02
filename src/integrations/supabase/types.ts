@@ -835,6 +835,8 @@ export type Database = {
       }
       idm_settings: {
         Row: {
+          ad_bind_dn: string | null
+          ad_bind_password_encrypted: string | null
           ad_dc_host: string | null
           ad_dc_port: number | null
           ad_dc_use_ssl: boolean | null
@@ -868,6 +870,8 @@ export type Database = {
           verify_certificate: boolean | null
         }
         Insert: {
+          ad_bind_dn?: string | null
+          ad_bind_password_encrypted?: string | null
           ad_dc_host?: string | null
           ad_dc_port?: number | null
           ad_dc_use_ssl?: boolean | null
@@ -901,6 +905,8 @@ export type Database = {
           verify_certificate?: boolean | null
         }
         Update: {
+          ad_bind_dn?: string | null
+          ad_bind_password_encrypted?: string | null
           ad_dc_host?: string | null
           ad_dc_port?: number | null
           ad_dc_use_ssl?: boolean | null

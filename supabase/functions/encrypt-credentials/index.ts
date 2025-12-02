@@ -16,7 +16,7 @@ interface EncryptCredentialsRequest {
   idm_settings_id?: string;
   username?: string;
   password: string;
-  type: 'credential_set' | 'server' | 'vcenter' | 'openmanage' | 'activity_settings' | 'idm_settings';
+  type: 'credential_set' | 'server' | 'vcenter' | 'openmanage' | 'activity_settings' | 'idm_settings' | 'idm_ad_bind';
 }
 
 serve(async (req) => {
@@ -212,6 +212,19 @@ serve(async (req) => {
         updateResult = await supabaseAdmin
           .from('idm_settings')
           .update({ bind_password_encrypted: encryptedData })
+          .eq('id', request.idm_settings_id);
+        break;
+
+      case 'idm_ad_bind':
+        if (!request.idm_settings_id) {
+          return new Response(
+            JSON.stringify({ error: 'idm_settings_id required for idm_ad_bind type' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        updateResult = await supabaseAdmin
+          .from('idm_settings')
+          .update({ ad_bind_password_encrypted: encryptedData })
           .eq('id', request.idm_settings_id);
         break;
 

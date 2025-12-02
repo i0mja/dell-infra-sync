@@ -328,10 +328,11 @@ export function IdmUserManager() {
     }
   };
 
-  const domains = [
+  // Deduplicate domains
+  const domains = [...new Set([
     idmSettings?.ad_domain_fqdn,
     ...(idmSettings?.trusted_domains || []),
-  ].filter(Boolean);
+  ].filter(Boolean))];
 
   return (
     <div className="space-y-6">
