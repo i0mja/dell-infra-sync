@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Calendar, Plus, Play } from "lucide-react";
+import { Play } from "lucide-react";
 
 interface CompactStatsBarProps {
   safeDays: number;
@@ -8,8 +8,6 @@ interface CompactStatsBarProps {
   failedJobs: number;
   nextWindow?: { title: string; start: string };
   optimalCount: number;
-  onScheduleMaintenance: () => void;
-  onCreateJob: () => void;
   onUpdateWizard: () => void;
 }
 
@@ -19,8 +17,6 @@ export function CompactStatsBar({
   failedJobs,
   nextWindow,
   optimalCount,
-  onScheduleMaintenance,
-  onCreateJob,
   onUpdateWizard
 }: CompactStatsBarProps) {
   return (
@@ -72,21 +68,13 @@ export function CompactStatsBar({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-          <Button variant="outline" size="sm" onClick={onUpdateWizard}>
+          <Button size="sm" onClick={onUpdateWizard}>
             <Play className="mr-2 h-4 w-4" />
             Update Wizard
           </Button>
-          <Button variant="outline" size="sm" onClick={onScheduleMaintenance}>
-            <Calendar className="mr-2 h-4 w-4" />
-            Schedule
-          </Button>
-          <Button size="sm" onClick={onCreateJob}>
-            <Plus className="mr-2 h-4 w-4" />
-            Create Job
-          </Button>
 
           <Badge variant="outline" className="gap-2 sm:ml-2 sm:border-l sm:pl-2">
-            <span className="h-2 w-2 rounded-full bg-blue-500" />
+            <span className="h-2 w-2 rounded-full bg-primary" />
             <span className="text-xs font-medium tracking-wide">Operations</span>
           </Badge>
         </div>
