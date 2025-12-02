@@ -157,41 +157,73 @@ class FreeIPAAuthenticator:
         """
         Check if username is from a trusted AD domain.
         
-        AD Trust users authenticate with their UPN (user@AD.DOMAIN) and appear
-        in the cn=users,cn=compat tree rather than cn=users,cn=accounts.
+        AD Trust users authenticate with their UPN (user@AD.DOMAIN) or NT-style
+        (DOMAIN\\user) format and appear in the cn=users,cn=compat tree rather 
+        than cn=users,cn=accounts.
+        
+        Supports two formats:
+        - UPN: user@domain.com
+        - NT-style: DOMAIN\\user
         
         Args:
-            username: Username to check (may include @domain)
+            username: Username to check (may include @domain or DOMAIN\\)
             
         Returns:
             Tuple of (is_ad_trust_user, clean_username, domain)
         """
-        if '@' not in username:
-            return (False, username, '')
+        # Check NT-style format first: DOMAIN\user
+        if '\\' in username:
+            parts = username.split('\\', 1)
+            if len(parts) == 2:
+                domain, user = parts
+                domain_lower = domain.lower()
+                logger.info(f"NT-style username detected: {domain}\\{user}")
+                
+                # Check if domain matches any trusted domain (by prefix)
+                for trusted in self.trusted_domains:
+                    # Match NEOPOSTAD against neopost.ad
+                    trusted_prefix = trusted.split('.')[0].lower()
+                    if domain_lower == trusted_prefix or domain_lower == trusted:
+                        logger.info(f"NT-style user {username} matches trusted domain: {trusted}")
+                        return (True, user, trusted)
+                
+                # If no trusted_domains configured, assume AD trust
+                if not self.trusted_domains:
+                    logger.info(f"NT-style user {username} assumed to be AD trust user (no trusted_domains configured)")
+                    return (True, user, domain)
+                
+                # Has backslash but domain not recognized
+                logger.warning(f"NT-style user {username} domain {domain} not in trusted domains")
+                return (True, user, domain)  # Still treat as AD trust user
         
-        user, domain = username.rsplit('@', 1)
-        domain_lower = domain.lower()
-        
-        # If domain matches IPA realm, it's a native FreeIPA user
-        if domain_lower == self.ipa_realm:
-            logger.info(f"User {username} domain matches IPA realm, treating as native user")
+        # Check UPN format: user@domain
+        if '@' in username:
+            user, domain = username.rsplit('@', 1)
+            domain_lower = domain.lower()
+            
+            # If domain matches IPA realm, it's a native FreeIPA user
+            if domain_lower == self.ipa_realm:
+                logger.info(f"User {username} domain matches IPA realm, treating as native user")
+                return (False, user, domain)
+            
+            # Check if domain is in explicitly configured trusted domains
+            if self.trusted_domains:
+                if domain_lower in self.trusted_domains:
+                    logger.info(f"User {username} is from trusted AD domain: {domain}")
+                    return (True, user, domain)
+            
+            # If no trusted_domains configured but has @ and doesn't match IPA realm,
+            # assume it's an AD trust user (permissive mode)
+            if not self.trusted_domains:
+                logger.info(f"User {username} has domain suffix different from IPA realm, assuming AD trust user")
+                return (True, user, domain)
+            
+            # Domain not in trusted list
+            logger.warning(f"User {username} domain {domain} not in trusted domains list")
             return (False, user, domain)
         
-        # Check if domain is in explicitly configured trusted domains
-        if self.trusted_domains:
-            if domain_lower in self.trusted_domains:
-                logger.info(f"User {username} is from trusted AD domain: {domain}")
-                return (True, user, domain)
-        
-        # If no trusted_domains configured but has @ and doesn't match IPA realm,
-        # assume it's an AD trust user (permissive mode)
-        if not self.trusted_domains:
-            logger.info(f"User {username} has domain suffix different from IPA realm, assuming AD trust user")
-            return (True, user, domain)
-        
-        # Domain not in trusted list
-        logger.warning(f"User {username} domain {domain} not in trusted domains list")
-        return (False, user, domain)
+        # Plain username - native FreeIPA user
+        return (False, username, '')
     
     def test_connection(self, bind_dn: str, bind_password: str) -> Dict:
         """
