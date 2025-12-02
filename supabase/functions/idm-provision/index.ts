@@ -66,11 +66,54 @@ serve(async (req) => {
     const idmUid = user_info?.uid || cleanUsername;
     console.log(`[IDM Provision] Clean username: ${cleanUsername}, idmUid: ${idmUid}`);
     
-    const { data: existingProfile } = await supabase
+    // Generate email early for lookup
+    let generatedEmail = user_info?.email;
+    if (!generatedEmail || !generatedEmail.includes('@') || generatedEmail.endsWith('.grp')) {
+      generatedEmail = `${cleanUsername}@idm.local`;
+    }
+    
+    // Try multiple lookup strategies to find existing user
+    let existingProfile = null;
+    
+    // 1. Try exact idm_uid match
+    const { data: profileByUid } = await supabase
       .from('profiles')
-      .select('id, email')
+      .select('id, email, idm_uid')
       .eq('idm_uid', idmUid)
       .single();
+    
+    if (profileByUid) {
+      existingProfile = profileByUid;
+      console.log(`[IDM Provision] Found user by exact idm_uid: ${existingProfile.id}`);
+    }
+    
+    // 2. Try clean username match (without domain)
+    if (!existingProfile) {
+      const { data: profileByCleanUid } = await supabase
+        .from('profiles')
+        .select('id, email, idm_uid')
+        .eq('idm_uid', cleanUsername)
+        .single();
+      
+      if (profileByCleanUid) {
+        existingProfile = profileByCleanUid;
+        console.log(`[IDM Provision] Found user by clean username: ${existingProfile.id}`);
+      }
+    }
+    
+    // 3. Try email match
+    if (!existingProfile) {
+      const { data: profileByEmail } = await supabase
+        .from('profiles')
+        .select('id, email, idm_uid')
+        .eq('email', generatedEmail)
+        .single();
+      
+      if (profileByEmail) {
+        existingProfile = profileByEmail;
+        console.log(`[IDM Provision] Found user by email: ${existingProfile.id}`);
+      }
+    }
 
     let userId: string;
     let email: string;
@@ -81,10 +124,11 @@ serve(async (req) => {
       userId = existingProfile.id;
       email = existingProfile.email;
 
-      // Update profile with latest IDM info
+      // Update profile with latest IDM info (including potentially updated idm_uid)
       await supabase
         .from('profiles')
         .update({
+          idm_uid: idmUid, // Update to current format
           idm_source: is_ad_trust_user ? 'ad_trust' : 'freeipa',
           idm_user_dn: user_dn,
           idm_groups: groups || [],
@@ -100,13 +144,6 @@ serve(async (req) => {
       // JIT user provisioning - create new user
       console.log(`[IDM Provision] Creating new user via JIT provisioning`);
       
-      // Generate a valid email for Supabase Auth
-      // Use user_info.email if valid, otherwise create synthetic email with .local TLD
-      let generatedEmail = user_info?.email;
-      if (!generatedEmail || !generatedEmail.includes('@') || generatedEmail.endsWith('.grp')) {
-        // Create synthetic email that Supabase will accept
-        generatedEmail = `${cleanUsername}@idm.local`;
-      }
       email = generatedEmail;
       console.log(`[IDM Provision] Using email for provisioning: ${email}`);
       
@@ -123,31 +160,67 @@ serve(async (req) => {
       });
 
       if (createError || !newUser.user) {
-        console.error('[IDM Provision] Failed to create user:', createError);
-        return new Response(
-          JSON.stringify({ success: false, error: 'Failed to provision user account' }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        // Handle email_exists error - try to find and use existing user
+        if (createError?.code === 'email_exists') {
+          console.log(`[IDM Provision] Email exists, looking up existing user by email...`);
+          
+          // Get user by email via admin API
+          const { data: usersData } = await supabase.auth.admin.listUsers();
+          const existingUser = usersData?.users?.find(u => u.email === email);
+          
+          if (existingUser) {
+            userId = existingUser.id;
+            console.log(`[IDM Provision] Found existing auth user: ${userId}`);
+            
+            // Update their profile
+            await supabase
+              .from('profiles')
+              .update({
+                idm_uid: idmUid,
+                idm_source: is_ad_trust_user ? 'ad_trust' : 'freeipa',
+                idm_user_dn: user_dn,
+                idm_groups: groups || [],
+                idm_disabled: false,
+                idm_mail: user_info?.email,
+                idm_title: user_info?.title,
+                idm_department: user_info?.department,
+                last_idm_sync: new Date().toISOString()
+              })
+              .eq('id', userId);
+          } else {
+            console.error('[IDM Provision] Could not find existing user despite email_exists error');
+            return new Response(
+              JSON.stringify({ success: false, error: 'User account conflict - please contact administrator' }),
+              { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+        } else {
+          console.error('[IDM Provision] Failed to create user:', createError);
+          return new Response(
+            JSON.stringify({ success: false, error: 'Failed to provision user account' }),
+            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+      } else {
+        userId = newUser.user.id;
+
+        // Update profile (trigger should have created it)
+        await supabase
+          .from('profiles')
+          .update({
+            full_name: fullName,
+            idm_uid: idmUid,
+            idm_source: is_ad_trust_user ? 'ad_trust' : 'freeipa',
+            idm_user_dn: user_dn,
+            idm_groups: groups || [],
+            idm_disabled: false,
+            idm_mail: user_info?.email,
+            idm_title: user_info?.title,
+            idm_department: user_info?.department,
+            last_idm_sync: new Date().toISOString()
+          })
+          .eq('id', userId);
       }
-
-      userId = newUser.user.id;
-
-      // Update profile (trigger should have created it)
-      await supabase
-        .from('profiles')
-        .update({
-          full_name: fullName,
-          idm_uid: idmUid,
-          idm_source: is_ad_trust_user ? 'ad_trust' : 'freeipa',
-          idm_user_dn: user_dn,
-          idm_groups: groups || [],
-          idm_disabled: false,
-          idm_mail: user_info?.email,
-          idm_title: user_info?.title,
-          idm_department: user_info?.department,
-          last_idm_sync: new Date().toISOString()
-        })
-        .eq('id', userId);
     }
 
     // Map groups to role - FIRST check managed_users table for direct assignment
