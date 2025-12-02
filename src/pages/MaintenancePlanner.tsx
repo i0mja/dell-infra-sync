@@ -329,11 +329,6 @@ export default function MaintenancePlanner() {
     }
   };
 
-  const handleCreateOperation = (type: 'job' | 'maintenance') => {
-    setSchedulePrefill(undefined);
-    setScheduleDialogOpen(true);
-  };
-
   const handleScheduleOptimal = (window: { start: string; end: string; affected_clusters: string[] }) => {
     setSchedulePrefill({
       start: new Date(window.start),
@@ -506,8 +501,6 @@ export default function MaintenancePlanner() {
         failedJobs={failedJobs}
         nextWindow={nextWindow ? { title: nextWindow.title, start: nextWindow.planned_start } : undefined}
         optimalCount={optimalWindows.length}
-        onScheduleMaintenance={() => handleCreateOperation('maintenance')}
-        onCreateJob={() => handleCreateOperation('maintenance')}
         onUpdateWizard={() => setUpdateWizardOpen(true)}
       />
 
