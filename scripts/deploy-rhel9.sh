@@ -413,16 +413,27 @@ EOF
 
 echo "✅ Supabase configuration created with all required variables"
 
-# Step 4: Start Supabase
+# Step 4: Start Supabase (STAGED STARTUP)
 echo "🚀 Step 4/6: Starting Supabase services..."
-docker compose up -d
 
-echo "⏳ Waiting for database to be ready..."
+# ============================================
+# STAGED STARTUP: Start DB first, verify passwords, then start other services
+# This prevents auth/storage/realtime from failing due to race conditions
+# ============================================
+
+echo "🗄️  Stage 1: Starting database service first..."
+docker compose up -d db
+
+echo "⏳ Stage 2: Waiting for database to initialize..."
 MAX_WAIT=120
 WAITED=0
+DB_READY=false
 while [ $WAITED -lt $MAX_WAIT ]; do
     if docker compose exec -T db pg_isready -U postgres > /dev/null 2>&1; then
-        echo "✅ Database is ready"
+        echo "   Database accepting connections..."
+        # Give it a few more seconds to run init scripts
+        sleep 5
+        DB_READY=true
         break
     fi
     sleep 5
@@ -430,12 +441,88 @@ while [ $WAITED -lt $MAX_WAIT ]; do
     echo "   ... waiting ($WAITED seconds)"
 done
 
-if [ $WAITED -ge $MAX_WAIT ]; then
-    echo "⚠️  Database may not be fully ready. Continuing anyway..."
+if [ "$DB_READY" != "true" ]; then
+    echo "❌ Database failed to start. Check logs with: docker compose logs db"
+    exit 1
 fi
 
-echo "⏳ Waiting for services to stabilize (60 seconds)..."
-for i in {1..6}; do
+# ============================================
+# CRITICAL: Verify role passwords are correctly set
+# The init script should have run, but we verify and fix if needed
+# ============================================
+echo "🔐 Stage 3: Verifying Supabase role passwords..."
+
+# Test connection as supabase_auth_admin (auth service uses this)
+if docker compose exec -T db psql -U supabase_auth_admin -d postgres -c "SELECT 1" > /dev/null 2>&1; then
+    echo "   ✅ supabase_auth_admin password verified"
+else
+    echo "   ⚠️  supabase_auth_admin password incorrect - applying fix..."
+    docker compose exec -T db psql -U postgres -d postgres -c "ALTER ROLE supabase_auth_admin WITH PASSWORD '$POSTGRES_PASSWORD';" 2>/dev/null || true
+fi
+
+# Test connection as supabase_storage_admin (storage service uses this)
+if docker compose exec -T db psql -U supabase_storage_admin -d postgres -c "SELECT 1" > /dev/null 2>&1; then
+    echo "   ✅ supabase_storage_admin password verified"
+else
+    echo "   ⚠️  supabase_storage_admin password incorrect - applying fix..."
+    docker compose exec -T db psql -U postgres -d postgres -c "ALTER ROLE supabase_storage_admin WITH PASSWORD '$POSTGRES_PASSWORD';" 2>/dev/null || true
+fi
+
+# Test connection as authenticator (PostgREST uses this)
+if docker compose exec -T db psql -U authenticator -d postgres -c "SELECT 1" > /dev/null 2>&1; then
+    echo "   ✅ authenticator password verified"
+else
+    echo "   ⚠️  authenticator password incorrect - applying fix..."
+    docker compose exec -T db psql -U postgres -d postgres -c "ALTER ROLE authenticator WITH PASSWORD '$POSTGRES_PASSWORD';" 2>/dev/null || true
+fi
+
+# Ensure authenticated and anon roles exist (needed for RLS policies)
+echo "   Ensuring authenticated/anon roles exist..."
+docker compose exec -T db psql -U postgres -d postgres -c "
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticated') THEN
+    CREATE ROLE authenticated NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
+    CREATE ROLE anon NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'service_role') THEN
+    CREATE ROLE service_role NOLOGIN BYPASSRLS;
+  END IF;
+  GRANT authenticated TO authenticator;
+  GRANT anon TO authenticator;
+  GRANT service_role TO authenticator;
+END
+\$\$;
+" 2>/dev/null || true
+
+# Ensure supabase_realtime publication exists
+echo "   Ensuring realtime publication exists..."
+docker compose exec -T db psql -U postgres -d postgres -c "
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+    CREATE PUBLICATION supabase_realtime;
+  END IF;
+END
+\$\$;
+" 2>/dev/null || true
+
+# Ensure extensions schema exists
+echo "   Ensuring extensions schema exists..."
+docker compose exec -T db psql -U postgres -d postgres -c "CREATE SCHEMA IF NOT EXISTS extensions;" 2>/dev/null || true
+
+echo "✅ Database roles and schemas verified"
+
+# ============================================
+# Stage 4: Now start all remaining services
+# ============================================
+echo "🚀 Stage 4: Starting remaining services..."
+docker compose up -d
+
+echo "⏳ Waiting for services to stabilize (90 seconds)..."
+for i in {1..9}; do
     sleep 10
     echo "   ... $((i * 10)) seconds"
 done
@@ -444,13 +531,19 @@ done
 echo "🔍 Checking service status..."
 docker compose ps
 
-# Check for critical services
-UNHEALTHY_SERVICES=$(docker compose ps --format json 2>/dev/null | grep -c '"Status":"restarting"' || echo "0")
-if [ "$UNHEALTHY_SERVICES" -gt "0" ]; then
+# Check for critical services (fixed grep command)
+UNHEALTHY_COUNT=$(docker compose ps 2>/dev/null | grep -c "restarting" || echo "0")
+if [ "$UNHEALTHY_COUNT" -gt "0" ]; then
     echo "⚠️  Some services are restarting. Checking logs..."
     echo ""
-    echo "Auth service logs (last 20 lines):"
-    docker compose logs auth --tail=20 2>/dev/null || true
+    echo "Auth service logs (last 30 lines):"
+    docker compose logs auth --tail=30 2>/dev/null || true
+    echo ""
+    echo "Storage service logs (last 20 lines):"
+    docker compose logs storage --tail=20 2>/dev/null || true
+    echo ""
+    echo "Realtime service logs (last 20 lines):"
+    docker compose logs realtime --tail=20 2>/dev/null || true
     echo ""
 fi
 
