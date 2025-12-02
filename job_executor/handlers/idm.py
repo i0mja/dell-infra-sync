@@ -796,7 +796,7 @@ class IDMHandler(BaseHandler):
             )
 
     def execute_idm_search_ad_users(self, job: Dict):
-        """Search for users directly in Active Directory."""
+        """Search for users directly in Active Directory using AD service account."""
         try:
             self.log(f"Starting AD user search job: {job['id']}")
             self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
@@ -818,14 +818,28 @@ class IDMHandler(BaseHandler):
             if not ad_domain_fqdn:
                 raise ValueError("AD Domain FQDN not configured. Configure it in IDM Connection settings.")
             
-            # Use same bind credentials
-            bind_dn = idm_settings.get('bind_dn')
-            bind_password = self.executor.decrypt_bind_password(
-                idm_settings.get('bind_password_encrypted')
-            )
+            # Use AD-specific service account credentials if configured, otherwise fall back to FreeIPA credentials
+            ad_bind_dn = idm_settings.get('ad_bind_dn')
+            ad_bind_password_encrypted = idm_settings.get('ad_bind_password_encrypted')
+            
+            if ad_bind_dn and ad_bind_password_encrypted:
+                # Use dedicated AD service account
+                bind_dn = ad_bind_dn
+                bind_password = self.executor.decrypt_bind_password(ad_bind_password_encrypted)
+                self.log(f"Using dedicated AD service account: {ad_bind_dn}")
+            else:
+                # Fall back to FreeIPA credentials (may not work for AD)
+                bind_dn = idm_settings.get('bind_dn')
+                bind_password = self.executor.decrypt_bind_password(
+                    idm_settings.get('bind_password_encrypted')
+                )
+                self.log(f"WARNING: No AD service account configured, using FreeIPA credentials (may not work)")
             
             if not bind_dn or not bind_password:
-                raise ValueError("Service account credentials required for AD search")
+                raise ValueError(
+                    "AD Service Account not configured. "
+                    "Add AD Bind DN and Password in IDM Connection settings under 'AD Service Account'."
+                )
             
             # Create authenticator with AD settings
             authenticator = self.executor.create_freeipa_authenticator(idm_settings)
