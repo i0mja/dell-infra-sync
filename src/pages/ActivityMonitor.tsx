@@ -427,13 +427,13 @@ export default function ActivityMonitor() {
                   value="operations"
                   className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
                 >
-                  Operations
+                  All Jobs
                 </TabsTrigger>
                 <TabsTrigger 
                   value="api-log"
                   className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
                 >
-                  Activity Log
+                  API Calls
                 </TabsTrigger>
               </TabsList>
             
