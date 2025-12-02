@@ -6,6 +6,7 @@ import { mapLegacyTabId, settingsTabs } from "@/config/settings-tabs";
 import { SettingsPageHeader } from "@/components/settings/SettingsPageHeader";
 import { GeneralSettings } from "@/pages/settings/GeneralSettings";
 import { SecuritySettings } from "@/pages/settings/SecuritySettings";
+import { IdentityManagementSettings } from "@/pages/settings/IdentityManagementSettings";
 import { NotificationSettings } from "@/pages/settings/NotificationSettings";
 import { InfrastructureSettings } from "@/pages/settings/InfrastructureSettings";
 import { SystemSettings } from "@/pages/settings/SystemSettings";
@@ -61,6 +62,7 @@ export default function Settings() {
       <div className="p-6 space-y-6">
         {activeTab === 'general' && <GeneralSettings />}
         {activeTab === 'security' && <SecuritySettings />}
+        {activeTab === 'identity-management' && <IdentityManagementSettings />}
         {activeTab === 'notifications' && <NotificationSettings />}
         {activeTab === 'infrastructure' && <InfrastructureSettings />}
         {activeTab === 'system' && <SystemSettings />}

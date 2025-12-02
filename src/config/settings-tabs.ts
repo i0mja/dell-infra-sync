@@ -1,4 +1,4 @@
-import { LucideIcon, Palette, Shield, Bell, Server, Activity } from "lucide-react";
+import { LucideIcon, Palette, Shield, Bell, Server, Activity, Users } from "lucide-react";
 
 export interface SettingsSubsection {
   id: string;
@@ -36,19 +36,13 @@ export const settingsTabs: SettingsTab[] = [
     id: 'security',
     name: 'Security & Access',
     title: 'Security & Access Control',
-    description: 'Manage authentication, credentials, and security settings',
+    description: 'Manage credentials, audit logs, and security settings',
     icon: Shield,
     subsections: [
       {
         id: 'credentials',
         name: 'Credentials',
         description: 'Manage iDRAC credential sets for server operations',
-        icon: Shield,
-      },
-      {
-        id: 'identity-provider',
-        name: 'Identity Provider',
-        description: 'Configure FreeIPA/LDAP authentication',
         icon: Shield,
       },
       {
@@ -61,6 +55,51 @@ export const settingsTabs: SettingsTab[] = [
         id: 'operations-safety',
         name: 'Operations Safety',
         description: 'Configure throttling and emergency kill switch',
+        icon: Shield,
+      },
+    ],
+  },
+  {
+    id: 'identity-management',
+    name: 'Identity Management',
+    title: 'Identity Management',
+    description: 'Configure FreeIPA/LDAP authentication and user directory',
+    icon: Users,
+    subsections: [
+      {
+        id: 'overview',
+        name: 'Overview',
+        description: 'Status dashboard and connection health',
+        icon: Activity,
+      },
+      {
+        id: 'connection',
+        name: 'Connection',
+        description: 'FreeIPA server and LDAP configuration',
+        icon: Server,
+      },
+      {
+        id: 'directory',
+        name: 'Directory',
+        description: 'LDAP structure and service account',
+        icon: Users,
+      },
+      {
+        id: 'role-mappings',
+        name: 'Role Mappings',
+        description: 'Map FreeIPA groups to application roles',
+        icon: Shield,
+      },
+      {
+        id: 'security-policies',
+        name: 'Security Policies',
+        description: 'Rate limits, lockouts, and session timeouts',
+        icon: Shield,
+      },
+      {
+        id: 'break-glass',
+        name: 'Break-Glass Admins',
+        description: 'Emergency local administrator accounts',
         icon: Shield,
       },
     ],
@@ -199,7 +238,7 @@ export const getTabById = (id: string): SettingsTab | undefined => {
 // Map old tab IDs to new structure for backward compatibility
 export const mapLegacyTabId = (oldTabId: string): { tab: string; section?: string } => {
   // First, check if it's already a valid tab ID
-  const validTabIds = ['general', 'security', 'notifications', 'infrastructure', 'system'];
+  const validTabIds = ['general', 'security', 'identity-management', 'notifications', 'infrastructure', 'system'];
   if (validTabIds.includes(oldTabId)) {
     return { tab: oldTabId };
   }
@@ -209,7 +248,7 @@ export const mapLegacyTabId = (oldTabId: string): { tab: string; section?: strin
     'appearance': { tab: 'general', section: 'appearance' },
     'preferences': { tab: 'notifications', section: 'preferences' },
     'credentials': { tab: 'security', section: 'credentials' },
-    'identity-provider': { tab: 'security', section: 'identity-provider' },
+    'identity-provider': { tab: 'identity-management', section: 'overview' },
     'audit-logs': { tab: 'security', section: 'audit-logs' },
     'operations-safety': { tab: 'security', section: 'operations-safety' },
     'smtp': { tab: 'notifications', section: 'smtp' },

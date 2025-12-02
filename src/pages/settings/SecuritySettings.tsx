@@ -1,8 +1,6 @@
 import { SettingsSection } from "@/components/settings/SettingsSection";
-import { ServerGroupsManagement } from "@/components/settings/ServerGroupsManagement";
-import { IdentityProviderSettings } from "@/components/settings/IdentityProviderSettings";
 import { AuditLogViewer } from "@/components/settings/AuditLogViewer";
-import { Shield, FileText, Users, ShieldAlert } from "lucide-react";
+import { Shield, FileText } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -469,16 +467,6 @@ export function SecuritySettings() {
         </div>
       </SettingsSection>
 
-      {/* Identity Provider */}
-      <SettingsSection
-        id="identity-provider"
-        title="Identity Provider"
-        description="Connect FreeIPA/LDAP for centralized authentication"
-        icon={Users}
-      >
-        <IdentityProviderSettings />
-      </SettingsSection>
-
       {/* Audit Logs */}
       <SettingsSection
         id="audit-logs"
@@ -491,10 +479,10 @@ export function SecuritySettings() {
 
       {/* Cluster Safety Checks */}
       <SettingsSection
-        id="safety-checks"
-        title="Cluster Safety Checks"
-        description="Scheduled safety checks for vSphere clusters"
-        icon={ShieldAlert}
+        id="operations-safety"
+        title="Operations Safety"
+        description="Configure scheduled cluster health checks and emergency controls"
+        icon={Shield}
       >
         <div className="space-y-4">
           <div className="flex items-center justify-between">
