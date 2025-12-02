@@ -888,10 +888,40 @@ class VCenterMixin:
                     if host.parent and isinstance(host.parent, vim.ClusterComputeResource):
                         cluster_name = host.parent.name
                     
-                    # Extract serial number from hardware
+                    # Extract serial number from hardware - Dell servers use otherIdentifyingInfo for Service Tags
                     serial_number = None
                     if hardware and hasattr(hardware, 'systemInfo'):
-                        serial_number = hardware.systemInfo.serialNumber if hasattr(hardware.systemInfo, 'serialNumber') else None
+                        system_info = hardware.systemInfo
+                        
+                        # Try direct serialNumber first
+                        if hasattr(system_info, 'serialNumber') and system_info.serialNumber:
+                            serial_number = system_info.serialNumber
+                        
+                        # Check otherIdentifyingInfo for Dell Service Tags (primary source for Dell servers)
+                        if not serial_number and hasattr(system_info, 'otherIdentifyingInfo'):
+                            for id_info in system_info.otherIdentifyingInfo or []:
+                                try:
+                                    id_type = id_info.identifierType
+                                    id_value = id_info.identifierValue
+                                    
+                                    # Look for ServiceTag (Dell's identifier)
+                                    if hasattr(id_type, 'key'):
+                                        key = str(id_type.key).lower() if id_type.key else ''
+                                        if 'servicetag' in key or 'service tag' in key:
+                                            serial_number = str(id_value).strip() if id_value else None
+                                            if serial_number:
+                                                self.log(f"    Found Dell Service Tag: {serial_number}", "DEBUG")
+                                                break
+                                        # Also check for AssetTag as fallback
+                                        elif 'assettag' in key or 'asset tag' in key:
+                                            if not serial_number and id_value:
+                                                serial_number = str(id_value).strip()
+                                except Exception as e:
+                                    self.log(f"    Warning: Error parsing identifier info: {e}", "DEBUG")
+                        
+                        # Log if still no serial number found
+                        if not serial_number:
+                            self.log(f"    Warning: Could not find serial number for {host.name}", "DEBUG")
                     
                     # Extract ESXi version
                     esxi_version = None
