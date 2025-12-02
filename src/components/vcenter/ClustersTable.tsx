@@ -12,7 +12,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import {
   ArrowUpDown,
@@ -249,6 +248,61 @@ export function ClustersTable({
 
   return (
     <div className="flex flex-col h-full bg-background overflow-hidden">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between gap-2 px-4 py-2 border-b">
+        <div className="flex items-center gap-2">
+          {selectedClusters.size > 0 && (
+            <span className="text-sm text-muted-foreground">{selectedClusters.size} selected</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Columns3 className="mr-1 h-4 w-4" /> Columns
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuCheckboxItem checked={isColVisible("name")} onCheckedChange={() => effectiveToggleColumn("name")}>
+                Cluster Name
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("status")} onCheckedChange={() => effectiveToggleColumn("status")}>
+                Status
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("hosts")} onCheckedChange={() => effectiveToggleColumn("hosts")}>
+                Hosts
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("vms")} onCheckedChange={() => effectiveToggleColumn("vms")}>
+                VMs
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("ha")} onCheckedChange={() => effectiveToggleColumn("ha")}>
+                HA
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("drs")} onCheckedChange={() => effectiveToggleColumn("drs")}>
+                DRS
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("cpu")} onCheckedChange={() => effectiveToggleColumn("cpu")}>
+                CPU Usage
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("memory")} onCheckedChange={() => effectiveToggleColumn("memory")}>
+                Memory Usage
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("storage")} onCheckedChange={() => effectiveToggleColumn("storage")}>
+                Storage Usage
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("sync")} onCheckedChange={() => effectiveToggleColumn("sync")}>
+                Last Sync
+              </DropdownMenuCheckboxItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button variant="outline" size="sm" onClick={handleExportCSV}>
+            <Download className="mr-1 h-4 w-4" /> Export
+          </Button>
+        </div>
+      </div>
+
       {/* Table */}
       <div className="overflow-auto flex-1">
         <Table>

@@ -18,7 +18,6 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuCheckboxItem,
   DropdownMenuLabel,
@@ -34,8 +33,6 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import {
-  ChevronDown,
-  ChevronRight,
   ClipboardCopy,
   Layers,
   Link2,
@@ -56,6 +53,7 @@ import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { useSavedViews } from "@/hooks/useSavedViews";
 import { usePagination } from "@/hooks/usePagination";
 import { TablePagination } from "@/components/ui/table-pagination";
+import { TruncatedCell } from "@/components/ui/truncated-cell";
 
 interface VCenterHost {
   id: string;
@@ -329,23 +327,64 @@ export function HostsTable({
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* Bulk Actions Bar */}
-      {selectedHosts.size > 0 && (
-        <div className="flex items-center gap-2 px-4 py-2 border-b bg-muted/50">
-          <span className="text-sm text-muted-foreground">{selectedHosts.size} selected</span>
-          <Button variant="ghost" size="sm" onClick={handleSyncSelected}>
-            <RefreshCcw className="h-3.5 w-3.5 mr-1" />
-            Sync Selected
-          </Button>
-          {onBulkDelete && (
-            <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive"
-              onClick={() => onBulkDelete(Array.from(selectedHosts))}>
-              <Trash2 className="h-3.5 w-3.5 mr-1" />
-              Remove ({selectedHosts.size})
-            </Button>
+      {/* Toolbar */}
+      <div className="flex items-center justify-between gap-2 px-4 py-2 border-b">
+        <div className="flex items-center gap-2">
+          {selectedHosts.size > 0 && (
+            <>
+              <span className="text-sm text-muted-foreground">{selectedHosts.size} selected</span>
+              <Button variant="ghost" size="sm" onClick={handleSyncSelected}>
+                <RefreshCcw className="h-3.5 w-3.5 mr-1" />
+                Sync Selected
+              </Button>
+              {onBulkDelete && (
+                <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive"
+                  onClick={() => onBulkDelete(Array.from(selectedHosts))}>
+                  <Trash2 className="h-3.5 w-3.5 mr-1" />
+                  Remove ({selectedHosts.size})
+                </Button>
+              )}
+            </>
           )}
         </div>
-      )}
+        <div className="flex items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Columns3 className="mr-1 h-4 w-4" /> Columns
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuCheckboxItem checked={isColumnVisible("name")} onCheckedChange={() => toggleColumn("name")}>
+                Hostname
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColumnVisible("status")} onCheckedChange={() => toggleColumn("status")}>
+                Status
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColumnVisible("esxi")} onCheckedChange={() => toggleColumn("esxi")}>
+                ESXi Version
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColumnVisible("serial")} onCheckedChange={() => toggleColumn("serial")}>
+                Serial Number
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColumnVisible("linked")} onCheckedChange={() => toggleColumn("linked")}>
+                Linked
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColumnVisible("sync")} onCheckedChange={() => toggleColumn("sync")}>
+                Last Sync
+              </DropdownMenuCheckboxItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button variant="outline" size="sm" onClick={handleExportCSV}>
+            <Download className="mr-1 h-4 w-4" /> Export
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setSaveDialogOpen(true)}>
+            <Save className="mr-1 h-4 w-4" /> Save View
+          </Button>
+        </div>
+      </div>
       
       {/* Table */}
       <div className="overflow-auto flex-1">
@@ -454,8 +493,8 @@ export function HostsTable({
                         <TableCell className="text-sm">{host.esxi_version || "N/A"}</TableCell>
                       )}
                       {isColumnVisible("serial") && (
-                        <TableCell className="text-sm font-mono text-xs">
-                          {host.serial_number || "N/A"}
+                        <TableCell className="font-mono text-xs">
+                          <TruncatedCell value={host.serial_number} maxWidth="160px" />
                         </TableCell>
                       )}
                       {isColumnVisible("linked") && (
