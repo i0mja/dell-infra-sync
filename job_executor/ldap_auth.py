@@ -983,7 +983,7 @@ class FreeIPAAuthenticator:
             max_results: Maximum number of results to return
             
         Returns:
-            List of group dicts with dn, cn, description
+            List of group dicts with dn, cn, description, member_count, members
         """
         try:
             server = self._get_server()
@@ -1004,19 +1004,46 @@ class FreeIPAAuthenticator:
                 search_base=f"{self.group_search_base},{self.base_dn}",
                 search_filter=search_filter,
                 search_scope=SUBTREE,
-                attributes=["cn", "description"],
+                attributes=["cn", "description", "member"],
                 size_limit=max_results,
             )
             
             groups = []
             for entry in conn.entries:
+                # Extract member usernames from DNs
+                members = []
+                member_count = 0
+                
+                if hasattr(entry, 'member'):
+                    member_values = entry.member.values if hasattr(entry.member, 'values') else []
+                    if not isinstance(member_values, (list, tuple)):
+                        member_values = [member_values] if member_values else []
+                    
+                    member_count = len(member_values)
+                    
+                    # Extract usernames from DNs (limit to first 20 for display)
+                    for member_dn in member_values[:20]:
+                        member_dn_str = str(member_dn)
+                        # Extract uid from "uid=john,cn=users,cn=accounts,dc=..."
+                        uid_match = re.match(r'uid=([^,]+)', member_dn_str)
+                        if uid_match:
+                            members.append(uid_match.group(1))
+                        else:
+                            # Try extracting cn for non-user members (e.g., nested groups)
+                            cn_match = re.match(r'cn=([^,]+)', member_dn_str)
+                            if cn_match:
+                                members.append(f"[{cn_match.group(1)}]")
+                
                 groups.append({
                     "dn": str(entry.entry_dn),
                     "cn": str(entry.cn) if hasattr(entry, 'cn') else None,
                     "description": str(entry.description) if hasattr(entry, 'description') else None,
+                    "member_count": member_count,
+                    "members": members,
                 })
             
             conn.unbind()
+            logger.info(f"[GROUP SEARCH] Found {len(groups)} groups matching '{search_term}'")
             return groups
             
         except Exception as e:
