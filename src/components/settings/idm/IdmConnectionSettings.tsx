@@ -7,16 +7,13 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useIdmSettings } from '@/hooks/useIdmSettings';
-import { AlertCircle, Loader2, Save, TestTube, Lock, Unlock } from 'lucide-react';
+import { AlertCircle, Loader2, Save, TestTube, Lock, Unlock, CheckCircle, XCircle } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
 
 // Helper functions for auto-derivation
-function getDomainFromHost(host: string): string {
-  const parts = host.split('.');
-  return parts.length > 1 ? parts.slice(1).join('.') : host;
-}
-
-function domainToBaseDn(domain: string): string {
-  return domain.split('.').map(part => `dc=${part}`).join(',');
+// Convert full hostname directly to Base DN (idm.neopost.grp → dc=idm,dc=neopost,dc=grp)
+function hostToBaseDn(host: string): string {
+  return host.split('.').map(part => `dc=${part}`).join(',');
 }
 
 function usernameToBindDn(username: string, baseDn: string): string {
@@ -40,6 +37,11 @@ export function IdmConnectionSettings() {
   const [serviceUsername, setServiceUsername] = useState('');
   const [bindDn, setBindDn] = useState(settings?.bind_dn || '');
   const [bindPassword, setBindPassword] = useState('');
+  
+  // Test connection state
+  const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [testJobId, setTestJobId] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<any>(null);
 
   useEffect(() => {
     if (settings) {
@@ -63,8 +65,7 @@ export function IdmConnectionSettings() {
       
       // If base_dn is saved but doesn't match auto-derived, set manual mode
       if (settings.base_dn && settings.server_host) {
-        const domain = getDomainFromHost(settings.server_host);
-        const autoBaseDn = domainToBaseDn(domain);
+        const autoBaseDn = hostToBaseDn(settings.server_host);
         setManualBaseDn(settings.base_dn !== autoBaseDn);
       }
     }
@@ -96,8 +97,7 @@ export function IdmConnectionSettings() {
     
     // Auto-derive Base DN if not manually set and host contains domain
     if (!manualBaseDn && host.includes('.')) {
-      const domain = getDomainFromHost(host);
-      const autoBaseDn = domainToBaseDn(domain);
+      const autoBaseDn = hostToBaseDn(host);
       setBaseDn(autoBaseDn);
       
       // Update bind DN if username exists
@@ -122,8 +122,7 @@ export function IdmConnectionSettings() {
     
     // If switching to auto mode, re-derive from host
     if (!newManualMode && serverHost.includes('.')) {
-      const domain = getDomainFromHost(serverHost);
-      const autoBaseDn = domainToBaseDn(domain);
+      const autoBaseDn = hostToBaseDn(serverHost);
       setBaseDn(autoBaseDn);
       
       // Update bind DN if username exists
@@ -133,8 +132,11 @@ export function IdmConnectionSettings() {
     }
   };
 
-  const handleTestConnection = () => {
-    testConnection({
+  const handleTestConnection = async () => {
+    setTestStatus('testing');
+    setTestResult(null);
+    
+    const job = await testConnection({
       server_host: serverHost,
       server_port: serverPort,
       ldaps_port: ldapsPort,
@@ -149,11 +151,47 @@ export function IdmConnectionSettings() {
       connection_timeout_seconds: connectionTimeout,
       use_saved_password: !bindPassword && !!settings?.bind_password_encrypted,
     });
+    
+    if (job?.id) {
+      setTestJobId(job.id);
+      pollJobStatus(job.id);
+    }
+  };
+  
+  const pollJobStatus = async (jobId: string) => {
+    const maxAttempts = 30; // 30 seconds max (30 attempts * 1 second)
+    let attempts = 0;
+    
+    const poll = async () => {
+      attempts++;
+      
+      const { data: job } = await supabase
+        .from('jobs')
+        .select('*')
+        .eq('id', jobId)
+        .single();
+      
+      if (!job) return;
+      
+      if (job.status === 'completed' || job.status === 'failed') {
+        const details = job.details as any;
+        setTestResult(details);
+        setTestStatus(job.status === 'completed' && details?.success ? 'success' : 'error');
+        return;
+      }
+      
+      if (attempts < maxAttempts && (job.status === 'pending' || job.status === 'running')) {
+        setTimeout(poll, 1000);
+      } else {
+        setTestStatus('error');
+        setTestResult({ error: 'Test timed out' });
+      }
+    };
+    
+    poll();
   };
 
   const canTestConnection = serverHost && bindDn && (bindPassword || settings?.bind_password_encrypted) && baseDn;
-  
-  const detectedDomain = serverHost.includes('.') ? getDomainFromHost(serverHost) : null;
 
   if (loading) {
     return (
@@ -219,9 +257,9 @@ export function IdmConnectionSettings() {
                     value={serverHost}
                     onChange={(e) => handleServerHostChange(e.target.value)}
                   />
-                  {detectedDomain && (
+                  {serverHost && (
                     <p className="text-sm text-muted-foreground">
-                      Detected domain: <span className="font-medium">{detectedDomain}</span>
+                      Base DN will be: <span className="font-mono text-xs">{hostToBaseDn(serverHost)}</span>
                     </p>
                   )}
                 </div>
@@ -356,14 +394,67 @@ export function IdmConnectionSettings() {
                 )}
               </div>
 
-              <Button 
-                onClick={handleTestConnection} 
-                variant="outline"
-                disabled={!canTestConnection}
-              >
-                <TestTube className="mr-2 h-4 w-4" />
-                Test Connection
-              </Button>
+              <div className="space-y-3">
+                <Button 
+                  onClick={handleTestConnection} 
+                  variant="outline"
+                  disabled={!canTestConnection || testStatus === 'testing'}
+                >
+                  {testStatus === 'testing' ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Testing...
+                    </>
+                  ) : (
+                    <>
+                      <TestTube className="mr-2 h-4 w-4" />
+                      Test Connection
+                    </>
+                  )}
+                </Button>
+                
+                {testStatus === 'testing' && (
+                  <Alert>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <AlertDescription>Testing connection to {serverHost}...</AlertDescription>
+                  </Alert>
+                )}
+                
+                {testStatus === 'success' && testResult && (
+                  <Alert className="border-green-500 bg-green-50 dark:bg-green-950/20">
+                    <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
+                    <AlertDescription className="text-green-800 dark:text-green-200">
+                      <p className="font-medium">✅ Connection successful!</p>
+                      {testResult.bind_successful && (
+                        <p className="text-sm mt-1">
+                          Authenticated as: <span className="font-mono">{testResult.bind_dn}</span>
+                        </p>
+                      )}
+                      {testResult.response_time_ms && (
+                        <p className="text-sm">Response time: {testResult.response_time_ms}ms</p>
+                      )}
+                    </AlertDescription>
+                  </Alert>
+                )}
+                
+                {testStatus === 'error' && (
+                  <Alert variant="destructive">
+                    <XCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      <p className="font-medium">❌ Connection failed</p>
+                      {testResult?.error_type && (
+                        <p className="text-sm mt-1">{testResult.error_type}</p>
+                      )}
+                      {testResult?.message && (
+                        <p className="text-sm mt-1">{testResult.message}</p>
+                      )}
+                      {testResult?.error && typeof testResult.error === 'string' && (
+                        <p className="text-sm mt-1">{testResult.error}</p>
+                      )}
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </div>
             </CardContent>
           </Card>
 
