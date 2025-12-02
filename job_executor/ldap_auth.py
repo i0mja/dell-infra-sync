@@ -1472,3 +1472,159 @@ class FreeIPAAuthenticator:
         except Exception as e:
             logger.error(f"Error syncing users: {e}")
             return []
+    
+    def search_ad_groups(
+        self,
+        bind_dn: str,
+        bind_password: str,
+        search_term: str = "",
+        max_results: int = 100,
+    ) -> List[Dict]:
+        """
+        Search for groups directly in Active Directory.
+        
+        This connects to the AD DC directly instead of going through FreeIPA,
+        which allows us to get actual usernames instead of SIDs.
+        
+        Args:
+            bind_dn: Service account DN for AD (e.g., 'CN=svc_ldap,OU=Service Accounts,DC=neopost,DC=ad')
+            bind_password: Service account password
+            search_term: Optional search filter (matches cn/name)
+            max_results: Maximum number of results to return
+            
+        Returns:
+            List of group dicts with dn, cn, description, member_count, members (actual usernames)
+        """
+        if not self.ad_dc_host:
+            logger.error("[AD SEARCH] AD DC host not configured")
+            return []
+        
+        try:
+            # Build AD DC server connection
+            ad_server = self._get_ad_server()
+            if not ad_server:
+                logger.error("[AD SEARCH] Failed to create AD server connection")
+                return []
+            
+            logger.info(f"[AD SEARCH] Connecting to AD DC {self.ad_dc_host}...")
+            
+            conn = Connection(
+                ad_server,
+                user=bind_dn,
+                password=bind_password,
+                auto_bind=True,
+            )
+            
+            logger.info("[AD SEARCH] Connected to AD DC successfully")
+            
+            # Derive AD base DN from domain FQDN
+            # e.g., neopost.ad -> DC=neopost,DC=ad
+            if self.ad_domain_fqdn:
+                ad_base_dn = ','.join([f'DC={part}' for part in self.ad_domain_fqdn.split('.')])
+            else:
+                # Try to derive from ad_dc_host
+                # s06-nad-dc04.neopost.ad -> DC=neopost,DC=ad
+                parts = self.ad_dc_host.split('.')
+                if len(parts) >= 2:
+                    ad_base_dn = ','.join([f'DC={part}' for part in parts[1:]])
+                else:
+                    ad_base_dn = 'DC=ad'
+            
+            logger.info(f"[AD SEARCH] Using AD base DN: {ad_base_dn}")
+            
+            # Build search filter for AD groups
+            if search_term:
+                search_filter = f"(&(objectClass=group)(cn=*{search_term}*))"
+            else:
+                search_filter = "(objectClass=group)"
+            
+            logger.info(f"[AD SEARCH] Searching with filter: {search_filter}")
+            
+            conn.search(
+                search_base=ad_base_dn,
+                search_filter=search_filter,
+                search_scope=SUBTREE,
+                attributes=["cn", "description", "member", "sAMAccountName", "distinguishedName"],
+                size_limit=max_results,
+            )
+            
+            groups = []
+            for entry in conn.entries:
+                members = []
+                member_count = 0
+                
+                # Parse 'member' attribute - AD stores full DNs like CN=John Smith,OU=Users,DC=neopost,DC=ad
+                if hasattr(entry, 'member'):
+                    member_values = entry.member.values if hasattr(entry.member, 'values') else []
+                    if not isinstance(member_values, (list, tuple)):
+                        member_values = [member_values] if member_values else []
+                    
+                    member_count = len(member_values)
+                    
+                    for member_dn in member_values[:20]:
+                        member_dn_str = str(member_dn)
+                        # Extract CN (common name) from DN
+                        cn_match = re.match(r'CN=([^,]+)', member_dn_str, re.IGNORECASE)
+                        if cn_match:
+                            members.append(cn_match.group(1))
+                
+                group_cn = str(entry.cn) if hasattr(entry, 'cn') else None
+                sam_account = str(entry.sAMAccountName) if hasattr(entry, 'sAMAccountName') else group_cn
+                
+                groups.append({
+                    "dn": str(entry.entry_dn),
+                    "cn": sam_account or group_cn,  # Prefer sAMAccountName for AD groups
+                    "description": str(entry.description) if hasattr(entry, 'description') else None,
+                    "member_count": member_count,
+                    "members": members,
+                    "source": "ad",
+                })
+            
+            conn.unbind()
+            logger.info(f"[AD SEARCH] Found {len(groups)} AD groups matching '{search_term}'")
+            return groups
+            
+        except LDAPBindError as e:
+            logger.error(f"[AD SEARCH] AD bind failed: {e}")
+            return []
+        except LDAPException as e:
+            logger.error(f"[AD SEARCH] AD LDAP error: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"[AD SEARCH] Error searching AD groups: {e}")
+            return []
+    
+    def _get_ad_server(self) -> Optional['Server']:
+        """Create or return cached AD DC server connection."""
+        if self._ad_server is not None:
+            return self._ad_server
+        
+        if not self.ad_dc_host:
+            return None
+        
+        try:
+            tls_config = None
+            if self.ad_dc_use_ssl:
+                tls_config = Tls(
+                    validate=ssl.CERT_NONE,  # AD certs often have issues
+                    version=ssl.PROTOCOL_TLSv1_2,
+                )
+            
+            port = self.ad_dc_port
+            use_ssl = self.ad_dc_use_ssl
+            
+            self._ad_server = Server(
+                self.ad_dc_host,
+                port=port,
+                use_ssl=use_ssl,
+                tls=tls_config,
+                get_info=ALL,
+                connect_timeout=self.connection_timeout,
+            )
+            
+            logger.info(f"[AD SERVER] Created AD server: {self.ad_dc_host}:{port} (SSL={use_ssl})")
+            return self._ad_server
+            
+        except Exception as e:
+            logger.error(f"[AD SERVER] Failed to create AD server: {e}")
+            return None

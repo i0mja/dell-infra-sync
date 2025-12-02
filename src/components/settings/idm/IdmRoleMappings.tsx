@@ -8,8 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useIdmGroupMappings } from '@/hooks/useIdmGroupMappings';
-import { Plus, Trash2, Loader2, Search, Users, ChevronDown, ChevronRight, User } from 'lucide-react';
+import { Plus, Trash2, Loader2, Search, Users, ChevronDown, ChevronRight, User, Building2, Server } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -20,12 +21,16 @@ interface GroupSearchResult {
   description: string | null;
   member_count: number;
   members: string[];
+  source?: 'freeipa' | 'ad';
 }
+
+type GroupSource = 'freeipa' | 'ad';
 
 export function IdmRoleMappings() {
   const { mappings, loading, createMapping, updateMapping, deleteMapping } = useIdmGroupMappings();
   const { toast } = useToast();
   const [showDialog, setShowDialog] = useState(false);
+  const [groupSource, setGroupSource] = useState<GroupSource>('freeipa');
   const [mappingForm, setMappingForm] = useState({
     idm_group_dn: '',
     idm_group_name: '',
@@ -33,6 +38,7 @@ export function IdmRoleMappings() {
     priority: 100,
     is_active: true,
     description: '',
+    source: 'freeipa' as GroupSource,
   });
 
   // Group search state
@@ -73,11 +79,14 @@ export function IdmRoleMappings() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
+      // Use different job type based on source
+      const jobType = groupSource === 'ad' ? 'idm_search_ad_groups' : 'idm_search_groups';
+
       // Create job for group search
       const { data: job, error: jobError } = await supabase
         .from('jobs')
         .insert({
-          job_type: 'idm_search_groups',
+          job_type: jobType as any,
           created_by: user.id,
           status: 'pending',
           details: {
@@ -118,13 +127,16 @@ export function IdmRoleMappings() {
           clearInterval(pollInterval);
           setIsSearching(false);
           const details = updatedJob.details as any;
-          const groups = details?.groups || [];
+          const groups = (details?.groups || []).map((g: GroupSearchResult) => ({
+            ...g,
+            source: groupSource,
+          }));
           setSearchResults(groups);
           
           if (groups.length === 0) {
             toast({
               title: "No groups found",
-              description: `No groups matching "${searchTerm}" were found`,
+              description: `No ${groupSource === 'ad' ? 'AD' : 'FreeIPA'} groups matching "${searchTerm}" were found`,
             });
           }
         } else if (updatedJob.status === 'failed') {
@@ -162,24 +174,21 @@ export function IdmRoleMappings() {
       ...mappingForm,
       idm_group_dn: group.dn,
       idm_group_name: group.cn,
+      source: groupSource,
     });
   };
 
   const handleCreateMapping = async () => {
-    await createMapping(mappingForm);
-    setMappingForm({
-      idm_group_dn: '',
-      idm_group_name: '',
-      app_role: 'viewer',
-      priority: 100,
-      is_active: true,
-      description: '',
+    await createMapping({
+      idm_group_dn: mappingForm.idm_group_dn,
+      idm_group_name: mappingForm.idm_group_name,
+      app_role: mappingForm.app_role,
+      priority: mappingForm.priority,
+      is_active: mappingForm.is_active,
+      description: mappingForm.description || null,
+      source: mappingForm.source,
     });
-    setSearchTerm('');
-    setSearchResults([]);
-    setSelectedGroup(null);
-    setExpandedGroups(new Set());
-    setShowDialog(false);
+    resetDialog();
   };
 
   const resetDialog = () => {
@@ -190,12 +199,22 @@ export function IdmRoleMappings() {
       priority: 100,
       is_active: true,
       description: '',
+      source: 'freeipa',
     });
     setSearchTerm('');
     setSearchResults([]);
     setSelectedGroup(null);
     setExpandedGroups(new Set());
+    setGroupSource('freeipa');
     setShowDialog(false);
+  };
+
+  const handleSourceChange = (source: GroupSource) => {
+    setGroupSource(source);
+    setSearchResults([]);
+    setSelectedGroup(null);
+    setExpandedGroups(new Set());
+    setMappingForm(prev => ({ ...prev, source }));
   };
 
   if (loading) {
@@ -213,7 +232,7 @@ export function IdmRoleMappings() {
           <div className="flex items-center justify-between">
             <div>
               <CardTitle>Group-to-Role Mappings</CardTitle>
-              <CardDescription>Map FreeIPA groups to application roles</CardDescription>
+              <CardDescription>Map FreeIPA or Active Directory groups to application roles</CardDescription>
             </div>
             <Dialog open={showDialog} onOpenChange={(open) => !open && resetDialog()}>
               <DialogTrigger asChild>
@@ -225,16 +244,36 @@ export function IdmRoleMappings() {
               <DialogContent className="max-w-2xl">
                 <DialogHeader>
                   <DialogTitle>Create Group Mapping</DialogTitle>
-                  <DialogDescription>Search for a FreeIPA group and map it to an application role</DialogDescription>
+                  <DialogDescription>Search for a group and map it to an application role</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4">
+                  {/* Source Selection */}
+                  <Tabs value={groupSource} onValueChange={(v) => handleSourceChange(v as GroupSource)}>
+                    <TabsList className="grid w-full grid-cols-2">
+                      <TabsTrigger value="freeipa" className="flex items-center gap-2">
+                        <Server className="h-4 w-4" />
+                        FreeIPA Groups
+                      </TabsTrigger>
+                      <TabsTrigger value="ad" className="flex items-center gap-2">
+                        <Building2 className="h-4 w-4" />
+                        Active Directory Groups
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+
                   {/* Group Search */}
                   <Card className="border-dashed">
                     <CardHeader className="pb-3">
                       <CardTitle className="text-sm font-medium flex items-center gap-2">
                         <Users className="h-4 w-4" />
-                        Search FreeIPA Groups
+                        Search {groupSource === 'ad' ? 'Active Directory' : 'FreeIPA'} Groups
                       </CardTitle>
+                      <CardDescription className="text-xs">
+                        {groupSource === 'ad' 
+                          ? 'Search directly in AD for groups with actual usernames (no SIDs)'
+                          : 'Search FreeIPA groups (may show SIDs for AD trust users)'
+                        }
+                      </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-3">
                       <div className="flex gap-2">
@@ -260,14 +299,14 @@ export function IdmRoleMappings() {
                       {isSearching && (
                         <div className="flex items-center justify-center py-4 text-sm text-muted-foreground">
                           <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                          Searching groups...
+                          Searching {groupSource === 'ad' ? 'AD' : 'FreeIPA'} groups...
                         </div>
                       )}
 
                       {!isSearching && searchResults.length > 0 && (
                         <div className="space-y-2">
                           <Label className="text-xs text-muted-foreground">
-                            Found {searchResults.length} group(s)
+                            Found {searchResults.length} {groupSource === 'ad' ? 'AD' : 'FreeIPA'} group(s)
                           </Label>
                           <ScrollArea className="h-64 border rounded-md">
                             <div className="p-1">
@@ -300,6 +339,12 @@ export function IdmRoleMappings() {
                                             <User className="h-3 w-3 mr-1" />
                                             {group.member_count}
                                           </Badge>
+                                          {groupSource === 'ad' && (
+                                            <Badge variant="outline" className="text-xs flex-shrink-0">
+                                              <Building2 className="h-3 w-3 mr-1" />
+                                              AD
+                                            </Badge>
+                                          )}
                                         </div>
                                         {group.description && (
                                           <p className="text-xs text-muted-foreground truncate">
@@ -369,7 +414,10 @@ export function IdmRoleMappings() {
                   <div className="space-y-2">
                     <Label>Group DN</Label>
                     <Input
-                      placeholder="cn=admins,cn=groups,cn=accounts,dc=example,dc=com"
+                      placeholder={groupSource === 'ad' 
+                        ? "CN=Domain Admins,CN=Users,DC=neopost,DC=ad"
+                        : "cn=admins,cn=groups,cn=accounts,dc=example,dc=com"
+                      }
                       value={mappingForm.idm_group_dn}
                       onChange={(e) => setMappingForm({ ...mappingForm, idm_group_dn: e.target.value })}
                       readOnly={!!selectedGroup}
@@ -381,7 +429,7 @@ export function IdmRoleMappings() {
                   <div className="space-y-2">
                     <Label>Group Name</Label>
                     <Input
-                      placeholder="admins"
+                      placeholder={groupSource === 'ad' ? "Domain Admins" : "admins"}
                       value={mappingForm.idm_group_name}
                       onChange={(e) => setMappingForm({ ...mappingForm, idm_group_name: e.target.value })}
                       readOnly={!!selectedGroup}
@@ -440,6 +488,7 @@ export function IdmRoleMappings() {
             <TableHeader>
               <TableRow>
                 <TableHead>Group Name</TableHead>
+                <TableHead>Source</TableHead>
                 <TableHead>App Role</TableHead>
                 <TableHead>Priority</TableHead>
                 <TableHead>Status</TableHead>
@@ -449,7 +498,7 @@ export function IdmRoleMappings() {
             <TableBody>
               {mappings.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground">
+                  <TableCell colSpan={6} className="text-center text-muted-foreground">
                     No group mappings configured. Add a mapping to get started.
                   </TableCell>
                 </TableRow>
@@ -457,6 +506,21 @@ export function IdmRoleMappings() {
                 mappings.map((mapping) => (
                   <TableRow key={mapping.id}>
                     <TableCell className="font-medium">{mapping.idm_group_name}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="text-xs">
+                        {mapping.source === 'ad' ? (
+                          <>
+                            <Building2 className="h-3 w-3 mr-1" />
+                            AD
+                          </>
+                        ) : (
+                          <>
+                            <Server className="h-3 w-3 mr-1" />
+                            FreeIPA
+                          </>
+                        )}
+                      </Badge>
+                    </TableCell>
                     <TableCell>
                       <Badge variant="outline">{mapping.app_role}</Badge>
                     </TableCell>
