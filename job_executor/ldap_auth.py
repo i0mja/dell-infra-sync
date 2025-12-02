@@ -16,6 +16,7 @@ against on-premise FreeIPA LDAP servers via the local network, supporting:
 
 from __future__ import annotations
 
+import re
 import ssl
 import json
 import logging
@@ -679,7 +680,7 @@ class FreeIPAAuthenticator:
         """
         Escape special characters for LDAP search filters.
         
-        RFC 4515 requires escaping: * ( ) \ NUL
+        RFC 4515 requires escaping: * ( ) \\ NUL
         """
         escape_chars = {
             '\\': r'\5c',
