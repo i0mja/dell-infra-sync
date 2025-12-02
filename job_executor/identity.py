@@ -8,7 +8,7 @@ This module provides canonical identity normalization for users across:
 Supports input formats:
 - Bare username: user
 - UPN format: user@domain.com
-- NT-style format: DOMAIN\user
+- NT-style format: DOMAIN\\user
 """
 
 import re
@@ -21,7 +21,7 @@ class IdentityFormat(Enum):
     """Format in which the identity was provided"""
     BARE = "bare"           # Just username: "jsmith"
     UPN = "upn"             # user@domain: "jsmith@neopost.grp"
-    NT_STYLE = "nt_style"   # DOMAIN\user: "NEOPOST\jsmith"
+    NT_STYLE = "nt_style"   # DOMAIN\\user: "NEOPOST\\jsmith"
 
 
 @dataclass
@@ -248,7 +248,7 @@ def normalize_group_name(group_dn_or_name: str) -> str:
     
     Handles:
     - Full LDAP DN: cn=admins,cn=groups,cn=accounts,dc=idm,dc=neopost,dc=grp -> admins
-    - NT-style: NEOPOST\Server-Admins -> server-admins
+    - NT-style: NEOPOST\\Server-Admins -> server-admins
     - Simple name: Server-Admins -> server-admins
     
     Args:
