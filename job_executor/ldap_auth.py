@@ -967,21 +967,81 @@ class FreeIPAAuthenticator:
             logger.error(f"Error getting groups for {username}: {e}")
             return []
     
+    def _resolve_sid_via_ipa_command(self, sid: str) -> Optional[str]:
+        """
+        Resolve a SID to username using the FreeIPA 'ipa trust-resolve' command.
+        
+        This requires the job executor to run on a machine enrolled in FreeIPA
+        with valid Kerberos credentials (e.g., from a keytab or kinit).
+        
+        Args:
+            sid: Windows SID (e.g., 'S-1-5-21-3513274823-891799712-3985061265-262796')
+            
+        Returns:
+            Resolved username (e.g., 'NEOPOSTAD:jalexander') or None if failed
+        """
+        import subprocess
+        
+        try:
+            result = subprocess.run(
+                ['ipa', 'trust-resolve', sid],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            
+            if result.returncode == 0:
+                # Parse output - ipa trust-resolve returns the username
+                # Output format is typically: "jalexander@neopost.ad" or similar
+                output = result.stdout.strip()
+                
+                if output:
+                    # Format as DOMAIN:username for display
+                    if '@' in output:
+                        # Split user@domain.tld -> DOMAIN:user
+                        parts = output.split('@')
+                        user_part = parts[0]
+                        domain_part = parts[-1].upper().split('.')[0]  # neopost.ad -> NEOPOST
+                        return f"{domain_part}:{user_part}"
+                    elif '\\' in output:
+                        # Already DOMAIN\\user format -> DOMAIN:user
+                        parts = output.split('\\')
+                        return f"{parts[0].upper()}:{parts[1]}"
+                    else:
+                        return output
+            else:
+                # Log stderr for debugging, but don't spam logs
+                stderr = result.stderr.strip()
+                if stderr and 'not found' not in stderr.lower():
+                    logger.debug(f"[SID RESOLVE] ipa trust-resolve stderr: {stderr[:100]}")
+                    
+        except FileNotFoundError:
+            # 'ipa' command not found - job executor not on FreeIPA-enrolled host
+            logger.debug("[SID RESOLVE] 'ipa' command not found - not enrolled in FreeIPA?")
+        except subprocess.TimeoutExpired:
+            logger.warning(f"[SID RESOLVE] ipa trust-resolve timed out for SID {sid[-12:]}...")
+        except Exception as e:
+            logger.debug(f"[SID RESOLVE] ipa trust-resolve error: {e}")
+        
+        return None
+    
     def _resolve_sids_to_usernames(self, conn: 'Connection', sids: List[str]) -> Dict[str, str]:
         """
-        Resolve Windows SIDs to usernames by searching multiple FreeIPA trees.
+        Resolve Windows SIDs to usernames using multiple strategies.
         
-        Tries multiple strategies:
-        1. ID Views tree (Default Trust View) - best for mapped AD users
+        Strategy order (stops when all SIDs resolved):
+        0. ipa trust-resolve command (PREFERRED - most reliable)
+        1. ID Views tree (Default Trust View)
         2. Compat users tree with multiple SID attribute names
-        3. AD DC direct query (if configured)
+        3. RID-based pattern matching
+        4. AD DC direct query (if configured)
         
         Args:
             conn: Active LDAP connection
             sids: List of SIDs to resolve (e.g., ['S-1-5-21-xxx-262796'])
             
         Returns:
-            Dict mapping SID -> username (e.g., {'S-1-5-21-xxx-262796': 'jalexander'})
+            Dict mapping SID -> username (e.g., {'S-1-5-21-xxx-262796': 'NEOPOSTAD:jalexander'})
         """
         resolved = {}
         if not sids:
@@ -989,33 +1049,37 @@ class FreeIPAAuthenticator:
         
         logger.info(f"[SID RESOLVE] Attempting to resolve {len(sids)} SID(s)")
         
-        # === DIAGNOSTIC: Sample compat users to see what attributes exist ===
+        # === STRATEGY 0: Use 'ipa trust-resolve' command (PREFERRED) ===
+        # This is the most reliable method when running on a FreeIPA-enrolled host
+        logger.info("[SID RESOLVE] Strategy 0: Using 'ipa trust-resolve' command")
+        
+        ipa_available = True
+        for sid in sids:
+            if not ipa_available:
+                break
+            username = self._resolve_sid_via_ipa_command(sid)
+            if username:
+                resolved[sid] = username
+                logger.info(f"[SID RESOLVE] Strategy 0 resolved: {sid[-12:]}... -> {username}")
+            elif username is None:
+                # Check if ipa command exists by looking at first failure
+                # If first SID fails due to missing ipa command, skip rest
+                import shutil
+                if not shutil.which('ipa'):
+                    logger.info("[SID RESOLVE] Strategy 0: 'ipa' command not available, falling back to LDAP strategies")
+                    ipa_available = False
+        
+        # If Strategy 0 resolved all SIDs, we're done
+        if len(resolved) == len(sids):
+            logger.info(f"[SID RESOLVE] All {len(sids)} SIDs resolved via ipa trust-resolve command")
+            return resolved
+        
+        # === FALLBACK: LDAP-based strategies for hosts not enrolled in FreeIPA ===
+        unresolved_count = len(sids) - len(resolved)
+        if unresolved_count > 0:
+            logger.info(f"[SID RESOLVE] {unresolved_count} SID(s) remaining, trying LDAP fallback strategies")
+        
         compat_users_base = f"cn=users,cn=compat,{self.base_dn}"
-        try:
-            conn.search(
-                search_base=compat_users_base,
-                search_filter="(objectClass=*)",
-                search_scope=SUBTREE,
-                attributes=["*"],  # Request ALL attributes
-                size_limit=5,
-            )
-            if conn.entries:
-                logger.info(f"[SID RESOLVE DEBUG] Sampled {len(conn.entries)} compat users")
-                for entry in conn.entries[:3]:
-                    attrs = list(entry.entry_attributes_as_dict.keys())
-                    logger.info(f"[SID RESOLVE DEBUG] DN: {entry.entry_dn}")
-                    logger.info(f"[SID RESOLVE DEBUG] Attributes: {attrs}")
-                    # Log any SID-like attributes
-                    for attr in attrs:
-                        val = entry.entry_attributes_as_dict.get(attr, [])
-                        if val:
-                            sample_val = str(val[0])[:50] if val else 'empty'
-                            if 'sid' in attr.lower() or 'S-1-' in sample_val:
-                                logger.info(f"[SID RESOLVE DEBUG]   {attr} = {sample_val}...")
-            else:
-                logger.warning(f"[SID RESOLVE DEBUG] No entries found in compat users tree")
-        except Exception as e:
-            logger.debug(f"[SID RESOLVE DEBUG] Error sampling compat users: {e}")
         
         # === STRATEGY 1: Search ID Views tree (Default Trust View) ===
         id_views_base = f"cn=Default Trust View,cn=views,cn=accounts,{self.base_dn}"
