@@ -19,6 +19,9 @@ export function IdmConnectionSettings() {
   const [useLdaps, setUseLdaps] = useState(settings?.use_ldaps ?? true);
   const [verifyCertificate, setVerifyCertificate] = useState(settings?.verify_certificate ?? true);
   const [connectionTimeout, setConnectionTimeout] = useState(settings?.connection_timeout_seconds || 10);
+  const [baseDn, setBaseDn] = useState(settings?.base_dn || '');
+  const [bindDn, setBindDn] = useState(settings?.bind_dn || '');
+  const [bindPassword, setBindPassword] = useState('');
 
   useEffect(() => {
     if (settings) {
@@ -29,11 +32,13 @@ export function IdmConnectionSettings() {
       setUseLdaps(settings.use_ldaps ?? true);
       setVerifyCertificate(settings.verify_certificate ?? true);
       setConnectionTimeout(settings.connection_timeout_seconds || 10);
+      setBaseDn(settings.base_dn || '');
+      setBindDn(settings.bind_dn || '');
     }
   }, [settings]);
 
   const handleSave = async () => {
-    await saveSettings({
+    const updates: any = {
       auth_mode: authMode,
       server_host: serverHost,
       server_port: serverPort,
@@ -41,7 +46,16 @@ export function IdmConnectionSettings() {
       use_ldaps: useLdaps,
       verify_certificate: verifyCertificate,
       connection_timeout_seconds: connectionTimeout,
-    });
+      base_dn: baseDn,
+      bind_dn: bindDn,
+    };
+
+    if (bindPassword) {
+      updates.bind_password_encrypted = bindPassword;
+    }
+
+    await saveSettings(updates);
+    setBindPassword('');
   };
 
   const handleTestConnection = () => {
@@ -51,17 +65,18 @@ export function IdmConnectionSettings() {
       ldaps_port: ldapsPort,
       use_ldaps: useLdaps,
       verify_certificate: verifyCertificate,
-      base_dn: settings?.base_dn,
+      base_dn: baseDn,
       user_search_base: settings?.user_search_base,
       group_search_base: settings?.group_search_base,
-      bind_dn: settings?.bind_dn,
+      bind_dn: bindDn,
+      bind_password: bindPassword || undefined,
       ca_certificate: settings?.ca_certificate,
       connection_timeout_seconds: connectionTimeout,
-      use_saved_password: true,
+      use_saved_password: !bindPassword && !!settings?.bind_password_encrypted,
     });
   };
 
-  const canTestConnection = serverHost && settings?.bind_dn && settings?.bind_password_encrypted && settings?.base_dn;
+  const canTestConnection = serverHost && bindDn && (bindPassword || settings?.bind_password_encrypted) && baseDn;
 
   if (loading) {
     return (
@@ -179,6 +194,46 @@ export function IdmConnectionSettings() {
                   <Switch checked={verifyCertificate} onCheckedChange={setVerifyCertificate} />
                 </div>
               )}
+            </CardContent>
+          </Card>
+
+          {/* Service Account */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Service Account</CardTitle>
+              <CardDescription>Credentials for binding to the LDAP directory</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>Base DN</Label>
+                <Input
+                  placeholder="dc=example,dc=com"
+                  value={baseDn}
+                  onChange={(e) => setBaseDn(e.target.value)}
+                />
+                <p className="text-sm text-muted-foreground">Root of the LDAP directory tree</p>
+              </div>
+              <div className="space-y-2">
+                <Label>Bind DN</Label>
+                <Input
+                  placeholder="uid=svc_dsm,cn=users,cn=accounts,dc=example,dc=com"
+                  value={bindDn}
+                  onChange={(e) => setBindDn(e.target.value)}
+                />
+                <p className="text-sm text-muted-foreground">Full distinguished name of the service account</p>
+              </div>
+              <div className="space-y-2">
+                <Label>Bind Password</Label>
+                <Input
+                  type="password"
+                  placeholder={settings?.bind_password_encrypted ? '••••••••' : 'Enter password'}
+                  value={bindPassword}
+                  onChange={(e) => setBindPassword(e.target.value)}
+                />
+                {settings?.bind_password_encrypted && (
+                  <p className="text-sm text-muted-foreground">Password is encrypted. Enter new password to change.</p>
+                )}
+              </div>
 
               <Button 
                 onClick={handleTestConnection} 
