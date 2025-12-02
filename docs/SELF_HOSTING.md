@@ -87,6 +87,8 @@ Dell Server Manager supports two deployment modes to accommodate different infra
 
 **What it is:** Fully self-contained deployment with a local Supabase instance. No internet connectivity required after initial installation.
 
+> **📦 Completely Air-Gapped?** If your target system has NO internet access at all, see the [Offline Installation Guide](OFFLINE_INSTALLATION.md) for the offline package workflow. This allows you to create a bundle on an internet-connected machine and transfer it to the air-gapped system.
+
 **Best for:**
 - **Air-gapped environments** (secure networks with no internet access)
 - **Compliance requirements** mandating on-premises data storage
