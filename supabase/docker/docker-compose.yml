@@ -21,7 +21,7 @@ services:
       JWT_EXP: 3600
     volumes:
       - supabase-db-data:/var/lib/postgresql/data
-      - ./volumes/db/init:/docker-entrypoint-initdb.d
+      - ./volumes/db/init:/docker-entrypoint-initdb.d:z
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -79,7 +79,7 @@ services:
       SUPABASE_ANON_KEY: ${ANON_KEY}
       SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
     volumes:
-      - ./volumes/api/kong.yml:/var/lib/kong/kong.yml:ro
+      - ./volumes/api/kong.yml:/var/lib/kong/kong.yml:ro,z
     depends_on:
       - auth
       - rest
@@ -233,7 +233,7 @@ services:
       SUPABASE_DB_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
       VERIFY_JWT: "false"
     volumes:
-      - ${FUNCTIONS_PATH:-./functions}:/home/deno/functions:ro
+      - ${FUNCTIONS_PATH:-./functions}:/home/deno/functions:ro,z
     depends_on:
       - db
 
