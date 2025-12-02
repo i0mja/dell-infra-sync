@@ -6,8 +6,9 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { useIdmSettings } from '@/hooks/useIdmSettings';
-import { AlertCircle, Loader2, Save, TestTube, Lock, Unlock, CheckCircle, XCircle } from 'lucide-react';
+import { AlertCircle, Loader2, Save, TestTube, Lock, Unlock, CheckCircle, XCircle, Plus, X } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 
 // Helper functions for auto-derivation
@@ -48,6 +49,10 @@ export function IdmConnectionSettings() {
   const [testAuthPassword, setTestAuthPassword] = useState('');
   const [testAuthStatus, setTestAuthStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testAuthResult, setTestAuthResult] = useState<any>(null);
+  
+  // AD Trust domains
+  const [trustedDomains, setTrustedDomains] = useState<string[]>([]);
+  const [newTrustedDomain, setNewTrustedDomain] = useState('');
 
   useEffect(() => {
     if (settings) {
@@ -60,6 +65,7 @@ export function IdmConnectionSettings() {
       setConnectionTimeout(settings.connection_timeout_seconds || 10);
       setBaseDn(settings.base_dn || '');
       setBindDn(settings.bind_dn || '');
+      setTrustedDomains(settings.trusted_domains || []);
       
       // If there's a saved bind_dn, extract username for display
       if (settings.bind_dn) {
@@ -88,6 +94,7 @@ export function IdmConnectionSettings() {
       connection_timeout_seconds: connectionTimeout,
       base_dn: baseDn,
       bind_dn: bindDn,
+      trusted_domains: trustedDomains,
     };
 
     if (bindPassword) {
@@ -96,6 +103,18 @@ export function IdmConnectionSettings() {
 
     await saveSettings(updates);
     setBindPassword('');
+  };
+
+  const handleAddTrustedDomain = () => {
+    const domain = newTrustedDomain.trim().toLowerCase();
+    if (domain && !trustedDomains.includes(domain)) {
+      setTrustedDomains([...trustedDomains, domain]);
+      setNewTrustedDomain('');
+    }
+  };
+
+  const handleRemoveTrustedDomain = (domain: string) => {
+    setTrustedDomains(trustedDomains.filter(d => d !== domain));
   };
 
   const handleServerHostChange = (host: string) => {
@@ -529,6 +548,70 @@ export function IdmConnectionSettings() {
             </CardContent>
           </Card>
 
+          {/* AD Trust Domains */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Active Directory Trust</CardTitle>
+              <CardDescription>
+                Configure trusted AD domains for users authenticating via AD Trust (e.g., user@corp.local)
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  AD Trust users from these domains will authenticate using their full UPN (user@domain) 
+                  and be searched in the FreeIPA compat tree (cn=users,cn=compat).
+                </AlertDescription>
+              </Alert>
+
+              <div className="space-y-2">
+                <Label>Trusted AD Domains</Label>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="e.g., corp.local or neopost.ad"
+                    value={newTrustedDomain}
+                    onChange={(e) => setNewTrustedDomain(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddTrustedDomain()}
+                  />
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    onClick={handleAddTrustedDomain}
+                    disabled={!newTrustedDomain.trim()}
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Enter domain names for trusted Active Directory realms
+                </p>
+              </div>
+
+              {trustedDomains.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {trustedDomains.map((domain) => (
+                    <Badge key={domain} variant="secondary" className="flex items-center gap-1">
+                      {domain}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveTrustedDomain(domain)}
+                        className="ml-1 hover:text-destructive"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Badge>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground italic">
+                  No trusted domains configured. Users with @domain suffixes not matching the FreeIPA realm 
+                  will still attempt AD Trust authentication (permissive mode).
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
           {/* Test Authentication */}
           <Card>
             <CardHeader>
@@ -595,7 +678,12 @@ export function IdmConnectionSettings() {
                   <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
                   <AlertDescription className="text-green-800 dark:text-green-200">
                     <div className="space-y-3">
-                      <p className="font-medium text-base">✅ Authentication Successful</p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium text-base">✅ Authentication Successful</p>
+                        {testAuthResult.is_ad_trust_user && (
+                          <Badge variant="outline" className="text-xs">AD Trust User</Badge>
+                        )}
+                      </div>
                       
                       <div className="space-y-2 text-sm">
                         <div>
@@ -604,6 +692,7 @@ export function IdmConnectionSettings() {
                           <p>Email: {testAuthResult.email || 'N/A'}</p>
                           {testAuthResult.title && <p>Title: {testAuthResult.title}</p>}
                           {testAuthResult.department && <p>Department: {testAuthResult.department}</p>}
+                          {testAuthResult.ad_domain && <p>AD Domain: {testAuthResult.ad_domain}</p>}
                         </div>
                         
                         <div>

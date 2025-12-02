@@ -854,6 +854,7 @@ export type Database = {
           session_timeout_minutes: number | null
           sync_enabled: boolean | null
           sync_interval_minutes: number | null
+          trusted_domains: string[] | null
           updated_at: string | null
           use_ldaps: boolean | null
           user_search_base: string | null
@@ -882,6 +883,7 @@ export type Database = {
           session_timeout_minutes?: number | null
           sync_enabled?: boolean | null
           sync_interval_minutes?: number | null
+          trusted_domains?: string[] | null
           updated_at?: string | null
           use_ldaps?: boolean | null
           user_search_base?: string | null
@@ -910,6 +912,7 @@ export type Database = {
           session_timeout_minutes?: number | null
           sync_enabled?: boolean | null
           sync_interval_minutes?: number | null
+          trusted_domains?: string[] | null
           updated_at?: string | null
           use_ldaps?: boolean | null
           user_search_base?: string | null
