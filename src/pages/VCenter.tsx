@@ -19,10 +19,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EsxiProfilesTab } from "@/components/vcenter/EsxiProfilesTab";
 import { useVCenterData } from "@/hooks/useVCenterData";
 import { useVCenters } from "@/hooks/useVCenters";
+import { useColumnVisibility } from "@/hooks/useColumnVisibility";
+import { useSavedViews } from "@/hooks/useSavedViews";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Columns3, Download } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 
 interface VCenterHost {
   id: string;
@@ -70,6 +71,30 @@ export default function VCenter() {
   const [datastoresTypeFilter, setDatastoresTypeFilter] = useState("all");
   const [datastoresAccessFilter, setDatastoresAccessFilter] = useState("all");
   const [datastoresCapacityFilter, setDatastoresCapacityFilter] = useState("all");
+  
+  // Column visibility hooks
+  const hostsColumnVisibility = useColumnVisibility("vcenter-hosts-columns", ["name", "status", "esxi", "serial", "linked", "sync"]);
+  const vmsColumnVisibility = useColumnVisibility("vcenter-vms-columns", ["name", "power", "ip", "resources", "disk", "os", "tools", "cluster"]);
+  const clustersColumnVisibility = useColumnVisibility("vcenter-clusters-columns", ["name", "status", "hosts", "vms", "ha", "drs", "cpu", "memory", "storage", "sync"]);
+  const datastoresColumnVisibility = useColumnVisibility("vcenter-datastores-columns", ["name", "type", "capacity", "usage", "hosts", "vms", "accessible"]);
+  
+  // Saved views hooks
+  const hostsSavedViews = useSavedViews("vcenter-hosts-views");
+  const vmsSavedViews = useSavedViews("vcenter-vms-views");
+  const clustersSavedViews = useSavedViews("vcenter-clusters-views");
+  const datastoresSavedViews = useSavedViews("vcenter-datastores-views");
+  
+  // Selection counts (updated by tables via callback)
+  const [hostsSelectedCount, setHostsSelectedCount] = useState(0);
+  const [vmsSelectedCount, setVmsSelectedCount] = useState(0);
+  const [clustersSelectedCount, setClustersSelectedCount] = useState(0);
+  const [datastoresSelectedCount, setDatastoresSelectedCount] = useState(0);
+  
+  // Selected items for export
+  const [selectedHostIds, setSelectedHostIds] = useState<Set<string>>(new Set());
+  const [selectedVmIds, setSelectedVmIds] = useState<Set<string>>(new Set());
+  const [selectedClusterIds, setSelectedClusterIds] = useState<Set<string>>(new Set());
+  const [selectedDatastoreIds, setSelectedDatastoreIds] = useState<Set<string>>(new Set());
   
   const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
   const [selectedVmId, setSelectedVmId] = useState<string | null>(null);
@@ -596,6 +621,28 @@ export default function VCenter() {
               onStatusFilterChange={setHostsStatusFilter}
               linkFilter={hostsLinkFilter}
               onLinkFilterChange={setHostsLinkFilter}
+              visibleColumns={hostsColumnVisibility.visibleColumns}
+              onToggleColumn={hostsColumnVisibility.toggleColumn}
+              onExport={() => {
+                const columns: ExportColumn<VCenterHost>[] = [
+                  { key: "name", label: "Hostname" },
+                  { key: "status", label: "Status" },
+                  { key: "maintenance_mode", label: "Maintenance", format: (v) => (v ? "Yes" : "No") },
+                  { key: "esxi_version", label: "ESXi Version" },
+                  { key: "serial_number", label: "Serial Number" },
+                  { key: "server_id", label: "Linked", format: (v) => (v ? "Yes" : "No") },
+                  { key: "cluster", label: "Cluster" },
+                  { key: "last_sync", label: "Last Sync" },
+                ];
+                const hostsToExport = selectedHostIds.size > 0 ? hosts.filter((h) => selectedHostIds.has(h.id)) : hosts;
+                exportToCSV(hostsToExport, columns, "vcenter-hosts");
+                toast({ title: "Export successful", description: `Exported ${hostsToExport.length} hosts` });
+              }}
+              selectedCount={hostsSelectedCount}
+              onSaveView={(name) => {
+                hostsSavedViews.saveView(name, {}, undefined, undefined, hostsColumnVisibility.visibleColumns);
+                toast({ title: "View saved", description: `"${name}" saved successfully` });
+              }}
             />
           )}
           {activeTab === "vms" && (
@@ -611,6 +658,29 @@ export default function VCenter() {
               onToolsFilterChange={setVmsToolsFilter}
               osFilter={vmsOsFilter}
               onOsFilterChange={setVmsOsFilter}
+              visibleColumns={vmsColumnVisibility.visibleColumns}
+              onToggleColumn={vmsColumnVisibility.toggleColumn}
+              onExport={() => {
+                const columns: ExportColumn<typeof vms[0]>[] = [
+                  { key: "name", label: "VM Name" },
+                  { key: "power_state", label: "Power State" },
+                  { key: "ip_address", label: "IP Address" },
+                  { key: "cpu_count", label: "CPUs" },
+                  { key: "memory_mb", label: "Memory (MB)" },
+                  { key: "disk_gb", label: "Disk (GB)" },
+                  { key: "guest_os", label: "Guest OS" },
+                  { key: "tools_status", label: "Tools Status" },
+                  { key: "cluster_name", label: "Cluster" },
+                ];
+                const vmsToExport = selectedVmIds.size > 0 ? vms.filter((v) => selectedVmIds.has(v.id)) : vms;
+                exportToCSV(vmsToExport, columns, "vcenter-vms");
+                toast({ title: "Export successful", description: `Exported ${vmsToExport.length} VMs` });
+              }}
+              selectedCount={vmsSelectedCount}
+              onSaveView={(name) => {
+                vmsSavedViews.saveView(name, { cluster: vmsClusterFilter, power: vmsPowerFilter, tools: vmsToolsFilter, os: vmsOsFilter }, undefined, undefined, vmsColumnVisibility.visibleColumns);
+                toast({ title: "View saved", description: `"${name}" saved successfully` });
+              }}
             />
           )}
           {activeTab === "clusters" && (
@@ -623,6 +693,27 @@ export default function VCenter() {
               onHaFilterChange={setClustersHaFilter}
               drsFilter={clustersDrsFilter}
               onDrsFilterChange={setClustersDrsFilter}
+              visibleColumns={clustersColumnVisibility.visibleColumns}
+              onToggleColumn={clustersColumnVisibility.toggleColumn}
+              onExport={() => {
+                const columns: ExportColumn<typeof clusters[0]>[] = [
+                  { key: "cluster_name", label: "Cluster Name" },
+                  { key: "overall_status", label: "Status" },
+                  { key: "host_count", label: "Hosts" },
+                  { key: "vm_count", label: "VMs" },
+                  { key: "ha_enabled", label: "HA Enabled", format: (v) => (v ? "Yes" : "No") },
+                  { key: "drs_enabled", label: "DRS Enabled", format: (v) => (v ? "Yes" : "No") },
+                  { key: "last_sync", label: "Last Sync" },
+                ];
+                const clustersToExport = selectedClusterIds.size > 0 ? clusters.filter((c) => selectedClusterIds.has(c.id)) : clusters;
+                exportToCSV(clustersToExport, columns, "vcenter-clusters");
+                toast({ title: "Export successful", description: `Exported ${clustersToExport.length} clusters` });
+              }}
+              selectedCount={clustersSelectedCount}
+              onSaveView={(name) => {
+                clustersSavedViews.saveView(name, { status: clustersStatusFilter, ha: clustersHaFilter, drs: clustersDrsFilter }, undefined, undefined, clustersColumnVisibility.visibleColumns);
+                toast({ title: "View saved", description: `"${name}" saved successfully` });
+              }}
             />
           )}
           {activeTab === "datastores" && (
@@ -635,6 +726,27 @@ export default function VCenter() {
               onAccessFilterChange={setDatastoresAccessFilter}
               capacityFilter={datastoresCapacityFilter}
               onCapacityFilterChange={setDatastoresCapacityFilter}
+              visibleColumns={datastoresColumnVisibility.visibleColumns}
+              onToggleColumn={datastoresColumnVisibility.toggleColumn}
+              onExport={() => {
+                const columns: ExportColumn<typeof datastores[0]>[] = [
+                  { key: "name", label: "Name" },
+                  { key: "type", label: "Type" },
+                  { key: "capacity_bytes", label: "Capacity (bytes)" },
+                  { key: "free_bytes", label: "Free (bytes)" },
+                  { key: "host_count", label: "Hosts" },
+                  { key: "vm_count", label: "VMs" },
+                  { key: "accessible", label: "Accessible", format: (v) => (v ? "Yes" : "No") },
+                ];
+                const datastoresToExport = selectedDatastoreIds.size > 0 ? datastores.filter((d) => selectedDatastoreIds.has(d.id)) : datastores;
+                exportToCSV(datastoresToExport, columns, "vcenter-datastores");
+                toast({ title: "Export successful", description: `Exported ${datastoresToExport.length} datastores` });
+              }}
+              selectedCount={datastoresSelectedCount}
+              onSaveView={(name) => {
+                datastoresSavedViews.saveView(name, { type: datastoresTypeFilter, access: datastoresAccessFilter, capacity: datastoresCapacityFilter }, undefined, undefined, datastoresColumnVisibility.visibleColumns);
+                toast({ title: "View saved", description: `"${name}" saved successfully` });
+              }}
             />
           )}
 
@@ -653,6 +765,11 @@ export default function VCenter() {
               loading={hostsLoading}
               onHostDelete={handleHostDelete}
               onBulkDelete={handleBulkHostDelete}
+              visibleColumns={hostsColumnVisibility.visibleColumns}
+              onSelectionChange={(ids) => {
+                setSelectedHostIds(ids);
+                setHostsSelectedCount(ids.size);
+              }}
             />
           </TabsContent>
 
@@ -667,6 +784,11 @@ export default function VCenter() {
               powerFilter={vmsPowerFilter}
               toolsFilter={vmsToolsFilter}
               osFilter={vmsOsFilter}
+              visibleColumns={vmsColumnVisibility.visibleColumns}
+              onSelectionChange={(ids) => {
+                setSelectedVmIds(ids);
+                setVmsSelectedCount(ids.size);
+              }}
             />
           </TabsContent>
 
@@ -680,6 +802,11 @@ export default function VCenter() {
               statusFilter={clustersStatusFilter}
               haFilter={clustersHaFilter}
               drsFilter={clustersDrsFilter}
+              visibleColumns={clustersColumnVisibility.visibleColumns}
+              onSelectionChange={(ids) => {
+                setSelectedClusterIds(ids);
+                setClustersSelectedCount(ids.size);
+              }}
             />
           </TabsContent>
 
@@ -693,6 +820,11 @@ export default function VCenter() {
               typeFilter={datastoresTypeFilter}
               accessFilter={datastoresAccessFilter}
               capacityFilter={datastoresCapacityFilter}
+              visibleColumns={datastoresColumnVisibility.visibleColumns}
+              onSelectionChange={(ids) => {
+                setSelectedDatastoreIds(ids);
+                setDatastoresSelectedCount(ids.size);
+              }}
             />
           </TabsContent>
 
