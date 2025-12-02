@@ -10,38 +10,24 @@ import { Loader2, Save } from 'lucide-react';
 export function IdmDirectorySettings() {
   const { settings, loading, saving, saveSettings } = useIdmSettings();
 
-  const [baseDn, setBaseDn] = useState(settings?.base_dn || '');
   const [userSearchBase, setUserSearchBase] = useState(settings?.user_search_base || 'cn=users,cn=accounts');
   const [groupSearchBase, setGroupSearchBase] = useState(settings?.group_search_base || 'cn=groups,cn=accounts');
-  const [bindDn, setBindDn] = useState(settings?.bind_dn || '');
-  const [bindPassword, setBindPassword] = useState('');
   const [caCertificate, setCaCertificate] = useState(settings?.ca_certificate || '');
 
   useEffect(() => {
     if (settings) {
-      setBaseDn(settings.base_dn || '');
       setUserSearchBase(settings.user_search_base || 'cn=users,cn=accounts');
       setGroupSearchBase(settings.group_search_base || 'cn=groups,cn=accounts');
-      setBindDn(settings.bind_dn || '');
       setCaCertificate(settings.ca_certificate || '');
     }
   }, [settings]);
 
   const handleSave = async () => {
-    const updates: any = {
-      base_dn: baseDn,
+    await saveSettings({
       user_search_base: userSearchBase,
       group_search_base: groupSearchBase,
-      bind_dn: bindDn,
       ca_certificate: caCertificate,
-    };
-
-    if (bindPassword) {
-      updates.bind_password_encrypted = bindPassword;
-    }
-
-    await saveSettings(updates);
-    setBindPassword('');
+    });
   };
 
   if (loading) {
@@ -54,22 +40,13 @@ export function IdmDirectorySettings() {
 
   return (
     <div className="space-y-6">
-      {/* LDAP Structure */}
+      {/* Directory Structure */}
       <Card>
         <CardHeader>
-          <CardTitle>LDAP Directory Structure</CardTitle>
-          <CardDescription>Define the LDAP directory tree structure</CardDescription>
+          <CardTitle>Directory Structure</CardTitle>
+          <CardDescription>Define where users and groups are located in the LDAP tree</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label>Base DN</Label>
-            <Input
-              placeholder="dc=example,dc=com"
-              value={baseDn}
-              onChange={(e) => setBaseDn(e.target.value)}
-            />
-            <p className="text-sm text-muted-foreground">Root of the LDAP directory tree</p>
-          </div>
           <div className="space-y-2">
             <Label>User Search Base</Label>
             <Input
@@ -87,37 +64,6 @@ export function IdmDirectorySettings() {
               onChange={(e) => setGroupSearchBase(e.target.value)}
             />
             <p className="text-sm text-muted-foreground">Relative to Base DN where groups are located</p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Service Account */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Service Account</CardTitle>
-          <CardDescription>Credentials for binding to the LDAP directory</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label>Bind DN</Label>
-            <Input
-              placeholder="uid=svc_dsm,cn=users,cn=accounts,dc=example,dc=com"
-              value={bindDn}
-              onChange={(e) => setBindDn(e.target.value)}
-            />
-            <p className="text-sm text-muted-foreground">Full distinguished name of the service account</p>
-          </div>
-          <div className="space-y-2">
-            <Label>Bind Password</Label>
-            <Input
-              type="password"
-              placeholder={settings?.bind_password_encrypted ? '••••••••' : 'Enter password'}
-              value={bindPassword}
-              onChange={(e) => setBindPassword(e.target.value)}
-            />
-            {settings?.bind_password_encrypted && (
-              <p className="text-sm text-muted-foreground">Password is encrypted. Enter new password to change.</p>
-            )}
           </div>
         </CardContent>
       </Card>
