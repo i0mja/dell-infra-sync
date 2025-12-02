@@ -583,7 +583,7 @@ export function IdmConnectionSettings() {
                 <Label>Trusted AD Domains</Label>
                 <div className="flex gap-2">
                   <Input
-                    placeholder="e.g., corp.local or neopost.ad"
+                    placeholder="e.g., neopost.grp or neopost.ad"
                     value={newTrustedDomain}
                     onChange={(e) => setNewTrustedDomain(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleAddTrustedDomain()}
@@ -598,7 +598,8 @@ export function IdmConnectionSettings() {
                   </Button>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  Enter domain names for trusted Active Directory realms
+                  Enter trusted AD domains as DNS names (for example <code>neopost.grp</code> and
+                  <code> neopost.ad</code>), matching the domains configured in your FreeIPA trusts.
                 </p>
               </div>
 
