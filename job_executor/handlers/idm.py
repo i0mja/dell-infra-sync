@@ -238,9 +238,19 @@ class IDMHandler(BaseHandler):
                 command_type='ldap_bind_attempt'
             )
             
-            # Authenticate user
+            # Get decrypted service account password for AD Trust group lookup
+            service_bind_password = None
+            if idm_settings.get('bind_password_encrypted'):
+                service_bind_password = self.executor.decrypt_bind_password(idm_settings['bind_password_encrypted'])
+            
+            # Authenticate user with service account for group lookup
             self.log(f"Testing authentication for user '{username}'")
-            auth_result = authenticator.authenticate_user(username, password)
+            auth_result = authenticator.authenticate_user(
+                username,
+                password,
+                service_bind_dn=idm_settings.get('bind_dn'),
+                service_bind_password=service_bind_password
+            )
             
             elapsed_ms = int((datetime.now() - start_time).total_seconds() * 1000)
             

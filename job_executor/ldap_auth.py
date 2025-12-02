@@ -14,6 +14,8 @@ against on-premise FreeIPA LDAP servers via the local network, supporting:
 - Identity normalization across multiple formats (bare, UPN, NT-style)
 """
 
+from __future__ import annotations
+
 import ssl
 import json
 import logging
@@ -470,22 +472,8 @@ class FreeIPAAuthenticator:
             # Check if this is an AD trust user
             is_ad_user, clean_username, domain = self._is_ad_trust_user(username)
             
-            if is_ad_user:
-                # AD Trust user - requires AD DC for authentication
-                if not self.ad_dc_host:
-                    elapsed_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-                    logger.error(f"AD Trust user {username} cannot authenticate: ad_dc_host not configured")
-                    return {
-                        "success": False,
-                        "error": "AD Domain Controller not configured",
-                        "error_details": f"AD Trust user '{username}' requires ad_dc_host to be configured in IDM settings. "
-                                         f"FreeIPA compat tree does not support simple LDAP binds for AD Trust users. "
-                                         f"Please configure the AD DC host in Settings → Identity Management → Connection.",
-                        "is_ad_trust_user": True,
-                        "ad_domain": domain,
-                        "response_time_ms": elapsed_ms,
-                    }
-                
+            # AD Trust user with AD DC configured: Use AD DC pass-through (preferred)
+            if is_ad_user and self.ad_dc_host:
                 # Use AD DC pass-through authentication
                 logger.info(f"Using AD DC pass-through for {username}")
                 ad_result = self._authenticate_via_ad_dc(username, password, domain)
@@ -510,6 +498,10 @@ class FreeIPAAuthenticator:
                     "auth_method": "ad_dc_passthrough",
                     "response_time_ms": elapsed_ms,
                 }
+            
+            # Log if AD trust user but no AD DC configured - will attempt compat tree fallback
+            if is_ad_user and not self.ad_dc_host:
+                logger.info(f"AD Trust user {username} - no ad_dc_host configured, attempting compat tree fallback")
             
             # Standard authentication (native FreeIPA or AD trust via compat tree)
             server = self._get_server()
