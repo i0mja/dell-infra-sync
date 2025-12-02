@@ -736,7 +736,7 @@ export default function ActivityMonitor() {
           )}
 
           {/* Tab content */}
-          <TabsContent value="operations" className="flex-1 mt-0 overflow-hidden px-4">
+          <TabsContent value="operations" className="flex-1 mt-0 overflow-hidden">
             {/* Stale job warning */}
             {!staleWarningDismissed && staleJobs.length > 0 && (
               <StaleJobWarning
