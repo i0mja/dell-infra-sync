@@ -10,6 +10,11 @@ import requests
 class IDMHandler(BaseHandler):
     """Handles IDM authentication, testing, and user sync operations"""
     
+    def _build_ldap_url(self, host: str, port: int, use_ssl: bool) -> str:
+        """Build LDAP URL based on settings."""
+        protocol = 'ldaps' if use_ssl else 'ldap'
+        return f"{protocol}://{host}:{port}"
+    
     def _log_ldap_operation(
         self,
         job_id: str,
@@ -228,6 +233,12 @@ class IDMHandler(BaseHandler):
             server_host = idm_settings.get('server_host', 'unknown')
             base_dn = idm_settings.get('base_dn', '')
             ad_dc_host = idm_settings.get('ad_dc_host')
+            ad_dc_port = idm_settings.get('ad_dc_port', 389)
+            ad_dc_use_ssl = idm_settings.get('ad_dc_use_ssl', False)
+            
+            # FreeIPA connection settings
+            ipa_use_ssl = idm_settings.get('use_ldaps', True)
+            ipa_port = idm_settings.get('ldaps_port', 636) if ipa_use_ssl else idm_settings.get('server_port', 389)
             
             # Log verbose connection details
             self._update_task(task_id, 'running', f"Connecting to FreeIPA: {server_host}", 10)
@@ -240,6 +251,12 @@ class IDMHandler(BaseHandler):
             # Check if this is an AD trust user
             is_ad_user, clean_username, domain = authenticator._is_ad_trust_user(username)
             
+            # Build the LDAP URL based on whether this is AD or FreeIPA auth
+            if is_ad_user and ad_dc_host:
+                bind_url = self._build_ldap_url(ad_dc_host, ad_dc_port, ad_dc_use_ssl)
+            else:
+                bind_url = self._build_ldap_url(server_host, ipa_port, ipa_use_ssl)
+            
             # Log the authentication attempt details
             auth_details = {
                 'username': username,
@@ -248,11 +265,13 @@ class IDMHandler(BaseHandler):
                 'server_host': server_host,
                 'base_dn': base_dn,
                 'ad_dc_host': ad_dc_host if is_ad_user else None,
+                'ad_dc_port': ad_dc_port if is_ad_user else None,
+                'ad_dc_use_ssl': ad_dc_use_ssl if is_ad_user else None,
             }
             
             if is_ad_user:
                 if ad_dc_host:
-                    self.log(f"AD Trust user detected - will authenticate via AD DC: {ad_dc_host}")
+                    self.log(f"AD Trust user detected - will authenticate via AD DC: {ad_dc_host}:{ad_dc_port} (SSL: {ad_dc_use_ssl})")
                     auth_details['auth_method'] = 'ad_dc_passthrough'
                     auth_details['bind_target'] = ad_dc_host
                 else:
@@ -266,13 +285,13 @@ class IDMHandler(BaseHandler):
                 auth_details['bind_target'] = server_host
                 auth_details['bind_dn'] = f"uid={clean_username},cn=users,cn=accounts,{base_dn}"
             
-            self._update_task(task_id, 'running', f"Attempting LDAP bind: {auth_details.get('auth_method')}", 30)
+            self._update_task(task_id, 'running', f"Attempting LDAP bind: {auth_details.get('auth_method')} via {bind_url}", 30)
             
             # Log the LDAP bind attempt
             self._log_ldap_operation(
                 job_id=job_id,
                 endpoint='/ldap/bind',
-                full_url=f"ldaps://{auth_details.get('bind_target', server_host)}:636",
+                full_url=bind_url,
                 success=False,  # Will update after
                 request_body={
                     'username': username,
@@ -303,7 +322,7 @@ class IDMHandler(BaseHandler):
             self._log_ldap_operation(
                 job_id=job_id,
                 endpoint='/ldap/bind',
-                full_url=f"ldaps://{auth_details.get('bind_target', server_host)}:636",
+                full_url=bind_url,
                 success=auth_result['success'],
                 response_time_ms=auth_result.get('response_time_ms', elapsed_ms),
                 response_body={
@@ -346,13 +365,14 @@ class IDMHandler(BaseHandler):
             self.log(f"  Email: {auth_result.get('user_info', {}).get('email', 'N/A')}")
             self.log(f"  Groups: {len(auth_result.get('groups', []))} group(s)")
             
-            # Log group retrieval
+            # Log group retrieval - use IPA URL for group searches
+            ipa_url = self._build_ldap_url(server_host, ipa_port, ipa_use_ssl)
             user_groups = auth_result.get('groups', [])
             if user_groups:
                 self._log_ldap_operation(
                     job_id=job_id,
                     endpoint='/ldap/search/groups',
-                    full_url=f"ldaps://{server_host}:636",
+                    full_url=ipa_url,
                     success=True,
                     response_body={'groups': user_groups[:10], 'total_count': len(user_groups)},
                     command_type='ldap_group_search'
@@ -429,11 +449,20 @@ class IDMHandler(BaseHandler):
         except Exception as e:
             self.log(f"IDM test authentication failed: {e}", "ERROR")
             
-            # Log the failure
+            # Log the failure - try to get settings for URL, fallback to unknown
+            try:
+                idm_settings = self.executor.get_idm_settings() or {}
+                error_host = idm_settings.get('server_host', 'unknown')
+                error_port = idm_settings.get('ldaps_port', 636) if idm_settings.get('use_ldaps', True) else idm_settings.get('server_port', 389)
+                error_ssl = idm_settings.get('use_ldaps', True)
+                error_url = self._build_ldap_url(error_host, error_port, error_ssl)
+            except:
+                error_url = 'ldap://unknown:389'
+            
             self._log_ldap_operation(
                 job_id=job_id,
                 endpoint='/ldap/bind',
-                full_url='ldaps://unknown:636',
+                full_url=error_url,
                 success=False,
                 error_message=str(e),
                 command_type='ldap_error'
@@ -492,19 +521,24 @@ class IDMHandler(BaseHandler):
             if not server_host or not bind_dn or not bind_password:
                 raise ValueError("Server host, bind DN, and bind password required")
             
-            self._update_task(task_id, 'running', f"Connecting to {server_host}", 20)
+            # Get connection settings for URL building
+            use_ldaps = details.get('use_ldaps', True) if details.get('server_host') else (self.executor.get_idm_settings() or {}).get('use_ldaps', True)
+            ldap_port = details.get('ldaps_port', 636) if use_ldaps else details.get('server_port', 389)
+            conn_url = self._build_ldap_url(server_host, ldap_port, use_ldaps)
+            
+            self._update_task(task_id, 'running', f"Connecting to {conn_url}", 20)
             
             # Log connection attempt
             self._log_ldap_operation(
                 job_id=job_id,
-                operation_type='ldap_bind',
                 endpoint='/ldap/connect',
-                full_url=f"ldaps://{server_host}:636",
+                full_url=conn_url,
                 success=False,
                 request_body={
                     'server_host': server_host,
                     'bind_dn': bind_dn,
-                    'use_ldaps': details.get('use_ldaps', True),
+                    'use_ldaps': use_ldaps,
+                    'port': ldap_port,
                 },
                 command_type='ldap_connection_test'
             )
@@ -531,9 +565,8 @@ class IDMHandler(BaseHandler):
             # Log result
             self._log_ldap_operation(
                 job_id=job_id,
-                operation_type='ldap_bind',
                 endpoint='/ldap/connect',
-                full_url=f"ldaps://{server_host}:636",
+                full_url=conn_url,
                 success=test_result['success'],
                 response_time_ms=test_result.get('response_time_ms', elapsed_ms),
                 response_body={
@@ -565,9 +598,8 @@ class IDMHandler(BaseHandler):
             
             self._log_ldap_operation(
                 job_id=job_id,
-                operation_type='ldap_bind',
                 endpoint='/ldap/connect',
-                full_url='ldaps://unknown:636',
+                full_url='ldap://unknown:389',
                 success=False,
                 error_message=str(e),
                 command_type='ldap_error'
