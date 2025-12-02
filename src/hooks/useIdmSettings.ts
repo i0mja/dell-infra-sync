@@ -113,10 +113,39 @@ export function useIdmSettings() {
     }
   };
 
-  const testConnection = async () => {
+  const testConnection = async (formValues?: {
+    server_host: string;
+    server_port: number;
+    ldaps_port?: number;
+    use_ldaps: boolean;
+    verify_certificate?: boolean;
+    base_dn: string;
+    user_search_base?: string;
+    group_search_base?: string;
+    bind_dn: string;
+    bind_password?: string;
+    ca_certificate?: string;
+    connection_timeout_seconds?: number;
+  }) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
+
+      // Build details from form values if provided
+      const details = formValues ? {
+        server_host: formValues.server_host,
+        server_port: formValues.server_port,
+        ldaps_port: formValues.ldaps_port,
+        use_ldaps: formValues.use_ldaps,
+        verify_certificate: formValues.verify_certificate,
+        base_dn: formValues.base_dn,
+        user_search_base: formValues.user_search_base,
+        group_search_base: formValues.group_search_base,
+        bind_dn: formValues.bind_dn,
+        bind_password: formValues.bind_password,
+        ca_certificate: formValues.ca_certificate,
+        connection_timeout_seconds: formValues.connection_timeout_seconds,
+      } : {};
 
       const { data: job, error } = await supabase
         .from('jobs')
@@ -125,6 +154,7 @@ export function useIdmSettings() {
           created_by: user.id,
           status: 'pending',
           target_scope: {},
+          details,
         }])
         .select()
         .single();
