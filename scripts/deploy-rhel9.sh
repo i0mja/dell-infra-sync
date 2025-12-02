@@ -164,16 +164,34 @@ if [ -f "$PROJECT_ROOT/supabase/docker/volumes/api/kong.yml" ]; then
 fi
 
 # ============================================
-# SELinux: Set proper context for RHEL 9
+# CRITICAL: Fix permissions for Docker containers
+# The postgres container runs as UID 999 (postgres user)
+# Without proper permissions, it cannot read init scripts
 # ============================================
-if command -v getenforce &> /dev/null && [ "$(getenforce)" != "Disabled" ]; then
-    echo "   Setting SELinux context for Docker volumes..."
-    chcon -Rt svirt_sandbox_file_t "$SUPABASE_DIR/volumes" 2>/dev/null || true
-    echo "✅ SELinux context set"
+echo "   Setting permissions for Docker containers..."
+
+# Set world-readable permissions on all volumes
+chmod -R 755 "$SUPABASE_DIR/volumes"
+
+# Set postgres ownership on db directories (UID 999 = postgres in container)
+chown -R 999:999 "$SUPABASE_DIR/volumes/db"
+
+# Verify permissions are correct
+if [ "$(stat -c %a $SUPABASE_DIR/volumes/db/init 2>/dev/null)" != "755" ]; then
+    echo "⚠️  Warning: Could not set permissions. Trying with sudo..."
+    sudo chmod -R 755 "$SUPABASE_DIR/volumes" 2>/dev/null || true
+    sudo chown -R 999:999 "$SUPABASE_DIR/volumes/db" 2>/dev/null || true
 fi
 
-# Set permissions
-chmod -R 755 "$SUPABASE_DIR/volumes"
+echo "✅ Permissions set (db owned by UID 999, mode 755)"
+
+# SELinux: Set proper context for RHEL 9 (only if Enforcing)
+if command -v getenforce &> /dev/null && [ "$(getenforce)" == "Enforcing" ]; then
+    echo "   Setting SELinux context for Docker volumes..."
+    chcon -Rt container_file_t "$SUPABASE_DIR/volumes" || \
+    chcon -Rt svirt_sandbox_file_t "$SUPABASE_DIR/volumes" || true
+    echo "✅ SELinux context set"
+fi
 
 # Get server IP
 SERVER_IP=$(hostname -I | awk '{print $1}')
