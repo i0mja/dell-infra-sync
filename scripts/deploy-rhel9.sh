@@ -59,46 +59,192 @@ else
     echo "✅ Node.js already installed"
 fi
 
-# Step 3: Clone and setup Supabase
+# Step 3: Setup Supabase using project's custom configuration
 echo "🗄️  Step 3/6: Setting up Supabase..."
-cd /opt
-if [ ! -d "supabase" ]; then
-    git clone --depth 1 https://github.com/supabase/supabase
+
+# Determine script location and project root
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SUPABASE_DIR="/opt/supabase-local"
+
+# Check if project's custom Supabase config exists
+if [ ! -d "$PROJECT_ROOT/supabase/docker" ]; then
+    echo "❌ Project's Supabase docker configuration not found!"
+    echo "   Expected location: $PROJECT_ROOT/supabase/docker"
+    echo "   Please ensure you're running from the project directory"
+    exit 1
 fi
-cd supabase/docker
 
-# Generate secure passwords
-POSTGRES_PASSWORD=$(openssl rand -base64 32)
-JWT_SECRET=$(openssl rand -base64 64)
-ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
-SERVICE_ROLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
+# Create Supabase directory and copy custom configuration
+mkdir -p "$SUPABASE_DIR"
+cp -r "$PROJECT_ROOT/supabase/docker/"* "$SUPABASE_DIR/"
+cd "$SUPABASE_DIR"
 
-# Create .env file
+# Create required directories
+mkdir -p volumes/api
+mkdir -p volumes/db/init
+mkdir -p volumes/storage
+
+# Copy kong.yml if it exists in project
+if [ -f "$PROJECT_ROOT/supabase/docker/volumes/api/kong.yml" ]; then
+    cp "$PROJECT_ROOT/supabase/docker/volumes/api/kong.yml" volumes/api/
+fi
+
+# Get server IP
+SERVER_IP=$(hostname -I | awk '{print $1}')
+
+# Generate secure credentials
+POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d '/+=')
+JWT_SECRET=$(openssl rand -base64 64 | tr -d '/+=')
+SECRET_KEY_BASE=$(openssl rand -base64 64 | tr -d '/+=')
+LOGFLARE_API_KEY=$(openssl rand -hex 16)
+VAULT_ENC_KEY=$(openssl rand -base64 32 | tr -d '/+=')
+PG_META_CRYPTO_KEY=$(openssl rand -base64 32 | tr -d '/+=')
+DASHBOARD_PASSWORD=$(openssl rand -base64 16 | tr -d '/+=')
+
+# Generate proper JWT tokens that match the JWT_SECRET
+generate_jwt() {
+    local role=$1
+    local header='{"alg":"HS256","typ":"JWT"}'
+    local payload="{\"iss\":\"supabase-local\",\"role\":\"$role\",\"iat\":$(date +%s),\"exp\":$(($(date +%s) + 315360000))}"
+    
+    local header_base64=$(echo -n "$header" | base64 | tr -d '=' | tr '/+' '_-' | tr -d '\n')
+    local payload_base64=$(echo -n "$payload" | base64 | tr -d '=' | tr '/+' '_-' | tr -d '\n')
+    local signature=$(echo -n "${header_base64}.${payload_base64}" | openssl dgst -sha256 -hmac "$JWT_SECRET" -binary | base64 | tr -d '=' | tr '/+' '_-' | tr -d '\n')
+    
+    echo "${header_base64}.${payload_base64}.${signature}"
+}
+
+ANON_KEY=$(generate_jwt "anon")
+SERVICE_ROLE_KEY=$(generate_jwt "service_role")
+
+# Create complete .env file with ALL required variables
 cat > .env << EOF
+############
+# Secrets - KEEP THESE SAFE!
+############
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 JWT_SECRET=$JWT_SECRET
 ANON_KEY=$ANON_KEY
 SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY
+SECRET_KEY_BASE=$SECRET_KEY_BASE
+VAULT_ENC_KEY=$VAULT_ENC_KEY
+PG_META_CRYPTO_KEY=$PG_META_CRYPTO_KEY
+
+############
+# Database
+############
+POSTGRES_HOST=db
+POSTGRES_PORT=5432
+POSTGRES_DB=postgres
+
+############
+# API Proxy - Kong
+############
+KONG_HTTP_PORT=8000
+KONG_HTTPS_PORT=8443
+
+############
+# API - PostgREST
+############
+PGRST_DB_SCHEMAS=public,storage,graphql_public
+
+############
+# Auth - GoTrue
+############
+SITE_URL=http://${SERVER_IP}:3000
+ADDITIONAL_REDIRECT_URLS=
+JWT_EXPIRY=3600
+DISABLE_SIGNUP=false
+ENABLE_EMAIL_SIGNUP=true
+ENABLE_EMAIL_AUTOCONFIRM=true
+ENABLE_PHONE_SIGNUP=false
+ENABLE_PHONE_AUTOCONFIRM=false
+ENABLE_ANONYMOUS_USERS=false
+
+MAILER_URLPATHS_CONFIRMATION=/auth/v1/verify
+MAILER_URLPATHS_INVITE=/auth/v1/verify
+MAILER_URLPATHS_RECOVERY=/auth/v1/verify
+MAILER_URLPATHS_EMAIL_CHANGE=/auth/v1/verify
+
+############
+# SMTP (optional - leave empty if not using email)
+############
+SMTP_ADMIN_EMAIL=admin@localhost
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASS=
+SMTP_SENDER_NAME=Dell Server Manager
+
+############
+# Storage
+############
+IMGPROXY_ENABLE_WEBP_DETECTION=true
+
+############
+# Functions
+############
+FUNCTIONS_VERIFY_JWT=false
+FUNCTIONS_PATH=$PROJECT_ROOT/supabase/functions
+
+############
+# Logging
+############
+LOGFLARE_API_KEY=$LOGFLARE_API_KEY
+LOGFLARE_PUBLIC_ACCESS_TOKEN=$LOGFLARE_API_KEY
+LOGFLARE_PRIVATE_ACCESS_TOKEN=$LOGFLARE_API_KEY
+
+############
+# Studio Dashboard
+############
 DASHBOARD_USERNAME=supabase
-DASHBOARD_PASSWORD=$(openssl rand -base64 16)
+DASHBOARD_PASSWORD=$DASHBOARD_PASSWORD
+STUDIO_DEFAULT_ORGANIZATION=Dell Server Manager
+STUDIO_DEFAULT_PROJECT=Local Deployment
 
-# Studio configuration
-STUDIO_DEFAULT_ORGANIZATION=Default Organization
-STUDIO_DEFAULT_PROJECT=Default Project
+############
+# Docker
+############
+DOCKER_SOCKET_LOCATION=/var/run/docker.sock
 
-# API configuration
-API_EXTERNAL_URL=http://$(hostname -I | awk '{print $1}'):8000
-SUPABASE_PUBLIC_URL=http://$(hostname -I | awk '{print $1}'):8000
+############
+# Connection Pooler
+############
+POOLER_PROXY_PORT_TRANSACTION=6543
+POOLER_DEFAULT_POOL_SIZE=20
+POOLER_MAX_CLIENT_CONN=100
+POOLER_DB_POOL_SIZE=10
+POOLER_TENANT_ID=local
+
+############
+# External URLs
+############
+API_EXTERNAL_URL=http://${SERVER_IP}:8000
+SUPABASE_PUBLIC_URL=http://${SERVER_IP}:8000
 EOF
 
-echo "✅ Supabase configuration created"
+echo "✅ Supabase configuration created with all required variables"
 
 # Step 4: Start Supabase
 echo "🚀 Step 4/6: Starting Supabase services..."
 docker compose up -d
-echo "⏳ Waiting for services to start (60 seconds)..."
-sleep 60
-echo "✅ Supabase is running"
+
+echo "⏳ Waiting for services to start (90 seconds)..."
+for i in {1..9}; do
+    sleep 10
+    echo "   ... $((i * 10)) seconds"
+done
+
+# Check if services are running
+if docker compose ps | grep -q "running"; then
+    echo "✅ Supabase services are running"
+else
+    echo "⚠️  Some services may not have started. Checking status..."
+    docker compose ps
+    echo ""
+    echo "If services failed, check logs with: docker compose logs"
+fi
 
 # Apply Supabase migrations from the repository for local deployment
 echo "📊 Applying Supabase migrations..."
@@ -184,8 +330,8 @@ read -s -p "Enter admin password: " ADMIN_PASSWORD
 echo ""
 
 # Use Supabase signup API to properly create user
-SUPABASE_URL=$(grep SUPABASE_URL /opt/supabase/.env | cut -d'=' -f2)
-ANON_KEY=$(grep ANON_KEY /opt/supabase/.env | cut -d'=' -f2)
+SUPABASE_URL=$(grep API_EXTERNAL_URL /opt/supabase-local/.env | cut -d'=' -f2)
+ANON_KEY=$(grep "^ANON_KEY=" /opt/supabase-local/.env | cut -d'=' -f2)
 
 curl -X POST "${SUPABASE_URL}/auth/v1/signup" \
   -H "apikey: ${ANON_KEY}" \
