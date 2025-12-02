@@ -156,6 +156,7 @@ done
 # Create required directories with correct structure
 mkdir -p volumes/api
 mkdir -p volumes/storage
+mkdir -p volumes/db/init
 
 # Copy kong.yml as a FILE (not directory)
 if [ -f "$PROJECT_ROOT/supabase/docker/volumes/api/kong.yml" ]; then
@@ -174,9 +175,133 @@ VAULT_ENC_KEY=$(openssl rand -base64 32 | tr -d '/+=')
 PG_META_CRYPTO_KEY=$(openssl rand -base64 32 | tr -d '/+=')
 DASHBOARD_PASSWORD=$(openssl rand -base64 16 | tr -d '/+=')
 
-# Note: We no longer create custom init scripts - the supabase/postgres image
-# has its own init scripts that create required schemas (auth, storage, etc.)
-# We'll apply password fixes AFTER the database initializes
+# ============================================
+# CRITICAL: Create custom init script that runs LAST (99-)
+# This ensures Supabase's built-in scripts run first, then we fix passwords
+# ============================================
+cat > volumes/db/init/99-custom-roles.sh << 'INITSCRIPT'
+#!/bin/bash
+set -e
+
+echo "=== Dell Server Manager: Custom Supabase Initialization ==="
+echo "Running AFTER Supabase built-in init scripts..."
+
+# This script runs during postgres container first startup
+# It ensures all roles have the correct password from $POSTGRES_PASSWORD
+
+psql -v ON_ERROR_STOP=0 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+  -- Create roles if they don't exist (Supabase should have created these, but just in case)
+  DO \$\$
+  BEGIN
+    -- Core Supabase roles
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_admin') THEN
+      CREATE ROLE supabase_admin LOGIN SUPERUSER PASSWORD '$POSTGRES_PASSWORD';
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_auth_admin') THEN
+      CREATE ROLE supabase_auth_admin LOGIN PASSWORD '$POSTGRES_PASSWORD' NOINHERIT;
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_storage_admin') THEN
+      CREATE ROLE supabase_storage_admin LOGIN PASSWORD '$POSTGRES_PASSWORD' NOINHERIT;
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_functions_admin') THEN
+      CREATE ROLE supabase_functions_admin LOGIN PASSWORD '$POSTGRES_PASSWORD' NOINHERIT;
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_replication_admin') THEN
+      CREATE ROLE supabase_replication_admin LOGIN PASSWORD '$POSTGRES_PASSWORD' REPLICATION;
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_read_only_user') THEN
+      CREATE ROLE supabase_read_only_user LOGIN PASSWORD '$POSTGRES_PASSWORD';
+    END IF;
+    
+    -- API roles
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticator') THEN
+      CREATE ROLE authenticator LOGIN PASSWORD '$POSTGRES_PASSWORD' NOINHERIT;
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
+      CREATE ROLE anon NOLOGIN;
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticated') THEN
+      CREATE ROLE authenticated NOLOGIN;
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'service_role') THEN
+      CREATE ROLE service_role NOLOGIN BYPASSRLS;
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'pgbouncer') THEN
+      CREATE ROLE pgbouncer LOGIN PASSWORD '$POSTGRES_PASSWORD';
+    END IF;
+  END
+  \$\$;
+
+  -- Set/update passwords for all service roles to match POSTGRES_PASSWORD
+  ALTER ROLE supabase_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+  ALTER ROLE supabase_auth_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+  ALTER ROLE supabase_storage_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+  ALTER ROLE supabase_functions_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+  ALTER ROLE supabase_replication_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+  ALTER ROLE supabase_read_only_user WITH PASSWORD '$POSTGRES_PASSWORD';
+  ALTER ROLE authenticator WITH PASSWORD '$POSTGRES_PASSWORD';
+  ALTER ROLE pgbouncer WITH PASSWORD '$POSTGRES_PASSWORD';
+
+  -- Grant roles to authenticator (needed for PostgREST role switching)
+  GRANT anon TO authenticator;
+  GRANT authenticated TO authenticator;
+  GRANT service_role TO authenticator;
+
+  -- Create schemas (some may already exist from Supabase init)
+  CREATE SCHEMA IF NOT EXISTS auth;
+  CREATE SCHEMA IF NOT EXISTS storage;
+  CREATE SCHEMA IF NOT EXISTS _realtime;
+  CREATE SCHEMA IF NOT EXISTS extensions;
+  CREATE SCHEMA IF NOT EXISTS _analytics;
+
+  -- Grant schema permissions
+  GRANT ALL ON SCHEMA auth TO supabase_auth_admin;
+  GRANT USAGE ON SCHEMA auth TO authenticator;
+  GRANT USAGE ON SCHEMA auth TO anon;
+  GRANT USAGE ON SCHEMA auth TO authenticated;
+  GRANT USAGE ON SCHEMA auth TO service_role;
+
+  GRANT ALL ON SCHEMA storage TO supabase_storage_admin;
+  GRANT USAGE ON SCHEMA storage TO authenticator;
+  GRANT USAGE ON SCHEMA storage TO anon;
+  GRANT USAGE ON SCHEMA storage TO authenticated;
+  GRANT USAGE ON SCHEMA storage TO service_role;
+
+  GRANT ALL ON SCHEMA _realtime TO supabase_admin;
+  GRANT USAGE ON SCHEMA _realtime TO authenticator;
+
+  GRANT ALL ON SCHEMA _analytics TO supabase_admin;
+  
+  GRANT ALL ON SCHEMA extensions TO supabase_admin;
+  GRANT USAGE ON SCHEMA extensions TO authenticator;
+  GRANT USAGE ON SCHEMA extensions TO anon;
+  GRANT USAGE ON SCHEMA extensions TO authenticated;
+  GRANT USAGE ON SCHEMA extensions TO service_role;
+
+  -- Create realtime publication
+  DO \$\$
+  BEGIN
+    IF NOT EXISTS (SELECT FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+      CREATE PUBLICATION supabase_realtime;
+    END IF;
+  END
+  \$\$;
+
+  -- Essential extensions
+  CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
+  CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;
+  CREATE EXTENSION IF NOT EXISTS pgjwt WITH SCHEMA extensions;
+
+  -- Grant extension usage
+  GRANT USAGE ON SCHEMA extensions TO PUBLIC;
+
+EOSQL
+
+echo "=== Dell Server Manager: Custom initialization complete ==="
+INITSCRIPT
+
+chmod +x volumes/db/init/99-custom-roles.sh
+echo "✅ Custom init script created"
 
 echo "✅ Directory structure created"
 
@@ -349,105 +474,106 @@ if [ "$DB_READY" != "true" ]; then
 fi
 
 # ============================================
-# CRITICAL: Wait for Supabase's built-in init scripts to complete
-# The supabase/postgres image creates auth, storage schemas and roles
-# We must wait for this to finish before applying password fixes
+# Stage 3: Verify init script ran correctly
+# The 99-custom-roles.sh script should have created schemas and fixed passwords
 # ============================================
-echo "🔐 Stage 3: Waiting for Supabase initialization to complete..."
+echo "🔐 Stage 3: Verifying database initialization..."
 
+# Wait a bit for init scripts to complete
+sleep 10
+
+# Check if auth schema exists (created by our init script)
 AUTH_SCHEMA_READY=false
-for i in {1..60}; do
-    # Check if auth schema exists (created by Supabase init scripts)
+for i in {1..30}; do
     if docker compose exec -T db psql -U postgres -d postgres -tAc "SELECT 1 FROM pg_namespace WHERE nspname = 'auth'" 2>/dev/null | grep -q "1"; then
-        echo "   ✅ auth schema exists - Supabase init complete"
+        echo "   ✅ auth schema exists"
         AUTH_SCHEMA_READY=true
         break
     fi
     sleep 2
-    if [ $((i % 10)) -eq 0 ]; then
-        echo "   ... waiting for Supabase init ($((i * 2)) seconds)"
+    if [ $((i % 5)) -eq 0 ]; then
+        echo "   ... waiting for init scripts ($((i * 2)) seconds)"
     fi
 done
 
 if [ "$AUTH_SCHEMA_READY" != "true" ]; then
-    echo "⚠️  auth schema not found after 120 seconds - proceeding anyway..."
+    echo "⚠️  auth schema not found - init script may not have run"
+    echo "   This can happen if the database volume already existed"
+    echo "   Applying manual fixes..."
+    
+    # Manual fallback: run the same SQL as the init script
+    docker compose exec -T db psql -U postgres -d postgres -c "
+    CREATE SCHEMA IF NOT EXISTS auth;
+    CREATE SCHEMA IF NOT EXISTS storage;
+    CREATE SCHEMA IF NOT EXISTS _realtime;
+    CREATE SCHEMA IF NOT EXISTS extensions;
+    " 2>/dev/null || true
 fi
 
-# Give a few more seconds for all init scripts to complete
-sleep 5
-
-echo "🔐 Stage 3b: Applying password fixes for Supabase roles..."
-
-# Apply password fixes for all Supabase internal roles
-# These roles are created by supabase/postgres but with default passwords
-docker compose exec -T db psql -U postgres -d postgres -c "
--- Fix passwords for Supabase internal roles to match POSTGRES_PASSWORD
-ALTER ROLE supabase_admin WITH PASSWORD '$POSTGRES_PASSWORD';
-ALTER ROLE supabase_auth_admin WITH PASSWORD '$POSTGRES_PASSWORD';
-ALTER ROLE supabase_storage_admin WITH PASSWORD '$POSTGRES_PASSWORD';
-ALTER ROLE supabase_functions_admin WITH PASSWORD '$POSTGRES_PASSWORD';
-ALTER ROLE supabase_replication_admin WITH PASSWORD '$POSTGRES_PASSWORD';
-ALTER ROLE supabase_read_only_user WITH PASSWORD '$POSTGRES_PASSWORD';
-ALTER ROLE authenticator WITH PASSWORD '$POSTGRES_PASSWORD';
-ALTER ROLE pgbouncer WITH PASSWORD '$POSTGRES_PASSWORD';
-" 2>/dev/null && echo "   ✅ Role passwords updated" || echo "   ⚠️  Some role password updates failed (may not exist yet)"
-
-# Verify key role passwords work
+# Verify role passwords work
 echo "   Verifying role connections..."
+ROLES_OK=true
+
 if docker compose exec -T db psql -U supabase_auth_admin -d postgres -c "SELECT 1" > /dev/null 2>&1; then
     echo "   ✅ supabase_auth_admin can connect"
 else
-    echo "   ⚠️  supabase_auth_admin connection failed"
+    echo "   ⚠️  supabase_auth_admin connection failed - applying password fix"
+    docker compose exec -T db psql -U postgres -d postgres -c "ALTER ROLE supabase_auth_admin WITH PASSWORD '$POSTGRES_PASSWORD';" 2>/dev/null || true
+    ROLES_OK=false
 fi
 
 if docker compose exec -T db psql -U supabase_storage_admin -d postgres -c "SELECT 1" > /dev/null 2>&1; then
     echo "   ✅ supabase_storage_admin can connect"
 else
-    echo "   ⚠️  supabase_storage_admin connection failed"
+    echo "   ⚠️  supabase_storage_admin connection failed - applying password fix"
+    docker compose exec -T db psql -U postgres -d postgres -c "ALTER ROLE supabase_storage_admin WITH PASSWORD '$POSTGRES_PASSWORD';" 2>/dev/null || true
+    ROLES_OK=false
 fi
 
 if docker compose exec -T db psql -U authenticator -d postgres -c "SELECT 1" > /dev/null 2>&1; then
     echo "   ✅ authenticator can connect"
 else
-    echo "   ⚠️  authenticator connection failed"
+    echo "   ⚠️  authenticator connection failed - applying password fix"
+    docker compose exec -T db psql -U postgres -d postgres -c "ALTER ROLE authenticator WITH PASSWORD '$POSTGRES_PASSWORD';" 2>/dev/null || true
+    ROLES_OK=false
 fi
 
-# Ensure authenticated and anon roles exist (needed for RLS policies)
-echo "   Ensuring authenticated/anon roles exist..."
-docker compose exec -T db psql -U postgres -d postgres -c "
-DO \$\$
-BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticated') THEN
-    CREATE ROLE authenticated NOLOGIN;
-  END IF;
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
-    CREATE ROLE anon NOLOGIN;
-  END IF;
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'service_role') THEN
-    CREATE ROLE service_role NOLOGIN BYPASSRLS;
-  END IF;
-  GRANT authenticated TO authenticator;
-  GRANT anon TO authenticator;
-  GRANT service_role TO authenticator;
-END
-\$\$;
-" 2>/dev/null || true
-
-# Ensure supabase_realtime publication exists
-echo "   Ensuring realtime publication exists..."
-docker compose exec -T db psql -U postgres -d postgres -c "
-DO \$\$
-BEGIN
-  IF NOT EXISTS (SELECT FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-    CREATE PUBLICATION supabase_realtime;
-  END IF;
-END
-\$\$;
-" 2>/dev/null || true
-
-# Ensure extensions schema exists
-echo "   Ensuring extensions schema exists..."
-docker compose exec -T db psql -U postgres -d postgres -c "CREATE SCHEMA IF NOT EXISTS extensions;" 2>/dev/null || true
+# If any roles failed, apply comprehensive fix
+if [ "$ROLES_OK" != "true" ]; then
+    echo "   Applying comprehensive role fixes..."
+    docker compose exec -T db psql -U postgres -d postgres -c "
+    ALTER ROLE supabase_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+    ALTER ROLE supabase_auth_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+    ALTER ROLE supabase_storage_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+    ALTER ROLE supabase_functions_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+    ALTER ROLE authenticator WITH PASSWORD '$POSTGRES_PASSWORD';
+    ALTER ROLE pgbouncer WITH PASSWORD '$POSTGRES_PASSWORD';
+    
+    -- Ensure API roles exist and are granted
+    DO \$\$
+    BEGIN
+      IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
+        CREATE ROLE anon NOLOGIN;
+      END IF;
+      IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticated') THEN
+        CREATE ROLE authenticated NOLOGIN;
+      END IF;
+      IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'service_role') THEN
+        CREATE ROLE service_role NOLOGIN BYPASSRLS;
+      END IF;
+    END
+    \$\$;
+    
+    GRANT anon TO authenticator;
+    GRANT authenticated TO authenticator;
+    GRANT service_role TO authenticator;
+    " 2>/dev/null || true
+    
+    # Restart db to pick up changes, then re-verify
+    echo "   Restarting database to apply changes..."
+    docker compose restart db
+    sleep 10
+fi
 
 echo "✅ Database roles and schemas configured"
 
