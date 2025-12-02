@@ -65,6 +65,7 @@ class FreeIPAAuthenticator:
         ad_dc_host: Optional[str] = None,
         ad_dc_port: int = 636,
         ad_dc_use_ssl: bool = True,
+        ad_domain_fqdn: Optional[str] = None,
     ):
         """
         Initialize FreeIPA authenticator.
@@ -84,6 +85,7 @@ class FreeIPAAuthenticator:
             ad_dc_host: Active Directory Domain Controller hostname for pass-through auth
             ad_dc_port: AD DC port (default 636 for LDAPS, 389 for LDAP)
             ad_dc_use_ssl: Use LDAPS for AD DC connection (default True)
+            ad_domain_fqdn: Explicit AD domain FQDN for when NETBIOS differs from domain name
         """
         if not LDAP3_AVAILABLE:
             raise ImportError("ldap3 library required: pip install ldap3")
@@ -101,6 +103,7 @@ class FreeIPAAuthenticator:
         self.ad_dc_host = ad_dc_host
         self.ad_dc_port = ad_dc_port
         self.ad_dc_use_ssl = ad_dc_use_ssl
+        self.ad_domain_fqdn = ad_domain_fqdn.lower() if ad_domain_fqdn else None
         
         # Derive IPA realm from base_dn (dc=idm,dc=neopost,dc=grp -> idm.neopost.grp)
         self.ipa_realm = self._base_dn_to_realm(base_dn)
@@ -373,9 +376,13 @@ class FreeIPAAuthenticator:
             }
             
             # Search for user in AD to get attributes
-            # Use the domain part to construct search base
-            ad_base_dn = ','.join([f"dc={p}" for p in domain.split('.')])
+            # Use ad_domain_fqdn if configured, otherwise derive from domain parameter
+            # This handles NETBIOS-to-FQDN mapping (e.g., NEOPOSTAD -> neopost.ad)
+            effective_domain = self.ad_domain_fqdn or domain
+            ad_base_dn = ','.join([f"dc={p}" for p in effective_domain.split('.')])
             user_part = username.split('@')[0]
+            
+            logger.info(f"Using AD search base: {ad_base_dn} (domain={domain}, ad_domain_fqdn={self.ad_domain_fqdn})")
             
             try:
                 conn.search(

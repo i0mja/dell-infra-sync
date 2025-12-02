@@ -428,6 +428,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
                 ad_dc_host=settings.get('ad_dc_host'),
                 ad_dc_port=settings.get('ad_dc_port', 636),
                 ad_dc_use_ssl=settings.get('ad_dc_use_ssl', True),
+                ad_domain_fqdn=settings.get('ad_domain_fqdn'),
             )
         except Exception as e:
             self.log(f"Failed to create FreeIPA authenticator: {e}", "ERROR")

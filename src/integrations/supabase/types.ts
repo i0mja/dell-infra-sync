@@ -835,6 +835,7 @@ export type Database = {
           ad_dc_host: string | null
           ad_dc_port: number | null
           ad_dc_use_ssl: boolean | null
+          ad_domain_fqdn: string | null
           auth_mode: string
           base_dn: string | null
           bind_dn: string | null
@@ -867,6 +868,7 @@ export type Database = {
           ad_dc_host?: string | null
           ad_dc_port?: number | null
           ad_dc_use_ssl?: boolean | null
+          ad_domain_fqdn?: string | null
           auth_mode?: string
           base_dn?: string | null
           bind_dn?: string | null
@@ -899,6 +901,7 @@ export type Database = {
           ad_dc_host?: string | null
           ad_dc_port?: number | null
           ad_dc_use_ssl?: boolean | null
+          ad_domain_fqdn?: string | null
           auth_mode?: string
           base_dn?: string | null
           bind_dn?: string | null
