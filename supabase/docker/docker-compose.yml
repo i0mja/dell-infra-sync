@@ -1,13 +1,14 @@
 # Dell Server Manager - Local Supabase Configuration
 # This docker-compose file sets up a complete self-hosted Supabase instance
 # for air-gapped/offline deployment of Dell Server Manager
-
-version: "3.8"
+#
+# Image versions last verified: 2024-11-15
+# To find latest stable tags: https://hub.docker.com/u/supabase
 
 services:
   # PostgreSQL Database
   db:
-    image: supabase/postgres:15.6.1.143
+    image: supabase/postgres:15.6.1.146
     container_name: supabase-db
     restart: unless-stopped
     ports:
@@ -37,7 +38,7 @@ services:
 
   # Supabase Studio (Dashboard)
   studio:
-    image: supabase/studio:20241202-60d42ab
+    image: supabase/studio:20241028-a265374
     container_name: supabase-studio
     restart: unless-stopped
     ports:
@@ -88,7 +89,7 @@ services:
 
   # GoTrue Auth
   auth:
-    image: supabase/gotrue:v2.167.0
+    image: supabase/gotrue:v2.164.0
     container_name: supabase-auth
     restart: unless-stopped
     environment:
