@@ -56,6 +56,7 @@ class FreeIPAAuthenticator:
         trusted_domains: Optional[List[str]] = None,
         ad_dc_host: Optional[str] = None,
         ad_dc_port: int = 636,
+        ad_dc_use_ssl: bool = True,
     ):
         """
         Initialize FreeIPA authenticator.
@@ -73,7 +74,8 @@ class FreeIPAAuthenticator:
             connection_timeout: Connection timeout in seconds
             trusted_domains: List of trusted AD domain names (e.g., ['neopost.ad', 'corp.local'])
             ad_dc_host: Active Directory Domain Controller hostname for pass-through auth
-            ad_dc_port: AD DC LDAPS port (default 636)
+            ad_dc_port: AD DC port (default 636 for LDAPS, 389 for LDAP)
+            ad_dc_use_ssl: Use LDAPS for AD DC connection (default True)
         """
         if not LDAP3_AVAILABLE:
             raise ImportError("ldap3 library required: pip install ldap3")
@@ -90,6 +92,7 @@ class FreeIPAAuthenticator:
         self.trusted_domains = [d.lower() for d in (trusted_domains or [])]
         self.ad_dc_host = ad_dc_host
         self.ad_dc_port = ad_dc_port
+        self.ad_dc_use_ssl = ad_dc_use_ssl
         
         # Derive IPA realm from base_dn (dc=idm,dc=neopost,dc=grp -> idm.neopost.grp)
         self.ipa_realm = self._base_dn_to_realm(base_dn)
@@ -133,14 +136,18 @@ class FreeIPAAuthenticator:
             return None
             
         if self._ad_server is None:
-            tls_config = Tls(
-                validate=ssl.CERT_NONE,  # AD DCs often have self-signed certs
-            )
+            tls_config = None
+            if self.ad_dc_use_ssl:
+                tls_config = Tls(
+                    validate=ssl.CERT_NONE,  # AD DCs often have self-signed certs
+                )
+            
+            logger.info(f"Creating AD DC server connection: {self.ad_dc_host}:{self.ad_dc_port}, SSL={self.ad_dc_use_ssl}")
             
             self._ad_server = Server(
                 self.ad_dc_host,
                 port=self.ad_dc_port,
-                use_ssl=True,
+                use_ssl=self.ad_dc_use_ssl,
                 tls=tls_config,
                 get_info=ALL,
                 connect_timeout=self.connection_timeout,

@@ -57,6 +57,7 @@ export function IdmConnectionSettings() {
   // AD Domain Controller for pass-through authentication
   const [adDcHost, setAdDcHost] = useState('');
   const [adDcPort, setAdDcPort] = useState(636);
+  const [adDcUseSsl, setAdDcUseSsl] = useState(true);
 
   useEffect(() => {
     if (settings) {
@@ -72,6 +73,7 @@ export function IdmConnectionSettings() {
       setTrustedDomains(settings.trusted_domains || []);
       setAdDcHost(settings.ad_dc_host || '');
       setAdDcPort(settings.ad_dc_port || 636);
+      setAdDcUseSsl(settings.ad_dc_use_ssl ?? true);
       
       // If there's a saved bind_dn, extract username for display
       if (settings.bind_dn) {
@@ -103,6 +105,7 @@ export function IdmConnectionSettings() {
       trusted_domains: trustedDomains,
       ad_dc_host: adDcHost || null,
       ad_dc_port: adDcPort,
+      ad_dc_use_ssl: adDcUseSsl,
     };
 
     if (bindPassword) {
@@ -628,7 +631,7 @@ export function IdmConnectionSettings() {
                   </p>
                 </div>
                 
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-4 gap-4">
                   <div className="col-span-2 space-y-2">
                     <Label>AD Domain Controller Host</Label>
                     <Input
@@ -641,13 +644,29 @@ export function IdmConnectionSettings() {
                     </p>
                   </div>
                   <div className="space-y-2">
-                    <Label>AD DC LDAPS Port</Label>
+                    <Label>AD DC Port</Label>
                     <Input
                       type="number"
                       value={adDcPort}
-                      onChange={(e) => setAdDcPort(parseInt(e.target.value) || 636)}
+                      onChange={(e) => setAdDcPort(parseInt(e.target.value) || (adDcUseSsl ? 636 : 389))}
                     />
-                    <p className="text-sm text-muted-foreground">Default: 636</p>
+                    <p className="text-sm text-muted-foreground">{adDcUseSsl ? 'LDAPS: 636' : 'LDAP: 389'}</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Use LDAPS</Label>
+                    <div className="flex items-center space-x-2 pt-2">
+                      <Switch
+                        checked={adDcUseSsl}
+                        onCheckedChange={(checked) => {
+                          setAdDcUseSsl(checked);
+                          // Auto-update port when toggling SSL
+                          setAdDcPort(checked ? 636 : 389);
+                        }}
+                      />
+                      <span className="text-sm text-muted-foreground">
+                        {adDcUseSsl ? 'SSL/TLS' : 'Plain'}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
