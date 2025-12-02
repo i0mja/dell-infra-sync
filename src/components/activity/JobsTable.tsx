@@ -250,7 +250,9 @@ export function JobsTable({
       .join(" ");
   };
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string, job?: Job) => {
+    const stale = job && isJobStale(job);
+    
     switch (status) {
       case "completed":
         return (
@@ -272,9 +274,17 @@ export function JobsTable({
         );
       case "pending":
         return (
-          <Badge variant="secondary" className="text-xs">
-            Pending
-          </Badge>
+          <div className="flex items-center gap-1">
+            <Badge variant="secondary" className="text-xs">
+              Pending
+            </Badge>
+            {stale && (
+              <Badge variant="outline" className="text-xs border-amber-500 text-amber-500">
+                <AlertTriangle className="h-3 w-3 mr-1" />
+                Not Picked Up
+              </Badge>
+            )}
+          </div>
         );
       case "cancelled":
         return (
@@ -344,8 +354,15 @@ export function JobsTable({
   };
 
   const canCancelJob = (job: Job) => ["pending", "running"].includes(job.status);
-  const canRetryJob = (job: Job) => job.status === "failed";
+  const canRetryJob = (job: Job) => ["failed", "cancelled"].includes(job.status);
   const canDeleteJob = (job: Job) => ["completed", "failed", "cancelled"].includes(job.status);
+
+  // Check if a pending job is stale (not picked up after 60 seconds)
+  const isJobStale = (job: Job): boolean => {
+    if (job.status !== 'pending' || job.started_at) return false;
+    const ageSeconds = (Date.now() - new Date(job.created_at).getTime()) / 1000;
+    return ageSeconds > 60;
+  };
 
   const selectedCancellable = Array.from(selectedJobs).filter(id => {
     const job = jobs.find(j => j.id === id);
@@ -587,7 +604,7 @@ export function JobsTable({
                         </div>
                       </TableCell>
                     )}
-                    {isColumnVisible("status") && <TableCell>{getStatusBadge(job.status)}</TableCell>}
+                    {isColumnVisible("status") && <TableCell>{getStatusBadge(job.status, job)}</TableCell>}
                     {isColumnVisible("priority") && <TableCell>{getPriorityBadge(job.priority)}</TableCell>}
                     {isColumnVisible("duration") && (
                       <TableCell className="text-sm text-muted-foreground">{getDuration(job)}</TableCell>
