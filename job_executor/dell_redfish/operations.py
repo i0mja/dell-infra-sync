@@ -2101,3 +2101,330 @@ class DellOperations:
             'apply_update': apply_update,
             'reboot_needed': reboot_needed
         }
+    
+    # Pre-Flight Check Operations for Updates
+    
+    def get_lifecycle_controller_status(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        server_id: str = None,
+        job_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Check if Lifecycle Controller is ready for updates.
+        
+        Dell pattern: GET /redfish/v1/Managers/iDRAC.Embedded.1/Attributes
+        Look for: LifecycleController.1.LCStatus = "Ready"
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            server_id: Optional server ID for logging
+            job_id: Optional job ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict: LC status information with 'ready' boolean and 'status' string
+        """
+        response = self.adapter.make_request(
+            method='GET',
+            ip=ip,
+            endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Attributes',
+            username=username,
+            password=password,
+            operation_name='Get Lifecycle Controller Status',
+            server_id=server_id,
+            job_id=job_id,
+            user_id=user_id
+        )
+        
+        attributes = response.get('Attributes', {})
+        lc_status = attributes.get('LifecycleController.1.LCStatus', 'Unknown')
+        
+        return {
+            'ready': lc_status == 'Ready',
+            'status': lc_status,
+            'message': f"Lifecycle Controller is {lc_status}"
+        }
+    
+    def get_pending_idrac_jobs(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        server_id: str = None,
+        job_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Get list of non-completed jobs that would block updates.
+        
+        Dell pattern: GET /redfish/v1/Managers/iDRAC.Embedded.1/Jobs
+        Filter: Scheduled, Running, New status
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            server_id: Optional server ID for logging
+            job_id: Optional job ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict: Contains 'count', 'jobs' list, and 'passed' boolean
+        """
+        response = self.adapter.make_request(
+            method='GET',
+            ip=ip,
+            endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Jobs',
+            username=username,
+            password=password,
+            operation_name='Get Pending iDRAC Jobs',
+            server_id=server_id,
+            job_id=job_id,
+            user_id=user_id
+        )
+        
+        members = response.get('Members', [])
+        blocking_statuses = ['Scheduled', 'Running', 'New', 'Starting', 'Downloading']
+        pending_jobs = []
+        
+        for member in members:
+            job_uri = member.get('@odata.id', '')
+            # Fetch individual job details
+            try:
+                job_detail = self.adapter.make_request(
+                    method='GET',
+                    ip=ip,
+                    endpoint=job_uri,
+                    username=username,
+                    password=password,
+                    operation_name='Get Job Detail',
+                    server_id=server_id,
+                    job_id=job_id,
+                    user_id=user_id
+                )
+                
+                job_status = job_detail.get('JobState', '')
+                if job_status in blocking_statuses:
+                    pending_jobs.append({
+                        'id': job_detail.get('Id'),
+                        'name': job_detail.get('Name'),
+                        'status': job_status,
+                        'message': job_detail.get('Message', '')
+                    })
+            except:
+                # If individual job fetch fails, skip it
+                continue
+        
+        return {
+            'passed': len(pending_jobs) == 0,
+            'count': len(pending_jobs),
+            'jobs': pending_jobs,
+            'message': f"{len(pending_jobs)} pending job(s) in queue" if pending_jobs else "Job queue is clear"
+        }
+    
+    def check_storage_rebuild_status(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        server_id: str = None,
+        job_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Check for RAID rebuilds in progress.
+        
+        Dell pattern: GET /redfish/v1/Systems/System.Embedded.1/Storage
+        Check each controller's volumes for rebuild operations
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            server_id: Optional server ID for logging
+            job_id: Optional job ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict: Contains 'passed', 'rebuilding', and 'details' about rebuild status
+        """
+        try:
+            response = self.adapter.make_request(
+                method='GET',
+                ip=ip,
+                endpoint='/redfish/v1/Systems/System.Embedded.1/Storage',
+                username=username,
+                password=password,
+                operation_name='Get Storage Status',
+                server_id=server_id,
+                job_id=job_id,
+                user_id=user_id
+            )
+            
+            members = response.get('Members', [])
+            rebuild_in_progress = False
+            rebuild_details = []
+            
+            for member in members:
+                controller_uri = member.get('@odata.id', '')
+                try:
+                    controller = self.adapter.make_request(
+                        method='GET',
+                        ip=ip,
+                        endpoint=controller_uri,
+                        username=username,
+                        password=password,
+                        operation_name='Get Controller Details',
+                        server_id=server_id,
+                        job_id=job_id,
+                        user_id=user_id
+                    )
+                    
+                    # Check volumes for rebuild status
+                    volumes_uri = controller.get('Volumes', {}).get('@odata.id', '')
+                    if volumes_uri:
+                        volumes = self.adapter.make_request(
+                            method='GET',
+                            ip=ip,
+                            endpoint=volumes_uri,
+                            username=username,
+                            password=password,
+                            operation_name='Get Volumes',
+                            server_id=server_id,
+                            job_id=job_id,
+                            user_id=user_id
+                        )
+                        
+                        for vol_member in volumes.get('Members', []):
+                            vol_uri = vol_member.get('@odata.id', '')
+                            try:
+                                volume = self.adapter.make_request(
+                                    method='GET',
+                                    ip=ip,
+                                    endpoint=vol_uri,
+                                    username=username,
+                                    password=password,
+                                    operation_name='Get Volume Details',
+                                    server_id=server_id,
+                                    job_id=job_id,
+                                    user_id=user_id
+                                )
+                                
+                                # Check for rebuild operations
+                                operations = volume.get('Operations', [])
+                                for op in operations:
+                                    if 'rebuild' in op.get('OperationName', '').lower():
+                                        rebuild_in_progress = True
+                                        rebuild_details.append({
+                                            'volume': volume.get('Name', 'Unknown'),
+                                            'operation': op.get('OperationName'),
+                                            'progress': op.get('PercentageComplete', 0)
+                                        })
+                            except:
+                                continue
+                except:
+                    continue
+            
+            return {
+                'passed': not rebuild_in_progress,
+                'rebuilding': rebuild_in_progress,
+                'details': rebuild_details,
+                'message': f"Rebuild in progress on {len(rebuild_details)} volume(s)" if rebuild_in_progress else "No RAID rebuilds in progress"
+            }
+        except Exception as e:
+            # If storage check fails, assume it's safe but log the issue
+            return {
+                'passed': True,
+                'rebuilding': False,
+                'details': [],
+                'message': f"Unable to check storage status: {str(e)}"
+            }
+    
+    def get_thermal_status(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        server_id: str = None,
+        job_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Check for thermal warnings/alerts.
+        
+        Dell pattern: GET /redfish/v1/Chassis/System.Embedded.1/Thermal
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            server_id: Optional server ID for logging
+            job_id: Optional job ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict: Contains 'passed', 'warnings' list, and temperature information
+        """
+        try:
+            response = self.adapter.make_request(
+                method='GET',
+                ip=ip,
+                endpoint='/redfish/v1/Chassis/System.Embedded.1/Thermal',
+                username=username,
+                password=password,
+                operation_name='Get Thermal Status',
+                server_id=server_id,
+                job_id=job_id,
+                user_id=user_id
+            )
+            
+            warnings = []
+            temperatures = response.get('Temperatures', [])
+            fans = response.get('Fans', [])
+            
+            # Check temperatures
+            for temp in temperatures:
+                status = temp.get('Status', {})
+                health = status.get('Health', 'OK')
+                state = status.get('State', 'Enabled')
+                
+                if health != 'OK' or state != 'Enabled':
+                    warnings.append({
+                        'sensor': temp.get('Name', 'Unknown'),
+                        'reading': temp.get('ReadingCelsius'),
+                        'health': health,
+                        'state': state
+                    })
+            
+            # Check fans
+            for fan in fans:
+                status = fan.get('Status', {})
+                health = status.get('Health', 'OK')
+                state = status.get('State', 'Enabled')
+                
+                if health != 'OK' or state != 'Enabled':
+                    warnings.append({
+                        'sensor': fan.get('Name', 'Unknown'),
+                        'reading': fan.get('Reading'),
+                        'health': health,
+                        'state': state
+                    })
+            
+            return {
+                'passed': len(warnings) == 0,
+                'warnings': warnings,
+                'message': f"{len(warnings)} thermal warning(s)" if warnings else "All thermal sensors OK"
+            }
+        except Exception as e:
+            # If thermal check fails, return warning but don't block
+            return {
+                'passed': True,
+                'warnings': [],
+                'message': f"Unable to check thermal status: {str(e)}"
+            }

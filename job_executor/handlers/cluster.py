@@ -1190,16 +1190,61 @@ class ClusterHandler(BaseHandler):
                               and not h.runtime.inMaintenanceMode)
             
             # Enhanced safety logic with warnings
-            safe_to_proceed = (
-                healthy_hosts >= (min_required_hosts + 1) and
-                (drs_enabled or True)  # Simplified logic
-            )
-            
             warnings = []
             if not drs_enabled:
                 warnings.append("DRS is disabled - VMs will not automatically evacuate")
             if drs_mode == 'manual':
                 warnings.append("DRS is in manual mode - requires manual VM migration")
+            
+            # NEW: Run iDRAC pre-flight checks for linked Dell servers
+            idrac_results = []
+            all_idrac_ready = True
+            
+            # Get target host ID if specified in details
+            target_host_id = details.get('target_host_id')
+            
+            # Query for servers linked to hosts in this cluster
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            from job_executor.utils import _safe_json_parse
+            
+            cluster_hosts_response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_hosts?cluster=eq.{cluster_name}&select=id,hostname,server_id,servers(id,hostname,ip_address)",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL
+            )
+            
+            if cluster_hosts_response.status_code == 200:
+                cluster_hosts_data = _safe_json_parse(cluster_hosts_response)
+                for host_data in cluster_hosts_data:
+                    if host_data.get('server_id') and host_data.get('servers'):
+                        server = host_data['servers'] if isinstance(host_data['servers'], dict) else host_data['servers'][0]
+                        
+                        # Only check target host if specified, otherwise check all
+                        if target_host_id and host_data['id'] != target_host_id:
+                            continue
+                        
+                        try:
+                            idrac_check = self._run_idrac_preflight(server, job['id'])
+                            idrac_results.append(idrac_check)
+                            if not idrac_check['ready']:
+                                all_idrac_ready = False
+                        except Exception as e:
+                            self.log(f"iDRAC pre-flight check failed for {server['hostname']}: {e}", "WARNING")
+                            idrac_results.append({
+                                'server_id': server['id'],
+                                'hostname': server.get('hostname', server.get('ip_address', 'Unknown')),
+                                'ip_address': server.get('ip_address', ''),
+                                'ready': False,
+                                'error': str(e),
+                                'checks': {}
+                            })
+                            all_idrac_ready = False
+            
+            safe_to_proceed = (
+                healthy_hosts >= (min_required_hosts + 1) and
+                (drs_enabled or True) and
+                (len(idrac_results) == 0 or all_idrac_ready)  # All iDRAC checks must pass
+            )
             
             result = {
                 'safe_to_proceed': safe_to_proceed,
@@ -1208,7 +1253,9 @@ class ClusterHandler(BaseHandler):
                 'min_required_hosts': min_required_hosts,
                 'drs_enabled': drs_enabled,
                 'drs_mode': drs_mode,
-                'warnings': warnings
+                'warnings': warnings,
+                'idrac_checks': idrac_results,
+                'all_idrac_ready': all_idrac_ready
             }
             
             # Store result
@@ -1228,6 +1275,152 @@ class ClusterHandler(BaseHandler):
             self.log(f"Cluster safety check failed: {e}", "ERROR")
             self.update_job_status(job['id'], 'failed', completed_at=datetime.now().isoformat(), 
                                  details={'error': str(e), 'safe_to_proceed': False})
+    
+    def _run_idrac_preflight(self, server: Dict, job_id: str) -> Dict:
+        """
+        Run all iDRAC pre-flight checks for a single server.
+        
+        Args:
+            server: Server dict with id, hostname, ip_address, credentials
+            job_id: Job ID for logging
+            
+        Returns:
+            dict: Pre-flight check results with ready status and individual checks
+        """
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        from job_executor.utils import _safe_json_parse
+        
+        server_id = server['id']
+        hostname = server.get('hostname', server.get('ip_address', 'Unknown'))
+        ip_address = server.get('ip_address', '')
+        
+        self.log(f"Running iDRAC pre-flight checks for {hostname}")
+        
+        # Get credentials
+        creds = self.get_credentials(server_id)
+        if not creds:
+            raise Exception(f"No credentials found for server {hostname}")
+        
+        username, password = creds
+        
+        # Initialize Dell operations
+        dell_ops = self.executor._get_dell_operations()
+        
+        checks = {
+            'lc_status': {'passed': False, 'status': None, 'message': ''},
+            'pending_jobs': {'passed': False, 'count': 0, 'jobs': []},
+            'system_health': {'passed': False, 'overall': None, 'details': {}},
+            'storage_health': {'passed': False, 'rebuilding': False},
+            'power_state': {'passed': False, 'state': None},
+            'thermal_status': {'passed': False, 'warnings': []}
+        }
+        
+        try:
+            # 1. Lifecycle Controller Status (CRITICAL)
+            try:
+                lc_result = dell_ops.get_lifecycle_controller_status(
+                    ip=ip_address,
+                    username=username,
+                    password=password,
+                    server_id=server_id,
+                    job_id=job_id
+                )
+                checks['lc_status'] = lc_result
+            except Exception as e:
+                checks['lc_status']['message'] = f"Failed to check LC status: {str(e)}"
+                self.log(f"LC status check failed for {hostname}: {e}", "WARNING")
+            
+            # 2. Pending Jobs (CRITICAL)
+            try:
+                jobs_result = dell_ops.get_pending_idrac_jobs(
+                    ip=ip_address,
+                    username=username,
+                    password=password,
+                    server_id=server_id,
+                    job_id=job_id
+                )
+                checks['pending_jobs'] = jobs_result
+            except Exception as e:
+                checks['pending_jobs']['message'] = f"Failed to check job queue: {str(e)}"
+                self.log(f"Job queue check failed for {hostname}: {e}", "WARNING")
+            
+            # 3. System Health (WARNING)
+            try:
+                health_result = dell_ops.get_health_status(
+                    ip=ip_address,
+                    username=username,
+                    password=password,
+                    server_id=server_id
+                )
+                checks['system_health'] = {
+                    'passed': health_result.get('overall_health') == 'OK',
+                    'overall': health_result.get('overall_health'),
+                    'details': health_result
+                }
+                checks['power_state'] = {
+                    'passed': health_result.get('power_state') == 'On',
+                    'state': health_result.get('power_state')
+                }
+            except Exception as e:
+                checks['system_health']['message'] = f"Failed to check health: {str(e)}"
+                self.log(f"Health check failed for {hostname}: {e}", "WARNING")
+            
+            # 4. Storage/RAID (WARNING)
+            try:
+                storage_result = dell_ops.check_storage_rebuild_status(
+                    ip=ip_address,
+                    username=username,
+                    password=password,
+                    server_id=server_id,
+                    job_id=job_id
+                )
+                checks['storage_health'] = storage_result
+            except Exception as e:
+                checks['storage_health']['message'] = f"Failed to check storage: {str(e)}"
+                self.log(f"Storage check failed for {hostname}: {e}", "WARNING")
+            
+            # 5. Thermal Status (WARNING)
+            try:
+                thermal_result = dell_ops.get_thermal_status(
+                    ip=ip_address,
+                    username=username,
+                    password=password,
+                    server_id=server_id,
+                    job_id=job_id
+                )
+                checks['thermal_status'] = thermal_result
+            except Exception as e:
+                checks['thermal_status']['message'] = f"Failed to check thermal: {str(e)}"
+                self.log(f"Thermal check failed for {hostname}: {e}", "WARNING")
+            
+        except Exception as e:
+            self.log(f"Overall iDRAC pre-flight failed for {hostname}: {e}", "ERROR")
+            raise
+        
+        # Determine overall ready status (CRITICAL checks must pass)
+        critical_checks_passed = (
+            checks['lc_status'].get('passed', False) and
+            checks['pending_jobs'].get('passed', False) and
+            checks['power_state'].get('passed', False)
+        )
+        
+        # Warning checks can fail but still allow override
+        warning_checks = []
+        if not checks['system_health'].get('passed', False):
+            warning_checks.append('System health is not OK')
+        if not checks['storage_health'].get('passed', False):
+            warning_checks.append('RAID rebuild in progress')
+        if not checks['thermal_status'].get('passed', False):
+            warning_checks.append('Thermal warnings detected')
+        
+        return {
+            'server_id': server_id,
+            'hostname': hostname,
+            'ip_address': ip_address,
+            'ready': critical_checks_passed,
+            'checks': checks,
+            'warnings': warning_checks
+        }
     
     def execute_server_group_safety_check(self, job: Dict):
         """Execute server group safety check before taking servers offline for maintenance"""
