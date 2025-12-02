@@ -651,6 +651,17 @@ export function IdmConnectionSettings() {
                   </div>
                 </div>
 
+                {trustedDomains.length > 0 && !adDcHost && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      <strong>AD Domain Controller Required:</strong> You have trusted domains configured 
+                      ({trustedDomains.join(', ')}) but no AD DC host. AD Trust users will NOT be able to 
+                      authenticate because FreeIPA compat tree does not support simple LDAP binds.
+                    </AlertDescription>
+                  </Alert>
+                )}
+
                 {adDcHost && (
                   <Alert className="border-blue-500 bg-blue-50 dark:bg-blue-950/20">
                     <AlertCircle className="h-4 w-4 text-blue-600" />
