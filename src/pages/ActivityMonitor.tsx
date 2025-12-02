@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ActivityStatsBar } from "@/components/activity/ActivityStatsBar";
 import { JobsFilterToolbar } from "@/components/activity/JobsFilterToolbar";
@@ -8,7 +8,8 @@ import { CommandsFilterToolbar } from "@/components/activity/CommandsFilterToolb
 import { CommandsTable } from "@/components/activity/CommandsTable";
 import { CommandDetailsSidebar } from "@/components/activity/CommandDetailsSidebar";
 import { CommandDetailDialog } from "@/components/activity/CommandDetailDialog";
-import { JobsTable } from "@/components/activity/JobsTable";
+import { JobsTable, Job } from "@/components/activity/JobsTable";
+import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,7 @@ import { useActiveJobs } from "@/hooks/useActiveJobs";
 import { useJobsWithProgress } from "@/hooks/useJobsWithProgress";
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
+import { useAuth } from "@/hooks/useAuth";
 
 interface IdracCommand {
   id: string;
@@ -42,17 +44,6 @@ interface IdracCommand {
   servers?: { hostname: string | null; ip_address: string };
 }
 
-interface Job {
-  id: string;
-  job_type: string;
-  status: string;
-  target_scope: any;
-  details: any;
-  created_at: string;
-  started_at: string | null;
-  completed_at: string | null;
-}
-
 export default function ActivityMonitor() {
   const [commands, setCommands] = useState<IdracCommand[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -61,6 +52,10 @@ export default function ActivityMonitor() {
   const [isDetailsSheetOpen, setIsDetailsSheetOpen] = useState(false);
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("operations");
+  
+  // Job detail dialog state
+  const [selectedJobForDialog, setSelectedJobForDialog] = useState<Job | null>(null);
+  const [jobDetailDialogOpen, setJobDetailDialogOpen] = useState(false);
   
   // Jobs filters
   const [jobsSearch, setJobsSearch] = useState("");
@@ -81,11 +76,14 @@ export default function ActivityMonitor() {
   const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
 
   const isDesktop = useMediaQuery('(min-width: 1280px)');
+  const queryClient = useQueryClient();
+  const { userRole } = useAuth();
+  const canManage = userRole === 'admin' || userRole === 'operator';
 
   // Column visibility for jobs
   const { visibleColumns: jobsColumns, isColumnVisible: isJobColVisible, toggleColumn: toggleJobColumn } = useColumnVisibility(
     "jobs-table-columns",
-    ["job_type", "status", "duration", "target", "started", "progress"]
+    ["job_type", "status", "priority", "duration", "target", "started", "progress", "actions"]
   );
 
   // Column visibility for commands
@@ -111,7 +109,7 @@ export default function ActivityMonitor() {
   const { activeJobs, refetch: refetchActiveJobs } = useActiveJobs();
 
   // Fetch jobs with progress
-  const { data: jobsWithProgress } = useJobsWithProgress();
+  const { data: jobsWithProgress, refetch: refetchJobs } = useJobsWithProgress();
 
   useEffect(() => {
     if (jobsWithProgress) {
@@ -235,10 +233,132 @@ export default function ActivityMonitor() {
     };
   }, []);
 
+  // Job management handlers
+  const handleCancelJob = async (jobId: string) => {
+    try {
+      const { error } = await supabase.functions.invoke('update-job', {
+        body: { 
+          job: { 
+            id: jobId, 
+            status: 'cancelled', 
+            completed_at: new Date().toISOString(),
+            details: { cancellation_reason: 'Cancelled by user' }
+          } 
+        }
+      });
+      if (error) throw error;
+      toast.success("Job cancelled successfully");
+      refetchJobs();
+      refetchActiveJobs();
+    } catch (err) {
+      console.error('Error cancelling job:', err);
+      toast.error("Failed to cancel job");
+    }
+  };
+
+  const handleRetryJob = async (job: Job) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        toast.error("You must be logged in to retry jobs");
+        return;
+      }
+      
+      const { error } = await supabase.functions.invoke('create-job', {
+        body: { 
+          job_type: job.job_type, 
+          created_by: user.id, 
+          target_scope: job.target_scope,
+          details: { ...job.details, retried_from: job.id }
+        }
+      });
+      if (error) throw error;
+      toast.success("Job retry initiated");
+      refetchJobs();
+    } catch (err) {
+      console.error('Error retrying job:', err);
+      toast.error("Failed to retry job");
+    }
+  };
+
+  const handleDeleteJob = async (jobId: string) => {
+    try {
+      // First delete associated tasks
+      await supabase.from('job_tasks').delete().eq('job_id', jobId);
+      // Then delete the job
+      const { error } = await supabase.from('jobs').delete().eq('id', jobId);
+      if (error) throw error;
+      toast.success("Job deleted successfully");
+      refetchJobs();
+    } catch (err) {
+      console.error('Error deleting job:', err);
+      toast.error("Failed to delete job");
+    }
+  };
+
+  const handleBulkCancel = async (jobIds: string[]) => {
+    try {
+      for (const id of jobIds) {
+        await supabase.functions.invoke('update-job', {
+          body: { 
+            job: { 
+              id, 
+              status: 'cancelled', 
+              completed_at: new Date().toISOString(),
+              details: { cancellation_reason: 'Bulk cancelled by user' }
+            } 
+          }
+        });
+      }
+      toast.success(`Cancelled ${jobIds.length} jobs`);
+      refetchJobs();
+      refetchActiveJobs();
+    } catch (err) {
+      console.error('Error bulk cancelling jobs:', err);
+      toast.error("Failed to cancel some jobs");
+    }
+  };
+
+  const handleBulkDelete = async (jobIds: string[]) => {
+    try {
+      // Delete tasks first
+      await supabase.from('job_tasks').delete().in('job_id', jobIds);
+      // Then delete jobs
+      const { error } = await supabase.from('jobs').delete().in('id', jobIds);
+      if (error) throw error;
+      toast.success(`Deleted ${jobIds.length} jobs`);
+      refetchJobs();
+    } catch (err) {
+      console.error('Error bulk deleting jobs:', err);
+      toast.error("Failed to delete some jobs");
+    }
+  };
+
+  const handleUpdatePriority = async (jobId: string, priority: string) => {
+    try {
+      const { error } = await supabase
+        .from('jobs')
+        .update({ priority })
+        .eq('id', jobId);
+      if (error) throw error;
+      toast.success(`Priority updated to ${priority}`);
+      refetchJobs();
+    } catch (err) {
+      console.error('Error updating priority:', err);
+      toast.error("Failed to update priority");
+    }
+  };
+
+  const handleViewJobDetails = (job: Job) => {
+    setSelectedJobForDialog(job);
+    setJobDetailDialogOpen(true);
+  };
+
   // Helper functions
   const handleManualRefresh = () => {
     refetch();
     refetchActiveJobs();
+    refetchJobs();
   };
 
   const handleRowClick = (cmd: IdracCommand) => {
@@ -246,7 +366,6 @@ export default function ActivityMonitor() {
     if (!isDesktop) {
       setIsDetailsSheetOpen(true);
     }
-    // On desktop, sidebar shows inline automatically
   };
 
   const handleCloseDetails = () => {
@@ -275,6 +394,7 @@ export default function ActivityMonitor() {
     const columns: ExportColumn<Job>[] = [
       { key: "job_type", label: "Job Type" },
       { key: "status", label: "Status" },
+      { key: "priority", label: "Priority" },
       { key: "created_at", label: "Created" },
       { key: "started_at", label: "Started" },
       { key: "completed_at", label: "Completed" },
@@ -478,6 +598,9 @@ export default function ActivityMonitor() {
                     <DropdownMenuCheckboxItem checked={isJobColVisible("status")} onCheckedChange={() => toggleJobColumn("status")}>
                       Status
                     </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem checked={isJobColVisible("priority")} onCheckedChange={() => toggleJobColumn("priority")}>
+                      Priority
+                    </DropdownMenuCheckboxItem>
                     <DropdownMenuCheckboxItem checked={isJobColVisible("duration")} onCheckedChange={() => toggleJobColumn("duration")}>
                       Duration
                     </DropdownMenuCheckboxItem>
@@ -489,6 +612,9 @@ export default function ActivityMonitor() {
                     </DropdownMenuCheckboxItem>
                     <DropdownMenuCheckboxItem checked={isJobColVisible("progress")} onCheckedChange={() => toggleJobColumn("progress")}>
                       Progress
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem checked={isJobColVisible("actions")} onCheckedChange={() => toggleJobColumn("actions")}>
+                      Actions
                     </DropdownMenuCheckboxItem>
                   </>
                 ) : (
@@ -569,6 +695,14 @@ export default function ActivityMonitor() {
               visibleColumns={jobsColumns}
               onToggleColumn={toggleJobColumn}
               onExport={handleExportJobsCSV}
+              onCancelJob={handleCancelJob}
+              onRetryJob={handleRetryJob}
+              onDeleteJob={handleDeleteJob}
+              onBulkCancel={handleBulkCancel}
+              onBulkDelete={handleBulkDelete}
+              onViewDetails={handleViewJobDetails}
+              onUpdatePriority={handleUpdatePriority}
+              canManage={canManage}
             />
           </TabsContent>
 
@@ -620,6 +754,18 @@ export default function ActivityMonitor() {
           setIsDetailsDialogOpen(open);
           if (!open) {
             setSelectedCommand(null);
+          }
+        }}
+      />
+
+      {/* Job Detail Dialog */}
+      <JobDetailDialog
+        job={selectedJobForDialog}
+        open={jobDetailDialogOpen}
+        onOpenChange={(open) => {
+          setJobDetailDialogOpen(open);
+          if (!open) {
+            setSelectedJobForDialog(null);
           }
         }}
       />
