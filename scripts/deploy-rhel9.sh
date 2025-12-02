@@ -75,20 +75,105 @@ if [ ! -d "$PROJECT_ROOT/supabase/docker" ]; then
     exit 1
 fi
 
-# Create Supabase directory and copy custom configuration
+# ============================================
+# CLEANUP: Handle failed previous deployments
+# ============================================
+if [ -d "$SUPABASE_DIR" ]; then
+    echo "⚠️  Existing Supabase installation detected at $SUPABASE_DIR"
+    echo ""
+    echo "Choose an option:"
+    echo "  1) Clean reinstall (recommended for failed deployments)"
+    echo "  2) Keep existing data and update configuration"
+    echo "  3) Abort"
+    echo ""
+    read -p "Enter your choice (1/2/3): " CLEANUP_CHOICE
+    
+    case $CLEANUP_CHOICE in
+        1)
+            echo "🧹 Performing clean reinstall..."
+            cd "$SUPABASE_DIR" 2>/dev/null || true
+            
+            # Stop and remove all containers
+            if [ -f "docker-compose.yml" ]; then
+                echo "   Stopping containers..."
+                docker compose down -v --remove-orphans 2>/dev/null || true
+            fi
+            
+            # Remove any orphaned containers
+            echo "   Removing orphaned containers..."
+            docker rm -f $(docker ps -aq --filter "name=supabase") 2>/dev/null || true
+            
+            # Remove volumes
+            echo "   Removing Docker volumes..."
+            docker volume rm $(docker volume ls -q --filter "name=supabase") 2>/dev/null || true
+            
+            # Remove installation directory
+            echo "   Removing installation directory..."
+            cd /
+            rm -rf "$SUPABASE_DIR"
+            
+            # Clean Docker system
+            echo "   Cleaning Docker system..."
+            docker system prune -f 2>/dev/null || true
+            
+            echo "✅ Cleanup complete"
+            ;;
+        2)
+            echo "ℹ️  Keeping existing data, updating configuration only..."
+            cd "$SUPABASE_DIR"
+            docker compose down 2>/dev/null || true
+            ;;
+        3)
+            echo "❌ Aborted by user"
+            exit 0
+            ;;
+        *)
+            echo "❌ Invalid choice. Aborting."
+            exit 1
+            ;;
+    esac
+fi
+
+# Create Supabase directory
 mkdir -p "$SUPABASE_DIR"
-cp -r "$PROJECT_ROOT/supabase/docker/"* "$SUPABASE_DIR/"
 cd "$SUPABASE_DIR"
 
-# Create required directories
+# ============================================
+# IMPORTANT: Clean up volumes directory first
+# This fixes "cannot overwrite directory with non-directory" errors
+# ============================================
+echo "   Preparing volume directories..."
+rm -rf "$SUPABASE_DIR/volumes" 2>/dev/null || true
+
+# Copy configuration files (excluding volumes which we'll create fresh)
+for item in "$PROJECT_ROOT/supabase/docker/"*; do
+    item_name=$(basename "$item")
+    if [ "$item_name" != "volumes" ]; then
+        cp -r "$item" "$SUPABASE_DIR/"
+    fi
+done
+
+# Create required directories with correct structure
 mkdir -p volumes/api
 mkdir -p volumes/db/init
 mkdir -p volumes/storage
 
-# Copy kong.yml if it exists in project
+# Copy kong.yml as a FILE (not directory)
 if [ -f "$PROJECT_ROOT/supabase/docker/volumes/api/kong.yml" ]; then
-    cp "$PROJECT_ROOT/supabase/docker/volumes/api/kong.yml" volumes/api/
+    cp "$PROJECT_ROOT/supabase/docker/volumes/api/kong.yml" volumes/api/kong.yml
 fi
+
+# ============================================
+# SELinux: Set proper context for RHEL 9
+# ============================================
+if command -v getenforce &> /dev/null && [ "$(getenforce)" != "Disabled" ]; then
+    echo "   Setting SELinux context for Docker volumes..."
+    chcon -Rt svirt_sandbox_file_t "$SUPABASE_DIR/volumes" 2>/dev/null || true
+    echo "✅ SELinux context set"
+fi
+
+# Set permissions
+chmod -R 755 "$SUPABASE_DIR/volumes"
 
 # Get server IP
 SERVER_IP=$(hostname -I | awk '{print $1}')
