@@ -28,6 +28,8 @@ export interface IdmSettings {
   last_sync_status: string | null;
   last_sync_error: string | null;
   trusted_domains: string[] | null;
+  ad_dc_host: string | null;
+  ad_dc_port: number | null;
   created_at: string | null;
   updated_at: string | null;
 }
