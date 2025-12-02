@@ -155,14 +155,16 @@ class IDMHandler(BaseHandler):
             test_result = {
                 'success': True,
                 'user_dn': auth_result.get('user_dn'),
-                'full_name': auth_result.get('full_name'),
-                'email': auth_result.get('email'),
-                'title': auth_result.get('title'),
-                'department': auth_result.get('department'),
+                'full_name': auth_result.get('user_info', {}).get('full_name') or auth_result.get('full_name'),
+                'email': auth_result.get('user_info', {}).get('email') or auth_result.get('email'),
+                'title': auth_result.get('user_info', {}).get('title') or auth_result.get('title'),
+                'department': auth_result.get('user_info', {}).get('department') or auth_result.get('department'),
                 'groups': user_groups,
                 'group_count': len(user_groups),
                 'mapped_role': mapped_role,
                 'matched_group': matched_group,
+                'is_ad_trust_user': auth_result.get('is_ad_trust_user', False),
+                'ad_domain': auth_result.get('ad_domain'),
                 'is_test': True,
             }
             

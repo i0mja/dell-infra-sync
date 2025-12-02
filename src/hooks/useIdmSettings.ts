@@ -27,6 +27,7 @@ export interface IdmSettings {
   last_sync_at: string | null;
   last_sync_status: string | null;
   last_sync_error: string | null;
+  trusted_domains: string[] | null;
   created_at: string | null;
   updated_at: string | null;
 }

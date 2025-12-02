@@ -424,6 +424,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
                 verify_certificate=settings.get('verify_certificate', True),
                 ca_certificate=ca_cert_path,
                 connection_timeout=settings.get('connection_timeout_seconds', 10),
+                trusted_domains=settings.get('trusted_domains', []),
             )
         except Exception as e:
             self.log(f"Failed to create FreeIPA authenticator: {e}", "ERROR")
