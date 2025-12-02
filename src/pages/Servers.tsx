@@ -443,6 +443,7 @@ export default function Servers() {
           groupedData={groupedData ? groupedData.map(g => ({
             id: g.group?.id || g.cluster || 'ungrouped',
             name: g.name,
+            type: g.group ? 'manual' : (g.cluster ? 'vcenter' : undefined),
             servers: g.servers,
             onlineCount: g.onlineCount,
             linkedCount: g.linkedCount,
