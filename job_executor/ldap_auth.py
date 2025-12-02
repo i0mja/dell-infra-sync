@@ -967,6 +967,63 @@ class FreeIPAAuthenticator:
             logger.error(f"Error getting groups for {username}: {e}")
             return []
     
+    def _resolve_sids_to_usernames(self, conn: 'Connection', sids: List[str]) -> Dict[str, str]:
+        """
+        Resolve Windows SIDs to usernames by searching the compat users tree.
+        
+        FreeIPA stores AD Trust users in cn=users,cn=compat with their SID in
+        ipaNTSecurityIdentifier or objectSid attributes.
+        
+        Args:
+            conn: Active LDAP connection
+            sids: List of SIDs to resolve (e.g., ['S-1-5-21-xxx-262796'])
+            
+        Returns:
+            Dict mapping SID -> username (e.g., {'S-1-5-21-xxx-262796': 'jalexander'})
+        """
+        resolved = {}
+        if not sids:
+            return resolved
+            
+        compat_users_base = f"cn=users,cn=compat,{self.base_dn}"
+        logger.debug(f"[SID RESOLVE] Resolving {len(sids)} SID(s) from compat users tree: {compat_users_base}")
+        
+        for sid in sids:
+            try:
+                # Search for user with this SID
+                # FreeIPA stores SIDs in ipaNTSecurityIdentifier or objectSid
+                escaped_sid = self._ldap_escape(sid)
+                sid_filter = f"(|(ipaNTSecurityIdentifier={escaped_sid})(objectSid={escaped_sid}))"
+                
+                conn.search(
+                    search_base=compat_users_base,
+                    search_filter=sid_filter,
+                    search_scope=SUBTREE,
+                    attributes=["uid", "cn", "gecos"],
+                )
+                
+                if conn.entries:
+                    entry = conn.entries[0]
+                    username = None
+                    if hasattr(entry, 'uid') and entry.uid.value:
+                        username = str(entry.uid.value)
+                    elif hasattr(entry, 'cn') and entry.cn.value:
+                        username = str(entry.cn.value)
+                    elif hasattr(entry, 'gecos') and entry.gecos.value:
+                        username = str(entry.gecos.value)
+                    
+                    if username:
+                        resolved[sid] = username
+                        logger.debug(f"[SID RESOLVE] Resolved {sid[-12:]}... -> {username}")
+                else:
+                    logger.debug(f"[SID RESOLVE] No match for SID {sid[-12:]}...")
+                    
+            except Exception as e:
+                logger.debug(f"[SID RESOLVE] Could not resolve SID {sid}: {e}")
+        
+        logger.info(f"[SID RESOLVE] Resolved {len(resolved)}/{len(sids)} SIDs to usernames")
+        return resolved
+
     def search_groups(
         self,
         bind_dn: str,
@@ -1011,8 +1068,39 @@ class FreeIPAAuthenticator:
                 size_limit=max_results,
             )
             
-            groups = []
+            # First pass: collect all SIDs that need resolution
+            all_sids = set()
+            entries_data = []  # Store entry data for second pass
+            
             for entry in conn.entries:
+                entry_info = {
+                    'entry': entry,
+                    'ext_sids': [],  # SIDs found in ipaExternalMember
+                }
+                
+                if hasattr(entry, 'ipaExternalMember'):
+                    ext_values = entry.ipaExternalMember.values if hasattr(entry.ipaExternalMember, 'values') else []
+                    if not isinstance(ext_values, (list, tuple)):
+                        ext_values = [ext_values] if ext_values else []
+                    
+                    for ext_member in ext_values:
+                        ext_str = str(ext_member)
+                        if ext_str.startswith('S-1-'):
+                            all_sids.add(ext_str)
+                            entry_info['ext_sids'].append(ext_str)
+                
+                entries_data.append(entry_info)
+            
+            # Resolve all SIDs in one batch
+            sid_to_username = {}
+            if all_sids:
+                logger.info(f"[GROUP SEARCH] Found {len(all_sids)} unique SIDs to resolve")
+                sid_to_username = self._resolve_sids_to_usernames(conn, list(all_sids))
+            
+            # Second pass: build group results with resolved usernames
+            groups = []
+            for entry_info in entries_data:
+                entry = entry_info['entry']
                 members = []
                 member_count = 0
                 
@@ -1068,8 +1156,11 @@ class FreeIPAAuthenticator:
                             username = ext_str.split('\\')[-1]
                             display = f"AD:{username}"
                         elif ext_str.startswith('S-1-'):
-                            # SID format - show abbreviated
-                            display = f"SID:...{ext_str[-8:]}"
+                            # SID format - try to resolve, fallback to abbreviated SID
+                            if ext_str in sid_to_username:
+                                display = f"AD:{sid_to_username[ext_str]}"
+                            else:
+                                display = f"SID:...{ext_str[-8:]}"
                         else:
                             display = f"EXT:{ext_str}"
                         
