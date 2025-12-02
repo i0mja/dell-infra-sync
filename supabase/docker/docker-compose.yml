@@ -21,7 +21,7 @@ services:
       JWT_EXP: 3600
     volumes:
       - supabase-db-data:/var/lib/postgresql/data
-      - ./volumes/db/init:/docker-entrypoint-initdb.d:z
+      # Note: Do NOT mount init scripts here - let supabase/postgres run its built-in init
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
