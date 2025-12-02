@@ -155,7 +155,6 @@ done
 
 # Create required directories with correct structure
 mkdir -p volumes/api
-mkdir -p volumes/db/init
 mkdir -p volumes/storage
 
 # Copy kong.yml as a FILE (not directory)
@@ -163,7 +162,7 @@ if [ -f "$PROJECT_ROOT/supabase/docker/volumes/api/kong.yml" ]; then
     cp "$PROJECT_ROOT/supabase/docker/volumes/api/kong.yml" volumes/api/kong.yml
 fi
 
-# Get server IP (permissions will be set after init script creation)
+# Get server IP
 SERVER_IP=$(hostname -I | awk '{print $1}')
 
 # Generate secure credentials
@@ -175,111 +174,14 @@ VAULT_ENC_KEY=$(openssl rand -base64 32 | tr -d '/+=')
 PG_META_CRYPTO_KEY=$(openssl rand -base64 32 | tr -d '/+=')
 DASHBOARD_PASSWORD=$(openssl rand -base64 16 | tr -d '/+=')
 
-# ============================================
-# CRITICAL: Create database init script
-# This fixes Supabase internal role passwords to match POSTGRES_PASSWORD
-# Without this, auth/storage/realtime services fail to connect
-# ============================================
-echo "   Creating database initialization script..."
-cat > volumes/db/init/00-setup-supabase-roles.sql << INIT_SQL
--- ============================================
--- Supabase Role Password Fix for Self-Hosted Deployment
--- This script runs at database initialization (before other init scripts)
--- It fixes the passwords for Supabase internal roles to match POSTGRES_PASSWORD
--- ============================================
+# Note: We no longer create custom init scripts - the supabase/postgres image
+# has its own init scripts that create required schemas (auth, storage, etc.)
+# We'll apply password fixes AFTER the database initializes
 
--- Fix passwords for all Supabase internal roles
--- The supabase/postgres image creates these with default passwords
-ALTER ROLE supabase_admin WITH PASSWORD '$POSTGRES_PASSWORD';
-ALTER ROLE supabase_auth_admin WITH PASSWORD '$POSTGRES_PASSWORD';
-ALTER ROLE supabase_storage_admin WITH PASSWORD '$POSTGRES_PASSWORD';
-ALTER ROLE supabase_functions_admin WITH PASSWORD '$POSTGRES_PASSWORD';
-ALTER ROLE supabase_replication_admin WITH PASSWORD '$POSTGRES_PASSWORD';
-ALTER ROLE supabase_read_only_user WITH PASSWORD '$POSTGRES_PASSWORD';
-ALTER ROLE authenticator WITH PASSWORD '$POSTGRES_PASSWORD';
-ALTER ROLE pgbouncer WITH PASSWORD '$POSTGRES_PASSWORD';
+echo "✅ Directory structure created"
 
--- Create authenticated role if missing (used by RLS policies)
-DO \$\$
-BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticated') THEN
-    CREATE ROLE authenticated NOLOGIN;
-    RAISE NOTICE 'Created authenticated role';
-  END IF;
-END
-\$\$;
-
--- Create anon role if missing (used by RLS policies)
-DO \$\$
-BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
-    CREATE ROLE anon NOLOGIN;
-    RAISE NOTICE 'Created anon role';
-  END IF;
-END
-\$\$;
-
--- Create service_role if missing
-DO \$\$
-BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'service_role') THEN
-    CREATE ROLE service_role NOLOGIN BYPASSRLS;
-    RAISE NOTICE 'Created service_role';
-  END IF;
-END
-\$\$;
-
--- Grant roles to authenticator (PostgREST connects as authenticator)
-GRANT authenticated TO authenticator;
-GRANT anon TO authenticator;
-GRANT service_role TO authenticator;
-
--- Create extensions schema if not exists
-CREATE SCHEMA IF NOT EXISTS extensions;
-GRANT USAGE ON SCHEMA extensions TO anon, authenticated, service_role;
-GRANT ALL ON SCHEMA extensions TO supabase_admin;
-
--- Create the realtime publication for real-time subscriptions
-DO \$\$
-BEGIN
-  IF NOT EXISTS (SELECT FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-    CREATE PUBLICATION supabase_realtime;
-    RAISE NOTICE 'Created supabase_realtime publication';
-  END IF;
-END
-\$\$;
-
--- Grant schema permissions
-GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
-GRANT ALL ON SCHEMA public TO supabase_admin;
-
--- Log completion
-DO \$\$ BEGIN RAISE NOTICE 'Supabase roles initialized successfully'; END \$\$;
-INIT_SQL
-
-echo "✅ Database init script created"
-
-# ============================================
-# CRITICAL: Fix permissions for Docker containers
-# The postgres container runs as UID 999 (postgres user)
-# Without proper permissions, it cannot read init scripts
-# ============================================
-echo "   Setting permissions for Docker containers..."
-
-# Set world-readable permissions on all volumes
+# Set world-readable permissions on volumes
 chmod -R 755 "$SUPABASE_DIR/volumes"
-
-# Set postgres ownership on db directories (UID 999 = postgres in container)
-chown -R 999:999 "$SUPABASE_DIR/volumes/db"
-
-# Verify permissions are correct
-if [ "$(stat -c %a $SUPABASE_DIR/volumes/db/init 2>/dev/null)" != "755" ]; then
-    echo "⚠️  Warning: Could not set permissions. Trying with sudo..."
-    sudo chmod -R 755 "$SUPABASE_DIR/volumes" 2>/dev/null || true
-    sudo chown -R 999:999 "$SUPABASE_DIR/volumes/db" 2>/dev/null || true
-fi
-
-echo "✅ Permissions set (db owned by UID 999, mode 755)"
 
 # SELinux: Set proper context for RHEL 9 (only if Enforcing)
 if command -v getenforce &> /dev/null && [ "$(getenforce)" == "Enforcing" ]; then
@@ -447,33 +349,67 @@ if [ "$DB_READY" != "true" ]; then
 fi
 
 # ============================================
-# CRITICAL: Verify role passwords are correctly set
-# The init script should have run, but we verify and fix if needed
+# CRITICAL: Wait for Supabase's built-in init scripts to complete
+# The supabase/postgres image creates auth, storage schemas and roles
+# We must wait for this to finish before applying password fixes
 # ============================================
-echo "🔐 Stage 3: Verifying Supabase role passwords..."
+echo "🔐 Stage 3: Waiting for Supabase initialization to complete..."
 
-# Test connection as supabase_auth_admin (auth service uses this)
+AUTH_SCHEMA_READY=false
+for i in {1..60}; do
+    # Check if auth schema exists (created by Supabase init scripts)
+    if docker compose exec -T db psql -U postgres -d postgres -tAc "SELECT 1 FROM pg_namespace WHERE nspname = 'auth'" 2>/dev/null | grep -q "1"; then
+        echo "   ✅ auth schema exists - Supabase init complete"
+        AUTH_SCHEMA_READY=true
+        break
+    fi
+    sleep 2
+    if [ $((i % 10)) -eq 0 ]; then
+        echo "   ... waiting for Supabase init ($((i * 2)) seconds)"
+    fi
+done
+
+if [ "$AUTH_SCHEMA_READY" != "true" ]; then
+    echo "⚠️  auth schema not found after 120 seconds - proceeding anyway..."
+fi
+
+# Give a few more seconds for all init scripts to complete
+sleep 5
+
+echo "🔐 Stage 3b: Applying password fixes for Supabase roles..."
+
+# Apply password fixes for all Supabase internal roles
+# These roles are created by supabase/postgres but with default passwords
+docker compose exec -T db psql -U postgres -d postgres -c "
+-- Fix passwords for Supabase internal roles to match POSTGRES_PASSWORD
+ALTER ROLE supabase_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+ALTER ROLE supabase_auth_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+ALTER ROLE supabase_storage_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+ALTER ROLE supabase_functions_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+ALTER ROLE supabase_replication_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+ALTER ROLE supabase_read_only_user WITH PASSWORD '$POSTGRES_PASSWORD';
+ALTER ROLE authenticator WITH PASSWORD '$POSTGRES_PASSWORD';
+ALTER ROLE pgbouncer WITH PASSWORD '$POSTGRES_PASSWORD';
+" 2>/dev/null && echo "   ✅ Role passwords updated" || echo "   ⚠️  Some role password updates failed (may not exist yet)"
+
+# Verify key role passwords work
+echo "   Verifying role connections..."
 if docker compose exec -T db psql -U supabase_auth_admin -d postgres -c "SELECT 1" > /dev/null 2>&1; then
-    echo "   ✅ supabase_auth_admin password verified"
+    echo "   ✅ supabase_auth_admin can connect"
 else
-    echo "   ⚠️  supabase_auth_admin password incorrect - applying fix..."
-    docker compose exec -T db psql -U postgres -d postgres -c "ALTER ROLE supabase_auth_admin WITH PASSWORD '$POSTGRES_PASSWORD';" 2>/dev/null || true
+    echo "   ⚠️  supabase_auth_admin connection failed"
 fi
 
-# Test connection as supabase_storage_admin (storage service uses this)
 if docker compose exec -T db psql -U supabase_storage_admin -d postgres -c "SELECT 1" > /dev/null 2>&1; then
-    echo "   ✅ supabase_storage_admin password verified"
+    echo "   ✅ supabase_storage_admin can connect"
 else
-    echo "   ⚠️  supabase_storage_admin password incorrect - applying fix..."
-    docker compose exec -T db psql -U postgres -d postgres -c "ALTER ROLE supabase_storage_admin WITH PASSWORD '$POSTGRES_PASSWORD';" 2>/dev/null || true
+    echo "   ⚠️  supabase_storage_admin connection failed"
 fi
 
-# Test connection as authenticator (PostgREST uses this)
 if docker compose exec -T db psql -U authenticator -d postgres -c "SELECT 1" > /dev/null 2>&1; then
-    echo "   ✅ authenticator password verified"
+    echo "   ✅ authenticator can connect"
 else
-    echo "   ⚠️  authenticator password incorrect - applying fix..."
-    docker compose exec -T db psql -U postgres -d postgres -c "ALTER ROLE authenticator WITH PASSWORD '$POSTGRES_PASSWORD';" 2>/dev/null || true
+    echo "   ⚠️  authenticator connection failed"
 fi
 
 # Ensure authenticated and anon roles exist (needed for RLS policies)
@@ -513,7 +449,7 @@ END
 echo "   Ensuring extensions schema exists..."
 docker compose exec -T db psql -U postgres -d postgres -c "CREATE SCHEMA IF NOT EXISTS extensions;" 2>/dev/null || true
 
-echo "✅ Database roles and schemas verified"
+echo "✅ Database roles and schemas configured"
 
 # ============================================
 # Stage 4: Now start all remaining services
@@ -531,9 +467,10 @@ done
 echo "🔍 Checking service status..."
 docker compose ps
 
-# Check for critical services (fixed grep command)
-UNHEALTHY_COUNT=$(docker compose ps 2>/dev/null | grep -c "restarting" || echo "0")
-if [ "$UNHEALTHY_COUNT" -gt "0" ]; then
+# Check for critical services (fixed grep command - capture single integer)
+UNHEALTHY_COUNT=$(docker compose ps 2>/dev/null | grep -ci "restarting" || true)
+UNHEALTHY_COUNT=${UNHEALTHY_COUNT:-0}
+if [ "$UNHEALTHY_COUNT" -gt 0 ] 2>/dev/null; then
     echo "⚠️  Some services are restarting. Checking logs..."
     echo ""
     echo "Auth service logs (last 30 lines):"
