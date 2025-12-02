@@ -175,8 +175,9 @@ export function IdmConnectionSettings() {
       
       if (job.status === 'completed' || job.status === 'failed') {
         const details = job.details as any;
-        setTestResult(details);
-        setTestStatus(job.status === 'completed' && details?.success ? 'success' : 'error');
+        const testResult = details?.test_result || details; // Handle both structures
+        setTestResult(testResult);
+        setTestStatus(job.status === 'completed' && testResult?.success ? 'success' : 'error');
         return;
       }
       

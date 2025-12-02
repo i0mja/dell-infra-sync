@@ -115,6 +115,19 @@ export default function MaintenancePlanner() {
     return map;
   }, [servers]);
 
+  // Maintenance-related job types
+  const MAINTENANCE_JOB_TYPES = [
+    'firmware_update',
+    'full_server_update',
+    'rolling_cluster_update',
+    'esxi_upgrade',
+    'esxi_then_firmware',
+    'firmware_then_esxi',
+    'scp_import',
+    'prepare_host_for_update',
+    'verify_host_after_update',
+  ] as const;
+
   // Fetch jobs
   useEffect(() => {
     const fetchJobs = async () => {
@@ -122,6 +135,7 @@ export default function MaintenancePlanner() {
         .from("jobs")
         .select("*")
         .is("parent_job_id", null)
+        .in("job_type", MAINTENANCE_JOB_TYPES)
         .order("created_at", { ascending: false });
       
       if (data) setJobs(data);
