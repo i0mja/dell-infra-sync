@@ -77,10 +77,20 @@ class IDMHandler(BaseHandler):
             
             details = job.get('details') or {}
             
+            # Check if we should use saved password from database
+            use_saved_password = details.get('use_saved_password', False)
+            
             # Get settings from job details or database
             server_host = details.get('server_host')
             bind_dn = details.get('bind_dn')
             bind_password = details.get('bind_password')
+            
+            # If use_saved_password flag is set, retrieve password from database
+            if use_saved_password and not bind_password:
+                idm_settings = self.executor.get_idm_settings()
+                if idm_settings and idm_settings.get('bind_password_encrypted'):
+                    bind_password = self.executor.decrypt_bind_password(idm_settings['bind_password_encrypted'])
+                    self.log("Using saved bind password from database")
             
             if not server_host:
                 # Use settings from database
@@ -90,7 +100,8 @@ class IDMHandler(BaseHandler):
                 
                 server_host = idm_settings['server_host']
                 bind_dn = idm_settings.get('bind_dn')
-                bind_password = self.executor.decrypt_bind_password(idm_settings.get('bind_password_encrypted'))
+                if not bind_password:
+                    bind_password = self.executor.decrypt_bind_password(idm_settings.get('bind_password_encrypted'))
             
             if not server_host or not bind_dn or not bind_password:
                 raise ValueError("Server host, bind DN, and bind password required")
