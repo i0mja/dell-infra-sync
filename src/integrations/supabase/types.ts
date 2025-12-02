@@ -1351,6 +1351,56 @@ export type Database = {
           },
         ]
       }
+      managed_users: {
+        Row: {
+          ad_domain: string
+          ad_username: string
+          app_role: Database["public"]["Enums"]["app_role"]
+          created_at: string | null
+          created_by: string | null
+          display_name: string | null
+          email: string | null
+          id: string
+          is_active: boolean | null
+          notes: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          ad_domain: string
+          ad_username: string
+          app_role?: Database["public"]["Enums"]["app_role"]
+          created_at?: string | null
+          created_by?: string | null
+          display_name?: string | null
+          email?: string | null
+          id?: string
+          is_active?: boolean | null
+          notes?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          ad_domain?: string
+          ad_username?: string
+          app_role?: Database["public"]["Enums"]["app_role"]
+          created_at?: string | null
+          created_by?: string | null
+          display_name?: string | null
+          email?: string | null
+          id?: string
+          is_active?: boolean | null
+          notes?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "managed_users_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       network_settings: {
         Row: {
           connection_timeout_seconds: number
@@ -3219,6 +3269,7 @@ export type Database = {
         | "idm_test_auth"
         | "idm_network_check"
         | "idm_search_ad_groups"
+        | "idm_search_ad_users"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -3396,6 +3447,7 @@ export const Constants = {
         "idm_test_auth",
         "idm_network_check",
         "idm_search_ad_groups",
+        "idm_search_ad_users",
       ],
       operation_type: [
         "idrac_api",

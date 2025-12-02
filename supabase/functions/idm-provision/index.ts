@@ -150,37 +150,62 @@ serve(async (req) => {
         .eq('id', userId);
     }
 
-    // Map groups to role using idm_group_mappings
-    console.log('[IDM Provision] Mapping groups to role...');
+    // Map groups to role - FIRST check managed_users table for direct assignment
+    console.log('[IDM Provision] Checking managed_users for direct role assignment...');
     
-    const { data: groupMappings } = await supabase
-      .from('idm_group_mappings')
+    // Normalize username for managed_users lookup
+    const normalizedUsername = cleanUsername.toLowerCase();
+    
+    // Check managed_users table first
+    const { data: managedUser } = await supabase
+      .from('managed_users')
       .select('*')
+      .eq('ad_username', normalizedUsername)
       .eq('is_active', true)
-      .order('priority', { ascending: true });
-
-    let mappedRole = 'viewer'; // Default role
+      .single();
     
-    if (groupMappings && groupMappings.length > 0) {
-      for (const mapping of groupMappings) {
-        // Improved group matching: normalize both sides for comparison
-        const mappingGroupName = (mapping.idm_group_dn || mapping.idm_group_name || '').toLowerCase();
-        const normalizedMappingName = mappingGroupName.includes('cn=') 
-          ? mappingGroupName.match(/cn=([^,]+)/i)?.[1]?.toLowerCase() || mappingGroupName
-          : mappingGroupName.split('\\').pop()?.toLowerCase() || mappingGroupName;
-        
-        if (groups?.some((group: string) => {
-          const normalizedGroup = group.toLowerCase().includes('cn=')
-            ? group.match(/cn=([^,]+)/i)?.[1]?.toLowerCase() || group.toLowerCase()
-            : group.split('\\').pop()?.toLowerCase() || group.toLowerCase();
-          return normalizedGroup === normalizedMappingName || normalizedGroup.includes(normalizedMappingName) || normalizedMappingName.includes(normalizedGroup);
-        })) {
-          mappedRole = mapping.app_role;
-          console.log(`[IDM Provision] Mapped to role '${mappedRole}' via group '${mapping.idm_group_name}'`);
-          break;
+    let mappedRole = 'viewer'; // Default role
+    let roleSource = 'default';
+    
+    if (managedUser) {
+      // Use role from managed_users table
+      mappedRole = managedUser.app_role;
+      roleSource = 'managed_users';
+      console.log(`[IDM Provision] Found managed user entry, using role '${mappedRole}' from managed_users table`);
+    } else {
+      // Fall back to group mappings
+      console.log('[IDM Provision] No managed_users entry, falling back to group mappings...');
+      
+      const { data: groupMappings } = await supabase
+        .from('idm_group_mappings')
+        .select('*')
+        .eq('is_active', true)
+        .order('priority', { ascending: true });
+
+      if (groupMappings && groupMappings.length > 0) {
+        for (const mapping of groupMappings) {
+          // Improved group matching: normalize both sides for comparison
+          const mappingGroupName = (mapping.idm_group_dn || mapping.idm_group_name || '').toLowerCase();
+          const normalizedMappingName = mappingGroupName.includes('cn=') 
+            ? mappingGroupName.match(/cn=([^,]+)/i)?.[1]?.toLowerCase() || mappingGroupName
+            : mappingGroupName.split('\\').pop()?.toLowerCase() || mappingGroupName;
+          
+          if (groups?.some((group: string) => {
+            const normalizedGroup = group.toLowerCase().includes('cn=')
+              ? group.match(/cn=([^,]+)/i)?.[1]?.toLowerCase() || group.toLowerCase()
+              : group.split('\\').pop()?.toLowerCase() || group.toLowerCase();
+            return normalizedGroup === normalizedMappingName || normalizedGroup.includes(normalizedMappingName) || normalizedMappingName.includes(normalizedGroup);
+          })) {
+            mappedRole = mapping.app_role;
+            roleSource = 'group_mapping';
+            console.log(`[IDM Provision] Mapped to role '${mappedRole}' via group '${mapping.idm_group_name}'`);
+            break;
+          }
         }
       }
     }
+
+    console.log(`[IDM Provision] Final role: ${mappedRole} (source: ${roleSource})`);
 
     // Update user role
     await supabase

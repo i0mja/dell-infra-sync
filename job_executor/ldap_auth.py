@@ -1594,6 +1594,115 @@ class FreeIPAAuthenticator:
             logger.error(f"[AD SEARCH] Error searching AD groups: {e}")
             return []
     
+    def search_ad_users(
+        self,
+        bind_dn: str,
+        bind_password: str,
+        search_term: str = "",
+        max_results: int = 50,
+    ) -> List[Dict]:
+        """
+        Search for users directly in Active Directory.
+        
+        Args:
+            bind_dn: Service account DN for binding (can use UPN format like svc@domain.com)
+            bind_password: Service account password
+            search_term: Optional search term to filter by (searches sAMAccountName, displayName, cn)
+            max_results: Maximum number of results to return
+            
+        Returns:
+            List of dicts with user information:
+            - sam_account_name: sAMAccountName (username)
+            - display_name: Full name
+            - email: Email address
+            - dn: Distinguished name
+            - department: Department
+            - title: Job title
+        """
+        ad_server = self._get_ad_server()
+        if not ad_server:
+            logger.error("[AD USER SEARCH] AD DC not configured")
+            return []
+        
+        # Derive base DN from AD domain FQDN
+        if self.ad_domain_fqdn:
+            ad_base_dn = ','.join([f"dc={part}" for part in self.ad_domain_fqdn.split('.')])
+        else:
+            logger.error("[AD USER SEARCH] AD domain FQDN not configured")
+            return []
+        
+        logger.info(f"[AD USER SEARCH] Searching AD users on {self.ad_dc_host} with base DN: {ad_base_dn}")
+        logger.info(f"[AD USER SEARCH] Search term: '{search_term}', max results: {max_results}")
+        
+        try:
+            # Connect with service account
+            conn = Connection(
+                ad_server,
+                user=bind_dn,
+                password=bind_password,
+                auto_bind=True,
+                raise_exceptions=True,
+            )
+            
+            logger.info(f"[AD USER SEARCH] Bound successfully as {bind_dn}")
+            
+            # Build search filter
+            if search_term:
+                # Search in sAMAccountName, displayName, cn, mail
+                escaped_term = self._ldap_escape(search_term)
+                search_filter = f"(&(objectClass=user)(objectCategory=person)(|(sAMAccountName=*{escaped_term}*)(displayName=*{escaped_term}*)(cn=*{escaped_term}*)(mail=*{escaped_term}*)))"
+            else:
+                # Get all users (limited by max_results)
+                search_filter = "(&(objectClass=user)(objectCategory=person))"
+            
+            logger.info(f"[AD USER SEARCH] Filter: {search_filter}")
+            
+            conn.search(
+                search_base=ad_base_dn,
+                search_filter=search_filter,
+                search_scope=SUBTREE,
+                attributes=[
+                    'sAMAccountName', 'displayName', 'cn', 'mail',
+                    'department', 'title', 'distinguishedName',
+                    'userPrincipalName', 'memberOf'
+                ],
+                size_limit=max_results,
+            )
+            
+            users = []
+            for entry in conn.entries:
+                sam = str(entry.sAMAccountName) if hasattr(entry, 'sAMAccountName') else None
+                if not sam:
+                    continue
+                    
+                user_info = {
+                    "sam_account_name": sam,
+                    "display_name": str(entry.displayName) if hasattr(entry, 'displayName') and entry.displayName.value else str(entry.cn) if hasattr(entry, 'cn') else sam,
+                    "email": str(entry.mail) if hasattr(entry, 'mail') and entry.mail.value else None,
+                    "dn": str(entry.distinguishedName) if hasattr(entry, 'distinguishedName') else None,
+                    "department": str(entry.department) if hasattr(entry, 'department') and entry.department.value else None,
+                    "title": str(entry.title) if hasattr(entry, 'title') and entry.title.value else None,
+                    "upn": str(entry.userPrincipalName) if hasattr(entry, 'userPrincipalName') and entry.userPrincipalName.value else None,
+                    "groups": [str(g) for g in entry.memberOf.values] if hasattr(entry, 'memberOf') and entry.memberOf.values else [],
+                }
+                users.append(user_info)
+            
+            conn.unbind()
+            logger.info(f"[AD USER SEARCH] Found {len(users)} AD users matching '{search_term}'")
+            return users
+            
+        except LDAPBindError as e:
+            logger.error(f"[AD USER SEARCH] AD bind failed: {e}")
+            return []
+        except LDAPException as e:
+            logger.error(f"[AD USER SEARCH] AD LDAP error: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"[AD USER SEARCH] Error searching AD users: {e}")
+            import traceback
+            logger.debug(f"[AD USER SEARCH] Traceback: {traceback.format_exc()}")
+            return []
+    
     def _get_ad_server(self) -> Optional['Server']:
         """Create or return cached AD DC server connection."""
         if self._ad_server is not None:

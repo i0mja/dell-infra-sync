@@ -4,3 +4,4 @@ export { IdmDirectorySettings } from './IdmDirectorySettings';
 export { IdmRoleMappings } from './IdmRoleMappings';
 export { IdmSecurityPolicies } from './IdmSecurityPolicies';
 export { IdmBreakGlass } from './IdmBreakGlass';
+export { IdmUserManager } from './IdmUserManager';
