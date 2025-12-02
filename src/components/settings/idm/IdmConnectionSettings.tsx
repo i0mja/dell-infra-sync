@@ -7,7 +7,23 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useIdmSettings } from '@/hooks/useIdmSettings';
-import { AlertCircle, Loader2, Save, TestTube } from 'lucide-react';
+import { AlertCircle, Loader2, Save, TestTube, Lock, Unlock } from 'lucide-react';
+
+// Helper functions for auto-derivation
+function getDomainFromHost(host: string): string {
+  const parts = host.split('.');
+  return parts.length > 1 ? parts.slice(1).join('.') : host;
+}
+
+function domainToBaseDn(domain: string): string {
+  return domain.split('.').map(part => `dc=${part}`).join(',');
+}
+
+function usernameToBindDn(username: string, baseDn: string): string {
+  // Handle user@domain or just username
+  const user = username.includes('@') ? username.split('@')[0] : username;
+  return `uid=${user},cn=users,cn=accounts,${baseDn}`;
+}
 
 export function IdmConnectionSettings() {
   const { settings, loading, saving, saveSettings, testConnection } = useIdmSettings();
@@ -20,6 +36,8 @@ export function IdmConnectionSettings() {
   const [verifyCertificate, setVerifyCertificate] = useState(settings?.verify_certificate ?? true);
   const [connectionTimeout, setConnectionTimeout] = useState(settings?.connection_timeout_seconds || 10);
   const [baseDn, setBaseDn] = useState(settings?.base_dn || '');
+  const [manualBaseDn, setManualBaseDn] = useState(false);
+  const [serviceUsername, setServiceUsername] = useState('');
   const [bindDn, setBindDn] = useState(settings?.bind_dn || '');
   const [bindPassword, setBindPassword] = useState('');
 
@@ -34,6 +52,21 @@ export function IdmConnectionSettings() {
       setConnectionTimeout(settings.connection_timeout_seconds || 10);
       setBaseDn(settings.base_dn || '');
       setBindDn(settings.bind_dn || '');
+      
+      // If there's a saved bind_dn, extract username for display
+      if (settings.bind_dn) {
+        const uidMatch = settings.bind_dn.match(/uid=([^,]+)/);
+        if (uidMatch) {
+          setServiceUsername(uidMatch[1]);
+        }
+      }
+      
+      // If base_dn is saved but doesn't match auto-derived, set manual mode
+      if (settings.base_dn && settings.server_host) {
+        const domain = getDomainFromHost(settings.server_host);
+        const autoBaseDn = domainToBaseDn(domain);
+        setManualBaseDn(settings.base_dn !== autoBaseDn);
+      }
     }
   }, [settings]);
 
@@ -58,6 +91,48 @@ export function IdmConnectionSettings() {
     setBindPassword('');
   };
 
+  const handleServerHostChange = (host: string) => {
+    setServerHost(host);
+    
+    // Auto-derive Base DN if not manually set and host contains domain
+    if (!manualBaseDn && host.includes('.')) {
+      const domain = getDomainFromHost(host);
+      const autoBaseDn = domainToBaseDn(domain);
+      setBaseDn(autoBaseDn);
+      
+      // Update bind DN if username exists
+      if (serviceUsername) {
+        setBindDn(usernameToBindDn(serviceUsername, autoBaseDn));
+      }
+    }
+  };
+
+  const handleUsernameChange = (input: string) => {
+    setServiceUsername(input);
+    
+    // Auto-expand to full Bind DN if base DN exists
+    if (baseDn) {
+      setBindDn(usernameToBindDn(input, baseDn));
+    }
+  };
+
+  const toggleManualBaseDn = () => {
+    const newManualMode = !manualBaseDn;
+    setManualBaseDn(newManualMode);
+    
+    // If switching to auto mode, re-derive from host
+    if (!newManualMode && serverHost.includes('.')) {
+      const domain = getDomainFromHost(serverHost);
+      const autoBaseDn = domainToBaseDn(domain);
+      setBaseDn(autoBaseDn);
+      
+      // Update bind DN if username exists
+      if (serviceUsername) {
+        setBindDn(usernameToBindDn(serviceUsername, autoBaseDn));
+      }
+    }
+  };
+
   const handleTestConnection = () => {
     testConnection({
       server_host: serverHost,
@@ -77,6 +152,8 @@ export function IdmConnectionSettings() {
   };
 
   const canTestConnection = serverHost && bindDn && (bindPassword || settings?.bind_password_encrypted) && baseDn;
+  
+  const detectedDomain = serverHost.includes('.') ? getDomainFromHost(serverHost) : null;
 
   if (loading) {
     return (
@@ -138,11 +215,15 @@ export function IdmConnectionSettings() {
                 <div className="space-y-2">
                   <Label>Server Host</Label>
                   <Input
-                    placeholder="ipa.example.com"
+                    placeholder="idm.example.com"
                     value={serverHost}
-                    onChange={(e) => setServerHost(e.target.value)}
+                    onChange={(e) => handleServerHostChange(e.target.value)}
                   />
-                  <p className="text-sm text-muted-foreground">Hostname or IP address of FreeIPA server</p>
+                  {detectedDomain && (
+                    <p className="text-sm text-muted-foreground">
+                      Detected domain: <span className="font-medium">{detectedDomain}</span>
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label>Connection Timeout (seconds)</Label>
@@ -205,23 +286,63 @@ export function IdmConnectionSettings() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label>Base DN</Label>
+                <div className="flex items-center justify-between">
+                  <Label>Base DN</Label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={toggleManualBaseDn}
+                    className="h-8 px-2"
+                  >
+                    {manualBaseDn ? (
+                      <>
+                        <Unlock className="mr-1 h-3 w-3" />
+                        Manual
+                      </>
+                    ) : (
+                      <>
+                        <Lock className="mr-1 h-3 w-3" />
+                        Auto
+                      </>
+                    )}
+                  </Button>
+                </div>
                 <Input
                   placeholder="dc=example,dc=com"
                   value={baseDn}
-                  onChange={(e) => setBaseDn(e.target.value)}
+                  onChange={(e) => {
+                    setBaseDn(e.target.value);
+                    setManualBaseDn(true);
+                  }}
                 />
-                <p className="text-sm text-muted-foreground">Root of the LDAP directory tree</p>
+                <p className="text-sm text-muted-foreground">
+                  {manualBaseDn ? (
+                    <span className="text-amber-600">✏️ Manually configured</span>
+                  ) : (
+                    <span className="text-green-600">✓ Auto-derived from server host</span>
+                  )}
+                </p>
               </div>
+              
               <div className="space-y-2">
-                <Label>Bind DN</Label>
+                <Label>Service Account Username</Label>
                 <Input
-                  placeholder="uid=svc_dsm,cn=users,cn=accounts,dc=example,dc=com"
-                  value={bindDn}
-                  onChange={(e) => setBindDn(e.target.value)}
+                  placeholder="svc_dsm or svc_dsm@idm.example.com"
+                  value={serviceUsername}
+                  onChange={(e) => handleUsernameChange(e.target.value)}
                 />
-                <p className="text-sm text-muted-foreground">Full distinguished name of the service account</p>
+                <p className="text-sm text-muted-foreground">
+                  Enter username, username@domain, or full Bind DN
+                </p>
               </div>
+              
+              {bindDn && (
+                <div className="space-y-2 p-3 bg-muted/50 rounded-lg border">
+                  <Label className="text-xs text-muted-foreground">Resolved Bind DN</Label>
+                  <p className="text-sm font-mono break-all">{bindDn}</p>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label>Bind Password</Label>
                 <Input
