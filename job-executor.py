@@ -369,6 +369,28 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             self.log(f"Error fetching IDM settings: {e}", "ERROR")
             return None
     
+    def get_idm_group_mappings(self) -> list:
+        """Fetch active IDM group mappings from database."""
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            }
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/idm_group_mappings",
+                headers=headers,
+                params={'select': '*', 'order': 'priority.asc'},
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            if response.status_code == 200:
+                mappings = _safe_json_parse(response)
+                return mappings if mappings else []
+            return []
+        except Exception as e:
+            self.log(f"Error fetching IDM group mappings: {e}", "ERROR")
+            return []
+    
     def decrypt_bind_password(self, encrypted_password: str) -> Optional[str]:
         """Decrypt the FreeIPA bind password using encryption key."""
         if not encrypted_password:
@@ -829,6 +851,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             'idm_test_connection': self.idm_handler.execute_idm_test_connection,
             'idm_sync_users': self.idm_handler.execute_idm_sync_users,
             'idm_search_groups': self.idm_handler.execute_idm_search_groups,
+            'idm_test_auth': self.idm_handler.execute_idm_test_auth,
         }
         
         handler = handler_map.get(job_type)

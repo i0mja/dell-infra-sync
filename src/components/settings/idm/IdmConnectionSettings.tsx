@@ -42,6 +42,12 @@ export function IdmConnectionSettings() {
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testJobId, setTestJobId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<any>(null);
+  
+  // Test authentication state
+  const [testAuthUsername, setTestAuthUsername] = useState('');
+  const [testAuthPassword, setTestAuthPassword] = useState('');
+  const [testAuthStatus, setTestAuthStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [testAuthResult, setTestAuthResult] = useState<any>(null);
 
   useEffect(() => {
     if (settings) {
@@ -192,7 +198,71 @@ export function IdmConnectionSettings() {
     poll();
   };
 
+  const handleTestAuth = async () => {
+    if (!testAuthUsername || !testAuthPassword) return;
+    
+    setTestAuthStatus('testing');
+    setTestAuthResult(null);
+    
+    const { data: job, error } = await supabase
+      .from('jobs')
+      .insert({
+        job_type: 'idm_test_auth',
+        status: 'pending',
+        details: {
+          username: testAuthUsername,
+          password: testAuthPassword,
+        },
+        created_by: (await supabase.auth.getUser()).data.user?.id || '',
+      })
+      .select()
+      .single();
+    
+    if (error || !job) {
+      setTestAuthStatus('error');
+      setTestAuthResult({ error: 'Failed to create test job' });
+      return;
+    }
+    
+    pollTestAuthStatus(job.id);
+  };
+  
+  const pollTestAuthStatus = async (jobId: string) => {
+    const maxAttempts = 30;
+    let attempts = 0;
+    
+    const poll = async () => {
+      attempts++;
+      
+      const { data: job } = await supabase
+        .from('jobs')
+        .select('*')
+        .eq('id', jobId)
+        .single();
+      
+      if (!job) return;
+      
+      if (job.status === 'completed' || job.status === 'failed') {
+        const details = job.details as any;
+        const result = details?.test_result || {};
+        setTestAuthResult(result);
+        setTestAuthStatus(result.success ? 'success' : 'error');
+        return;
+      }
+      
+      if (attempts < maxAttempts && (job.status === 'pending' || job.status === 'running')) {
+        setTimeout(poll, 1000);
+      } else {
+        setTestAuthStatus('error');
+        setTestAuthResult({ error: 'Test timed out' });
+      }
+    };
+    
+    poll();
+  };
+
   const canTestConnection = serverHost && bindDn && (bindPassword || settings?.bind_password_encrypted) && baseDn;
+  const canTestAuth = testAuthUsername && testAuthPassword && authMode !== 'local_only';
 
   if (loading) {
     return (
@@ -456,6 +526,133 @@ export function IdmConnectionSettings() {
                   </Alert>
                 )}
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Test Authentication */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Test IDM Authentication</CardTitle>
+              <CardDescription>Verify user credentials and group mappings without logging in</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  This tests authentication and role mapping without creating a session or provisioning the user.
+                </AlertDescription>
+              </Alert>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Username</Label>
+                  <Input
+                    placeholder="jsmith"
+                    value={testAuthUsername}
+                    onChange={(e) => setTestAuthUsername(e.target.value)}
+                    disabled={testAuthStatus === 'testing'}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Password</Label>
+                  <Input
+                    type="password"
+                    placeholder="Enter password"
+                    value={testAuthPassword}
+                    onChange={(e) => setTestAuthPassword(e.target.value)}
+                    disabled={testAuthStatus === 'testing'}
+                  />
+                </div>
+              </div>
+
+              <Button 
+                onClick={handleTestAuth} 
+                variant="outline"
+                disabled={!canTestAuth || testAuthStatus === 'testing'}
+              >
+                {testAuthStatus === 'testing' ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Testing...
+                  </>
+                ) : (
+                  <>
+                    <TestTube className="mr-2 h-4 w-4" />
+                    Test Authentication
+                  </>
+                )}
+              </Button>
+
+              {testAuthStatus === 'testing' && (
+                <Alert>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <AlertDescription>Authenticating user '{testAuthUsername}'...</AlertDescription>
+                </Alert>
+              )}
+
+              {testAuthStatus === 'success' && testAuthResult && (
+                <Alert className="border-green-500 bg-green-50 dark:bg-green-950/20">
+                  <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
+                  <AlertDescription className="text-green-800 dark:text-green-200">
+                    <div className="space-y-3">
+                      <p className="font-medium text-base">✅ Authentication Successful</p>
+                      
+                      <div className="space-y-2 text-sm">
+                        <div>
+                          <p className="font-medium">User Details:</p>
+                          <p>Full Name: {testAuthResult.full_name || 'N/A'}</p>
+                          <p>Email: {testAuthResult.email || 'N/A'}</p>
+                          {testAuthResult.title && <p>Title: {testAuthResult.title}</p>}
+                          {testAuthResult.department && <p>Department: {testAuthResult.department}</p>}
+                        </div>
+                        
+                        <div>
+                          <p className="font-medium">User DN:</p>
+                          <p className="font-mono text-xs break-all">{testAuthResult.user_dn}</p>
+                        </div>
+                        
+                        {testAuthResult.groups && testAuthResult.groups.length > 0 && (
+                          <div>
+                            <p className="font-medium">Groups ({testAuthResult.group_count}):</p>
+                            <ul className="list-disc list-inside space-y-1 ml-2">
+                              {testAuthResult.groups.slice(0, 5).map((group: string, idx: number) => (
+                                <li key={idx} className="font-mono text-xs break-all">{group}</li>
+                              ))}
+                              {testAuthResult.groups.length > 5 && (
+                                <li className="text-muted-foreground">...and {testAuthResult.groups.length - 5} more</li>
+                              )}
+                            </ul>
+                          </div>
+                        )}
+                        
+                        <div className="p-3 bg-green-100 dark:bg-green-900/30 rounded border border-green-300 dark:border-green-700">
+                          <p className="font-medium">Role Mapping:</p>
+                          {testAuthResult.matched_group ? (
+                            <>
+                              <p>Matched Group: <span className="font-mono">{testAuthResult.matched_group}</span></p>
+                              <p>Assigned Role: <span className="font-semibold uppercase">{testAuthResult.mapped_role}</span></p>
+                            </>
+                          ) : (
+                            <p>No group mapping matched. Default role: <span className="font-semibold uppercase">{testAuthResult.mapped_role}</span></p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {testAuthStatus === 'error' && testAuthResult && (
+                <Alert variant="destructive">
+                  <XCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    <p className="font-medium">❌ Authentication Failed</p>
+                    {testAuthResult.error && (
+                      <p className="text-sm mt-1">{testAuthResult.error}</p>
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
             </CardContent>
           </Card>
 
