@@ -1154,7 +1154,9 @@ export type Database = {
           firmware_source: string | null
           id: string
           job_type: Database["public"]["Enums"]["job_type"]
+          notes: string | null
           parent_job_id: string | null
+          priority: string | null
           schedule_at: string | null
           started_at: string | null
           status: Database["public"]["Enums"]["job_status"]
@@ -1172,7 +1174,9 @@ export type Database = {
           firmware_source?: string | null
           id?: string
           job_type: Database["public"]["Enums"]["job_type"]
+          notes?: string | null
           parent_job_id?: string | null
+          priority?: string | null
           schedule_at?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["job_status"]
@@ -1190,7 +1194,9 @@ export type Database = {
           firmware_source?: string | null
           id?: string
           job_type?: Database["public"]["Enums"]["job_type"]
+          notes?: string | null
           parent_job_id?: string | null
+          priority?: string | null
           schedule_at?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["job_status"]

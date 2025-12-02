@@ -3,39 +3,59 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import {
-  ChevronDown,
-  ChevronRight,
-  Search,
-  Download,
-  Columns3,
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  Calendar,
-  Server,
   Activity,
+  MoreHorizontal,
+  Eye,
+  Copy,
+  XCircle,
+  RotateCcw,
+  Trash2,
+  Flag,
+  AlertTriangle,
 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  DropdownMenuCheckboxItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+} from "@/components/ui/context-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { formatDistanceToNow } from "date-fns";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { usePagination } from "@/hooks/usePagination";
 import { TablePagination } from "@/components/ui/table-pagination";
 
-interface Job {
+export interface Job {
   id: string;
   job_type: string;
   status: string;
@@ -46,6 +66,8 @@ interface Job {
   target_scope: any;
   created_by?: string;
   component_order?: number | null;
+  priority?: string;
+  notes?: string;
   totalTasks?: number;
   completedTasks?: number;
   runningTasks?: number;
@@ -61,7 +83,23 @@ interface JobsTableProps {
   visibleColumns?: string[];
   onToggleColumn?: (column: string) => void;
   onExport?: () => void;
+  // Job management props
+  onCancelJob?: (jobId: string) => Promise<void>;
+  onRetryJob?: (job: Job) => Promise<void>;
+  onDeleteJob?: (jobId: string) => Promise<void>;
+  onBulkCancel?: (jobIds: string[]) => Promise<void>;
+  onBulkDelete?: (jobIds: string[]) => Promise<void>;
+  onViewDetails?: (job: Job) => void;
+  onUpdatePriority?: (jobId: string, priority: string) => Promise<void>;
+  canManage?: boolean;
 }
+
+const priorityConfig: Record<string, { label: string; color: string; icon: string }> = {
+  critical: { label: "Critical", color: "bg-destructive text-destructive-foreground", icon: "🔴" },
+  high: { label: "High", color: "bg-orange-500 text-white", icon: "🟠" },
+  normal: { label: "Normal", color: "bg-secondary text-secondary-foreground", icon: "🟢" },
+  low: { label: "Low", color: "bg-muted text-muted-foreground", icon: "⚪" },
+};
 
 export function JobsTable({
   jobs,
@@ -70,15 +108,24 @@ export function JobsTable({
   visibleColumns: propsVisibleColumns,
   onToggleColumn: propsOnToggleColumn,
   onExport: propsOnExport,
+  onCancelJob,
+  onRetryJob,
+  onDeleteJob,
+  onBulkCancel,
+  onBulkDelete,
+  onViewDetails,
+  onUpdatePriority,
+  canManage = false,
 }: JobsTableProps) {
   const [sortField, setSortField] = useState<string | null>("created_at");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
+  const [confirmDialog, setConfirmDialog] = useState<{ type: "cancel" | "delete" | "bulk-cancel" | "bulk-delete"; jobId?: string } | null>(null);
   const { toast } = useToast();
 
   const { visibleColumns: localVisibleColumns, isColumnVisible: localIsColumnVisible, toggleColumn: localToggleColumn } = useColumnVisibility(
     "jobs-table-columns",
-    ["job_type", "status", "duration", "target", "started", "progress"]
+    ["job_type", "status", "priority", "duration", "target", "started", "progress", "actions"]
   );
 
   const isColumnVisible = (col: string) => {
@@ -115,7 +162,8 @@ export function JobsTable({
     return sortDirection === "asc" ? <ArrowUp className="ml-1 h-3 w-3" /> : <ArrowDown className="ml-1 h-3 w-3" />;
   };
 
-  const toggleJobSelection = (jobId: string) => {
+  const toggleJobSelection = (jobId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
     const newSelected = new Set(selectedJobs);
     if (newSelected.has(jobId)) {
       newSelected.delete(jobId);
@@ -133,6 +181,11 @@ export function JobsTable({
     }
   };
 
+  const handleCopyJobId = (jobId: string) => {
+    navigator.clipboard.writeText(jobId);
+    toast({ title: "Copied", description: "Job ID copied to clipboard" });
+  };
+
   const handleExportCSV = () => {
     if (propsOnExport) {
       propsOnExport();
@@ -142,6 +195,7 @@ export function JobsTable({
     const columns: ExportColumn<Job>[] = [
       { key: "job_type", label: "Job Type" },
       { key: "status", label: "Status" },
+      { key: "priority", label: "Priority" },
       { key: "created_at", label: "Created" },
       { key: "started_at", label: "Started" },
       { key: "completed_at", label: "Completed" },
@@ -150,6 +204,26 @@ export function JobsTable({
     const jobsToExport = selectedJobs.size > 0 ? jobs.filter((j) => selectedJobs.has(j.id)) : jobs;
     exportToCSV(jobsToExport, columns, "jobs");
     toast({ title: "Export successful", description: `Exported ${jobsToExport.length} jobs` });
+  };
+
+  const handleConfirmAction = async () => {
+    if (!confirmDialog) return;
+    
+    try {
+      if (confirmDialog.type === "cancel" && confirmDialog.jobId && onCancelJob) {
+        await onCancelJob(confirmDialog.jobId);
+      } else if (confirmDialog.type === "delete" && confirmDialog.jobId && onDeleteJob) {
+        await onDeleteJob(confirmDialog.jobId);
+      } else if (confirmDialog.type === "bulk-cancel" && onBulkCancel) {
+        await onBulkCancel(Array.from(selectedJobs));
+        setSelectedJobs(new Set());
+      } else if (confirmDialog.type === "bulk-delete" && onBulkDelete) {
+        await onBulkDelete(Array.from(selectedJobs));
+        setSelectedJobs(new Set());
+      }
+    } finally {
+      setConfirmDialog(null);
+    }
   };
 
   // Apply sorting
@@ -202,6 +276,12 @@ export function JobsTable({
             Pending
           </Badge>
         );
+      case "cancelled":
+        return (
+          <Badge variant="outline" className="text-xs text-muted-foreground">
+            Cancelled
+          </Badge>
+        );
       default:
         return (
           <Badge variant="outline" className="text-xs">
@@ -209,6 +289,15 @@ export function JobsTable({
           </Badge>
         );
     }
+  };
+
+  const getPriorityBadge = (priority: string = "normal") => {
+    const config = priorityConfig[priority] || priorityConfig.normal;
+    return (
+      <Badge variant="outline" className={`text-xs ${config.color}`}>
+        {config.icon} {config.label}
+      </Badge>
+    );
   };
 
   const getDuration = (job: Job) => {
@@ -226,7 +315,6 @@ export function JobsTable({
   };
 
   const getTarget = (job: Job) => {
-    // vCenter sync jobs
     if (job.job_type === 'vcenter_sync') {
       const vmsTotal = job.details?.vms_total;
       const hostsTotal = job.details?.hosts_total;
@@ -255,6 +343,134 @@ export function JobsTable({
     return "—";
   };
 
+  const canCancelJob = (job: Job) => ["pending", "running"].includes(job.status);
+  const canRetryJob = (job: Job) => job.status === "failed";
+  const canDeleteJob = (job: Job) => ["completed", "failed", "cancelled"].includes(job.status);
+
+  const selectedCancellable = Array.from(selectedJobs).filter(id => {
+    const job = jobs.find(j => j.id === id);
+    return job && canCancelJob(job);
+  });
+
+  const selectedDeletable = Array.from(selectedJobs).filter(id => {
+    const job = jobs.find(j => j.id === id);
+    return job && canDeleteJob(job);
+  });
+
+  const renderJobActions = (job: Job) => (
+    <>
+      <DropdownMenuItem onClick={() => onViewDetails?.(job)}>
+        <Eye className="mr-2 h-4 w-4" /> View Details
+      </DropdownMenuItem>
+      <DropdownMenuItem onClick={() => handleCopyJobId(job.id)}>
+        <Copy className="mr-2 h-4 w-4" /> Copy Job ID
+      </DropdownMenuItem>
+      
+      {canManage && onUpdatePriority && (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <Flag className="mr-2 h-4 w-4" /> Set Priority
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              {Object.entries(priorityConfig).map(([key, config]) => (
+                <DropdownMenuItem 
+                  key={key} 
+                  onClick={() => onUpdatePriority(job.id, key)}
+                  className={job.priority === key ? "bg-accent" : ""}
+                >
+                  {config.icon} {config.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        </>
+      )}
+
+      {canManage && (
+        <>
+          <DropdownMenuSeparator />
+          {canCancelJob(job) && onCancelJob && (
+            <DropdownMenuItem onClick={() => setConfirmDialog({ type: "cancel", jobId: job.id })}>
+              <XCircle className="mr-2 h-4 w-4" /> Cancel Job
+            </DropdownMenuItem>
+          )}
+          {canRetryJob(job) && onRetryJob && (
+            <DropdownMenuItem onClick={() => onRetryJob(job)}>
+              <RotateCcw className="mr-2 h-4 w-4" /> Retry Job
+            </DropdownMenuItem>
+          )}
+          {canDeleteJob(job) && onDeleteJob && (
+            <DropdownMenuItem 
+              className="text-destructive focus:text-destructive"
+              onClick={() => setConfirmDialog({ type: "delete", jobId: job.id })}
+            >
+              <Trash2 className="mr-2 h-4 w-4" /> Delete Job
+            </DropdownMenuItem>
+          )}
+        </>
+      )}
+    </>
+  );
+
+  const renderContextMenuActions = (job: Job) => (
+    <>
+      <ContextMenuItem onClick={() => onViewDetails?.(job)}>
+        <Eye className="mr-2 h-4 w-4" /> View Details
+      </ContextMenuItem>
+      <ContextMenuItem onClick={() => handleCopyJobId(job.id)}>
+        <Copy className="mr-2 h-4 w-4" /> Copy Job ID
+      </ContextMenuItem>
+      
+      {canManage && onUpdatePriority && (
+        <>
+          <ContextMenuSeparator />
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>
+              <Flag className="mr-2 h-4 w-4" /> Set Priority
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              {Object.entries(priorityConfig).map(([key, config]) => (
+                <ContextMenuItem 
+                  key={key} 
+                  onClick={() => onUpdatePriority(job.id, key)}
+                  className={job.priority === key ? "bg-accent" : ""}
+                >
+                  {config.icon} {config.label}
+                </ContextMenuItem>
+              ))}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        </>
+      )}
+
+      {canManage && (
+        <>
+          <ContextMenuSeparator />
+          {canCancelJob(job) && onCancelJob && (
+            <ContextMenuItem onClick={() => setConfirmDialog({ type: "cancel", jobId: job.id })}>
+              <XCircle className="mr-2 h-4 w-4" /> Cancel Job
+            </ContextMenuItem>
+          )}
+          {canRetryJob(job) && onRetryJob && (
+            <ContextMenuItem onClick={() => onRetryJob(job)}>
+              <RotateCcw className="mr-2 h-4 w-4" /> Retry Job
+            </ContextMenuItem>
+          )}
+          {canDeleteJob(job) && onDeleteJob && (
+            <ContextMenuItem 
+              className="text-destructive focus:text-destructive"
+              onClick={() => setConfirmDialog({ type: "delete", jobId: job.id })}
+            >
+              <Trash2 className="mr-2 h-4 w-4" /> Delete Job
+            </ContextMenuItem>
+          )}
+        </>
+      )}
+    </>
+  );
+
   if (jobs.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 py-12">
@@ -269,12 +485,47 @@ export function JobsTable({
 
   return (
     <div className="flex flex-col h-full">
+      {/* Bulk actions toolbar */}
+      {selectedJobs.size > 0 && canManage && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-muted/50 border-b">
+          <span className="text-sm font-medium">{selectedJobs.size} selected</span>
+          <Button size="sm" variant="ghost" onClick={toggleAllJobs}>
+            {selectedJobs.size === jobs.length ? "Deselect All" : "Select All"}
+          </Button>
+          <div className="h-4 w-px bg-border" />
+          {selectedCancellable.length > 0 && onBulkCancel && (
+            <Button 
+              size="sm" 
+              variant="ghost" 
+              onClick={() => setConfirmDialog({ type: "bulk-cancel" })}
+            >
+              <XCircle className="h-4 w-4 mr-1" /> Cancel ({selectedCancellable.length})
+            </Button>
+          )}
+          {selectedDeletable.length > 0 && onBulkDelete && (
+            <Button 
+              size="sm" 
+              variant="ghost" 
+              className="text-destructive hover:text-destructive"
+              onClick={() => setConfirmDialog({ type: "bulk-delete" })}
+            >
+              <Trash2 className="h-4 w-4 mr-1" /> Delete ({selectedDeletable.length})
+            </Button>
+          )}
+        </div>
+      )}
+
       {/* Table */}
       <div className="flex-1 overflow-auto">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-12"></TableHead>
+              <TableHead className="w-12">
+                <Checkbox 
+                  checked={selectedJobs.size === jobs.length && jobs.length > 0}
+                  onCheckedChange={toggleAllJobs}
+                />
+              </TableHead>
               {isColumnVisible("job_type") && (
                 <TableHead className="cursor-pointer" onClick={() => handleSort("job_type")}>
                   <div className="flex items-center">
@@ -291,6 +542,14 @@ export function JobsTable({
                   </div>
                 </TableHead>
               )}
+              {isColumnVisible("priority") && (
+                <TableHead className="cursor-pointer" onClick={() => handleSort("priority")}>
+                  <div className="flex items-center">
+                    Priority
+                    {getSortIcon("priority")}
+                  </div>
+                </TableHead>
+              )}
               {isColumnVisible("duration") && <TableHead>Duration</TableHead>}
               {isColumnVisible("target") && <TableHead>Target</TableHead>}
               {isColumnVisible("started") && (
@@ -302,69 +561,88 @@ export function JobsTable({
                 </TableHead>
               )}
               {isColumnVisible("progress") && <TableHead>Progress</TableHead>}
+              {isColumnVisible("actions") && <TableHead className="w-12"></TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
             {pagination.paginatedItems.map((job) => (
-              <TableRow
-                key={job.id}
-                className="cursor-pointer hover:bg-muted/50"
-                onClick={() => onJobClick(job)}
-                data-state={expandedJobId === job.id ? "selected" : undefined}
-              >
-                <TableCell onClick={(e) => e.stopPropagation()}>
-                  <Checkbox
-                    checked={selectedJobs.has(job.id)}
-                    onCheckedChange={() => toggleJobSelection(job.id)}
-                  />
-                </TableCell>
-                {isColumnVisible("job_type") && (
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <Activity className="h-4 w-4 text-muted-foreground" />
-                      <span className="font-medium text-sm">{formatJobType(job.job_type)}</span>
-                    </div>
-                  </TableCell>
-                )}
-                {isColumnVisible("status") && <TableCell>{getStatusBadge(job.status)}</TableCell>}
-                {isColumnVisible("duration") && (
-                  <TableCell className="text-sm text-muted-foreground">{getDuration(job)}</TableCell>
-                )}
-                {isColumnVisible("target") && (
-                  <TableCell className="text-sm text-muted-foreground">{getTarget(job)}</TableCell>
-                )}
-                {isColumnVisible("started") && (
-                  <TableCell className="text-sm text-muted-foreground">
-                    {job.started_at ? formatDistanceToNow(new Date(job.started_at), { addSuffix: true }) : "—"}
-                  </TableCell>
-                )}
-                {isColumnVisible("progress") && (
-                  <TableCell>
-                    {job.status === "running" ? (
-                      // Priority 1: Calculated progress from details fields
-                      job.calculatedProgress !== undefined && job.calculatedProgress !== null ? (
+              <ContextMenu key={job.id}>
+                <ContextMenuTrigger asChild>
+                  <TableRow
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => onViewDetails ? onViewDetails(job) : onJobClick(job)}
+                    data-state={expandedJobId === job.id ? "selected" : undefined}
+                  >
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={selectedJobs.has(job.id)}
+                        onCheckedChange={() => toggleJobSelection(job.id)}
+                      />
+                    </TableCell>
+                    {isColumnVisible("job_type") && (
+                      <TableCell>
                         <div className="flex items-center gap-2">
-                          <Progress value={job.calculatedProgress} className="w-24 h-2" />
-                          <span className="text-xs text-muted-foreground">{job.calculatedProgress}%</span>
+                          <Activity className="h-4 w-4 text-muted-foreground" />
+                          <span className="font-medium text-sm">{formatJobType(job.job_type)}</span>
                         </div>
-                      // Priority 2: Task-based average progress
-                      ) : job.averageProgress !== undefined && job.averageProgress > 0 ? (
-                        <div className="flex items-center gap-2">
-                          <Progress value={job.averageProgress} className="w-24 h-2" />
-                          <span className="text-xs text-muted-foreground">{Math.round(job.averageProgress)}%</span>
-                        </div>
-                      // Priority 3: Show current step text
-                      ) : job.details?.current_step ? (
-                        <span className="text-xs text-muted-foreground truncate max-w-[150px]">{job.details.current_step}</span>
-                      ) : (
-                        <span className="text-sm text-muted-foreground">—</span>
-                      )
-                    ) : (
-                      <span className="text-sm text-muted-foreground">—</span>
+                      </TableCell>
                     )}
-                  </TableCell>
-                )}
-              </TableRow>
+                    {isColumnVisible("status") && <TableCell>{getStatusBadge(job.status)}</TableCell>}
+                    {isColumnVisible("priority") && <TableCell>{getPriorityBadge(job.priority)}</TableCell>}
+                    {isColumnVisible("duration") && (
+                      <TableCell className="text-sm text-muted-foreground">{getDuration(job)}</TableCell>
+                    )}
+                    {isColumnVisible("target") && (
+                      <TableCell className="text-sm text-muted-foreground">{getTarget(job)}</TableCell>
+                    )}
+                    {isColumnVisible("started") && (
+                      <TableCell className="text-sm text-muted-foreground">
+                        {job.started_at ? formatDistanceToNow(new Date(job.started_at), { addSuffix: true }) : "—"}
+                      </TableCell>
+                    )}
+                    {isColumnVisible("progress") && (
+                      <TableCell>
+                        {job.status === "running" ? (
+                          job.calculatedProgress !== undefined && job.calculatedProgress !== null ? (
+                            <div className="flex items-center gap-2">
+                              <Progress value={job.calculatedProgress} className="w-24 h-2" />
+                              <span className="text-xs text-muted-foreground">{job.calculatedProgress}%</span>
+                            </div>
+                          ) : job.averageProgress !== undefined && job.averageProgress > 0 ? (
+                            <div className="flex items-center gap-2">
+                              <Progress value={job.averageProgress} className="w-24 h-2" />
+                              <span className="text-xs text-muted-foreground">{Math.round(job.averageProgress)}%</span>
+                            </div>
+                          ) : job.details?.current_step ? (
+                            <span className="text-xs text-muted-foreground truncate max-w-[150px]">{job.details.current_step}</span>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">—</span>
+                          )
+                        ) : (
+                          <span className="text-sm text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                    )}
+                    {isColumnVisible("actions") && (
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {renderJobActions(job)}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    )}
+                  </TableRow>
+                </ContextMenuTrigger>
+                <ContextMenuContent>
+                  {renderContextMenuActions(job)}
+                </ContextMenuContent>
+              </ContextMenu>
             ))}
           </TableBody>
         </Table>
@@ -386,6 +664,36 @@ export function JobsTable({
         canGoNext={pagination.canGoNext}
         canGoPrev={pagination.canGoPrev}
       />
+
+      {/* Confirmation dialogs */}
+      <AlertDialog open={!!confirmDialog} onOpenChange={() => setConfirmDialog(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              {confirmDialog?.type === "cancel" && "Cancel Job"}
+              {confirmDialog?.type === "delete" && "Delete Job"}
+              {confirmDialog?.type === "bulk-cancel" && `Cancel ${selectedCancellable.length} Jobs`}
+              {confirmDialog?.type === "bulk-delete" && `Delete ${selectedDeletable.length} Jobs`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmDialog?.type === "cancel" && "Are you sure you want to cancel this job? This action cannot be undone."}
+              {confirmDialog?.type === "delete" && "Are you sure you want to delete this job? This will remove the job and its history permanently."}
+              {confirmDialog?.type === "bulk-cancel" && `Are you sure you want to cancel ${selectedCancellable.length} jobs? This action cannot be undone.`}
+              {confirmDialog?.type === "bulk-delete" && `Are you sure you want to delete ${selectedDeletable.length} jobs? This will remove them permanently.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleConfirmAction}
+              className={confirmDialog?.type?.includes("delete") ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : ""}
+            >
+              {confirmDialog?.type?.includes("cancel") ? "Yes, Cancel" : "Yes, Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
