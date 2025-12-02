@@ -969,10 +969,12 @@ class FreeIPAAuthenticator:
     
     def _resolve_sids_to_usernames(self, conn: 'Connection', sids: List[str]) -> Dict[str, str]:
         """
-        Resolve Windows SIDs to usernames by searching the compat users tree.
+        Resolve Windows SIDs to usernames by searching multiple FreeIPA trees.
         
-        FreeIPA stores AD Trust users in cn=users,cn=compat with their SID in
-        ipaNTSecurityIdentifier or objectSid attributes.
+        Tries multiple strategies:
+        1. ID Views tree (Default Trust View) - best for mapped AD users
+        2. Compat users tree with multiple SID attribute names
+        3. AD DC direct query (if configured)
         
         Args:
             conn: Active LDAP connection
@@ -984,22 +986,88 @@ class FreeIPAAuthenticator:
         resolved = {}
         if not sids:
             return resolved
-            
+        
+        logger.info(f"[SID RESOLVE] Attempting to resolve {len(sids)} SID(s)")
+        
+        # === DIAGNOSTIC: Sample compat users to see what attributes exist ===
         compat_users_base = f"cn=users,cn=compat,{self.base_dn}"
-        logger.debug(f"[SID RESOLVE] Resolving {len(sids)} SID(s) from compat users tree: {compat_users_base}")
+        try:
+            conn.search(
+                search_base=compat_users_base,
+                search_filter="(objectClass=*)",
+                search_scope=SUBTREE,
+                attributes=["*"],  # Request ALL attributes
+                size_limit=5,
+            )
+            if conn.entries:
+                logger.info(f"[SID RESOLVE DEBUG] Sampled {len(conn.entries)} compat users")
+                for entry in conn.entries[:3]:
+                    attrs = list(entry.entry_attributes_as_dict.keys())
+                    logger.info(f"[SID RESOLVE DEBUG] DN: {entry.entry_dn}")
+                    logger.info(f"[SID RESOLVE DEBUG] Attributes: {attrs}")
+                    # Log any SID-like attributes
+                    for attr in attrs:
+                        val = entry.entry_attributes_as_dict.get(attr, [])
+                        if val:
+                            sample_val = str(val[0])[:50] if val else 'empty'
+                            if 'sid' in attr.lower() or 'S-1-' in sample_val:
+                                logger.info(f"[SID RESOLVE DEBUG]   {attr} = {sample_val}...")
+            else:
+                logger.warning(f"[SID RESOLVE DEBUG] No entries found in compat users tree")
+        except Exception as e:
+            logger.debug(f"[SID RESOLVE DEBUG] Error sampling compat users: {e}")
+        
+        # === STRATEGY 1: Search ID Views tree (Default Trust View) ===
+        id_views_base = f"cn=Default Trust View,cn=views,cn=accounts,{self.base_dn}"
+        logger.debug(f"[SID RESOLVE] Strategy 1: ID Views tree ({id_views_base})")
         
         for sid in sids:
+            if sid in resolved:
+                continue
             try:
-                # Search for user with this SID
-                # FreeIPA stores SIDs in ipaNTSecurityIdentifier or objectSid
                 escaped_sid = self._ldap_escape(sid)
-                sid_filter = f"(|(ipaNTSecurityIdentifier={escaped_sid})(objectSid={escaped_sid}))"
+                # ID Views may store anchor with SID or the raw SID
+                sid_filter = f"(|(ipaNTSecurityIdentifier={escaped_sid})(objectSid={escaped_sid})(ipaAnchorUUID=*{escaped_sid}*))"
+                
+                conn.search(
+                    search_base=id_views_base,
+                    search_filter=sid_filter,
+                    search_scope=SUBTREE,
+                    attributes=["uid", "cn", "ipaOriginalUid", "ipaAnchorUUID"],
+                )
+                
+                if conn.entries:
+                    entry = conn.entries[0]
+                    username = None
+                    if hasattr(entry, 'ipaOriginalUid') and entry.ipaOriginalUid.value:
+                        username = str(entry.ipaOriginalUid.value)
+                    elif hasattr(entry, 'uid') and entry.uid.value:
+                        username = str(entry.uid.value)
+                    elif hasattr(entry, 'cn') and entry.cn.value:
+                        username = str(entry.cn.value)
+                    
+                    if username:
+                        resolved[sid] = username
+                        logger.info(f"[SID RESOLVE] Strategy 1 resolved: {sid[-12:]}... -> {username}")
+            except Exception as e:
+                logger.debug(f"[SID RESOLVE] Strategy 1 failed for {sid[-12:]}: {e}")
+        
+        # === STRATEGY 2: Search compat users tree with multiple attribute names ===
+        logger.debug(f"[SID RESOLVE] Strategy 2: Compat users tree ({compat_users_base})")
+        
+        for sid in sids:
+            if sid in resolved:
+                continue
+            try:
+                escaped_sid = self._ldap_escape(sid)
+                # Try multiple possible SID attribute names used by FreeIPA
+                sid_filter = f"(|(ipaNTSecurityIdentifier={escaped_sid})(objectSid={escaped_sid})(sambaSID={escaped_sid})(ntSecurityIdentifier={escaped_sid}))"
                 
                 conn.search(
                     search_base=compat_users_base,
                     search_filter=sid_filter,
                     search_scope=SUBTREE,
-                    attributes=["uid", "cn", "gecos"],
+                    attributes=["uid", "cn", "gecos", "ipaNTSecurityIdentifier", "objectSid"],
                 )
                 
                 if conn.entries:
@@ -1014,14 +1082,107 @@ class FreeIPAAuthenticator:
                     
                     if username:
                         resolved[sid] = username
-                        logger.debug(f"[SID RESOLVE] Resolved {sid[-12:]}... -> {username}")
+                        logger.info(f"[SID RESOLVE] Strategy 2 resolved: {sid[-12:]}... -> {username}")
                 else:
-                    logger.debug(f"[SID RESOLVE] No match for SID {sid[-12:]}...")
-                    
+                    logger.debug(f"[SID RESOLVE] Strategy 2: No match for SID {sid[-12:]}...")
             except Exception as e:
-                logger.debug(f"[SID RESOLVE] Could not resolve SID {sid}: {e}")
+                logger.debug(f"[SID RESOLVE] Strategy 2 failed for {sid[-12:]}: {e}")
         
-        logger.info(f"[SID RESOLVE] Resolved {len(resolved)}/{len(sids)} SIDs to usernames")
+        # === STRATEGY 3: Extract RID and search by pattern matching ===
+        # SIDs like S-1-5-21-xxx-xxx-262796 - the last part (RID) may be in uid
+        logger.debug(f"[SID RESOLVE] Strategy 3: RID-based pattern matching")
+        
+        for sid in sids:
+            if sid in resolved:
+                continue
+            try:
+                # Extract RID (last component of SID)
+                rid = sid.split('-')[-1]
+                
+                # Search for users with this RID in their uid or related attributes
+                # Some systems store users as uid=S-1-5-21-xxx-RID or similar
+                rid_filter = f"(|(uid=*{rid}*)(cn=*{rid}*))"
+                
+                conn.search(
+                    search_base=compat_users_base,
+                    search_filter=rid_filter,
+                    search_scope=SUBTREE,
+                    attributes=["uid", "cn", "gecos"],
+                    size_limit=10,
+                )
+                
+                # Look for exact RID match
+                for entry in conn.entries:
+                    entry_uid = str(entry.uid.value) if hasattr(entry, 'uid') and entry.uid.value else ''
+                    # Check if this entry's SID ends with our RID
+                    if entry_uid and rid in entry_uid:
+                        # This might be the user, extract clean username if possible
+                        username = entry_uid
+                        # If uid looks like domain\\user or S-1-xxx format, try to clean it
+                        if '\\' in username:
+                            username = username.split('\\')[-1]
+                        resolved[sid] = username
+                        logger.info(f"[SID RESOLVE] Strategy 3 (RID match) resolved: {sid[-12:]}... -> {username}")
+                        break
+            except Exception as e:
+                logger.debug(f"[SID RESOLVE] Strategy 3 failed for {sid[-12:]}: {e}")
+        
+        # === STRATEGY 4: Query AD DC directly if available ===
+        if self.ad_dc_host:
+            unresolved_sids = [s for s in sids if s not in resolved]
+            if unresolved_sids:
+                logger.info(f"[SID RESOLVE] Strategy 4: Querying AD DC ({self.ad_dc_host}) for {len(unresolved_sids)} SID(s)")
+                try:
+                    ad_server = self._get_ad_server()
+                    if ad_server:
+                        # AD uses objectSid attribute
+                        ad_conn = Connection(
+                            ad_server,
+                            user=self.bind_dn,  # Use FreeIPA service account for AD too
+                            password=self.bind_password,
+                            auto_bind=True,
+                        )
+                        
+                        for sid in unresolved_sids:
+                            try:
+                                escaped_sid = self._ldap_escape(sid)
+                                ad_conn.search(
+                                    search_base=self.ad_domain_fqdn.replace('.', ',dc=') if self.ad_domain_fqdn else '',
+                                    search_filter=f"(objectSid={escaped_sid})",
+                                    search_scope=SUBTREE,
+                                    attributes=["sAMAccountName", "cn", "userPrincipalName"],
+                                )
+                                
+                                if ad_conn.entries:
+                                    entry = ad_conn.entries[0]
+                                    username = None
+                                    if hasattr(entry, 'sAMAccountName') and entry.sAMAccountName.value:
+                                        username = str(entry.sAMAccountName.value)
+                                    elif hasattr(entry, 'cn') and entry.cn.value:
+                                        username = str(entry.cn.value)
+                                    
+                                    if username:
+                                        resolved[sid] = f"AD:{username}"
+                                        logger.info(f"[SID RESOLVE] Strategy 4 (AD DC) resolved: {sid[-12:]}... -> AD:{username}")
+                            except Exception as e:
+                                logger.debug(f"[SID RESOLVE] Strategy 4 AD query failed for {sid[-12:]}: {e}")
+                        
+                        ad_conn.unbind()
+                except Exception as e:
+                    logger.warning(f"[SID RESOLVE] Strategy 4 (AD DC) failed: {e}")
+        
+        # Log summary
+        logger.info(f"[SID RESOLVE] Final result: Resolved {len(resolved)}/{len(sids)} SIDs to usernames")
+        for sid, username in resolved.items():
+            logger.debug(f"[SID RESOLVE]   {sid[-16:]}... -> {username}")
+        
+        # Log unresolved SIDs
+        unresolved = [s for s in sids if s not in resolved]
+        if unresolved:
+            logger.warning(f"[SID RESOLVE] Could not resolve {len(unresolved)} SID(s):")
+            for sid in unresolved[:5]:  # Log first 5
+                logger.warning(f"[SID RESOLVE]   Unresolved: {sid}")
+        
         return resolved
 
     def search_groups(
