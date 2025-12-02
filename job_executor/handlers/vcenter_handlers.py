@@ -246,8 +246,53 @@ class VCenterHandlers(BaseHandler):
                 details=summary
             )
             
+            # Update vCenter last_sync status on success
+            if source_vcenter_id:
+                try:
+                    final_status = 'partial' if sync_errors else 'success'
+                    requests.patch(
+                        f"{DSM_URL}/rest/v1/vcenters?id=eq.{source_vcenter_id}",
+                        json={
+                            'last_sync': datetime.now().isoformat(),
+                            'last_sync_status': final_status,
+                            'last_sync_error': '; '.join(sync_errors) if sync_errors else None
+                        },
+                        headers={
+                            'apikey': SERVICE_ROLE_KEY,
+                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=minimal'
+                        },
+                        verify=VERIFY_SSL
+                    )
+                    self.log(f"✓ Updated vCenter sync status: {final_status}")
+                except Exception as update_err:
+                    self.log(f"Warning: Failed to update vCenter sync status: {update_err}", "WARN")
+            
         except Exception as e:
             self.log(f"vCenter sync failed: {e}", "ERROR")
+            
+            # Update vCenter last_sync status on failure
+            if source_vcenter_id:
+                try:
+                    requests.patch(
+                        f"{DSM_URL}/rest/v1/vcenters?id=eq.{source_vcenter_id}",
+                        json={
+                            'last_sync': datetime.now().isoformat(),
+                            'last_sync_status': 'failed',
+                            'last_sync_error': str(e)[:500]  # Truncate long errors
+                        },
+                        headers={
+                            'apikey': SERVICE_ROLE_KEY,
+                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=minimal'
+                        },
+                        verify=VERIFY_SSL
+                    )
+                except Exception as update_err:
+                    self.log(f"Warning: Failed to update vCenter error status: {update_err}", "WARN")
+            
             self.update_job_status(
                 job['id'], 
                 'failed',
