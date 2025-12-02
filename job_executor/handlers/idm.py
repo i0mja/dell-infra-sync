@@ -98,14 +98,37 @@ class IDMHandler(BaseHandler):
             if not authenticator:
                 raise ValueError("Failed to initialize FreeIPA authenticator")
             
-            # Authenticate user
+            # Authenticate user with service account for group lookup
             self.log(f"Authenticating user '{username}' against FreeIPA: {idm_settings['server_host']}")
-            auth_result = authenticator.authenticate_user(username, password)
+            
+            # Get decrypted service account password for AD Trust group lookup
+            service_bind_password = None
+            if idm_settings.get('bind_password_encrypted'):
+                service_bind_password = self.executor.decrypt_bind_password(idm_settings['bind_password_encrypted'])
+            
+            auth_result = authenticator.authenticate_user(
+                username,
+                password,
+                service_bind_dn=idm_settings.get('bind_dn'),
+                service_bind_password=service_bind_password
+            )
             
             if auth_result['success']:
                 self.log(f"[OK] User '{username}' authenticated successfully")
                 self.log(f"  User DN: {auth_result.get('user_dn')}")
                 self.log(f"  Groups: {len(auth_result.get('groups', []))} group(s)")
+                
+                # Add canonical identity information
+                try:
+                    normalized = authenticator.normalize_identity(username)
+                    if normalized:
+                        auth_result['canonical_principal'] = normalized.canonical_principal
+                        auth_result['realm'] = normalized.realm
+                        auth_result['is_ad_trust_user'] = normalized.is_ad_trust
+                        self.log(f"  Canonical Principal: {normalized.canonical_principal}")
+                        self.log(f"  Realm: {normalized.realm}")
+                except Exception as e:
+                    self.log(f"Could not normalize identity: {e}", "WARN")
             else:
                 self.log(f"[X] Authentication failed for '{username}': {auth_result.get('error')}", "WARN")
             

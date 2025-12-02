@@ -107,6 +107,17 @@ class FreeIPAAuthenticator:
         
         self._server = None
         self._ad_server = None
+        
+        # Initialize identity normalizer for canonical identity handling
+        if IDENTITY_AVAILABLE:
+            ipa_realm_upper = self._derive_realm_from_base_dn(base_dn)
+            self.identity_normalizer = IdentityNormalizer(
+                ipa_realm=ipa_realm_upper,
+                ipa_domain=self.ipa_realm,
+                trusted_domains=self.trusted_domains,
+            )
+        else:
+            self.identity_normalizer = None
     
     def _base_dn_to_realm(self, base_dn: str) -> str:
         """Convert base DN to realm/domain format."""
@@ -128,7 +139,7 @@ class FreeIPAAuthenticator:
                 parts.append(component[3:].upper())
         return '.'.join(parts) if parts else 'LOCALDOMAIN'
     
-    def normalize_identity(self, username: str) -> NormalizedIdentity:
+    def normalize_identity(self, username: str) -> Optional[NormalizedIdentity]:
         """
         Normalize a username to canonical form.
         
@@ -137,7 +148,11 @@ class FreeIPAAuthenticator:
             
         Returns:
             NormalizedIdentity with canonical principal, realm, etc.
+            Returns None if identity normalization is not available.
         """
+        if not IDENTITY_AVAILABLE or not self.identity_normalizer:
+            logger.warning("Identity normalization not available")
+            return None
         return self.identity_normalizer.normalize(username)
     
     def _get_server(self) -> Server:
