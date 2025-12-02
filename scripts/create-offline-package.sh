@@ -10,206 +10,276 @@ PACKAGE_DIR="$PROJECT_ROOT/offline-package"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 PACKAGE_NAME="dell-server-manager-offline-${TIMESTAMP}"
 
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+echo_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+echo_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+echo_step() { echo -e "${BLUE}[STEP]${NC} $1"; }
+
 echo "========================================="
 echo "Creating Offline Installation Package"
 echo "========================================="
 echo ""
 
 # Create package directory structure
-echo "Creating package directory structure..."
-mkdir -p "$PACKAGE_DIR/$PACKAGE_NAME"/{docker-images,npm-packages,python-packages,app,docs,scripts}
+echo_step "Creating package directory structure..."
+mkdir -p "$PACKAGE_DIR/$PACKAGE_NAME"/{docker-images,npm-packages,python-packages,app,docs}
 
 # Copy application code
-echo "Copying application code..."
+echo_step "Copying application code..."
 rsync -av --exclude='node_modules' --exclude='dist' --exclude='.git' \
   --exclude='offline-package' --exclude='supabase/.branches' \
-  --exclude='.env' \
+  --exclude='.env' --exclude='.env.local' \
   "$PROJECT_ROOT/" "$PACKAGE_DIR/$PACKAGE_NAME/app/"
 
 # Download npm dependencies
-echo "Downloading npm dependencies..."
+echo_step "Downloading npm dependencies..."
 cd "$PROJECT_ROOT"
-npm pack --pack-destination "$PACKAGE_DIR/$PACKAGE_NAME/npm-packages/"
 npm install --legacy-peer-deps
+echo_info "Packaging node_modules..."
 tar -czf "$PACKAGE_DIR/$PACKAGE_NAME/npm-packages/node_modules.tar.gz" node_modules/
 
 # Download Python packages
-echo "Downloading Python packages..."
+echo_step "Downloading Python packages..."
 pip3 download -d "$PACKAGE_DIR/$PACKAGE_NAME/python-packages/" \
-  requests pyVim pyVmomi urllib3 \
-  || echo "Note: Some Python packages may need to be downloaded manually"
+  requests pyVim pyVmomi urllib3 supabase \
+  2>/dev/null || echo_warn "Some Python packages may need manual download"
 
-# Save Docker images
-echo "Downloading and saving Docker images..."
-echo "This may take 15-30 minutes depending on your connection..."
+# Define Docker images - updated to latest stable versions
+echo_step "Pulling Docker images (this may take 15-30 minutes)..."
 
-# Pull Supabase images
-docker pull supabase/postgres:15.1.0.147
-docker pull supabase/gotrue:v2.143.0
-docker pull supabase/realtime:v2.25.50
-docker pull supabase/storage-api:v0.43.11
-docker pull supabase/postgrest:v12.0.2
-docker pull supabase/postgres-meta:v0.75.0
-docker pull supabase/studio:20240101-5e69d88
-docker pull supabase/edge-runtime:v1.22.4
-docker pull kong:2.8.1
-docker pull supabase/logflare:1.4.0
-docker pull prom/prometheus:latest
-docker pull timberio/vector:0.34.0-alpine
-docker pull darthsim/imgproxy:latest
+DOCKER_IMAGES=(
+  "supabase/postgres:15.6.1.143"
+  "supabase/gotrue:v2.167.0"
+  "supabase/realtime:v2.30.34"
+  "supabase/storage-api:v1.11.13"
+  "postgrest/postgrest:v12.2.3"
+  "supabase/postgres-meta:v0.84.2"
+  "supabase/studio:20241202-60d42ab"
+  "supabase/edge-runtime:v1.64.1"
+  "kong:2.8.1"
+  "supabase/logflare:1.4.0"
+  "darthsim/imgproxy:v3.8.0"
+)
+
+for image in "${DOCKER_IMAGES[@]}"; do
+  echo "  Pulling $image..."
+  docker pull "$image" || echo_warn "Failed to pull $image"
+done
 
 # Save images to tar files
-echo "Saving Docker images to tar files..."
-docker save -o "$PACKAGE_DIR/$PACKAGE_NAME/docker-images/supabase-postgres.tar" supabase/postgres:15.1.0.147
-docker save -o "$PACKAGE_DIR/$PACKAGE_NAME/docker-images/supabase-gotrue.tar" supabase/gotrue:v2.143.0
-docker save -o "$PACKAGE_DIR/$PACKAGE_NAME/docker-images/supabase-realtime.tar" supabase/realtime:v2.25.50
-docker save -o "$PACKAGE_DIR/$PACKAGE_NAME/docker-images/supabase-storage.tar" supabase/storage-api:v0.43.11
-docker save -o "$PACKAGE_DIR/$PACKAGE_NAME/docker-images/supabase-postgrest.tar" supabase/postgrest:v12.0.2
-docker save -o "$PACKAGE_DIR/$PACKAGE_NAME/docker-images/supabase-postgres-meta.tar" supabase/postgres-meta:v0.75.0
-docker save -o "$PACKAGE_DIR/$PACKAGE_NAME/docker-images/supabase-studio.tar" supabase/studio:20240101-5e69d88
-docker save -o "$PACKAGE_DIR/$PACKAGE_NAME/docker-images/supabase-edge-runtime.tar" supabase/edge-runtime:v1.22.4
-docker save -o "$PACKAGE_DIR/$PACKAGE_NAME/docker-images/kong.tar" kong:2.8.1
-docker save -o "$PACKAGE_DIR/$PACKAGE_NAME/docker-images/supabase-logflare.tar" supabase/logflare:1.4.0
-docker save -o "$PACKAGE_DIR/$PACKAGE_NAME/docker-images/prometheus.tar" prom/prometheus:latest
-docker save -o "$PACKAGE_DIR/$PACKAGE_NAME/docker-images/vector.tar" timberio/vector:0.34.0-alpine
-docker save -o "$PACKAGE_DIR/$PACKAGE_NAME/docker-images/imgproxy.tar" darthsim/imgproxy:latest
-
-echo "Compressing Docker images..."
+echo_step "Saving Docker images to tar files..."
 cd "$PACKAGE_DIR/$PACKAGE_NAME/docker-images"
+
+declare -A IMAGE_NAMES=(
+  ["supabase/postgres:15.6.1.143"]="supabase-postgres"
+  ["supabase/gotrue:v2.167.0"]="supabase-gotrue"
+  ["supabase/realtime:v2.30.34"]="supabase-realtime"
+  ["supabase/storage-api:v1.11.13"]="supabase-storage"
+  ["postgrest/postgrest:v12.2.3"]="postgrest"
+  ["supabase/postgres-meta:v0.84.2"]="supabase-postgres-meta"
+  ["supabase/studio:20241202-60d42ab"]="supabase-studio"
+  ["supabase/edge-runtime:v1.64.1"]="supabase-edge-runtime"
+  ["kong:2.8.1"]="kong"
+  ["supabase/logflare:1.4.0"]="supabase-logflare"
+  ["darthsim/imgproxy:v3.8.0"]="imgproxy"
+)
+
+for image in "${DOCKER_IMAGES[@]}"; do
+  name="${IMAGE_NAMES[$image]}"
+  echo "  Saving $name..."
+  docker save -o "${name}.tar" "$image" 2>/dev/null || echo_warn "Failed to save $image"
+done
+
+echo_info "Compressing Docker images..."
 tar -czf docker-images.tar.gz *.tar
 rm -f *.tar
 
 # Copy documentation
-echo "Copying documentation..."
+echo_step "Copying documentation..."
 cp -r "$PROJECT_ROOT/docs" "$PACKAGE_DIR/$PACKAGE_NAME/"
 cp "$PROJECT_ROOT/README.md" "$PACKAGE_DIR/$PACKAGE_NAME/"
 
+# Copy installation script to root of package
+cp "$PROJECT_ROOT/scripts/install-offline-rhel9.sh" "$PACKAGE_DIR/$PACKAGE_NAME/"
+chmod +x "$PACKAGE_DIR/$PACKAGE_NAME/install-offline-rhel9.sh"
+
 # Create installation manifest
-echo "Creating installation manifest..."
+echo_step "Creating installation manifest..."
 cat > "$PACKAGE_DIR/$PACKAGE_NAME/MANIFEST.txt" << EOF
 Dell Server Manager - Offline Installation Package
+===================================================
 Generated: $(date)
-Version: $(git -C "$PROJECT_ROOT" describe --tags --always 2>/dev/null || echo "unknown")
+Version: $(git -C "$PROJECT_ROOT" describe --tags --always 2>/dev/null || echo "dev")
 
 Contents:
-  - app/                    : Complete application source code
-  - docker-images/          : Pre-downloaded Docker images for Supabase
-  - npm-packages/           : Node.js dependencies
-  - python-packages/        : Python dependencies for job executors
-  - docs/                   : Complete documentation
-  - scripts/                : Installation scripts
-  - MANIFEST.txt            : This file
-  - README-OFFLINE.txt      : Offline installation instructions
+  app/                    : Complete application source code
+  docker-images/          : Pre-downloaded Docker images for Supabase
+  npm-packages/           : Node.js dependencies (node_modules.tar.gz)
+  python-packages/        : Python dependencies for job executor
+  docs/                   : Complete documentation
+  install-offline-rhel9.sh: Installation script for RHEL 9
+  MANIFEST.txt            : This file
+  README-OFFLINE.txt      : Offline installation instructions
 
 Docker Images Included:
-  - supabase/postgres:15.1.0.147
-  - supabase/gotrue:v2.143.0
-  - supabase/realtime:v2.25.50
-  - supabase/storage-api:v0.43.11
-  - supabase/postgrest:v12.0.2
-  - supabase/postgres-meta:v0.75.0
-  - supabase/studio:20240101-5e69d88
-  - supabase/edge-runtime:v1.22.4
-  - kong:2.8.1
-  - supabase/logflare:1.4.0
-  - prom/prometheus:latest
-  - timberio/vector:0.34.0-alpine
-  - darthsim/imgproxy:latest
+  supabase/postgres:15.6.1.143      - PostgreSQL database
+  supabase/gotrue:v2.167.0          - Authentication service
+  supabase/realtime:v2.30.34        - Realtime subscriptions
+  supabase/storage-api:v1.11.13     - File storage API
+  postgrest/postgrest:v12.2.3       - REST API for PostgreSQL
+  supabase/postgres-meta:v0.84.2    - Database management API
+  supabase/studio:20241202-60d42ab  - Admin dashboard
+  supabase/edge-runtime:v1.64.1     - Edge functions runtime
+  kong:2.8.1                        - API gateway
+  supabase/logflare:1.4.0           - Analytics/logging
+  darthsim/imgproxy:v3.8.0          - Image processing
 
 System Requirements:
-  RHEL/CentOS/Rocky Linux 9: 4GB RAM, 50GB disk space
-  Windows Server 2022: 8GB RAM, 100GB disk space
+  OS: RHEL 9 / Rocky Linux 9 / AlmaLinux 9
+  RAM: 8GB minimum (16GB recommended)
+  Disk: 50GB minimum
+  Docker: Must be pre-installed
+  
+Network Requirements (Internal Only):
+  Port 3000: Dell Server Manager web UI
+  Port 3100: Supabase Studio (admin)
+  Port 8000: Supabase API
+  Port 5432: PostgreSQL (optional external access)
 
 Installation:
-  RHEL: sudo bash install-offline-rhel9.sh
-  Windows: Run PowerShell as Administrator, then: .\install-offline-windows.ps1
+  1. Transfer package to air-gapped system
+  2. Extract: tar -xzf dell-server-manager-offline-*.tar.gz
+  3. cd dell-server-manager-offline-*/
+  4. sudo ./install-offline-rhel9.sh
 EOF
 
-# Create offline installation README
+# Create README
 cat > "$PACKAGE_DIR/$PACKAGE_NAME/README-OFFLINE.txt" << 'EOF'
-Dell Server Manager - Offline Installation
-===========================================
+Dell Server Manager - Offline Installation Guide
+=================================================
 
 This package contains everything needed to deploy Dell Server Manager
 in a completely air-gapped environment without internet access.
 
 PREREQUISITES
 -------------
-1. Target system must be RHEL 9/CentOS 9/Rocky Linux 9 OR Windows Server 2022
-2. Root/Administrator access required
-3. Minimum 50GB free disk space (RHEL) or 100GB (Windows)
-4. Minimum 4GB RAM (RHEL) or 8GB RAM (Windows)
+Before installation, ensure the target system has:
 
-INSTALLATION STEPS
+1. Operating System: RHEL 9, Rocky Linux 9, or AlmaLinux 9
+2. Docker: Pre-installed and running
+   - For RHEL 9: dnf install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+   - Or use Podman with docker compatibility: dnf install podman-docker
+3. Root/sudo access
+4. Minimum 8GB RAM (16GB recommended for production)
+5. Minimum 50GB free disk space
+
+QUICK INSTALLATION
 ------------------
-
-For RHEL/CentOS/Rocky Linux 9:
-1. Transfer this entire package to the target system
+1. Transfer this package to the target system
 2. Extract: tar -xzf dell-server-manager-offline-*.tar.gz
 3. cd dell-server-manager-offline-*/
-4. chmod +x install-offline-rhel9.sh
-5. sudo ./install-offline-rhel9.sh
+4. sudo ./install-offline-rhel9.sh
+5. Follow the prompts to create admin user
 
-For Windows Server 2022:
-1. Transfer this entire package to the target system
-2. Extract the ZIP file
-3. Open PowerShell as Administrator
-4. cd to the extracted directory
-5. Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
-6. .\install-offline-windows.ps1
+The script will:
+- Load all Docker images
+- Start Supabase services
+- Apply database migrations
+- Build and configure the application
+- Create systemd services
+- Configure firewall rules
 
 POST-INSTALLATION
 -----------------
-After installation completes, you'll receive:
-- Application URL (typically http://SERVER_IP:3000)
-- Supabase Studio URL (typically http://SERVER_IP:8000)
-- Database credentials
-- Service management commands
+After installation:
+- Application URL: http://SERVER_IP:3000
+- Supabase Studio: http://SERVER_IP:3100
+- Credentials saved to: /opt/dell-server-manager/deployment-credentials.txt
 
-The system will be fully functional without any internet connectivity.
+SERVICE MANAGEMENT
+------------------
+# Check application status
+systemctl status dell-server-manager
 
-NETWORK REQUIREMENTS (Internal Only)
-------------------------------------
-- Application: Port 3000 (or 443 if SSL configured)
-- Supabase API: Port 8000
-- iDRAC connections: Port 443 (to your Dell servers)
-- vCenter connections: Port 443 (to your vCenter servers)
+# Check job executor status  
+systemctl status dell-job-executor
+
+# View application logs
+journalctl -u dell-server-manager -f
+
+# Restart application
+systemctl restart dell-server-manager
+
+# Check Supabase services
+cd /opt/supabase && docker compose ps
 
 TROUBLESHOOTING
 ---------------
-See docs/SELF_HOSTING.md for detailed troubleshooting steps.
+1. If Docker images fail to load:
+   - Check disk space: df -h
+   - Check Docker status: systemctl status docker
 
-Health checks:
-  RHEL: sudo bash app/scripts/health-check.sh
-  Windows: .\app\scripts\health-check.ps1
+2. If database won't start:
+   - Check logs: docker logs supabase-db
+   - Ensure port 5432 is free: ss -tlnp | grep 5432
+
+3. If application won't build:
+   - Check Node.js: node --version (should be 18+)
+   - Check npm cache: npm cache clean --force
+
+4. For detailed troubleshooting:
+   See docs/SELF_HOSTING.md in this package
+
+NETWORK REQUIREMENTS
+--------------------
+This installation requires NO internet access.
+Internal network access needed for:
+- iDRAC connections (port 443 to Dell servers)
+- vCenter connections (port 443 to vCenter servers)
+- Client browsers (port 3000 to this server)
+
+SECURITY NOTES
+--------------
+- Change default passwords in /opt/supabase/.env
+- Restrict access to /opt/dell-server-manager/deployment-credentials.txt
+- Consider enabling HTTPS with a reverse proxy (nginx/apache)
+- The JWT tokens included are demo tokens safe for air-gapped use
 EOF
 
-# Create compressed archive
-echo "Creating compressed archive..."
+# Create the archive
+echo_step "Creating compressed archive..."
 cd "$PACKAGE_DIR"
 tar -czf "${PACKAGE_NAME}.tar.gz" "$PACKAGE_NAME/"
 PACKAGE_SIZE=$(du -h "${PACKAGE_NAME}.tar.gz" | cut -f1)
+
+# Cleanup
+rm -rf "$PACKAGE_DIR/$PACKAGE_NAME"
 
 echo ""
 echo "========================================="
 echo "Offline Package Created Successfully!"
 echo "========================================="
 echo ""
-echo "Package Location: $PACKAGE_DIR/${PACKAGE_NAME}.tar.gz"
-echo "Package Size: $PACKAGE_SIZE"
+echo "Package: $PACKAGE_DIR/${PACKAGE_NAME}.tar.gz"
+echo "Size: $PACKAGE_SIZE"
 echo ""
-echo "Transfer this file to your air-gapped system and extract it:"
-echo "  tar -xzf ${PACKAGE_NAME}.tar.gz"
-echo "  cd ${PACKAGE_NAME}/"
-echo "  sudo bash install-offline-rhel9.sh    (for RHEL)"
-echo "  or"
-echo "  .\install-offline-windows.ps1         (for Windows)"
+echo "To deploy on air-gapped RHEL 9 system:"
+echo "  1. Transfer ${PACKAGE_NAME}.tar.gz to target system"
+echo "  2. tar -xzf ${PACKAGE_NAME}.tar.gz"
+echo "  3. cd ${PACKAGE_NAME}/"
+echo "  4. sudo ./install-offline-rhel9.sh"
 echo ""
-echo "The package contains:"
+echo "Package contents:"
 echo "  ✓ Complete application code"
-echo "  ✓ All Docker images (~3-5GB)"
-echo "  ✓ All npm dependencies"
-echo "  ✓ All Python packages"
+echo "  ✓ Supabase Docker images (~4GB)"
+echo "  ✓ npm dependencies"
+echo "  ✓ Python packages"
+echo "  ✓ Docker Compose configuration"
 echo "  ✓ Installation scripts"
-echo "  ✓ Complete documentation"
+echo "  ✓ Documentation"
 echo ""
