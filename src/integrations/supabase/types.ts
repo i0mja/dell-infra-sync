@@ -643,7 +643,9 @@ export type Database = {
       firmware_packages: {
         Row: {
           applicable_models: string[] | null
+          baseline_for_models: string[] | null
           checksum: string | null
+          component_name_pattern: string | null
           component_type: string
           created_at: string | null
           created_by: string | null
@@ -654,6 +656,7 @@ export type Database = {
           file_size_bytes: number
           filename: string
           id: string
+          is_baseline: boolean | null
           last_used_at: string | null
           local_path: string | null
           reboot_required: boolean | null
@@ -667,7 +670,9 @@ export type Database = {
         }
         Insert: {
           applicable_models?: string[] | null
+          baseline_for_models?: string[] | null
           checksum?: string | null
+          component_name_pattern?: string | null
           component_type: string
           created_at?: string | null
           created_by?: string | null
@@ -678,6 +683,7 @@ export type Database = {
           file_size_bytes: number
           filename: string
           id?: string
+          is_baseline?: boolean | null
           last_used_at?: string | null
           local_path?: string | null
           reboot_required?: boolean | null
@@ -691,7 +697,9 @@ export type Database = {
         }
         Update: {
           applicable_models?: string[] | null
+          baseline_for_models?: string[] | null
           checksum?: string | null
+          component_name_pattern?: string | null
           component_type?: string
           created_at?: string | null
           created_by?: string | null
@@ -702,6 +710,7 @@ export type Database = {
           file_size_bytes?: number
           filename?: string
           id?: string
+          is_baseline?: boolean | null
           last_used_at?: string | null
           local_path?: string | null
           reboot_required?: boolean | null
@@ -1914,6 +1923,69 @@ export type Database = {
           },
         ]
       }
+      server_firmware_inventory: {
+        Row: {
+          collected_at: string
+          component_category: string | null
+          component_id: string
+          component_name: string
+          component_type: string | null
+          created_at: string
+          device_id: string | null
+          id: string
+          job_id: string | null
+          server_id: string
+          status: string | null
+          updateable: boolean | null
+          version: string
+        }
+        Insert: {
+          collected_at?: string
+          component_category?: string | null
+          component_id: string
+          component_name: string
+          component_type?: string | null
+          created_at?: string
+          device_id?: string | null
+          id?: string
+          job_id?: string | null
+          server_id: string
+          status?: string | null
+          updateable?: boolean | null
+          version: string
+        }
+        Update: {
+          collected_at?: string
+          component_category?: string | null
+          component_id?: string
+          component_name?: string
+          component_type?: string | null
+          created_at?: string
+          device_id?: string | null
+          id?: string
+          job_id?: string | null
+          server_id?: string
+          status?: string | null
+          updateable?: boolean | null
+          version?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "server_firmware_inventory_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "server_firmware_inventory_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       server_group_members: {
         Row: {
           added_at: string | null
@@ -3118,6 +3190,7 @@ export type Database = {
         | "idm_authenticate"
         | "idm_sync_users"
         | "idm_test_connection"
+        | "firmware_inventory_scan"
       operation_type: "idrac_api" | "vcenter_api" | "openmanage_api"
     }
     CompositeTypes: {
@@ -3286,6 +3359,7 @@ export const Constants = {
         "idm_authenticate",
         "idm_sync_users",
         "idm_test_connection",
+        "firmware_inventory_scan",
       ],
       operation_type: ["idrac_api", "vcenter_api", "openmanage_api"],
     },
