@@ -87,6 +87,8 @@ interface HostsTableProps {
   loading: boolean;
   onHostDelete?: (host: VCenterHost) => void;
   onBulkDelete?: (hostIds: string[]) => void;
+  visibleColumns: string[];
+  onSelectionChange?: (selectedIds: Set<string>) => void;
 }
 
 export function HostsTable({
@@ -103,23 +105,16 @@ export function HostsTable({
   loading,
   onHostDelete,
   onBulkDelete,
+  visibleColumns,
+  onSelectionChange,
 }: HostsTableProps) {
   const [collapsedClusters, setCollapsedClusters] = useState<Set<string>>(new Set());
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [selectedHosts, setSelectedHosts] = useState<Set<string>>(new Set());
-  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
-  const [viewName, setViewName] = useState("");
   const { toast } = useToast();
 
-  const { visibleColumns, isColumnVisible, toggleColumn } = useColumnVisibility(
-    "vcenter-hosts-columns",
-    ["name", "status", "esxi", "serial", "linked", "sync"]
-  );
-
-  const { savedViews, currentView, saveView, loadView, deleteView, clearView } = useSavedViews(
-    "vcenter-hosts-views"
-  );
+  const isColumnVisible = (col: string) => visibleColumns.includes(col);
 
   // Flatten hosts for sorting
   const allHosts = clusterGroups.flatMap((g) => g.hosts.map((h) => ({ ...h, clusterName: g.name })));
