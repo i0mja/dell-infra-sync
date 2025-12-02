@@ -200,23 +200,45 @@ export const ClusterUpdateWizard = ({
   // Sync preSelectedTarget to state when dialog opens
   useEffect(() => {
     if (open && preSelectedTarget) {
-      setTargetType(preSelectedTarget.type);
+      // Only update if values are actually different
+      if (preSelectedTarget.type !== targetType) {
+        setTargetType(preSelectedTarget.type);
+      }
       
       if (preSelectedTarget.type === 'cluster' && preSelectedTarget.id) {
-        setSelectedCluster(preSelectedTarget.id);
-        setSelectedGroup('');
-        setSelectedServerIds([]);
+        if (preSelectedTarget.id !== selectedCluster) {
+          setSelectedCluster(preSelectedTarget.id);
+        }
+        if (selectedGroup !== '') {
+          setSelectedGroup('');
+        }
+        if (selectedServerIds.length > 0) {
+          setSelectedServerIds([]);
+        }
       } else if (preSelectedTarget.type === 'group' && preSelectedTarget.id) {
-        setSelectedGroup(preSelectedTarget.id);
-        setSelectedCluster('');
-        setSelectedServerIds([]);
+        if (preSelectedTarget.id !== selectedGroup) {
+          setSelectedGroup(preSelectedTarget.id);
+        }
+        if (selectedCluster !== '') {
+          setSelectedCluster('');
+        }
+        if (selectedServerIds.length > 0) {
+          setSelectedServerIds([]);
+        }
       } else if (preSelectedTarget.type === 'servers' && preSelectedTarget.ids) {
-        setSelectedServerIds(preSelectedTarget.ids);
-        setSelectedCluster('');
-        setSelectedGroup('');
+        const idsChanged = JSON.stringify(preSelectedTarget.ids) !== JSON.stringify(selectedServerIds);
+        if (idsChanged) {
+          setSelectedServerIds(preSelectedTarget.ids);
+        }
+        if (selectedCluster !== '') {
+          setSelectedCluster('');
+        }
+        if (selectedGroup !== '') {
+          setSelectedGroup('');
+        }
       }
     }
-  }, [open, preSelectedTarget]);
+  }, [open, preSelectedTarget, targetType, selectedCluster, selectedGroup, selectedServerIds]);
 
   // Reset wizard when closed
   useEffect(() => {
