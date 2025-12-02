@@ -126,6 +126,7 @@ export function useIdmSettings() {
     bind_password?: string;
     ca_certificate?: string;
     connection_timeout_seconds?: number;
+    use_saved_password?: boolean;
   }) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -145,6 +146,7 @@ export function useIdmSettings() {
         bind_password: formValues.bind_password,
         ca_certificate: formValues.ca_certificate,
         connection_timeout_seconds: formValues.connection_timeout_seconds,
+        use_saved_password: formValues.use_saved_password || false,
       } : {};
 
       const { data: job, error } = await supabase

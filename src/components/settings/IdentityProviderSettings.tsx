@@ -108,13 +108,15 @@ export function IdentityProviderSettings() {
       user_search_base: userSearchBase,
       group_search_base: groupSearchBase,
       bind_dn: bindDn,
-      bind_password: bindPassword,
+      bind_password: bindPassword || undefined,
       ca_certificate: caCertificate,
       connection_timeout_seconds: connectionTimeout,
+      use_saved_password: !bindPassword && !!settings?.bind_password_encrypted,
     });
   };
 
-  const canTestConnection = serverHost && bindDn && bindPassword && baseDn;
+  // Allow testing if password is entered OR if there's already a saved password
+  const canTestConnection = serverHost && bindDn && (bindPassword || settings?.bind_password_encrypted) && baseDn;
 
   const handleCreateMapping = async () => {
     await createMapping(mappingForm);
