@@ -828,6 +828,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             'idm_authenticate': self.idm_handler.execute_idm_authenticate,
             'idm_test_connection': self.idm_handler.execute_idm_test_connection,
             'idm_sync_users': self.idm_handler.execute_idm_sync_users,
+            'idm_search_groups': self.idm_handler.execute_idm_search_groups,
         }
         
         handler = handler_map.get(job_type)

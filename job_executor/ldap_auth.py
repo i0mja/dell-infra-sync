@@ -313,6 +313,65 @@ class FreeIPAAuthenticator:
             logger.error(f"Failed to get user groups: {e}")
             return []
     
+    def search_groups(
+        self,
+        bind_dn: str,
+        bind_password: str,
+        search_term: str = "*",
+        max_results: int = 100,
+    ) -> List[Dict]:
+        """
+        Search for groups in FreeIPA.
+        
+        Args:
+            bind_dn: Service account DN
+            bind_password: Service account password
+            search_term: Search pattern (supports wildcards)
+            max_results: Maximum number of results
+            
+        Returns:
+            List of group dicts with dn, cn, description, member_count
+        """
+        try:
+            server = self._get_server()
+            conn = Connection(
+                server,
+                user=bind_dn,
+                password=bind_password,
+                auto_bind=True,
+            )
+            
+            # FreeIPA group filter with search term
+            group_filter = f"(&(objectClass=groupOfNames)(cn=*{search_term}*))"
+            
+            group_attrs = ["cn", "description", "member"]
+            
+            conn.search(
+                search_base=f"{self.group_search_base},{self.base_dn}",
+                search_filter=group_filter,
+                search_scope=SUBTREE,
+                attributes=group_attrs,
+                size_limit=max_results,
+            )
+            
+            groups = []
+            for entry in conn.entries:
+                group = {
+                    "dn": str(entry.entry_dn),
+                    "cn": str(entry.cn) if hasattr(entry, 'cn') else None,
+                    "description": str(entry.description) if hasattr(entry, 'description') else None,
+                    "member_count": len(entry.member) if hasattr(entry, 'member') else 0,
+                }
+                if group["cn"]:
+                    groups.append(group)
+            
+            conn.unbind()
+            return groups
+            
+        except Exception as e:
+            logger.error(f"Failed to search groups: {e}")
+            return []
+    
     def sync_all_users(
         self,
         bind_dn: str,

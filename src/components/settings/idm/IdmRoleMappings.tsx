@@ -8,10 +8,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useIdmGroupMappings } from '@/hooks/useIdmGroupMappings';
-import { Plus, Trash2, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Loader2, Search, Users } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
+import { ScrollArea } from '@/components/ui/scroll-area';
+
+interface GroupSearchResult {
+  dn: string;
+  cn: string;
+  description: string | null;
+  member_count: number;
+}
 
 export function IdmRoleMappings() {
   const { mappings, loading, createMapping, updateMapping, deleteMapping } = useIdmGroupMappings();
+  const { toast } = useToast();
   const [showDialog, setShowDialog] = useState(false);
   const [mappingForm, setMappingForm] = useState({
     idm_group_dn: '',
@@ -21,6 +32,122 @@ export function IdmRoleMappings() {
     is_active: true,
     description: '',
   });
+
+  // Group search state
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchResults, setSearchResults] = useState<GroupSearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState<GroupSearchResult | null>(null);
+
+  const handleSearchGroups = async () => {
+    if (!searchTerm.trim()) {
+      toast({
+        title: "Search term required",
+        description: "Please enter a search term to find groups",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsSearching(true);
+    setSearchResults([]);
+    setSelectedGroup(null);
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      // Create job for group search
+      const { data: job, error: jobError } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'idm_search_groups',
+          created_by: user.id,
+          status: 'pending',
+          details: {
+            search_term: searchTerm,
+            max_results: 100,
+          },
+        })
+        .select()
+        .single();
+
+      if (jobError) throw jobError;
+
+      // Poll for job completion
+      let attempts = 0;
+      const maxAttempts = 30; // 30 seconds timeout
+      
+      const pollInterval = setInterval(async () => {
+        attempts++;
+        
+        const { data: updatedJob, error: pollError } = await supabase
+          .from('jobs')
+          .select('status, details')
+          .eq('id', job.id)
+          .single();
+
+        if (pollError) {
+          clearInterval(pollInterval);
+          setIsSearching(false);
+          toast({
+            title: "Search failed",
+            description: "Failed to retrieve search results",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        if (updatedJob.status === 'completed') {
+          clearInterval(pollInterval);
+          setIsSearching(false);
+          const details = updatedJob.details as any;
+          const groups = details?.groups || [];
+          setSearchResults(groups);
+          
+          if (groups.length === 0) {
+            toast({
+              title: "No groups found",
+              description: `No groups matching "${searchTerm}" were found`,
+            });
+          }
+        } else if (updatedJob.status === 'failed') {
+          clearInterval(pollInterval);
+          setIsSearching(false);
+          const details = updatedJob.details as any;
+          toast({
+            title: "Search failed",
+            description: details?.error || "Group search failed",
+            variant: "destructive",
+          });
+        } else if (attempts >= maxAttempts) {
+          clearInterval(pollInterval);
+          setIsSearching(false);
+          toast({
+            title: "Search timeout",
+            description: "Group search is taking too long. Please try again.",
+            variant: "destructive",
+          });
+        }
+      }, 1000);
+    } catch (error: any) {
+      setIsSearching(false);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to initiate group search",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleSelectGroup = (group: GroupSearchResult) => {
+    setSelectedGroup(group);
+    setMappingForm({
+      ...mappingForm,
+      idm_group_dn: group.dn,
+      idm_group_name: group.cn,
+    });
+  };
 
   const handleCreateMapping = async () => {
     await createMapping(mappingForm);
@@ -32,6 +159,24 @@ export function IdmRoleMappings() {
       is_active: true,
       description: '',
     });
+    setSearchTerm('');
+    setSearchResults([]);
+    setSelectedGroup(null);
+    setShowDialog(false);
+  };
+
+  const resetDialog = () => {
+    setMappingForm({
+      idm_group_dn: '',
+      idm_group_name: '',
+      app_role: 'viewer',
+      priority: 100,
+      is_active: true,
+      description: '',
+    });
+    setSearchTerm('');
+    setSearchResults([]);
+    setSelectedGroup(null);
     setShowDialog(false);
   };
 
@@ -52,35 +197,124 @@ export function IdmRoleMappings() {
               <CardTitle>Group-to-Role Mappings</CardTitle>
               <CardDescription>Map FreeIPA groups to application roles</CardDescription>
             </div>
-            <Dialog open={showDialog} onOpenChange={setShowDialog}>
+            <Dialog open={showDialog} onOpenChange={(open) => !open && resetDialog()}>
               <DialogTrigger asChild>
-                <Button>
+                <Button onClick={() => setShowDialog(true)}>
                   <Plus className="mr-2 h-4 w-4" />
                   Add Mapping
                 </Button>
               </DialogTrigger>
-              <DialogContent>
+              <DialogContent className="max-w-2xl">
                 <DialogHeader>
                   <DialogTitle>Create Group Mapping</DialogTitle>
-                  <DialogDescription>Map a FreeIPA group to an application role</DialogDescription>
+                  <DialogDescription>Search for a FreeIPA group and map it to an application role</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4">
+                  {/* Group Search */}
+                  <Card className="border-dashed">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm font-medium flex items-center gap-2">
+                        <Users className="h-4 w-4" />
+                        Search FreeIPA Groups
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="Enter group name to search..."
+                          value={searchTerm}
+                          onChange={(e) => setSearchTerm(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleSearchGroups()}
+                          disabled={isSearching}
+                        />
+                        <Button 
+                          onClick={handleSearchGroups} 
+                          disabled={isSearching || !searchTerm.trim()}
+                        >
+                          {isSearching ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Search className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
+
+                      {isSearching && (
+                        <div className="flex items-center justify-center py-4 text-sm text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                          Searching groups...
+                        </div>
+                      )}
+
+                      {!isSearching && searchResults.length > 0 && (
+                        <div className="space-y-2">
+                          <Label className="text-xs text-muted-foreground">
+                            Found {searchResults.length} group(s)
+                          </Label>
+                          <ScrollArea className="h-48 border rounded-md">
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead className="w-12"></TableHead>
+                                  <TableHead>Group Name</TableHead>
+                                  <TableHead>Description</TableHead>
+                                  <TableHead className="w-20 text-right">Members</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {searchResults.map((group) => (
+                                  <TableRow 
+                                    key={group.dn}
+                                    className="cursor-pointer hover:bg-muted/50"
+                                    onClick={() => handleSelectGroup(group)}
+                                  >
+                                    <TableCell>
+                                      <div className={`h-4 w-4 rounded-full border-2 ${
+                                        selectedGroup?.dn === group.dn 
+                                          ? 'bg-primary border-primary' 
+                                          : 'border-muted-foreground'
+                                      }`} />
+                                    </TableCell>
+                                    <TableCell className="font-medium">{group.cn}</TableCell>
+                                    <TableCell className="text-muted-foreground text-sm">
+                                      {group.description || '—'}
+                                    </TableCell>
+                                    <TableCell className="text-right">{group.member_count}</TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </ScrollArea>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  {/* Group DN (read-only when selected from search) */}
                   <div className="space-y-2">
                     <Label>Group DN</Label>
                     <Input
                       placeholder="cn=admins,cn=groups,cn=accounts,dc=example,dc=com"
                       value={mappingForm.idm_group_dn}
                       onChange={(e) => setMappingForm({ ...mappingForm, idm_group_dn: e.target.value })}
+                      readOnly={!!selectedGroup}
+                      className={selectedGroup ? 'bg-muted' : ''}
                     />
                   </div>
+
+                  {/* Group Name (read-only when selected from search) */}
                   <div className="space-y-2">
                     <Label>Group Name</Label>
                     <Input
                       placeholder="admins"
                       value={mappingForm.idm_group_name}
                       onChange={(e) => setMappingForm({ ...mappingForm, idm_group_name: e.target.value })}
+                      readOnly={!!selectedGroup}
+                      className={selectedGroup ? 'bg-muted' : ''}
                     />
                   </div>
+
+                  {/* App Role */}
                   <div className="space-y-2">
                     <Label>App Role</Label>
                     <Select
@@ -97,6 +331,8 @@ export function IdmRoleMappings() {
                       </SelectContent>
                     </Select>
                   </div>
+
+                  {/* Priority */}
                   <div className="space-y-2">
                     <Label>Priority</Label>
                     <Input
@@ -106,6 +342,8 @@ export function IdmRoleMappings() {
                     />
                     <p className="text-sm text-muted-foreground">Higher priority = evaluated first</p>
                   </div>
+
+                  {/* Description */}
                   <div className="space-y-2">
                     <Label>Description (optional)</Label>
                     <Input
@@ -115,6 +353,7 @@ export function IdmRoleMappings() {
                   </div>
                 </div>
                 <DialogFooter>
+                  <Button variant="outline" onClick={resetDialog}>Cancel</Button>
                   <Button onClick={handleCreateMapping}>Create Mapping</Button>
                 </DialogFooter>
               </DialogContent>
