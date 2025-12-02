@@ -195,6 +195,10 @@ export const ClusterUpdateWizard = ({
   useEffect(() => {
     setSafetyCheckPassed(false);
     setTargetInfo(null);
+    // Clear cluster conflict when switching to cluster/group mode
+    if (targetType !== 'servers') {
+      setClusterConflict(null);
+    }
   }, [targetType, selectedCluster, selectedGroup, selectedServerIds]);
 
   // Sync preSelectedTarget to state when dialog opens
@@ -248,6 +252,7 @@ export const ClusterUpdateWizard = ({
       setTargetInfo(null);
       setConfirmed(false);
       setJobId(null);
+      setClusterConflict(null);
     }
   }, [open]);
 
