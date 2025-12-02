@@ -30,6 +30,7 @@ export interface IdmSettings {
   trusted_domains: string[] | null;
   ad_dc_host: string | null;
   ad_dc_port: number | null;
+  ad_dc_use_ssl: boolean | null;
   created_at: string | null;
   updated_at: string | null;
 }

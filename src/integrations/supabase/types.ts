@@ -834,6 +834,7 @@ export type Database = {
         Row: {
           ad_dc_host: string | null
           ad_dc_port: number | null
+          ad_dc_use_ssl: boolean | null
           auth_mode: string
           base_dn: string | null
           bind_dn: string | null
@@ -865,6 +866,7 @@ export type Database = {
         Insert: {
           ad_dc_host?: string | null
           ad_dc_port?: number | null
+          ad_dc_use_ssl?: boolean | null
           auth_mode?: string
           base_dn?: string | null
           bind_dn?: string | null
@@ -896,6 +898,7 @@ export type Database = {
         Update: {
           ad_dc_host?: string | null
           ad_dc_port?: number | null
+          ad_dc_use_ssl?: boolean | null
           auth_mode?: string
           base_dn?: string | null
           bind_dn?: string | null
