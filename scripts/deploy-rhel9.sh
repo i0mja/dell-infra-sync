@@ -163,6 +163,102 @@ if [ -f "$PROJECT_ROOT/supabase/docker/volumes/api/kong.yml" ]; then
     cp "$PROJECT_ROOT/supabase/docker/volumes/api/kong.yml" volumes/api/kong.yml
 fi
 
+# Get server IP (permissions will be set after init script creation)
+SERVER_IP=$(hostname -I | awk '{print $1}')
+
+# Generate secure credentials
+POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d '/+=')
+JWT_SECRET=$(openssl rand -base64 64 | tr -d '/+=')
+SECRET_KEY_BASE=$(openssl rand -base64 64 | tr -d '/+=')
+LOGFLARE_API_KEY=$(openssl rand -hex 16)
+VAULT_ENC_KEY=$(openssl rand -base64 32 | tr -d '/+=')
+PG_META_CRYPTO_KEY=$(openssl rand -base64 32 | tr -d '/+=')
+DASHBOARD_PASSWORD=$(openssl rand -base64 16 | tr -d '/+=')
+
+# ============================================
+# CRITICAL: Create database init script
+# This fixes Supabase internal role passwords to match POSTGRES_PASSWORD
+# Without this, auth/storage/realtime services fail to connect
+# ============================================
+echo "   Creating database initialization script..."
+cat > volumes/db/init/00-setup-supabase-roles.sql << INIT_SQL
+-- ============================================
+-- Supabase Role Password Fix for Self-Hosted Deployment
+-- This script runs at database initialization (before other init scripts)
+-- It fixes the passwords for Supabase internal roles to match POSTGRES_PASSWORD
+-- ============================================
+
+-- Fix passwords for all Supabase internal roles
+-- The supabase/postgres image creates these with default passwords
+ALTER ROLE supabase_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+ALTER ROLE supabase_auth_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+ALTER ROLE supabase_storage_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+ALTER ROLE supabase_functions_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+ALTER ROLE supabase_replication_admin WITH PASSWORD '$POSTGRES_PASSWORD';
+ALTER ROLE supabase_read_only_user WITH PASSWORD '$POSTGRES_PASSWORD';
+ALTER ROLE authenticator WITH PASSWORD '$POSTGRES_PASSWORD';
+ALTER ROLE pgbouncer WITH PASSWORD '$POSTGRES_PASSWORD';
+
+-- Create authenticated role if missing (used by RLS policies)
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticated') THEN
+    CREATE ROLE authenticated NOLOGIN;
+    RAISE NOTICE 'Created authenticated role';
+  END IF;
+END
+\$\$;
+
+-- Create anon role if missing (used by RLS policies)
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
+    CREATE ROLE anon NOLOGIN;
+    RAISE NOTICE 'Created anon role';
+  END IF;
+END
+\$\$;
+
+-- Create service_role if missing
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'service_role') THEN
+    CREATE ROLE service_role NOLOGIN BYPASSRLS;
+    RAISE NOTICE 'Created service_role';
+  END IF;
+END
+\$\$;
+
+-- Grant roles to authenticator (PostgREST connects as authenticator)
+GRANT authenticated TO authenticator;
+GRANT anon TO authenticator;
+GRANT service_role TO authenticator;
+
+-- Create extensions schema if not exists
+CREATE SCHEMA IF NOT EXISTS extensions;
+GRANT USAGE ON SCHEMA extensions TO anon, authenticated, service_role;
+GRANT ALL ON SCHEMA extensions TO supabase_admin;
+
+-- Create the realtime publication for real-time subscriptions
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+    CREATE PUBLICATION supabase_realtime;
+    RAISE NOTICE 'Created supabase_realtime publication';
+  END IF;
+END
+\$\$;
+
+-- Grant schema permissions
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON SCHEMA public TO supabase_admin;
+
+-- Log completion
+DO \$\$ BEGIN RAISE NOTICE 'Supabase roles initialized successfully'; END \$\$;
+INIT_SQL
+
+echo "✅ Database init script created"
+
 # ============================================
 # CRITICAL: Fix permissions for Docker containers
 # The postgres container runs as UID 999 (postgres user)
@@ -192,18 +288,6 @@ if command -v getenforce &> /dev/null && [ "$(getenforce)" == "Enforcing" ]; the
     chcon -Rt svirt_sandbox_file_t "$SUPABASE_DIR/volumes" || true
     echo "✅ SELinux context set"
 fi
-
-# Get server IP
-SERVER_IP=$(hostname -I | awk '{print $1}')
-
-# Generate secure credentials
-POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d '/+=')
-JWT_SECRET=$(openssl rand -base64 64 | tr -d '/+=')
-SECRET_KEY_BASE=$(openssl rand -base64 64 | tr -d '/+=')
-LOGFLARE_API_KEY=$(openssl rand -hex 16)
-VAULT_ENC_KEY=$(openssl rand -base64 32 | tr -d '/+=')
-PG_META_CRYPTO_KEY=$(openssl rand -base64 32 | tr -d '/+=')
-DASHBOARD_PASSWORD=$(openssl rand -base64 16 | tr -d '/+=')
 
 # Generate proper JWT tokens that match the JWT_SECRET
 generate_jwt() {
@@ -333,20 +417,41 @@ echo "✅ Supabase configuration created with all required variables"
 echo "🚀 Step 4/6: Starting Supabase services..."
 docker compose up -d
 
-echo "⏳ Waiting for services to start (90 seconds)..."
-for i in {1..9}; do
+echo "⏳ Waiting for database to be ready..."
+MAX_WAIT=120
+WAITED=0
+while [ $WAITED -lt $MAX_WAIT ]; do
+    if docker compose exec -T db pg_isready -U postgres > /dev/null 2>&1; then
+        echo "✅ Database is ready"
+        break
+    fi
+    sleep 5
+    WAITED=$((WAITED + 5))
+    echo "   ... waiting ($WAITED seconds)"
+done
+
+if [ $WAITED -ge $MAX_WAIT ]; then
+    echo "⚠️  Database may not be fully ready. Continuing anyway..."
+fi
+
+echo "⏳ Waiting for services to stabilize (60 seconds)..."
+for i in {1..6}; do
     sleep 10
     echo "   ... $((i * 10)) seconds"
 done
 
-# Check if services are running
-if docker compose ps | grep -q "running"; then
-    echo "✅ Supabase services are running"
-else
-    echo "⚠️  Some services may not have started. Checking status..."
-    docker compose ps
+# Check service health
+echo "🔍 Checking service status..."
+docker compose ps
+
+# Check for critical services
+UNHEALTHY_SERVICES=$(docker compose ps --format json 2>/dev/null | grep -c '"Status":"restarting"' || echo "0")
+if [ "$UNHEALTHY_SERVICES" -gt "0" ]; then
+    echo "⚠️  Some services are restarting. Checking logs..."
     echo ""
-    echo "If services failed, check logs with: docker compose logs"
+    echo "Auth service logs (last 20 lines):"
+    docker compose logs auth --tail=20 2>/dev/null || true
+    echo ""
 fi
 
 # Apply Supabase migrations from the repository for local deployment
