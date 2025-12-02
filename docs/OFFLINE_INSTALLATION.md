@@ -2,6 +2,67 @@
 
 This guide covers deploying Dell Server Manager in completely air-gapped environments with no internet connectivity.
 
+## Which Script Should I Use?
+
+Dell Server Manager provides multiple deployment scripts for RHEL 9. Choose based on your environment:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│           Does your RHEL 9 VM have internet access?            │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+              ┌───────────────┴───────────────┐
+              │                               │
+              ▼                               ▼
+       ┌─────────────┐                 ┌─────────────┐
+       │     YES     │                 │     NO      │
+       │ (temporary) │                 │ (air-gapped)│
+       └──────┬──────┘                 └──────┬──────┘
+              │                               │
+              ▼                               ▼
+    ┌───────────────────┐         ┌───────────────────────┐
+    │ deploy-rhel9.sh   │         │ Offline Package       │
+    │ (Option 1: Local) │         │ Workflow              │
+    │                   │         │                       │
+    │ • Auto-installs   │         │ 1. create-offline-    │
+    │   Docker, Node.js │         │    package.sh         │
+    │ • Downloads deps  │         │    (on connected PC)  │
+    │ • Sets up local   │         │                       │
+    │   Supabase        │         │ 2. Transfer bundle    │
+    │ • ~5 minutes      │         │                       │
+    │                   │         │ 3. install-offline-   │
+    │ See: SELF_HOSTING │         │    rhel9.sh           │
+    │      .md          │         │    (on air-gapped VM) │
+    └───────────────────┘         └───────────────────────┘
+```
+
+### Script Comparison
+
+| Script | Internet Required | Use Case | Documentation |
+|--------|------------------|----------|---------------|
+| `deploy-rhel9.sh` | Yes (during setup) | Standard deployment with internet access | [SELF_HOSTING.md](SELF_HOSTING.md) |
+| `create-offline-package.sh` | Yes (to create bundle) | Creates transferable offline package | This guide |
+| `install-offline-rhel9.sh` | No | Installs from offline package | This guide |
+| `setup-local-supabase.sh` | Optional | Standalone local Supabase setup | This guide |
+
+### Key Differences
+
+**`deploy-rhel9.sh`** (documented in [SELF_HOSTING.md](SELF_HOSTING.md)):
+- Requires internet during initial setup only
+- Automatically downloads Docker, Node.js, and dependencies
+- Result is an offline-capable system (no internet needed after setup)
+- Simpler process if you have temporary internet access
+- Includes optional Let's Encrypt SSL setup
+
+**Offline Package Workflow** (this guide):
+- Zero internet required on the target system
+- Must create package on a separate internet-connected machine first
+- Package is ~4-5GB and contains everything needed
+- Required for truly air-gapped/secure enclaves
+- Docker must be pre-installed on target system
+
+---
+
 ## Overview
 
 Dell Server Manager can run fully offline using a self-hosted Supabase instance. The offline package bundles:
