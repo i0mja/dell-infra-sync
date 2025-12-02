@@ -586,8 +586,25 @@ class APIHandler(BaseHTTPRequestHandler):
                 ad_domain_fqdn=idm_settings.get('ad_domain_fqdn'),
             )
             
-            # Perform authentication
-            auth_result = authenticator.authenticate(username, password)
+            # Decrypt service account password for FreeIPA group lookup after AD auth
+            bind_dn = idm_settings.get('bind_dn')
+            bind_password_encrypted = idm_settings.get('bind_password_encrypted')
+            bind_password = None
+            
+            if bind_dn and bind_password_encrypted:
+                try:
+                    bind_password = self.executor.decrypt_password(bind_password_encrypted)
+                    self.executor.log(f"Service account credentials available for group lookup: {bind_dn}", "DEBUG")
+                except Exception as e:
+                    self.executor.log(f"Failed to decrypt service account password: {e}", "WARNING")
+            
+            # Perform authentication with service account for group lookup
+            auth_result = authenticator.authenticate_user(
+                username=username,
+                password=password,
+                service_bind_dn=bind_dn,
+                service_bind_password=bind_password
+            )
             
             response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
             
