@@ -256,6 +256,161 @@ export default function Servers() {
     }, 100);
   };
 
+  // Handler functions
+  const handleGroupUpdate = (groupId: string, groupType: 'manual' | 'vcenter' | undefined, serverIds: string[]) => {
+    if (groupType === 'vcenter') {
+      setPreSelectedClusterForUpdate(groupId);
+    } else {
+      setBulkUpdateServerIds(serverIds);
+    }
+    setUpdateWizardOpen(true);
+  };
+
+  const handleGroupSafetyCheck = async (groupId: string, clusterName: string) => {
+    if (!user) return;
+    
+    try {
+      const { error } = await supabase.functions.invoke("create-job", {
+        body: {
+          job_type: "cluster_safety_check",
+          created_by: user.id,
+          details: {
+            cluster_name: clusterName,
+            min_required_hosts: 2,
+            check_drs: true,
+            check_ha: true,
+          },
+          target_scope: {}
+        },
+      });
+      
+      if (error) throw error;
+      
+      toast({
+        title: "Safety Check Started",
+        description: `Running pre-flight checks for cluster "${clusterName}"`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to Start Safety Check",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleGroupFirmwareInventory = async (serverIds: string[]) => {
+    if (!user) return;
+    
+    try {
+      const { error } = await supabase.functions.invoke("create-job", {
+        body: {
+          job_type: "firmware_inventory_scan",
+          created_by: user.id,
+          target_scope: { server_ids: serverIds },
+        },
+      });
+      
+      if (error) throw error;
+      
+      toast({
+        title: "Firmware Inventory Collection Started",
+        description: `Collecting firmware inventory for ${serverIds.length} server(s)`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to Start Firmware Inventory",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleGroupRefreshAll = async (serverIds: string[]) => {
+    if (!user) return;
+    
+    try {
+      const { error } = await supabase.functions.invoke("create-job", {
+        body: {
+          job_type: "discovery_scan",
+          created_by: user.id,
+          target_scope: { server_ids: serverIds },
+        },
+      });
+      
+      if (error) throw error;
+      
+      toast({
+        title: "Bulk Refresh Started",
+        description: `Refreshing ${serverIds.length} server(s)`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to Start Refresh",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleGroupHealthCheckAll = async (serverIds: string[]) => {
+    if (!user) return;
+    
+    try {
+      const { error } = await supabase.functions.invoke("create-job", {
+        body: {
+          job_type: "health_check",
+          created_by: user.id,
+          target_scope: { server_ids: serverIds },
+        },
+      });
+      
+      if (error) throw error;
+      
+      toast({
+        title: "Health Check Started",
+        description: `Running health checks for ${serverIds.length} server(s)`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to Start Health Check",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleGroupTestCredentials = async (serverIds: string[]) => {
+    if (!user) return;
+    
+    try {
+      const { error } = await supabase.functions.invoke("create-job", {
+        body: {
+          job_type: "credential_test",
+          created_by: user.id,
+          target_scope: { server_ids: serverIds },
+        },
+      });
+      
+      if (error) throw error;
+      
+      toast({
+        title: "Credential Test Started",
+        description: `Testing credentials for ${serverIds.length} server(s)`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to Start Credential Test",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleViewInVCenter = (clusterName: string) => {
+    navigate(`/vcenter?cluster=${encodeURIComponent(clusterName)}`);
+  };
+
   // Get selected group data
   const selectedGroupData = selectedGroup
     ? groupedData.find((g) => g.name === selectedGroup) || null
@@ -330,6 +485,13 @@ export default function Servers() {
           onBulkAutoLink={handleBulkAutoLink}
           bulkLinking={isLinking}
           onBulkUpdate={handleBulkUpdate}
+          onGroupUpdate={handleGroupUpdate}
+          onGroupSafetyCheck={handleGroupSafetyCheck}
+          onGroupRefreshAll={handleGroupRefreshAll}
+          onGroupHealthCheckAll={handleGroupHealthCheckAll}
+          onGroupTestCredentials={handleGroupTestCredentials}
+          onGroupFirmwareInventory={handleGroupFirmwareInventory}
+          onViewInVCenter={handleViewInVCenter}
           />
         </div>
 

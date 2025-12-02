@@ -55,6 +55,12 @@ import {
   Search,
   MoreHorizontal,
   Loader2,
+  CheckSquare,
+  ExternalLink,
+  Upload,
+  Cpu,
+  Key,
+  Edit,
 } from "lucide-react";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
@@ -106,6 +112,16 @@ interface ServersTableProps {
   onServerDelete?: (server: Server) => void;
   onBulkDelete?: (serverIds: string[]) => void;
   onBulkUpdate?: (serverIds: string[]) => void;
+  // Group-level operations
+  onGroupUpdate?: (groupId: string, groupType: 'manual' | 'vcenter' | undefined, serverIds: string[]) => void;
+  onGroupSafetyCheck?: (groupId: string, clusterName: string) => void;
+  onGroupRefreshAll?: (serverIds: string[]) => void;
+  onGroupHealthCheckAll?: (serverIds: string[]) => void;
+  onGroupTestCredentials?: (serverIds: string[]) => void;
+  onGroupFirmwareInventory?: (serverIds: string[]) => void;
+  onGroupRename?: (groupId: string) => void;
+  onGroupDelete?: (groupId: string) => void;
+  onViewInVCenter?: (clusterName: string) => void;
 }
 
 export function ServersTable({
@@ -140,6 +156,15 @@ export function ServersTable({
   onServerDelete,
   onBulkDelete,
   onBulkUpdate,
+  onGroupUpdate,
+  onGroupSafetyCheck,
+  onGroupRefreshAll,
+  onGroupHealthCheckAll,
+  onGroupTestCredentials,
+  onGroupFirmwareInventory,
+  onGroupRename,
+  onGroupDelete,
+  onViewInVCenter,
 }: ServersTableProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [sortField, setSortField] = useState<string | null>(null);
@@ -299,6 +324,38 @@ export function ServersTable({
     } catch (error: any) {
       toast({ title: "Copy failed", description: error?.message, variant: "destructive" });
     }
+  };
+
+  // Select/deselect all servers in a group
+  const selectAllInGroup = (serverIds: string[]) => {
+    const allSelected = serverIds.every(id => selectedServers.has(id));
+    const newSelected = new Set(selectedServers);
+    
+    if (allSelected) {
+      serverIds.forEach(id => newSelected.delete(id));
+    } else {
+      serverIds.forEach(id => newSelected.add(id));
+    }
+    
+    setSelectedServers(newSelected);
+  };
+
+  // Export specific group to CSV
+  const handleExportGroupCSV = (group: GroupData) => {
+    const columns: ExportColumn<Server>[] = [
+      { key: "hostname", label: "Hostname" },
+      { key: "ip_address", label: "IP Address" },
+      { key: "connection_status", label: "Status" },
+      { key: "model", label: "Model" },
+      { key: "service_tag", label: "Service Tag" },
+      { key: "idrac_firmware", label: "iDRAC Firmware" },
+    ];
+
+    exportToCSV(group.servers, columns, `servers-${group.name.toLowerCase().replace(/\s+/g, '-')}`);
+    toast({ 
+      title: "Export successful", 
+      description: `Exported ${group.servers.length} servers from "${group.name}"` 
+    });
   };
 
   const getStatusBadge = (server: Server) => {
@@ -731,29 +788,139 @@ export function ServersTable({
                 displayGroups.map((group) => {
                   const isCollapsed = collapsedGroups.has(group.id);
                   const isGroupSelected = selectedGroupId === group.id;
+                  const serverIds = group.servers.map(s => s.id);
+                  const isVCenterCluster = group.type === 'vcenter';
+                  const isManualGroup = group.type === 'manual';
+                  const allSelected = serverIds.every(id => selectedServers.has(id));
 
                   return (
                     <Fragment key={group.id}>
-                      {/* Group Header Row */}
-                      <TableRow
-                        key={`group-${group.id}`}
-                        className={`cursor-pointer hover:bg-accent/50 font-medium ${isGroupSelected ? "bg-accent" : "bg-muted/30"}`}
-                        onClick={() => {
-                          toggleGroup(group.id);
-                          onGroupClick(group.id);
-                        }}
-                      >
-                        <TableCell colSpan={10} className="py-2 px-3">
-                          <div className="flex items-center gap-2">
-                            {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                            <span className="font-semibold">{group.name}</span>
-                            <span className="text-xs text-muted-foreground">
-                              ({group.servers.length} servers, {group.onlineCount} online
-                              {group.linkedCount !== undefined && `, ${group.linkedCount} linked`})
-                            </span>
-                          </div>
-                        </TableCell>
-                      </TableRow>
+                      {/* Group Header Row with Context Menu */}
+                      <ContextMenu>
+                        <ContextMenuTrigger asChild>
+                          <TableRow
+                            key={`group-${group.id}`}
+                            className={`cursor-pointer hover:bg-accent/50 font-medium ${isGroupSelected ? "bg-accent" : "bg-muted/30"}`}
+                            onClick={() => {
+                              toggleGroup(group.id);
+                              onGroupClick(group.id);
+                            }}
+                          >
+                            <TableCell colSpan={10} className="py-2 px-3">
+                              <div className="flex items-center gap-2">
+                                {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                                <span className="font-semibold">{group.name}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  ({group.servers.length} servers, {group.onlineCount} online
+                                  {group.linkedCount !== undefined && `, ${group.linkedCount} linked`})
+                                </span>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        </ContextMenuTrigger>
+                        
+                        <ContextMenuContent className="w-64 bg-background">
+                          {/* Selection Section */}
+                          <ContextMenuItem onClick={() => selectAllInGroup(serverIds)}>
+                            <CheckSquare className="mr-2 h-4 w-4" />
+                            {allSelected ? 'Deselect All Servers' : 'Select All Servers'}
+                          </ContextMenuItem>
+                          
+                          {/* vCenter Navigation - only for vCenter clusters */}
+                          {isVCenterCluster && onViewInVCenter && (
+                            <>
+                              <ContextMenuSeparator />
+                              <ContextMenuItem onClick={() => onViewInVCenter(group.name)}>
+                                <ExternalLink className="mr-2 h-4 w-4" />
+                                View in vCenter
+                              </ContextMenuItem>
+                            </>
+                          )}
+                          
+                          <ContextMenuSeparator />
+                          
+                          {/* Cluster Operations */}
+                          {onGroupUpdate && (
+                            <ContextMenuItem onClick={() => onGroupUpdate(group.id, group.type, serverIds)}>
+                              <Upload className="mr-2 h-4 w-4" />
+                              Rolling Cluster Update
+                            </ContextMenuItem>
+                          )}
+                          
+                          {isVCenterCluster && onGroupSafetyCheck && (
+                            <ContextMenuItem onClick={() => onGroupSafetyCheck(group.id, group.name)}>
+                              <ShieldCheck className="mr-2 h-4 w-4" />
+                              Pre-Flight Safety Check
+                            </ContextMenuItem>
+                          )}
+                          
+                          {onGroupFirmwareInventory && (
+                            <ContextMenuItem onClick={() => onGroupFirmwareInventory(serverIds)}>
+                              <Cpu className="mr-2 h-4 w-4" />
+                              Collect Firmware Inventory
+                            </ContextMenuItem>
+                          )}
+                          
+                          <ContextMenuSeparator />
+                          
+                          {/* Bulk Server Operations */}
+                          {onGroupRefreshAll && (
+                            <ContextMenuItem onClick={() => onGroupRefreshAll(serverIds)}>
+                              <RefreshCw className="mr-2 h-4 w-4" />
+                              Refresh All Inventory
+                            </ContextMenuItem>
+                          )}
+                          
+                          {onGroupHealthCheckAll && (
+                            <ContextMenuItem onClick={() => onGroupHealthCheckAll(serverIds)}>
+                              <Activity className="mr-2 h-4 w-4" />
+                              Health Check All
+                            </ContextMenuItem>
+                          )}
+                          
+                          {onGroupTestCredentials && (
+                            <ContextMenuItem onClick={() => onGroupTestCredentials(serverIds)}>
+                              <Key className="mr-2 h-4 w-4" />
+                              Test All Credentials
+                            </ContextMenuItem>
+                          )}
+                          
+                          <ContextMenuSeparator />
+                          
+                          {/* Export & Copy */}
+                          <ContextMenuItem onClick={() => handleExportGroupCSV(group)}>
+                            <Download className="mr-2 h-4 w-4" />
+                            Export to CSV
+                          </ContextMenuItem>
+                          
+                          <ContextMenuItem onClick={() => copyToClipboard(group.name, "Group Name")}>
+                            <ClipboardCopy className="mr-2 h-4 w-4" />
+                            Copy Group Name
+                          </ContextMenuItem>
+                          
+                          {/* Manual Group Management - only for manual groups */}
+                          {isManualGroup && (
+                            <>
+                              <ContextMenuSeparator />
+                              {onGroupRename && (
+                                <ContextMenuItem onClick={() => onGroupRename(group.id)}>
+                                  <Edit className="mr-2 h-4 w-4" />
+                                  Rename Group
+                                </ContextMenuItem>
+                              )}
+                              {onGroupDelete && (
+                                <ContextMenuItem 
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={() => onGroupDelete(group.id)}
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" />
+                                  Delete Group
+                                </ContextMenuItem>
+                              )}
+                            </>
+                          )}
+                        </ContextMenuContent>
+                      </ContextMenu>
 
                       {/* Server Rows */}
                       {!isCollapsed &&
