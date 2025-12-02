@@ -1,14 +1,11 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuCheckboxItem,
   DropdownMenuLabel,
@@ -16,8 +13,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import {
-  Search,
   Power,
   PowerOff,
   Loader2,
@@ -27,17 +24,16 @@ import {
   Download,
   Columns3,
   Save,
-  Trash2,
   HardDrive,
   X,
 } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
 import type { VCenterVM } from "@/hooks/useVCenterData";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { useSavedViews } from "@/hooks/useSavedViews";
 import { usePagination } from "@/hooks/usePagination";
 import { TablePagination } from "@/components/ui/table-pagination";
+import { TruncatedCell } from "@/components/ui/truncated-cell";
 import { toast } from "sonner";
 
 interface VMsTableProps {
@@ -297,6 +293,58 @@ export function VMsTable({
 
   return (
     <div className="flex flex-col h-full bg-background overflow-hidden">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between gap-2 px-4 py-2 border-b">
+        <div className="flex items-center gap-2">
+          {selectedVms.size > 0 && (
+            <span className="text-sm text-muted-foreground">{selectedVms.size} selected</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Columns3 className="mr-1 h-4 w-4" /> Columns
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuCheckboxItem checked={isColVisible("name")} onCheckedChange={() => effectiveToggleColumn("name")}>
+                VM Name
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("power")} onCheckedChange={() => effectiveToggleColumn("power")}>
+                Power State
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("ip")} onCheckedChange={() => effectiveToggleColumn("ip")}>
+                IP Address
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("resources")} onCheckedChange={() => effectiveToggleColumn("resources")}>
+                CPU / RAM
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("disk")} onCheckedChange={() => effectiveToggleColumn("disk")}>
+                Disk
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("os")} onCheckedChange={() => effectiveToggleColumn("os")}>
+                Guest OS
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("tools")} onCheckedChange={() => effectiveToggleColumn("tools")}>
+                VMware Tools
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("cluster")} onCheckedChange={() => effectiveToggleColumn("cluster")}>
+                Cluster
+              </DropdownMenuCheckboxItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button variant="outline" size="sm" onClick={handleExportCSV}>
+            <Download className="mr-1 h-4 w-4" /> Export
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setSaveDialogOpen(true)}>
+            <Save className="mr-1 h-4 w-4" /> Save View
+          </Button>
+        </div>
+      </div>
+
       {filteredVms.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-4">
             <div className="text-center text-muted-foreground">
@@ -414,7 +462,9 @@ export function VMsTable({
                         <TableCell className="text-sm">{vm.disk_gb ? vm.disk_gb.toFixed(0) : "0"}</TableCell>
                       )}
                       {isColVisible("os") && (
-                        <TableCell className="text-sm truncate max-w-[180px]">{vm.guest_os || "Unknown"}</TableCell>
+                        <TableCell className="text-sm">
+                          <TruncatedCell value={vm.guest_os || "Unknown"} maxWidth="180px" />
+                        </TableCell>
                       )}
                       {isColVisible("tools") && <TableCell>{getToolsStatusBadge(vm.tools_status)}</TableCell>}
                       {isColVisible("cluster") && <TableCell className="text-sm">{vm.cluster_name || "N/A"}</TableCell>}

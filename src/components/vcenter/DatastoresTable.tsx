@@ -1,13 +1,18 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Progress } from "@/components/ui/progress";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuCheckboxItem, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { Search, HardDrive, Server, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Download, Columns3, Filter } from "lucide-react";
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuTrigger, 
+  DropdownMenuCheckboxItem, 
+  DropdownMenuLabel, 
+  DropdownMenuSeparator 
+} from "@/components/ui/dropdown-menu";
+import { HardDrive, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Download, Columns3, Server } from "lucide-react";
 import type { VCenterDatastore } from "@/hooks/useVCenterData";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
@@ -143,6 +148,56 @@ export function DatastoresTable({
 
   return (
     <div className="flex flex-col h-full bg-background overflow-hidden">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between gap-2 px-4 py-2 border-b">
+        <div className="flex items-center gap-2">
+          {selectedDatastores.size > 0 && (
+            <span className="text-sm text-muted-foreground">{selectedDatastores.size} selected</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Columns3 className="mr-1 h-4 w-4" /> Columns
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuCheckboxItem checked={isColVisible("name")} onCheckedChange={() => effectiveToggleColumn("name")}>
+                Name
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("type")} onCheckedChange={() => effectiveToggleColumn("type")}>
+                Type
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("capacity")} onCheckedChange={() => effectiveToggleColumn("capacity")}>
+                Capacity
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("free")} onCheckedChange={() => effectiveToggleColumn("free")}>
+                Free
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("usage")} onCheckedChange={() => effectiveToggleColumn("usage")}>
+                Usage
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("hosts")} onCheckedChange={() => effectiveToggleColumn("hosts")}>
+                Hosts
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("vms")} onCheckedChange={() => effectiveToggleColumn("vms")}>
+                VMs
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColVisible("status")} onCheckedChange={() => effectiveToggleColumn("status")}>
+                Status
+              </DropdownMenuCheckboxItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button variant="outline" size="sm" onClick={handleExportCSV}>
+            <Download className="mr-1 h-4 w-4" /> Export
+          </Button>
+        </div>
+      </div>
+
+      {/* Table */}
       <div className="overflow-auto flex-1">
           <Table>
             <TableHeader className="sticky top-0 bg-muted z-10">

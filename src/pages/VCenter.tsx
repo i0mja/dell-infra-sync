@@ -582,16 +582,6 @@ export default function VCenter() {
             </TabsList>
             
             <div className="flex-1" />
-            
-            {/* Action Buttons */}
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm">
-                <Columns3 className="mr-1 h-4 w-4" /> Columns
-              </Button>
-              <Button variant="outline" size="sm">
-                <Download className="mr-1 h-4 w-4" /> Export
-              </Button>
-            </div>
           </div>
 
           {/* Filter Toolbars */}
