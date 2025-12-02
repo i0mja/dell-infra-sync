@@ -218,3 +218,52 @@ class IDMHandler(BaseHandler):
                 completed_at=datetime.now().isoformat(),
                 details={'error': str(e)}
             )
+    
+    def execute_idm_search_groups(self, job: Dict):
+        """Search for groups in FreeIPA LDAP."""
+        try:
+            self.log(f"Starting IDM group search job: {job['id']}")
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            details = job.get('details') or {}
+            search_term = details.get('search_term', '')
+            max_results = details.get('max_results', 100)
+            
+            # Get IDM settings
+            idm_settings = self.executor.get_idm_settings()
+            if not idm_settings:
+                raise ValueError("IDM not configured")
+            
+            bind_dn = idm_settings.get('bind_dn')
+            bind_password = self.executor.decrypt_bind_password(
+                idm_settings.get('bind_password_encrypted')
+            )
+            
+            if not bind_dn or not bind_password:
+                raise ValueError("Service account credentials required")
+            
+            authenticator = self.executor.create_freeipa_authenticator(idm_settings)
+            if not authenticator:
+                raise ValueError("Failed to initialize FreeIPA authenticator")
+            
+            # Search groups
+            self.log(f"Searching groups matching: '{search_term}' (max {max_results})")
+            groups = authenticator.search_groups(bind_dn, bind_password, search_term, max_results)
+            
+            self.log(f"[OK] Found {len(groups)} group(s)")
+            
+            self.update_job_status(
+                job['id'],
+                'completed',
+                completed_at=datetime.now().isoformat(),
+                details={'groups': groups, 'count': len(groups)}
+            )
+            
+        except Exception as e:
+            self.log(f"IDM group search failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e), 'groups': []}
+            )
