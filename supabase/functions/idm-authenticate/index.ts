@@ -129,6 +129,11 @@ serve(async (req) => {
         console.log('[IDM Auth] Job completed successfully');
         const authResult = updatedJob.details?.auth_result;
 
+        const userAttributes =
+          authResult?.user_attributes ||
+          authResult?.user_info ||
+          {};
+
         if (!authResult?.success) {
           // Record failed attempt
           await supabase.rpc('record_auth_attempt', {
@@ -157,7 +162,7 @@ serve(async (req) => {
         });
 
         // Check if user exists by idm_uid
-        const idmUid = authResult.user_attributes?.uid || username;
+        const idmUid = userAttributes.uid || username;
         const { data: existingProfile } = await supabase
           .from('profiles')
           .select('id, email')
@@ -181,9 +186,9 @@ serve(async (req) => {
               idm_user_dn: authResult.user_dn,
               idm_groups: authResult.groups || [],
               idm_disabled: false,
-              idm_mail: authResult.user_attributes?.email,
-              idm_title: authResult.user_attributes?.title,
-              idm_department: authResult.user_attributes?.department,
+              idm_mail: userAttributes.email,
+              idm_title: userAttributes.title,
+              idm_department: userAttributes.department,
               last_idm_sync: new Date().toISOString()
             })
             .eq('id', userId);
@@ -192,8 +197,8 @@ serve(async (req) => {
           // JIT user provisioning - create new user
           console.log(`[IDM Auth] Creating new user via JIT provisioning`);
           
-          email = authResult.user_attributes?.email || `${idmUid}@idm.local`;
-          const fullName = authResult.user_attributes?.full_name || idmUid;
+          email = userAttributes.email || `${idmUid}@idm.local`;
+          const fullName = userAttributes.full_name || userAttributes.displayName || idmUid;
 
           const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
             email,
@@ -225,9 +230,9 @@ serve(async (req) => {
               idm_user_dn: authResult.user_dn,
               idm_groups: authResult.groups || [],
               idm_disabled: false,
-              idm_mail: authResult.user_attributes?.email,
-              idm_title: authResult.user_attributes?.title,
-              idm_department: authResult.user_attributes?.department,
+              idm_mail: userAttributes.email,
+              idm_title: userAttributes.title,
+              idm_department: userAttributes.department,
               last_idm_sync: new Date().toISOString()
             })
             .eq('id', userId);
