@@ -351,7 +351,7 @@ fi
 
 # Apply Supabase migrations from the repository for local deployment
 echo "📊 Applying Supabase migrations..."
-MIGRATIONS_DIR="$(dirname "$0")/../supabase/migrations"
+MIGRATIONS_DIR="$PROJECT_ROOT/supabase/migrations"
 
 if [ ! -d "$MIGRATIONS_DIR" ]; then
     echo "❌ CRITICAL: Supabase migrations not found!"
