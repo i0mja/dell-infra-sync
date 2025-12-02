@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
 import { ActivityStatsBar } from "@/components/activity/ActivityStatsBar";
 import { JobsFilterToolbar } from "@/components/activity/JobsFilterToolbar";
 import { CommandsFilterToolbar } from "@/components/activity/CommandsFilterToolbar";
@@ -10,6 +11,7 @@ import { CommandDetailsSidebar } from "@/components/activity/CommandDetailsSideb
 import { CommandDetailDialog } from "@/components/activity/CommandDetailDialog";
 import { JobsTable, Job } from "@/components/activity/JobsTable";
 import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
+import { StaleJobWarning } from "@/components/activity/StaleJobWarning";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -79,6 +81,11 @@ export default function ActivityMonitor() {
   const queryClient = useQueryClient();
   const { userRole } = useAuth();
   const canManage = userRole === 'admin' || userRole === 'operator';
+  const navigate = useNavigate();
+  
+  // Stale job detection state
+  const [staleWarningDismissed, setStaleWarningDismissed] = useState(false);
+  const lastStaleToastTime = useRef<number>(0);
 
   // Column visibility for jobs
   const { visibleColumns: jobsColumns, isColumnVisible: isJobColVisible, toggleColumn: toggleJobColumn } = useColumnVisibility(
@@ -523,6 +530,48 @@ export default function ActivityMonitor() {
     return true;
   });
 
+  // Detect stale jobs (pending for over 60 seconds without being picked up)
+  const STALE_THRESHOLD_SECONDS = 60;
+  const staleJobs = useMemo(() => {
+    const now = Date.now();
+    return jobs.filter(job => {
+      if (job.status !== 'pending' || job.started_at) return false;
+      const createdAt = new Date(job.created_at).getTime();
+      const ageSeconds = (now - createdAt) / 1000;
+      return ageSeconds > STALE_THRESHOLD_SECONDS;
+    });
+  }, [jobs]);
+
+  // Show toast notification when stale jobs appear (debounced)
+  useEffect(() => {
+    if (staleJobs.length > 0 && !staleWarningDismissed) {
+      const now = Date.now();
+      // Only show toast every 30 seconds to avoid spam
+      if (now - lastStaleToastTime.current > 30000) {
+        lastStaleToastTime.current = now;
+        toast.warning(`${staleJobs.length} job(s) waiting for Job Executor`, {
+          description: "Jobs have been pending for over 60 seconds. Job Executor may not be running.",
+          action: {
+            label: "View System Health",
+            onClick: () => navigate('/settings/system')
+          }
+        });
+      }
+    }
+  }, [staleJobs.length, staleWarningDismissed, navigate]);
+
+  // Reset dismissed state when stale jobs clear
+  useEffect(() => {
+    if (staleJobs.length === 0) {
+      setStaleWarningDismissed(false);
+    }
+  }, [staleJobs.length]);
+
+  const handleCancelStaleJobs = async (jobIds: string[]) => {
+    await handleBulkCancel(jobIds);
+    setStaleWarningDismissed(true);
+  };
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <ActivityStatsBar
@@ -687,7 +736,15 @@ export default function ActivityMonitor() {
           )}
 
           {/* Tab content */}
-          <TabsContent value="operations" className="flex-1 mt-0 overflow-hidden">
+          <TabsContent value="operations" className="flex-1 mt-0 overflow-hidden px-4">
+            {/* Stale job warning */}
+            {!staleWarningDismissed && staleJobs.length > 0 && (
+              <StaleJobWarning
+                staleJobs={staleJobs}
+                onCancelJobs={handleCancelStaleJobs}
+                onDismiss={() => setStaleWarningDismissed(true)}
+              />
+            )}
             <JobsTable
               jobs={filteredJobs}
               onJobClick={handleJobClick}
