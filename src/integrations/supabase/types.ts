@@ -3214,6 +3214,7 @@ export type Database = {
         | "firmware_inventory_scan"
         | "idm_search_groups"
         | "idm_test_auth"
+        | "idm_network_check"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -3389,6 +3390,7 @@ export const Constants = {
         "firmware_inventory_scan",
         "idm_search_groups",
         "idm_test_auth",
+        "idm_network_check",
       ],
       operation_type: [
         "idrac_api",

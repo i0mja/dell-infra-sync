@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { useIdmSettings } from '@/hooks/useIdmSettings';
-import { AlertCircle, Loader2, Save, TestTube, Lock, Unlock, CheckCircle, XCircle, Plus, X } from 'lucide-react';
+import { AlertCircle, Loader2, Save, TestTube, Lock, Unlock, CheckCircle, XCircle, Plus, X, Wifi } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 
 // Helper functions for auto-derivation
@@ -49,6 +49,10 @@ export function IdmConnectionSettings() {
   const [testAuthPassword, setTestAuthPassword] = useState('');
   const [testAuthStatus, setTestAuthStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testAuthResult, setTestAuthResult] = useState<any>(null);
+  
+  // Network connectivity test state
+  const [networkCheckStatus, setNetworkCheckStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [networkCheckResult, setNetworkCheckResult] = useState<any>(null);
   
   // AD Trust domains
   const [trustedDomains, setTrustedDomains] = useState<string[]>([]);
@@ -294,8 +298,75 @@ export function IdmConnectionSettings() {
     poll();
   };
 
+  const handleNetworkCheck = async () => {
+    setNetworkCheckStatus('testing');
+    setNetworkCheckResult(null);
+    
+    const { data: job, error } = await supabase
+      .from('jobs')
+      .insert({
+        job_type: 'idm_network_check' as any,
+        status: 'pending',
+        details: {
+          server_host: serverHost,
+          server_port: serverPort,
+          ldaps_port: ldapsPort,
+          use_ldaps: useLdaps,
+          ad_dc_host: adDcHost || null,
+          ad_dc_port: adDcPort,
+          ad_dc_use_ssl: adDcUseSsl,
+        },
+        created_by: (await supabase.auth.getUser()).data.user?.id || '',
+      })
+      .select()
+      .single();
+    
+    if (error || !job) {
+      setNetworkCheckStatus('error');
+      setNetworkCheckResult({ error: 'Failed to create network check job' });
+      return;
+    }
+    
+    pollNetworkCheckStatus(job.id);
+  };
+  
+  const pollNetworkCheckStatus = async (jobId: string) => {
+    const maxAttempts = 30;
+    let attempts = 0;
+    
+    const poll = async () => {
+      attempts++;
+      
+      const { data: job } = await supabase
+        .from('jobs')
+        .select('*')
+        .eq('id', jobId)
+        .single();
+      
+      if (!job) return;
+      
+      if (job.status === 'completed' || job.status === 'failed') {
+        const details = job.details as any;
+        const results = details?.network_results || {};
+        setNetworkCheckResult(results);
+        setNetworkCheckStatus(results?.summary?.all_tests_passed ? 'success' : 'error');
+        return;
+      }
+      
+      if (attempts < maxAttempts && (job.status === 'pending' || job.status === 'running')) {
+        setTimeout(poll, 1000);
+      } else {
+        setNetworkCheckStatus('error');
+        setNetworkCheckResult({ error: 'Network check timed out' });
+      }
+    };
+    
+    poll();
+  };
+
   const canTestConnection = serverHost && bindDn && (bindPassword || settings?.bind_password_encrypted) && baseDn;
   const canTestAuth = testAuthUsername && testAuthPassword && authMode !== 'local_only';
+  const canNetworkCheck = serverHost;
 
   if (loading) {
     return (
@@ -713,6 +784,163 @@ export function IdmConnectionSettings() {
                   </Alert>
                 )}
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Network Connectivity Test */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Wifi className="h-5 w-5" />
+                Network Connectivity Test
+              </CardTitle>
+              <CardDescription>
+                Test socket-level connectivity to FreeIPA and AD DC servers before attempting LDAP authentication
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Button 
+                onClick={handleNetworkCheck} 
+                variant="outline"
+                disabled={!canNetworkCheck || networkCheckStatus === 'testing'}
+              >
+                {networkCheckStatus === 'testing' ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Testing Network...
+                  </>
+                ) : (
+                  <>
+                    <Wifi className="mr-2 h-4 w-4" />
+                    Test Network Connectivity
+                  </>
+                )}
+              </Button>
+              
+              {networkCheckResult && (
+                <div className="space-y-3">
+                  {/* FreeIPA Results */}
+                  {networkCheckResult.freeipa && Object.keys(networkCheckResult.freeipa).length > 0 && (
+                    <div className="p-3 border rounded-lg">
+                      <h4 className="font-medium mb-2 flex items-center gap-2">
+                        FreeIPA Server
+                        <span className="text-xs font-mono text-muted-foreground">
+                          ({serverHost}:{useLdaps ? ldapsPort : serverPort})
+                        </span>
+                        {networkCheckResult.summary?.freeipa_reachable ? (
+                          <Badge variant="default" className="bg-green-600">Reachable</Badge>
+                        ) : (
+                          <Badge variant="destructive">Unreachable</Badge>
+                        )}
+                      </h4>
+                      <div className="grid grid-cols-3 gap-2 text-sm">
+                        {networkCheckResult.freeipa.dns && (
+                          <div className={`p-2 rounded ${networkCheckResult.freeipa.dns.success ? 'bg-green-50 dark:bg-green-950/20' : 'bg-red-50 dark:bg-red-950/20'}`}>
+                            <div className="flex items-center gap-1">
+                              {networkCheckResult.freeipa.dns.success ? <CheckCircle className="h-3 w-3 text-green-600" /> : <XCircle className="h-3 w-3 text-red-600" />}
+                              <span className="font-medium">DNS</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1">{networkCheckResult.freeipa.dns.message}</p>
+                          </div>
+                        )}
+                        {networkCheckResult.freeipa.port && (
+                          <div className={`p-2 rounded ${networkCheckResult.freeipa.port.success ? 'bg-green-50 dark:bg-green-950/20' : 'bg-red-50 dark:bg-red-950/20'}`}>
+                            <div className="flex items-center gap-1">
+                              {networkCheckResult.freeipa.port.success ? <CheckCircle className="h-3 w-3 text-green-600" /> : <XCircle className="h-3 w-3 text-red-600" />}
+                              <span className="font-medium">Port</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1">{networkCheckResult.freeipa.port.message}</p>
+                          </div>
+                        )}
+                        {networkCheckResult.freeipa.ssl && (
+                          <div className={`p-2 rounded ${networkCheckResult.freeipa.ssl.success ? 'bg-green-50 dark:bg-green-950/20' : 'bg-red-50 dark:bg-red-950/20'}`}>
+                            <div className="flex items-center gap-1">
+                              {networkCheckResult.freeipa.ssl.success ? <CheckCircle className="h-3 w-3 text-green-600" /> : <XCircle className="h-3 w-3 text-red-600" />}
+                              <span className="font-medium">SSL</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1">{networkCheckResult.freeipa.ssl.message}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* AD DC Results (if configured) */}
+                  {networkCheckResult.ad_dc && Object.keys(networkCheckResult.ad_dc).length > 0 && (
+                    <div className="p-3 border rounded-lg">
+                      <h4 className="font-medium mb-2 flex items-center gap-2">
+                        AD Domain Controller
+                        <span className="text-xs font-mono text-muted-foreground">
+                          ({adDcHost}:{adDcPort})
+                        </span>
+                        {networkCheckResult.summary?.ad_dc_reachable ? (
+                          <Badge variant="default" className="bg-green-600">Reachable</Badge>
+                        ) : (
+                          <Badge variant="destructive">Unreachable</Badge>
+                        )}
+                      </h4>
+                      <div className="grid grid-cols-3 gap-2 text-sm">
+                        {networkCheckResult.ad_dc.dns && (
+                          <div className={`p-2 rounded ${networkCheckResult.ad_dc.dns.success ? 'bg-green-50 dark:bg-green-950/20' : 'bg-red-50 dark:bg-red-950/20'}`}>
+                            <div className="flex items-center gap-1">
+                              {networkCheckResult.ad_dc.dns.success ? <CheckCircle className="h-3 w-3 text-green-600" /> : <XCircle className="h-3 w-3 text-red-600" />}
+                              <span className="font-medium">DNS</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1">{networkCheckResult.ad_dc.dns.message}</p>
+                          </div>
+                        )}
+                        {networkCheckResult.ad_dc.port && (
+                          <div className={`p-2 rounded ${networkCheckResult.ad_dc.port.success ? 'bg-green-50 dark:bg-green-950/20' : 'bg-red-50 dark:bg-red-950/20'}`}>
+                            <div className="flex items-center gap-1">
+                              {networkCheckResult.ad_dc.port.success ? <CheckCircle className="h-3 w-3 text-green-600" /> : <XCircle className="h-3 w-3 text-red-600" />}
+                              <span className="font-medium">Port</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1">{networkCheckResult.ad_dc.port.message}</p>
+                          </div>
+                        )}
+                        {networkCheckResult.ad_dc.ssl && (
+                          <div className={`p-2 rounded ${networkCheckResult.ad_dc.ssl.success ? 'bg-green-50 dark:bg-green-950/20' : 'bg-red-50 dark:bg-red-950/20'}`}>
+                            <div className="flex items-center gap-1">
+                              {networkCheckResult.ad_dc.ssl.success ? <CheckCircle className="h-3 w-3 text-green-600" /> : <XCircle className="h-3 w-3 text-red-600" />}
+                              <span className="font-medium">SSL</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1">{networkCheckResult.ad_dc.ssl.message}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Summary */}
+                  {networkCheckResult.summary && (
+                    <Alert className={networkCheckResult.summary.all_tests_passed ? 'border-green-500 bg-green-50 dark:bg-green-950/20' : 'border-red-500 bg-red-50 dark:bg-red-950/20'}>
+                      {networkCheckResult.summary.all_tests_passed ? (
+                        <CheckCircle className="h-4 w-4 text-green-600" />
+                      ) : (
+                        <XCircle className="h-4 w-4 text-red-600" />
+                      )}
+                      <AlertDescription>
+                        {networkCheckResult.summary.all_tests_passed 
+                          ? 'All network connectivity tests passed. LDAP authentication should work.'
+                          : 'Some network tests failed. Check firewall rules and DNS configuration.'}
+                        {networkCheckResult.summary.total_time_ms && (
+                          <span className="text-xs text-muted-foreground ml-2">
+                            ({networkCheckResult.summary.total_time_ms}ms)
+                          </span>
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  
+                  {/* Error state */}
+                  {networkCheckResult.error && (
+                    <Alert variant="destructive">
+                      <XCircle className="h-4 w-4" />
+                      <AlertDescription>{networkCheckResult.error}</AlertDescription>
+                    </Alert>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
 
