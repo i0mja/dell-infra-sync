@@ -10,6 +10,7 @@ against on-premise FreeIPA LDAP servers via the local network, supporting:
 - FreeIPA-specific attribute extraction (uid, groups, memberOf)
 - Service account-based user sync operations
 - AD Trust users (users from trusted Active Directory domains)
+- AD DC pass-through authentication for AD Trust users
 """
 
 import ssl
@@ -53,6 +54,8 @@ class FreeIPAAuthenticator:
         ca_certificate: Optional[str] = None,
         connection_timeout: int = 10,
         trusted_domains: Optional[List[str]] = None,
+        ad_dc_host: Optional[str] = None,
+        ad_dc_port: int = 636,
     ):
         """
         Initialize FreeIPA authenticator.
@@ -69,6 +72,8 @@ class FreeIPAAuthenticator:
             ca_certificate: Path to CA certificate file for validation
             connection_timeout: Connection timeout in seconds
             trusted_domains: List of trusted AD domain names (e.g., ['neopost.ad', 'corp.local'])
+            ad_dc_host: Active Directory Domain Controller hostname for pass-through auth
+            ad_dc_port: AD DC LDAPS port (default 636)
         """
         if not LDAP3_AVAILABLE:
             raise ImportError("ldap3 library required: pip install ldap3")
@@ -83,11 +88,14 @@ class FreeIPAAuthenticator:
         self.ca_certificate = ca_certificate
         self.connection_timeout = connection_timeout
         self.trusted_domains = [d.lower() for d in (trusted_domains or [])]
+        self.ad_dc_host = ad_dc_host
+        self.ad_dc_port = ad_dc_port
         
         # Derive IPA realm from base_dn (dc=idm,dc=neopost,dc=grp -> idm.neopost.grp)
         self.ipa_realm = self._base_dn_to_realm(base_dn)
         
         self._server = None
+        self._ad_server = None
     
     def _base_dn_to_realm(self, base_dn: str) -> str:
         """Convert base DN to realm/domain format."""
@@ -118,6 +126,26 @@ class FreeIPAAuthenticator:
                 connect_timeout=self.connection_timeout,
             )
         return self._server
+    
+    def _get_ad_server(self) -> Optional[Server]:
+        """Get or create AD Domain Controller server connection."""
+        if not self.ad_dc_host:
+            return None
+            
+        if self._ad_server is None:
+            tls_config = Tls(
+                validate=ssl.CERT_NONE,  # AD DCs often have self-signed certs
+            )
+            
+            self._ad_server = Server(
+                self.ad_dc_host,
+                port=self.ad_dc_port,
+                use_ssl=True,
+                tls=tls_config,
+                get_info=ALL,
+                connect_timeout=self.connection_timeout,
+            )
+        return self._ad_server
     
     def _build_user_dn(self, username: str) -> str:
         """Build user DN from username for native FreeIPA users."""
@@ -212,6 +240,108 @@ class FreeIPAAuthenticator:
                 "response_time_ms": elapsed_ms,
             }
     
+    def _authenticate_via_ad_dc(self, username: str, password: str, domain: str) -> Dict:
+        """
+        Authenticate AD Trust user directly against the AD Domain Controller.
+        
+        This is the pass-through method that bypasses FreeIPA for authentication
+        but still uses FreeIPA for group membership lookup.
+        
+        Args:
+            username: Full username with domain (user@domain)
+            password: User's password
+            domain: AD domain name
+            
+        Returns:
+            Dict with success, user_dn, user_info, error, response_time_ms
+        """
+        start_time = datetime.now()
+        
+        ad_server = self._get_ad_server()
+        if not ad_server:
+            return {
+                "success": False,
+                "error": "AD Domain Controller not configured (ad_dc_host)",
+                "error_details": "Configure AD DC host in IDM settings for AD Trust authentication",
+                "response_time_ms": 0,
+            }
+        
+        logger.info(f"Attempting AD DC pass-through authentication for {username} via {self.ad_dc_host}")
+        
+        try:
+            # Bind to AD DC with user's credentials
+            # AD accepts UPN format (user@domain) or DOMAIN\user
+            conn = Connection(
+                ad_server,
+                user=username,
+                password=password,
+                auto_bind=True,
+                raise_exceptions=True,
+            )
+            
+            logger.info(f"AD DC bind successful for {username}")
+            
+            # Try to get user attributes from AD
+            user_info = {
+                "uid": username,
+                "full_name": None,
+                "email": None,
+            }
+            
+            # Search for user in AD to get attributes
+            # Use the domain part to construct search base
+            ad_base_dn = ','.join([f"dc={p}" for p in domain.split('.')])
+            user_part = username.split('@')[0]
+            
+            try:
+                conn.search(
+                    search_base=ad_base_dn,
+                    search_filter=f"(sAMAccountName={user_part})",
+                    search_scope=SUBTREE,
+                    attributes=['cn', 'mail', 'displayName', 'memberOf', 'distinguishedName'],
+                )
+                
+                if conn.entries:
+                    entry = conn.entries[0]
+                    user_info["full_name"] = str(entry.displayName) if hasattr(entry, 'displayName') else str(entry.cn) if hasattr(entry, 'cn') else None
+                    user_info["email"] = str(entry.mail) if hasattr(entry, 'mail') else None
+                    user_info["ad_dn"] = str(entry.distinguishedName) if hasattr(entry, 'distinguishedName') else None
+                    
+                    logger.info(f"Retrieved AD user attributes for {username}")
+            except Exception as e:
+                logger.warning(f"Could not retrieve AD user attributes: {e}")
+            
+            conn.unbind()
+            
+            elapsed_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            
+            return {
+                "success": True,
+                "user_dn": f"ad_trust:{username}",
+                "user_info": user_info,
+                "ad_authenticated": True,
+                "response_time_ms": elapsed_ms,
+            }
+            
+        except LDAPBindError as e:
+            elapsed_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            logger.error(f"AD DC bind failed for {username}: {e}")
+            return {
+                "success": False,
+                "error": "Invalid credentials",
+                "error_details": f"AD DC authentication failed: {str(e)}",
+                "response_time_ms": elapsed_ms,
+            }
+        except LDAPException as e:
+            elapsed_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            logger.error(f"AD DC LDAP error for {username}: {e}")
+            return {
+                "success": False,
+                "error": f"LDAP error: {str(e)}",
+                "error_type": type(e).__name__,
+                "response_time_ms": elapsed_ms,
+            }
+    
     def authenticate_user(
         self,
         username: str,
@@ -224,7 +354,8 @@ class FreeIPAAuthenticator:
         
         Supports both native FreeIPA users and AD Trust users:
         - Native users: Bind with constructed DN (uid=user,cn=users,cn=accounts,dc=...)
-        - AD Trust users: Bind with UPN (user@AD.DOMAIN) and search cn=users,cn=compat
+        - AD Trust users with ad_dc_host: Pass-through to AD DC, then lookup groups in FreeIPA
+        - AD Trust users without ad_dc_host: Attempt FreeIPA compat tree bind
         
         Args:
             username: Username (uid) to authenticate - may include @domain for AD users
@@ -245,18 +376,44 @@ class FreeIPAAuthenticator:
         start_time = datetime.now()
         
         try:
-            server = self._get_server()
-            
             # Check if this is an AD trust user
             is_ad_user, clean_username, domain = self._is_ad_trust_user(username)
             
+            if is_ad_user and self.ad_dc_host:
+                # Use AD DC pass-through authentication
+                logger.info(f"Using AD DC pass-through for {username}")
+                ad_result = self._authenticate_via_ad_dc(username, password, domain)
+                
+                if not ad_result['success']:
+                    return ad_result
+                
+                # Authentication succeeded, now look up groups in FreeIPA compat tree
+                groups = self._lookup_ad_trust_groups_via_service_account(
+                    username, service_bind_dn, service_bind_password
+                )
+                
+                elapsed_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+                
+                return {
+                    "success": True,
+                    "user_dn": ad_result.get('user_dn'),
+                    "user_info": ad_result.get('user_info', {}),
+                    "groups": groups,
+                    "is_ad_trust_user": True,
+                    "ad_domain": domain,
+                    "auth_method": "ad_dc_passthrough",
+                    "response_time_ms": elapsed_ms,
+                }
+            
+            # Standard authentication (native FreeIPA or AD trust via compat tree)
+            server = self._get_server()
+            
             if is_ad_user:
-                # AD Trust users: bind with full UPN (user@AD.DOMAIN)
+                # AD Trust users without AD DC configured: try compat tree bind
                 bind_user = username  # Keep full user@domain for SASL/Kerberos
                 user_search_base = f"cn=users,cn=compat,{self.base_dn}"
-                # In compat tree, uid includes the full user@domain
                 user_filter = f"(uid={username})"
-                logger.info(f"AD Trust authentication for {username} - searching compat tree")
+                logger.info(f"AD Trust authentication for {username} - attempting compat tree bind")
             else:
                 # Native FreeIPA users: use DN bind
                 bind_user = self._build_user_dn(clean_username)
@@ -347,6 +504,7 @@ class FreeIPAAuthenticator:
                 "groups": groups,
                 "is_ad_trust_user": is_ad_user,
                 "ad_domain": domain if is_ad_user else None,
+                "auth_method": "freeipa_compat" if is_ad_user else "freeipa_native",
                 "response_time_ms": elapsed_ms,
             }
             
@@ -377,6 +535,50 @@ class FreeIPAAuthenticator:
                 "error_type": type(e).__name__,
                 "response_time_ms": elapsed_ms,
             }
+    
+    def _lookup_ad_trust_groups_via_service_account(
+        self,
+        username: str,
+        service_bind_dn: Optional[str],
+        service_bind_password: Optional[str],
+    ) -> List[str]:
+        """
+        Look up AD Trust user groups in FreeIPA compat tree using service account.
+        
+        This is used after AD DC pass-through authentication to get group memberships.
+        
+        Args:
+            username: Full username with domain (user@domain)
+            service_bind_dn: Service account DN
+            service_bind_password: Service account password
+            
+        Returns:
+            List of group DNs
+        """
+        groups = []
+        
+        if not service_bind_dn or not service_bind_password:
+            logger.warning("No service account configured for group lookup after AD DC auth")
+            return groups
+        
+        try:
+            server = self._get_server()
+            conn = Connection(
+                server,
+                user=service_bind_dn,
+                password=service_bind_password,
+                auto_bind=True,
+            )
+            
+            # Search compat groups tree
+            groups = self._search_ad_trust_groups(conn, username)
+            
+            conn.unbind()
+            
+        except Exception as e:
+            logger.warning(f"Error looking up groups for AD trust user {username}: {e}")
+        
+        return groups
     
     def _search_ad_trust_groups(self, conn: 'Connection', username: str) -> List[str]:
         """
@@ -447,44 +649,55 @@ class FreeIPAAuthenticator:
             
             if is_ad_user:
                 # Search compat tree for AD trust users
+                user_dn = None
                 user_search_base = f"cn=users,cn=compat,{self.base_dn}"
-                user_filter = f"(uid={username})"
-            else:
-                user_dn = self._build_user_dn(clean_username)
-                user_search_base = user_dn
-                user_filter = "(objectClass=*)"
-            
-            conn.search(
-                search_base=user_search_base,
-                search_filter=user_filter,
-                attributes=["memberOf"],
-            )
-            
-            groups = []
-            if conn.entries:
-                entry = conn.entries[0]
-                if hasattr(entry, 'memberOf'):
-                    groups = [str(g) for g in entry.memberOf]
-            
-            # Also check compat groups for AD trust users
-            if is_ad_user:
+                
+                conn.search(
+                    search_base=user_search_base,
+                    search_filter=f"(uid={username})",
+                    search_scope=SUBTREE,
+                    attributes=["memberOf"],
+                )
+                
+                groups = []
+                if conn.entries:
+                    user_entry = conn.entries[0]
+                    if hasattr(user_entry, 'memberOf'):
+                        groups = [str(g) for g in user_entry.memberOf]
+                
+                # Also check compat groups
                 compat_groups = self._search_ad_trust_groups(conn, username)
-                groups.extend(compat_groups)
-                # Remove duplicates
-                groups = list(set(groups))
+                groups.extend([g for g in compat_groups if g not in groups])
+                
+            else:
+                # Native FreeIPA user
+                user_dn = self._build_user_dn(clean_username)
+                
+                conn.search(
+                    search_base=f"{self.user_search_base},{self.base_dn}",
+                    search_filter=f"(uid={clean_username})",
+                    search_scope=SUBTREE,
+                    attributes=["memberOf"],
+                )
+                
+                groups = []
+                if conn.entries:
+                    user_entry = conn.entries[0]
+                    if hasattr(user_entry, 'memberOf'):
+                        groups = [str(g) for g in user_entry.memberOf]
             
             conn.unbind()
             return groups
             
         except Exception as e:
-            logger.error(f"Failed to get user groups: {e}")
+            logger.error(f"Error getting groups for {username}: {e}")
             return []
     
     def search_groups(
         self,
         bind_dn: str,
         bind_password: str,
-        search_term: str = "*",
+        search_term: str = "",
         max_results: int = 100,
     ) -> List[Dict]:
         """
@@ -493,11 +706,11 @@ class FreeIPAAuthenticator:
         Args:
             bind_dn: Service account DN
             bind_password: Service account password
-            search_term: Search pattern (supports wildcards)
-            max_results: Maximum number of results
+            search_term: Optional search filter (matches cn)
+            max_results: Maximum number of results to return
             
         Returns:
-            List of group dicts with dn, cn, description, member_count
+            List of group dicts with dn, cn, description
         """
         try:
             server = self._get_server()
@@ -508,53 +721,49 @@ class FreeIPAAuthenticator:
                 auto_bind=True,
             )
             
-            # FreeIPA group filter with search term
-            group_filter = f"(&(objectClass=groupOfNames)(cn=*{search_term}*))"
-            
-            group_attrs = ["cn", "description", "member"]
+            # Build search filter
+            if search_term:
+                search_filter = f"(&(objectClass=groupOfNames)(cn=*{search_term}*))"
+            else:
+                search_filter = "(objectClass=groupOfNames)"
             
             conn.search(
                 search_base=f"{self.group_search_base},{self.base_dn}",
-                search_filter=group_filter,
+                search_filter=search_filter,
                 search_scope=SUBTREE,
-                attributes=group_attrs,
+                attributes=["cn", "description"],
                 size_limit=max_results,
             )
             
             groups = []
             for entry in conn.entries:
-                group = {
+                groups.append({
                     "dn": str(entry.entry_dn),
                     "cn": str(entry.cn) if hasattr(entry, 'cn') else None,
                     "description": str(entry.description) if hasattr(entry, 'description') else None,
-                    "member_count": len(entry.member) if hasattr(entry, 'member') else 0,
-                }
-                if group["cn"]:
-                    groups.append(group)
+                })
             
             conn.unbind()
             return groups
             
         except Exception as e:
-            logger.error(f"Failed to search groups: {e}")
+            logger.error(f"Error searching groups: {e}")
             return []
     
     def sync_all_users(
         self,
         bind_dn: str,
         bind_password: str,
-        user_filter: str = "(objectClass=person)",
     ) -> List[Dict]:
         """
-        Sync all users from FreeIPA using service account.
+        Retrieve all users from FreeIPA for sync purposes.
         
         Args:
             bind_dn: Service account DN
             bind_password: Service account password
-            user_filter: LDAP filter for users
             
         Returns:
-            List of user dicts with dn, uid, full_name, email, groups, disabled
+            List of user dicts with uid, full_name, email, groups, etc.
         """
         try:
             server = self._get_server()
@@ -565,34 +774,39 @@ class FreeIPAAuthenticator:
                 auto_bind=True,
             )
             
-            user_attrs = [
-                "uid", "cn", "sn", "givenName", "mail",
-                "memberOf", "title", "departmentNumber", "nsAccountLock"
-            ]
-            
+            # Search for all users
             conn.search(
                 search_base=f"{self.user_search_base},{self.base_dn}",
-                search_filter=user_filter,
+                search_filter="(objectClass=person)",
                 search_scope=SUBTREE,
-                attributes=user_attrs,
+                attributes=[
+                    "uid", "cn", "sn", "givenName", "mail",
+                    "memberOf", "title", "departmentNumber",
+                    "nsAccountLock",
+                ],
             )
             
             users = []
             for entry in conn.entries:
                 user = {
-                    "dn": str(entry.entry_dn),
                     "uid": str(entry.uid) if hasattr(entry, 'uid') else None,
+                    "dn": str(entry.entry_dn),
                     "full_name": str(entry.cn) if hasattr(entry, 'cn') else None,
+                    "first_name": str(entry.givenName) if hasattr(entry, 'givenName') else None,
+                    "last_name": str(entry.sn) if hasattr(entry, 'sn') else None,
                     "email": str(entry.mail) if hasattr(entry, 'mail') else None,
-                    "groups": [str(g) for g in entry.memberOf] if hasattr(entry, 'memberOf') else [],
+                    "title": str(entry.title) if hasattr(entry, 'title') else None,
+                    "department": str(entry.departmentNumber) if hasattr(entry, 'departmentNumber') else None,
                     "disabled": str(entry.nsAccountLock).lower() == 'true' if hasattr(entry, 'nsAccountLock') else False,
+                    "groups": [str(g) for g in entry.memberOf] if hasattr(entry, 'memberOf') else [],
                 }
-                if user["uid"]:
+                if user["uid"]:  # Only include users with uid
                     users.append(user)
             
             conn.unbind()
+            logger.info(f"Retrieved {len(users)} users from FreeIPA")
             return users
             
         except Exception as e:
-            logger.error(f"Failed to sync users: {e}")
+            logger.error(f"Error syncing users: {e}")
             return []

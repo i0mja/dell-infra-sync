@@ -53,6 +53,10 @@ export function IdmConnectionSettings() {
   // AD Trust domains
   const [trustedDomains, setTrustedDomains] = useState<string[]>([]);
   const [newTrustedDomain, setNewTrustedDomain] = useState('');
+  
+  // AD Domain Controller for pass-through authentication
+  const [adDcHost, setAdDcHost] = useState('');
+  const [adDcPort, setAdDcPort] = useState(636);
 
   useEffect(() => {
     if (settings) {
@@ -66,6 +70,8 @@ export function IdmConnectionSettings() {
       setBaseDn(settings.base_dn || '');
       setBindDn(settings.bind_dn || '');
       setTrustedDomains(settings.trusted_domains || []);
+      setAdDcHost(settings.ad_dc_host || '');
+      setAdDcPort(settings.ad_dc_port || 636);
       
       // If there's a saved bind_dn, extract username for display
       if (settings.bind_dn) {
@@ -95,6 +101,8 @@ export function IdmConnectionSettings() {
       base_dn: baseDn,
       bind_dn: bindDn,
       trusted_domains: trustedDomains,
+      ad_dc_host: adDcHost || null,
+      ad_dc_port: adDcPort,
     };
 
     if (bindPassword) {
@@ -560,8 +568,8 @@ export function IdmConnectionSettings() {
               <Alert>
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>
-                  AD Trust users from these domains will authenticate using their full UPN (user@domain) 
-                  and be searched in the FreeIPA compat tree (cn=users,cn=compat).
+                  AD Trust users from these domains will authenticate using their full UPN (user@domain).
+                  Configure an AD Domain Controller below for direct pass-through authentication.
                 </AlertDescription>
               </Alert>
 
@@ -609,6 +617,51 @@ export function IdmConnectionSettings() {
                   will still attempt AD Trust authentication (permissive mode).
                 </p>
               )}
+
+              {/* AD Domain Controller Configuration */}
+              <div className="pt-4 border-t space-y-4">
+                <div>
+                  <Label className="text-base font-medium">AD Domain Controller (Pass-through)</Label>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    For AD Trust users, authenticate directly against the AD DC instead of FreeIPA.
+                    This is required if FreeIPA compat tree binding doesn't work for your AD Trust setup.
+                  </p>
+                </div>
+                
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="col-span-2 space-y-2">
+                    <Label>AD Domain Controller Host</Label>
+                    <Input
+                      placeholder="dc01.corp.local or 192.168.1.100"
+                      value={adDcHost}
+                      onChange={(e) => setAdDcHost(e.target.value)}
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Leave empty to use FreeIPA compat tree binding for AD users
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>AD DC LDAPS Port</Label>
+                    <Input
+                      type="number"
+                      value={adDcPort}
+                      onChange={(e) => setAdDcPort(parseInt(e.target.value) || 636)}
+                    />
+                    <p className="text-sm text-muted-foreground">Default: 636</p>
+                  </div>
+                </div>
+
+                {adDcHost && (
+                  <Alert className="border-blue-500 bg-blue-50 dark:bg-blue-950/20">
+                    <AlertCircle className="h-4 w-4 text-blue-600" />
+                    <AlertDescription className="text-blue-800 dark:text-blue-200">
+                      AD Trust users (e.g., user@{trustedDomains[0] || 'domain'}) will authenticate 
+                      directly against <span className="font-mono">{adDcHost}:{adDcPort}</span>, 
+                      then group lookups will use FreeIPA's compat tree.
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </div>
             </CardContent>
           </Card>
 
