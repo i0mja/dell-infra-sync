@@ -58,6 +58,7 @@ export function IdmConnectionSettings() {
   const [adDcHost, setAdDcHost] = useState('');
   const [adDcPort, setAdDcPort] = useState(636);
   const [adDcUseSsl, setAdDcUseSsl] = useState(true);
+  const [adDomainFqdn, setAdDomainFqdn] = useState('');
 
   useEffect(() => {
     if (settings) {
@@ -74,6 +75,7 @@ export function IdmConnectionSettings() {
       setAdDcHost(settings.ad_dc_host || '');
       setAdDcPort(settings.ad_dc_port || 636);
       setAdDcUseSsl(settings.ad_dc_use_ssl ?? true);
+      setAdDomainFqdn(settings.ad_domain_fqdn || '');
       
       // If there's a saved bind_dn, extract username for display
       if (settings.bind_dn) {
@@ -106,6 +108,7 @@ export function IdmConnectionSettings() {
       ad_dc_host: adDcHost || null,
       ad_dc_port: adDcPort,
       ad_dc_use_ssl: adDcUseSsl,
+      ad_domain_fqdn: adDomainFqdn || null,
     };
 
     if (bindPassword) {
@@ -631,41 +634,58 @@ export function IdmConnectionSettings() {
                   </p>
                 </div>
                 
-                <div className="grid grid-cols-4 gap-4">
-                  <div className="col-span-2 space-y-2">
-                    <Label>AD Domain Controller Host</Label>
+                <div className="space-y-4">
+                  {/* AD Domain FQDN - Important for NETBIOS mapping */}
+                  <div className="space-y-2">
+                    <Label>AD Domain FQDN</Label>
                     <Input
-                      placeholder="dc01.corp.local or 192.168.1.100"
-                      value={adDcHost}
-                      onChange={(e) => setAdDcHost(e.target.value)}
+                      placeholder="e.g., neopost.ad (the actual domain, not NETBIOS)"
+                      value={adDomainFqdn}
+                      onChange={(e) => setAdDomainFqdn(e.target.value)}
                     />
                     <p className="text-sm text-muted-foreground">
-                      Leave empty to use FreeIPA compat tree binding for AD users
+                      <strong>Important:</strong> Enter the actual AD domain FQDN (e.g., <code>neopost.ad</code>) 
+                      if it differs from the NETBIOS name (e.g., <code>NEOPOSTAD</code>). This ensures correct 
+                      LDAP search base construction when users log in with <code>NETBIOS\\username</code> format.
                     </p>
                   </div>
-                  <div className="space-y-2">
-                    <Label>AD DC Port</Label>
-                    <Input
-                      type="number"
-                      value={adDcPort}
-                      onChange={(e) => setAdDcPort(parseInt(e.target.value) || (adDcUseSsl ? 636 : 389))}
-                    />
-                    <p className="text-sm text-muted-foreground">{adDcUseSsl ? 'LDAPS: 636' : 'LDAP: 389'}</p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Use LDAPS</Label>
-                    <div className="flex items-center space-x-2 pt-2">
-                      <Switch
-                        checked={adDcUseSsl}
-                        onCheckedChange={(checked) => {
-                          setAdDcUseSsl(checked);
-                          // Auto-update port when toggling SSL
-                          setAdDcPort(checked ? 636 : 389);
-                        }}
+
+                  <div className="grid grid-cols-4 gap-4">
+                    <div className="col-span-2 space-y-2">
+                      <Label>AD Domain Controller Host</Label>
+                      <Input
+                        placeholder="dc01.corp.local or 192.168.1.100"
+                        value={adDcHost}
+                        onChange={(e) => setAdDcHost(e.target.value)}
                       />
-                      <span className="text-sm text-muted-foreground">
-                        {adDcUseSsl ? 'SSL/TLS' : 'Plain'}
-                      </span>
+                      <p className="text-sm text-muted-foreground">
+                        Leave empty to use FreeIPA compat tree binding for AD users
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>AD DC Port</Label>
+                      <Input
+                        type="number"
+                        value={adDcPort}
+                        onChange={(e) => setAdDcPort(parseInt(e.target.value) || (adDcUseSsl ? 636 : 389))}
+                      />
+                      <p className="text-sm text-muted-foreground">{adDcUseSsl ? 'LDAPS: 636' : 'LDAP: 389'}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Use LDAPS</Label>
+                      <div className="flex items-center space-x-2 pt-2">
+                        <Switch
+                          checked={adDcUseSsl}
+                          onCheckedChange={(checked) => {
+                            setAdDcUseSsl(checked);
+                            // Auto-update port when toggling SSL
+                            setAdDcPort(checked ? 636 : 389);
+                          }}
+                        />
+                        <span className="text-sm text-muted-foreground">
+                          {adDcUseSsl ? 'SSL/TLS' : 'Plain'}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>
