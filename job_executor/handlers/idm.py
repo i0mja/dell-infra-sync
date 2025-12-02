@@ -4,6 +4,7 @@ from typing import Dict, Optional
 from datetime import datetime
 from .base import BaseHandler
 import json
+import requests
 
 
 class IDMHandler(BaseHandler):
@@ -23,33 +24,63 @@ class IDMHandler(BaseHandler):
     ):
         """Log LDAP operation to idrac_commands table for Activity Monitor visibility."""
         try:
-            self.executor.supabase.table('idrac_commands').insert({
-                'job_id': job_id,
-                'operation_type': 'ldap_api',  # Use valid enum value
-                'endpoint': endpoint,
-                'full_url': full_url,
-                'command_type': command_type,
-                'success': success,
-                'response_time_ms': response_time_ms,
-                'request_body': request_body,
-                'response_body': response_body,
-                'error_message': error_message,
-                'source': 'job_executor',
-            }).execute()
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            
+            response = requests.post(
+                f"{DSM_URL}/rest/v1/idrac_commands",
+                headers={
+                    "apikey": SERVICE_ROLE_KEY,
+                    "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=minimal"
+                },
+                json={
+                    'job_id': job_id,
+                    'operation_type': 'ldap_api',
+                    'endpoint': endpoint,
+                    'full_url': full_url,
+                    'command_type': command_type,
+                    'success': success,
+                    'response_time_ms': response_time_ms,
+                    'request_body': request_body,
+                    'response_body': response_body,
+                    'error_message': error_message,
+                    'source': 'job_executor',
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            if response.status_code not in [200, 201]:
+                self.log(f"Failed to log LDAP operation: {response.status_code} - {response.text}", "WARN")
         except Exception as e:
             self.log(f"Failed to log LDAP operation: {e}", "WARN")
     
     def _create_task(self, job_id: str, task_name: str) -> Optional[str]:
         """Create a job task for tracking individual steps."""
         try:
-            result = self.executor.supabase.table('job_tasks').insert({
-                'job_id': job_id,
-                'status': 'running',
-                'started_at': datetime.now().isoformat(),
-                'log': f"Starting: {task_name}",
-            }).execute()
-            if result.data:
-                return result.data[0]['id']
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            
+            response = requests.post(
+                f"{DSM_URL}/rest/v1/job_tasks",
+                headers={
+                    "apikey": SERVICE_ROLE_KEY,
+                    "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=representation"
+                },
+                json={
+                    'job_id': job_id,
+                    'status': 'running',
+                    'started_at': datetime.now().isoformat(),
+                    'log': f"Starting: {task_name}",
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            if response.status_code in [200, 201]:
+                tasks = response.json()
+                if tasks and len(tasks) > 0:
+                    return tasks[0]['id']
         except Exception as e:
             self.log(f"Failed to create task: {e}", "WARN")
         return None
@@ -59,6 +90,8 @@ class IDMHandler(BaseHandler):
         if not task_id:
             return
         try:
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            
             update = {
                 'status': status,
                 'log': log,
@@ -68,7 +101,19 @@ class IDMHandler(BaseHandler):
             if status in ('completed', 'failed'):
                 update['completed_at'] = datetime.now().isoformat()
             
-            self.executor.supabase.table('job_tasks').update(update).eq('id', task_id).execute()
+            response = requests.patch(
+                f"{DSM_URL}/rest/v1/job_tasks",
+                headers={
+                    "apikey": SERVICE_ROLE_KEY,
+                    "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=minimal"
+                },
+                params={'id': f'eq.{task_id}'},
+                json=update,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
         except Exception as e:
             self.log(f"Failed to update task: {e}", "WARN")
     
