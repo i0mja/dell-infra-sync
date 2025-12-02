@@ -7,7 +7,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
-import { CheckCircle, XCircle, AlertTriangle, Loader2, Server, HardDrive, Clock } from "lucide-react";
+import { CheckCircle, XCircle, AlertTriangle, Loader2, Server, HardDrive, Clock, Activity, Thermometer } from "lucide-react";
+import { Card } from "@/components/ui/card";
 
 interface PreFlightCheckDialogProps {
   open: boolean;
@@ -15,6 +16,36 @@ interface PreFlightCheckDialogProps {
   onProceed: () => void;
   serverId: string;
   jobType: 'firmware_update' | 'full_server_update';
+}
+
+interface IdracCheck {
+  passed: boolean;
+  status?: string;
+  message?: string;
+  count?: number;
+  jobs?: any[];
+  overall?: string;
+  details?: any;
+  rebuilding?: boolean;
+  state?: string;
+  warnings?: any[];
+}
+
+interface IdracPreflightResult {
+  server_id: string;
+  hostname: string;
+  ip_address: string;
+  ready: boolean;
+  error?: string;
+  checks: {
+    lc_status?: IdracCheck;
+    pending_jobs?: IdracCheck;
+    system_health?: IdracCheck;
+    storage_health?: IdracCheck;
+    power_state?: IdracCheck;
+    thermal_status?: IdracCheck;
+  };
+  warnings?: string[];
 }
 
 interface SafetyCheckResult {
@@ -31,6 +62,9 @@ interface SafetyCheckResult {
   estimated_evacuation_seconds: number;
   warnings: string[];
   recommendation: string;
+  // NEW: iDRAC Pre-flight Results
+  idrac_checks?: IdracPreflightResult[];
+  all_idrac_ready?: boolean;
 }
 
 export const PreFlightCheckDialog = ({ open, onOpenChange, onProceed, serverId, jobType }: PreFlightCheckDialogProps) => {
@@ -319,6 +353,149 @@ export const PreFlightCheckDialog = ({ open, onOpenChange, onProceed, serverId, 
                 </Alert>
               )}
 
+              {/* NEW: iDRAC Pre-Flight Checks */}
+              {result.idrac_checks && result.idrac_checks.length > 0 && (
+                <div className="space-y-4">
+                  <h4 className="font-semibold flex items-center gap-2">
+                    <Activity className="h-4 w-4" />
+                    Dell iDRAC Pre-Flight Checks
+                  </h4>
+                  
+                  {result.idrac_checks.map((server) => (
+                    <Card key={server.server_id} className="p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <span className="font-medium">{server.hostname}</span>
+                          <span className="text-sm text-muted-foreground ml-2">({server.ip_address})</span>
+                        </div>
+                        <Badge variant={server.ready ? "default" : "destructive"}>
+                          {server.ready ? "Ready" : "Not Ready"}
+                        </Badge>
+                      </div>
+                      
+                      {server.error ? (
+                        <Alert variant="destructive">
+                          <AlertDescription>{server.error}</AlertDescription>
+                        </Alert>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          {/* Lifecycle Controller */}
+                          {server.checks.lc_status && (
+                            <div className="flex items-center justify-between p-2 bg-muted rounded">
+                              <span className="flex items-center gap-2">
+                                {server.checks.lc_status.passed ? (
+                                  <CheckCircle className="h-4 w-4 text-green-500" />
+                                ) : (
+                                  <XCircle className="h-4 w-4 text-destructive" />
+                                )}
+                                Lifecycle Controller
+                              </span>
+                              <span className="text-xs">{server.checks.lc_status.status}</span>
+                            </div>
+                          )}
+                          
+                          {/* Pending Jobs */}
+                          {server.checks.pending_jobs && (
+                            <div className="flex items-center justify-between p-2 bg-muted rounded">
+                              <span className="flex items-center gap-2">
+                                {server.checks.pending_jobs.passed ? (
+                                  <CheckCircle className="h-4 w-4 text-green-500" />
+                                ) : (
+                                  <XCircle className="h-4 w-4 text-destructive" />
+                                )}
+                                Job Queue
+                              </span>
+                              <span className="text-xs">
+                                {server.checks.pending_jobs.count || 0} pending
+                              </span>
+                            </div>
+                          )}
+                          
+                          {/* System Health */}
+                          {server.checks.system_health && (
+                            <div className="flex items-center justify-between p-2 bg-muted rounded">
+                              <span className="flex items-center gap-2">
+                                {server.checks.system_health.passed ? (
+                                  <CheckCircle className="h-4 w-4 text-green-500" />
+                                ) : (
+                                  <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                                )}
+                                System Health
+                              </span>
+                              <span className="text-xs">{server.checks.system_health.overall}</span>
+                            </div>
+                          )}
+                          
+                          {/* Storage */}
+                          {server.checks.storage_health && (
+                            <div className="flex items-center justify-between p-2 bg-muted rounded">
+                              <span className="flex items-center gap-2">
+                                {server.checks.storage_health.passed ? (
+                                  <CheckCircle className="h-4 w-4 text-green-500" />
+                                ) : (
+                                  <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                                )}
+                                Storage/RAID
+                              </span>
+                              <span className="text-xs">
+                                {server.checks.storage_health.rebuilding ? "Rebuilding" : "OK"}
+                              </span>
+                            </div>
+                          )}
+                          
+                          {/* Power */}
+                          {server.checks.power_state && (
+                            <div className="flex items-center justify-between p-2 bg-muted rounded">
+                              <span className="flex items-center gap-2">
+                                {server.checks.power_state.passed ? (
+                                  <CheckCircle className="h-4 w-4 text-green-500" />
+                                ) : (
+                                  <XCircle className="h-4 w-4 text-destructive" />
+                                )}
+                                Power State
+                              </span>
+                              <span className="text-xs">{server.checks.power_state.state}</span>
+                            </div>
+                          )}
+                          
+                          {/* Thermal */}
+                          {server.checks.thermal_status && (
+                            <div className="flex items-center justify-between p-2 bg-muted rounded">
+                              <span className="flex items-center gap-2">
+                                {server.checks.thermal_status.passed ? (
+                                  <CheckCircle className="h-4 w-4 text-green-500" />
+                                ) : (
+                                  <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                                )}
+                                <Thermometer className="h-3 w-3" />
+                                Thermal
+                              </span>
+                              <span className="text-xs">
+                                {server.checks.thermal_status.warnings?.length || 0} warning(s)
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      
+                      {/* Server-specific warnings */}
+                      {server.warnings && server.warnings.length > 0 && (
+                        <Alert className="mt-3 border-yellow-500">
+                          <AlertTriangle className="h-4 w-4" />
+                          <AlertDescription>
+                            <ul className="list-disc list-inside text-xs">
+                              {server.warnings.map((warning, idx) => (
+                                <li key={idx}>{warning}</li>
+                              ))}
+                            </ul>
+                          </AlertDescription>
+                        </Alert>
+                      )}
+                    </Card>
+                  ))}
+                </div>
+              )}
+
               {/* Recommendation */}
               <Alert variant={result.safe_to_proceed ? "default" : "destructive"}>
                 <AlertDescription>
@@ -327,11 +504,14 @@ export const PreFlightCheckDialog = ({ open, onOpenChange, onProceed, serverId, 
                     <p className="text-sm">
                       Cluster has sufficient capacity for maintenance.
                       {result.drs_enabled && " VMs will be automatically evacuated via DRS."}
+                      {result.idrac_checks && result.idrac_checks.length > 0 && result.all_idrac_ready && 
+                        " All Dell servers passed pre-flight checks."}
                     </p>
                   ) : (
                     <p className="text-sm">
-                      Insufficient hosts or DRS configuration prevents safe update.
-                      Recommend enabling DRS or adding hosts before proceeding.
+                      {!result.all_idrac_ready && result.idrac_checks && result.idrac_checks.length > 0
+                        ? "One or more Dell servers failed critical pre-flight checks. Resolve issues before proceeding."
+                        : "Insufficient hosts or DRS configuration prevents safe update. Recommend enabling DRS or adding hosts before proceeding."}
                     </p>
                   )}
                 </AlertDescription>
