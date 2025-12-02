@@ -1,0 +1,1 @@
+ALTER TYPE job_type ADD VALUE IF NOT EXISTS 'idm_test_ad_connection';

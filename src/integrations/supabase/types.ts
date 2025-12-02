@@ -3276,6 +3276,7 @@ export type Database = {
         | "idm_network_check"
         | "idm_search_ad_groups"
         | "idm_search_ad_users"
+        | "idm_test_ad_connection"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -3454,6 +3455,7 @@ export const Constants = {
         "idm_network_check",
         "idm_search_ad_groups",
         "idm_search_ad_users",
+        "idm_test_ad_connection",
       ],
       operation_type: [
         "idrac_api",

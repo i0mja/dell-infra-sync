@@ -328,11 +328,15 @@ export function IdmUserManager() {
     }
   };
 
-  // Deduplicate domains
-  const domains = [...new Set([
-    idmSettings?.ad_domain_fqdn,
-    ...(idmSettings?.trusted_domains || []),
-  ].filter(Boolean))];
+  // Deduplicate domains (normalize to lowercase and trim)
+  const domains = Array.from(new Set(
+    [
+      idmSettings?.ad_domain_fqdn,
+      ...(idmSettings?.trusted_domains || []),
+    ]
+      .filter((d): d is string => Boolean(d))
+      .map(d => d.trim().toLowerCase())
+  ));
 
   return (
     <div className="space-y-6">
@@ -521,8 +525,8 @@ export function IdmUserManager() {
                     <SelectValue placeholder="Select domain" />
                   </SelectTrigger>
                   <SelectContent>
-                    {domains.map((domain) => (
-                      <SelectItem key={domain} value={domain!}>{domain}</SelectItem>
+                    {domains.map((domain, index) => (
+                      <SelectItem key={`domain-${index}-${domain}`} value={domain}>{domain}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
