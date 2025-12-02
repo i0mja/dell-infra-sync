@@ -209,22 +209,39 @@ serve(async (req) => {
         ip_address: req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown'
       });
 
-    // Generate session token
-    const { data: sessionData, error: sessionError } = await supabase.auth.admin.generateLink({
-      type: 'magiclink',
+    // Generate recovery link to get a token we can verify server-side
+    console.log('[IDM Provision] Generating recovery link for session...');
+    const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
+      type: 'recovery',
       email,
-      options: {
-        redirectTo: `${supabaseUrl}/auth/v1/verify`
-      }
     });
 
-    if (sessionError || !sessionData) {
-      console.error('[IDM Provision] Failed to generate session:', sessionError);
+    if (linkError || !linkData?.properties?.hashed_token) {
+      console.error('[IDM Provision] Failed to generate recovery link:', linkError);
       return new Response(
-        JSON.stringify({ success: false, error: 'Failed to generate session token' }),
+        JSON.stringify({ success: false, error: 'Failed to generate session' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    // Verify the token server-side to get actual access/refresh tokens
+    console.log('[IDM Provision] Verifying token to create session...');
+    const { data: sessionData, error: verifyError } = await supabase.auth.verifyOtp({
+      token_hash: linkData.properties.hashed_token,
+      type: 'recovery',
+    });
+
+    if (verifyError || !sessionData?.session) {
+      console.error('[IDM Provision] Failed to verify token:', verifyError);
+      return new Response(
+        JSON.stringify({ success: false, error: 'Failed to create session' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Now we have actual tokens!
+    const accessToken = sessionData.session.access_token;
+    const refreshToken = sessionData.session.refresh_token;
 
     // Log to audit
     await supabase
@@ -247,11 +264,6 @@ serve(async (req) => {
       });
 
     console.log(`[IDM Provision] Provisioning successful for user ${userId}`);
-
-    // Extract tokens from magic link
-    const actionLink = sessionData.properties?.action_link || '';
-    const accessToken = actionLink.split('access_token=')[1]?.split('&')[0] || '';
-    const refreshToken = actionLink.split('refresh_token=')[1]?.split('&')[0] || '';
 
     return new Response(
       JSON.stringify({
