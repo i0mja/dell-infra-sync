@@ -64,18 +64,36 @@ export function useIdmSettings() {
     try {
       // If bind password is being updated, encrypt it first
       if (updates.bind_password_encrypted && !updates.bind_password_encrypted.startsWith('encrypted:')) {
+        // For IDM settings, we need to either update existing or insert first to get an ID
+        let idmSettingsId = settings?.id;
+        
+        // If no existing settings, insert first to get an ID
+        if (!idmSettingsId) {
+          const { data: newSettings, error: insertError } = await supabase
+            .from('idm_settings')
+            .insert([{ auth_mode: updates.auth_mode || 'local_only' }])
+            .select()
+            .single();
+          
+          if (insertError) throw insertError;
+          idmSettingsId = newSettings.id;
+        }
+
         const { data: encryptData, error: encryptError } = await supabase.functions.invoke(
           'encrypt-credentials',
           {
             body: {
               type: 'idm_settings',
+              idm_settings_id: idmSettingsId,
               password: updates.bind_password_encrypted,
             },
           }
         );
 
         if (encryptError) throw encryptError;
-        updates.bind_password_encrypted = encryptData.encrypted_password;
+        
+        // Don't overwrite password field - edge function updates it directly
+        delete updates.bind_password_encrypted;
       }
 
       if (settings?.id) {
