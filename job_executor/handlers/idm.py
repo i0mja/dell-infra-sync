@@ -203,7 +203,6 @@ class IDMHandler(BaseHandler):
             # Log the LDAP bind attempt
             self._log_ldap_operation(
                 job_id=job_id,
-                operation_type='ldap_bind',
                 endpoint='/ldap/bind',
                 full_url=f"ldaps://{auth_details.get('bind_target', server_host)}:636",
                 success=False,  # Will update after
@@ -225,7 +224,6 @@ class IDMHandler(BaseHandler):
             # Log the result
             self._log_ldap_operation(
                 job_id=job_id,
-                operation_type='ldap_bind',
                 endpoint='/ldap/bind',
                 full_url=f"ldaps://{auth_details.get('bind_target', server_host)}:636",
                 success=auth_result['success'],
@@ -275,7 +273,6 @@ class IDMHandler(BaseHandler):
             if user_groups:
                 self._log_ldap_operation(
                     job_id=job_id,
-                    operation_type='ldap_search',
                     endpoint='/ldap/search/groups',
                     full_url=f"ldaps://{server_host}:636",
                     success=True,
@@ -357,7 +354,6 @@ class IDMHandler(BaseHandler):
             # Log the failure
             self._log_ldap_operation(
                 job_id=job_id,
-                operation_type='ldap_bind',
                 endpoint='/ldap/bind',
                 full_url='ldaps://unknown:636',
                 success=False,
