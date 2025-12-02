@@ -739,6 +739,62 @@ class IDMHandler(BaseHandler):
                 details={'error': str(e), 'groups': []}
             )
 
+    def execute_idm_search_ad_groups(self, job: Dict):
+        """Search for groups directly in Active Directory."""
+        try:
+            self.log(f"Starting AD group search job: {job['id']}")
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            details = job.get('details') or {}
+            search_term = details.get('search_term', '')
+            max_results = details.get('max_results', 100)
+            
+            # Get IDM settings which contains AD DC info
+            idm_settings = self.executor.get_idm_settings()
+            if not idm_settings:
+                raise ValueError("IDM not configured")
+            
+            ad_dc_host = idm_settings.get('ad_dc_host')
+            if not ad_dc_host:
+                raise ValueError("AD DC host not configured. Configure it in IDM Connection settings.")
+            
+            # Use same bind credentials (assuming service account has AD access)
+            # Or use a separate AD service account if configured
+            bind_dn = idm_settings.get('bind_dn')
+            bind_password = self.executor.decrypt_bind_password(
+                idm_settings.get('bind_password_encrypted')
+            )
+            
+            if not bind_dn or not bind_password:
+                raise ValueError("Service account credentials required for AD search")
+            
+            # Create authenticator with AD settings
+            authenticator = self.executor.create_freeipa_authenticator(idm_settings)
+            if not authenticator:
+                raise ValueError("Failed to initialize authenticator")
+            
+            # Search AD groups directly
+            self.log(f"Searching AD groups on {ad_dc_host} matching: '{search_term}' (max {max_results})")
+            groups = authenticator.search_ad_groups(bind_dn, bind_password, search_term, max_results)
+            
+            self.log(f"[OK] Found {len(groups)} AD group(s)")
+            
+            self.update_job_status(
+                job['id'],
+                'completed',
+                completed_at=datetime.now().isoformat(),
+                details={'groups': groups, 'count': len(groups), 'source': 'ad'}
+            )
+            
+        except Exception as e:
+            self.log(f"AD group search failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e), 'groups': []}
+            )
+
     def _test_dns_resolution(self, hostname: str) -> dict:
         """Test DNS resolution for hostname."""
         try:

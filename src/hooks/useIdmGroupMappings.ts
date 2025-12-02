@@ -10,6 +10,7 @@ export interface IdmGroupMapping {
   priority: number | null;
   is_active: boolean | null;
   description: string | null;
+  source: 'freeipa' | 'ad' | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -28,7 +29,11 @@ export function useIdmGroupMappings() {
         .order('priority', { ascending: true });
 
       if (error) throw error;
-      setMappings(data || []);
+      // Cast source to proper type
+      setMappings((data || []).map(m => ({
+        ...m,
+        source: (m.source as 'freeipa' | 'ad') || 'freeipa',
+      })));
     } catch (error: any) {
       console.error('Failed to load IDM group mappings:', error);
       toast({

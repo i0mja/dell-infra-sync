@@ -804,6 +804,7 @@ export type Database = {
           idm_group_name: string
           is_active: boolean | null
           priority: number | null
+          source: string | null
           updated_at: string | null
         }
         Insert: {
@@ -815,6 +816,7 @@ export type Database = {
           idm_group_name: string
           is_active?: boolean | null
           priority?: number | null
+          source?: string | null
           updated_at?: string | null
         }
         Update: {
@@ -826,6 +828,7 @@ export type Database = {
           idm_group_name?: string
           is_active?: boolean | null
           priority?: number | null
+          source?: string | null
           updated_at?: string | null
         }
         Relationships: []
@@ -3215,6 +3218,7 @@ export type Database = {
         | "idm_search_groups"
         | "idm_test_auth"
         | "idm_network_check"
+        | "idm_search_ad_groups"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -3391,6 +3395,7 @@ export const Constants = {
         "idm_search_groups",
         "idm_test_auth",
         "idm_network_check",
+        "idm_search_ad_groups",
       ],
       operation_type: [
         "idrac_api",

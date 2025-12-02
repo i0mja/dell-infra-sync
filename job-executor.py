@@ -856,6 +856,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             'idm_test_connection': self.idm_handler.execute_idm_test_connection,
             'idm_sync_users': self.idm_handler.execute_idm_sync_users,
             'idm_search_groups': self.idm_handler.execute_idm_search_groups,
+            'idm_search_ad_groups': self.idm_handler.execute_idm_search_ad_groups,
             'idm_test_auth': self.idm_handler.execute_idm_test_auth,
             'idm_network_check': self.idm_handler.execute_idm_network_check,
         }
