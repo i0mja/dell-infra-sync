@@ -7,8 +7,9 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useIdmGroupMappings } from '@/hooks/useIdmGroupMappings';
-import { Plus, Trash2, Loader2, Search, Users } from 'lucide-react';
+import { Plus, Trash2, Loader2, Search, Users, ChevronDown, ChevronRight, User } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -18,6 +19,7 @@ interface GroupSearchResult {
   cn: string;
   description: string | null;
   member_count: number;
+  members: string[];
 }
 
 export function IdmRoleMappings() {
@@ -38,6 +40,19 @@ export function IdmRoleMappings() {
   const [searchResults, setSearchResults] = useState<GroupSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<GroupSearchResult | null>(null);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
+  const toggleGroupExpand = (dn: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(dn)) {
+        next.delete(dn);
+      } else {
+        next.add(dn);
+      }
+      return next;
+    });
+  };
 
   const handleSearchGroups = async () => {
     if (!searchTerm.trim()) {
@@ -52,6 +67,7 @@ export function IdmRoleMappings() {
     setIsSearching(true);
     setSearchResults([]);
     setSelectedGroup(null);
+    setExpandedGroups(new Set());
 
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -162,6 +178,7 @@ export function IdmRoleMappings() {
     setSearchTerm('');
     setSearchResults([]);
     setSelectedGroup(null);
+    setExpandedGroups(new Set());
     setShowDialog(false);
   };
 
@@ -177,6 +194,7 @@ export function IdmRoleMappings() {
     setSearchTerm('');
     setSearchResults([]);
     setSelectedGroup(null);
+    setExpandedGroups(new Set());
     setShowDialog(false);
   };
 
@@ -251,39 +269,96 @@ export function IdmRoleMappings() {
                           <Label className="text-xs text-muted-foreground">
                             Found {searchResults.length} group(s)
                           </Label>
-                          <ScrollArea className="h-48 border rounded-md">
-                            <Table>
-                              <TableHeader>
-                                <TableRow>
-                                  <TableHead className="w-12"></TableHead>
-                                  <TableHead>Group Name</TableHead>
-                                  <TableHead>Description</TableHead>
-                                  <TableHead className="w-20 text-right">Members</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {searchResults.map((group) => (
-                                  <TableRow 
+                          <ScrollArea className="h-64 border rounded-md">
+                            <div className="p-1">
+                              {searchResults.map((group) => {
+                                const isExpanded = expandedGroups.has(group.dn);
+                                const isSelected = selectedGroup?.dn === group.dn;
+                                
+                                return (
+                                  <Collapsible 
                                     key={group.dn}
-                                    className="cursor-pointer hover:bg-muted/50"
-                                    onClick={() => handleSelectGroup(group)}
+                                    open={isExpanded}
+                                    onOpenChange={() => toggleGroupExpand(group.dn)}
                                   >
-                                    <TableCell>
-                                      <div className={`h-4 w-4 rounded-full border-2 ${
-                                        selectedGroup?.dn === group.dn 
+                                    <div 
+                                      className={`flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors ${
+                                        isSelected ? 'bg-primary/10 border border-primary/30' : 'hover:bg-muted/50'
+                                      }`}
+                                      onClick={() => handleSelectGroup(group)}
+                                    >
+                                      <div className={`h-4 w-4 rounded-full border-2 flex-shrink-0 ${
+                                        isSelected 
                                           ? 'bg-primary border-primary' 
                                           : 'border-muted-foreground'
                                       }`} />
-                                    </TableCell>
-                                    <TableCell className="font-medium">{group.cn}</TableCell>
-                                    <TableCell className="text-muted-foreground text-sm">
-                                      {group.description || '—'}
-                                    </TableCell>
-                                    <TableCell className="text-right">{group.member_count}</TableCell>
-                                  </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
+                                      
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-medium truncate">{group.cn}</span>
+                                          <Badge variant="secondary" className="text-xs flex-shrink-0">
+                                            <User className="h-3 w-3 mr-1" />
+                                            {group.member_count}
+                                          </Badge>
+                                        </div>
+                                        {group.description && (
+                                          <p className="text-xs text-muted-foreground truncate">
+                                            {group.description}
+                                          </p>
+                                        )}
+                                      </div>
+                                      
+                                      {group.member_count > 0 && (
+                                        <CollapsibleTrigger asChild>
+                                          <Button 
+                                            variant="ghost" 
+                                            size="sm" 
+                                            className="h-6 w-6 p-0"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              toggleGroupExpand(group.dn);
+                                            }}
+                                          >
+                                            {isExpanded ? (
+                                              <ChevronDown className="h-4 w-4" />
+                                            ) : (
+                                              <ChevronRight className="h-4 w-4" />
+                                            )}
+                                          </Button>
+                                        </CollapsibleTrigger>
+                                      )}
+                                    </div>
+                                    
+                                    <CollapsibleContent>
+                                      <div className="ml-8 mb-2 p-2 bg-muted/30 rounded-md">
+                                        <div className="flex flex-wrap gap-1">
+                                          {group.members.map((member, idx) => (
+                                            <Badge 
+                                              key={idx} 
+                                              variant="outline" 
+                                              className="text-xs font-normal"
+                                            >
+                                              <User className="h-3 w-3 mr-1" />
+                                              {member}
+                                            </Badge>
+                                          ))}
+                                          {group.member_count > group.members.length && (
+                                            <Badge variant="outline" className="text-xs font-normal text-muted-foreground">
+                                              +{group.member_count - group.members.length} more
+                                            </Badge>
+                                          )}
+                                          {group.members.length === 0 && group.member_count > 0 && (
+                                            <span className="text-xs text-muted-foreground">
+                                              {group.member_count} member(s)
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </CollapsibleContent>
+                                  </Collapsible>
+                                );
+                              })}
+                            </div>
                           </ScrollArea>
                         </div>
                       )}
