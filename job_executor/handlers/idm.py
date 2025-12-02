@@ -795,6 +795,65 @@ class IDMHandler(BaseHandler):
                 details={'error': str(e), 'groups': []}
             )
 
+    def execute_idm_search_ad_users(self, job: Dict):
+        """Search for users directly in Active Directory."""
+        try:
+            self.log(f"Starting AD user search job: {job['id']}")
+            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            
+            details = job.get('details') or {}
+            search_term = details.get('search_term', '')
+            max_results = details.get('max_results', 50)
+            
+            # Get IDM settings which contains AD DC info
+            idm_settings = self.executor.get_idm_settings()
+            if not idm_settings:
+                raise ValueError("IDM not configured")
+            
+            ad_dc_host = idm_settings.get('ad_dc_host')
+            if not ad_dc_host:
+                raise ValueError("AD DC host not configured. Configure it in IDM Connection settings.")
+            
+            ad_domain_fqdn = idm_settings.get('ad_domain_fqdn')
+            if not ad_domain_fqdn:
+                raise ValueError("AD Domain FQDN not configured. Configure it in IDM Connection settings.")
+            
+            # Use same bind credentials
+            bind_dn = idm_settings.get('bind_dn')
+            bind_password = self.executor.decrypt_bind_password(
+                idm_settings.get('bind_password_encrypted')
+            )
+            
+            if not bind_dn or not bind_password:
+                raise ValueError("Service account credentials required for AD search")
+            
+            # Create authenticator with AD settings
+            authenticator = self.executor.create_freeipa_authenticator(idm_settings)
+            if not authenticator:
+                raise ValueError("Failed to initialize authenticator")
+            
+            # Search AD users directly
+            self.log(f"Searching AD users on {ad_dc_host} matching: '{search_term}' (max {max_results})")
+            users = authenticator.search_ad_users(bind_dn, bind_password, search_term, max_results)
+            
+            self.log(f"[OK] Found {len(users)} AD user(s)")
+            
+            self.update_job_status(
+                job['id'],
+                'completed',
+                completed_at=datetime.now().isoformat(),
+                details={'users': users, 'count': len(users), 'source': 'ad'}
+            )
+            
+        except Exception as e:
+            self.log(f"AD user search failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'],
+                'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e), 'users': []}
+            )
+
     def _test_dns_resolution(self, hostname: str) -> dict:
         """Test DNS resolution for hostname."""
         try:
