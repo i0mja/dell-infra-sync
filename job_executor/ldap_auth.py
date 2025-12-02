@@ -994,49 +994,94 @@ class FreeIPAAuthenticator:
                 auto_bind=True,
             )
             
-            # Build search filter
+            # Build search filter - include all FreeIPA group types
+            # groupOfNames, posixGroup, ipaUserGroup, ipaExternalGroup
+            group_classes = "(|(objectClass=groupOfNames)(objectClass=posixGroup)(objectClass=ipaUserGroup)(objectClass=ipaExternalGroup))"
             if search_term:
-                search_filter = f"(&(objectClass=groupOfNames)(cn=*{search_term}*))"
+                search_filter = f"(&{group_classes}(cn=*{search_term}*))"
             else:
-                search_filter = "(objectClass=groupOfNames)"
+                search_filter = group_classes
             
             conn.search(
                 search_base=f"{self.group_search_base},{self.base_dn}",
                 search_filter=search_filter,
                 search_scope=SUBTREE,
-                attributes=["cn", "description", "member"],
+                attributes=["cn", "description", "member", "memberUid", "ipaExternalMember"],
                 size_limit=max_results,
             )
             
             groups = []
             for entry in conn.entries:
-                # Extract member usernames from DNs
                 members = []
                 member_count = 0
                 
+                # 1. Parse 'member' attribute (DNs like uid=john,cn=users,...)
+                member_dn_count = 0
                 if hasattr(entry, 'member'):
                     member_values = entry.member.values if hasattr(entry.member, 'values') else []
                     if not isinstance(member_values, (list, tuple)):
                         member_values = [member_values] if member_values else []
                     
-                    member_count = len(member_values)
+                    member_dn_count = len(member_values)
+                    member_count += member_dn_count
                     
-                    # Extract usernames from DNs (limit to first 20 for display)
                     for member_dn in member_values[:20]:
                         member_dn_str = str(member_dn)
-                        # Extract uid from "uid=john,cn=users,cn=accounts,dc=..."
                         uid_match = re.match(r'uid=([^,]+)', member_dn_str)
                         if uid_match:
                             members.append(uid_match.group(1))
                         else:
-                            # Try extracting cn for non-user members (e.g., nested groups)
                             cn_match = re.match(r'cn=([^,]+)', member_dn_str)
                             if cn_match:
                                 members.append(f"[{cn_match.group(1)}]")
                 
+                # 2. Parse 'memberUid' attribute (POSIX - direct usernames)
+                member_uid_count = 0
+                if hasattr(entry, 'memberUid'):
+                    uid_values = entry.memberUid.values if hasattr(entry.memberUid, 'values') else []
+                    if not isinstance(uid_values, (list, tuple)):
+                        uid_values = [uid_values] if uid_values else []
+                    
+                    member_uid_count = len(uid_values)
+                    member_count += member_uid_count
+                    
+                    for uid in uid_values[:20]:
+                        uid_str = str(uid)
+                        if uid_str not in members:
+                            members.append(uid_str)
+                
+                # 3. Parse 'ipaExternalMember' attribute (AD Trust users - SIDs or DOMAIN\username)
+                ext_member_count = 0
+                if hasattr(entry, 'ipaExternalMember'):
+                    ext_values = entry.ipaExternalMember.values if hasattr(entry.ipaExternalMember, 'values') else []
+                    if not isinstance(ext_values, (list, tuple)):
+                        ext_values = [ext_values] if ext_values else []
+                    
+                    ext_member_count = len(ext_values)
+                    member_count += ext_member_count
+                    
+                    for ext_member in ext_values[:20]:
+                        ext_str = str(ext_member)
+                        if '\\' in ext_str:
+                            # DOMAIN\username format - extract username
+                            username = ext_str.split('\\')[-1]
+                            display = f"AD:{username}"
+                        elif ext_str.startswith('S-1-'):
+                            # SID format - show abbreviated
+                            display = f"SID:...{ext_str[-8:]}"
+                        else:
+                            display = f"EXT:{ext_str}"
+                        
+                        if display not in members:
+                            members.append(display)
+                
+                group_cn = str(entry.cn) if hasattr(entry, 'cn') else None
+                logger.debug(f"[GROUP SEARCH] Group {group_cn}: {member_count} members "
+                           f"(member={member_dn_count}, memberUid={member_uid_count}, ipaExternalMember={ext_member_count})")
+                
                 groups.append({
                     "dn": str(entry.entry_dn),
-                    "cn": str(entry.cn) if hasattr(entry, 'cn') else None,
+                    "cn": group_cn,
                     "description": str(entry.description) if hasattr(entry, 'description') else None,
                     "member_count": member_count,
                     "members": members,
