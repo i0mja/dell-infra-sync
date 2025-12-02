@@ -256,17 +256,28 @@ export function HostsTable({
       );
     }
 
-    switch (host.status?.toLowerCase()) {
+    const status = host.status?.toLowerCase();
+    
+    switch (status) {
       case "connected":
+      case "online":
         return (
           <Badge variant="default" className="bg-success text-success-foreground text-xs">
-            Connected
+            Online
           </Badge>
         );
       case "disconnected":
+      case "offline":
         return (
           <Badge variant="destructive" className="text-xs">
-            Disconnected
+            Offline
+          </Badge>
+        );
+      case "unreachable":
+      case "notresponding":
+        return (
+          <Badge variant="outline" className="text-yellow-600 border-yellow-600 text-xs">
+            Unreachable
           </Badge>
         );
       default:
