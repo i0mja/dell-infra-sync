@@ -429,14 +429,17 @@ const Auth = () => {
                     <Input
                       id="freeipa-username"
                       type="text"
-                      placeholder="username"
+                      placeholder="jsmith, jsmith@NEOPOST.GRP, or NEOPOST\jsmith"
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       required
                       disabled={lockoutRemaining !== null && lockoutRemaining > 0}
                     />
                     <p className="text-sm text-muted-foreground">
-                      Enter your FreeIPA username (not email)
+                      Use your IdM or AD username:
+                      <br /><span className="text-xs">• Username: <code className="bg-muted px-1 rounded">jsmith</code></span>
+                      <br /><span className="text-xs">• UPN: <code className="bg-muted px-1 rounded">jsmith@NEOPOST.GRP</code></span>
+                      <br /><span className="text-xs">• NT-style: <code className="bg-muted px-1 rounded">NEOPOST\jsmith</code></span>
                     </p>
                   </div>
                   <div className="space-y-2">
