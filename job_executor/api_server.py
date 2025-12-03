@@ -684,17 +684,43 @@ class APIServer:
         self.port = port
         self.server = None
         self.thread = None
+        self.ssl_enabled = False
         
         # Set executor reference for handler
         APIHandler.executor = executor
     
     def start(self):
         """Start the API server in a background thread"""
+        from job_executor import config
+        
         try:
             self.server = HTTPServer(('0.0.0.0', self.port), APIHandler)
+            
+            # Wrap with SSL if enabled
+            protocol = "http"
+            if config.API_SERVER_SSL_ENABLED:
+                try:
+                    import os
+                    if os.path.exists(config.API_SERVER_SSL_CERT) and os.path.exists(config.API_SERVER_SSL_KEY):
+                        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                        context.load_cert_chain(config.API_SERVER_SSL_CERT, config.API_SERVER_SSL_KEY)
+                        self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
+                        self.ssl_enabled = True
+                        protocol = "https"
+                        self.executor.log(f"SSL enabled with certificate: {config.API_SERVER_SSL_CERT}")
+                    else:
+                        self.executor.log(f"SSL enabled but certificate files not found:", "WARN")
+                        self.executor.log(f"  Certificate: {config.API_SERVER_SSL_CERT}", "WARN")
+                        self.executor.log(f"  Key: {config.API_SERVER_SSL_KEY}", "WARN")
+                        self.executor.log(f"  Generate with: /opt/job-executor/generate-ssl-cert.sh", "WARN")
+                        self.executor.log(f"  Starting without SSL...", "WARN")
+                except Exception as ssl_error:
+                    self.executor.log(f"Failed to enable SSL: {ssl_error}", "ERROR")
+                    self.executor.log(f"Starting without SSL...", "WARN")
+            
             self.thread = Thread(target=self.server.serve_forever, daemon=True)
             self.thread.start()
-            self.executor.log(f"API server started on http://0.0.0.0:{self.port}")
+            self.executor.log(f"API server started on {protocol}://0.0.0.0:{self.port}")
             self.executor.log(f"Available endpoints:")
             self.executor.log(f"  GET  /api/health")
             self.executor.log(f"  POST /api/console-launch")
@@ -702,6 +728,9 @@ class APIServer:
             self.executor.log(f"  POST /api/connectivity-test")
             self.executor.log(f"  POST /api/browse-datastore")
             self.executor.log(f"  POST /api/idm-authenticate")
+            
+            if not self.ssl_enabled and config.API_SERVER_SSL_ENABLED:
+                self.executor.log(f"WARNING: SSL was requested but not enabled. Remote HTTPS access may not work.", "WARN")
         except Exception as e:
             self.executor.log(f"Failed to start API server: {e}", "ERROR")
             raise

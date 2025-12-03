@@ -1324,6 +1324,18 @@ else
     DSM_URL="http://${SERVER_IP}:3000"
 fi
 
+# Copy SSL certificate generation script
+if [ -f "scripts/generate-ssl-cert.sh" ]; then
+    mkdir -p /opt/job-executor
+    cp scripts/generate-ssl-cert.sh /opt/job-executor/
+    chmod +x /opt/job-executor/generate-ssl-cert.sh
+    echo "✅ SSL certificate generation script installed"
+fi
+
+# Create SSL directory
+mkdir -p /etc/idrac-manager/ssl
+chmod 755 /etc/idrac-manager/ssl
+
 cat > /etc/systemd/system/dell-job-executor.service << EOF
 [Unit]
 Description=Dell Server Manager - Job Executor
@@ -1335,6 +1347,9 @@ User=root
 WorkingDirectory=$(pwd)
 Environment="SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY"
 Environment="DSM_URL=$DSM_URL"
+Environment="API_SERVER_SSL_ENABLED=false"
+Environment="API_SERVER_SSL_CERT=/etc/idrac-manager/ssl/server.crt"
+Environment="API_SERVER_SSL_KEY=/etc/idrac-manager/ssl/server.key"
 ExecStart=/usr/bin/python3 job-executor.py
 Restart=always
 RestartSec=10
@@ -1350,6 +1365,12 @@ systemctl enable dell-job-executor.service
 systemctl start dell-job-executor.service
 
 echo "✅ Job Executor service created and started"
+echo ""
+echo "📌 To enable HTTPS for remote browser access:"
+echo "   1. Run: sudo /opt/job-executor/generate-ssl-cert.sh"
+echo "   2. Edit /etc/systemd/system/dell-job-executor.service"
+echo "   3. Change API_SERVER_SSL_ENABLED=true"
+echo "   4. Run: systemctl daemon-reload && systemctl restart dell-job-executor"
 
 # Open firewall ports
 # Step 8: Optional SSL/TLS Setup
