@@ -6,11 +6,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { SettingsSection } from "@/components/settings/SettingsSection";
-import { Network, Activity, Terminal, Database, Loader2, Key, Eye, Copy, Server, CheckCircle, XCircle } from "lucide-react";
+import { Network, Activity, Terminal, Database, Loader2, Key, Eye, Copy, Server, CheckCircle, XCircle, ExternalLink } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { setJobExecutorUrl, getJobExecutorUrl, testJobExecutorConnection, initializeJobExecutorUrl } from "@/lib/job-executor-api";
 
 export function SystemSettings() {
@@ -412,14 +413,62 @@ export function SystemSettings() {
             <AlertCircle className="h-4 w-4 text-amber-600" />
             <AlertDescription className="text-amber-700 dark:text-amber-400">
               <strong>Remote HTTPS Access:</strong> If accessing this app over HTTPS from a remote browser, 
-              the Job Executor must also use HTTPS. Generate an SSL certificate on your server:
-              <code className="block mt-1 px-2 py-1 bg-muted rounded text-xs">
-                sudo /opt/job-executor/generate-ssl-cert.sh
-              </code>
-              Then enable SSL in <code className="px-1 bg-muted rounded text-xs">/opt/job-executor/.env</code>:
-              <code className="block mt-1 px-2 py-1 bg-muted rounded text-xs">
-                API_SERVER_SSL_ENABLED=true
-              </code>
+              the Job Executor must also use HTTPS.
+              
+              <Tabs defaultValue="windows" className="mt-3">
+                <TabsList className="h-8">
+                  <TabsTrigger value="windows" className="text-xs px-3 py-1">Windows</TabsTrigger>
+                  <TabsTrigger value="linux" className="text-xs px-3 py-1">Linux/RHEL</TabsTrigger>
+                </TabsList>
+                
+                <TabsContent value="windows" className="mt-2 space-y-2">
+                  <p className="text-xs">1. Generate SSL certificate:</p>
+                  <code className="block px-2 py-1 bg-muted rounded text-xs">
+                    C:\dell-server-manager\scripts\generate-ssl-cert.ps1
+                  </code>
+                  <p className="text-xs">2. Enable SSL in service:</p>
+                  <code className="block px-2 py-1 bg-muted rounded text-xs">
+                    nssm set DellServerManagerJobExecutor AppEnvironmentExtra +API_SERVER_SSL_ENABLED=true
+                  </code>
+                  <p className="text-xs">3. Restart service:</p>
+                  <code className="block px-2 py-1 bg-muted rounded text-xs">
+                    nssm restart DellServerManagerJobExecutor
+                  </code>
+                </TabsContent>
+                
+                <TabsContent value="linux" className="mt-2 space-y-2">
+                  <p className="text-xs">1. Generate SSL certificate:</p>
+                  <code className="block px-2 py-1 bg-muted rounded text-xs">
+                    sudo /opt/job-executor/generate-ssl-cert.sh
+                  </code>
+                  <p className="text-xs">2. Enable SSL in <code className="px-1 bg-muted rounded">/opt/job-executor/.env</code>:</p>
+                  <code className="block px-2 py-1 bg-muted rounded text-xs">
+                    API_SERVER_SSL_ENABLED=true
+                  </code>
+                  <p className="text-xs">3. Restart service:</p>
+                  <code className="block px-2 py-1 bg-muted rounded text-xs">
+                    sudo systemctl restart dell-job-executor
+                  </code>
+                </TabsContent>
+              </Tabs>
+              
+              {/* Trust Certificate Button */}
+              {jobExecutorUrl.startsWith('https://') && (
+                <div className="mt-3 pt-3 border-t border-amber-500/30">
+                  <p className="text-xs mb-2">
+                    <strong>Self-signed certificate?</strong> Open the health endpoint to accept it in your browser:
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => window.open(`${jobExecutorUrl}/health`, '_blank')}
+                  >
+                    <ExternalLink className="h-3 w-3 mr-1" />
+                    Trust Certificate
+                  </Button>
+                </div>
+              )}
             </AlertDescription>
           </Alert>
 
