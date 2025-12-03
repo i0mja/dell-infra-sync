@@ -67,10 +67,10 @@ serve(async (req) => {
     console.log(`[IDM Provision] Clean username: ${cleanUsername}, idmUid: ${idmUid}`);
     
     // Generate email early for lookup
-    // Use .internal instead of .local as Supabase Auth rejects .local TLD
+    // Use example.com which is a reserved domain per RFC 2606 - Supabase Auth rejects non-standard TLDs
     let generatedEmail = user_info?.email;
     if (!generatedEmail || !generatedEmail.includes('@') || generatedEmail.endsWith('.grp')) {
-      generatedEmail = `${cleanUsername.replace(/[^a-zA-Z0-9_.-]/g, '_')}@idm.internal`;
+      generatedEmail = `${cleanUsername.replace(/[^a-zA-Z0-9_.-]/g, '_')}@idm.example.com`;
     }
     
     // Try multiple lookup strategies to find existing user

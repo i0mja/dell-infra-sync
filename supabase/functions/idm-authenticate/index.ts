@@ -172,13 +172,62 @@ serve(async (req) => {
           p_success: true
         });
 
-        // Check if user exists by idm_uid
-        const idmUid = userAttributes.uid || username;
-        const { data: existingProfile } = await supabase
+        // Check if user exists by idm_uid - use clean username without domain
+        const cleanUsername = username.includes('@') 
+          ? username.split('@')[0] 
+          : username.includes('\\') 
+            ? username.split('\\').pop() || username
+            : username;
+        
+        const idmUid = userAttributes.uid || cleanUsername;
+        console.log(`[IDM Auth] Looking up user with idm_uid: ${idmUid} (clean: ${cleanUsername})`);
+        
+        // Try multiple lookup strategies like idm-provision does
+        let existingProfile = null;
+        
+        // 1. Try exact idm_uid match
+        const { data: profileByUid } = await supabase
           .from('profiles')
-          .select('id, email')
+          .select('id, email, idm_uid')
           .eq('idm_uid', idmUid)
           .single();
+        
+        if (profileByUid) {
+          existingProfile = profileByUid;
+          console.log(`[IDM Auth] Found user by exact idm_uid: ${existingProfile.id}`);
+        }
+        
+        // 2. Try clean username match
+        if (!existingProfile && cleanUsername !== idmUid) {
+          const { data: profileByCleanUid } = await supabase
+            .from('profiles')
+            .select('id, email, idm_uid')
+            .eq('idm_uid', cleanUsername)
+            .single();
+          
+          if (profileByCleanUid) {
+            existingProfile = profileByCleanUid;
+            console.log(`[IDM Auth] Found user by clean username: ${existingProfile.id}`);
+          }
+        }
+        
+        // 3. Try email match with generated email
+        const generatedEmail = userAttributes.email || userAttributes.mail || `${cleanUsername.replace(/[^a-zA-Z0-9_.-]/g, '_')}@idm.example.com`;
+        if (!existingProfile) {
+          // Also try legacy @idm.local format
+          const legacyEmail = `${cleanUsername}@idm.local`;
+          const { data: profileByEmail } = await supabase
+            .from('profiles')
+            .select('id, email, idm_uid')
+            .or(`email.eq.${generatedEmail},email.eq.${legacyEmail}`)
+            .limit(1)
+            .single();
+          
+          if (profileByEmail) {
+            existingProfile = profileByEmail;
+            console.log(`[IDM Auth] Found user by email: ${existingProfile.id}`);
+          }
+        }
 
         let userId: string;
         let email: string;
@@ -208,9 +257,9 @@ serve(async (req) => {
           // JIT user provisioning - create new user
           console.log(`[IDM Auth] Creating new user via JIT provisioning`);
           
-          // Use a valid email format - .local TLD is rejected by Supabase Auth
-          // Use .internal or construct from username with valid domain
-          email = userAttributes.email || userAttributes.mail || `${idmUid.replace(/[^a-zA-Z0-9_.-]/g, '_')}@idm.internal`;
+          // Use a valid email format - Supabase Auth rejects non-standard TLDs like .local or .internal
+          // Use example.com which is a reserved domain per RFC 2606
+          email = userAttributes.email || userAttributes.mail || `${idmUid.replace(/[^a-zA-Z0-9_.-]/g, '_')}@idm.example.com`;
           const fullName = userAttributes.full_name || userAttributes.displayName || idmUid;
 
           const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
