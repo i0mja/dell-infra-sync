@@ -63,13 +63,15 @@ export const CommandsTable = ({
     const variants: Record<string, string> = {
       idrac_api: "bg-blue-500/10 text-blue-500 border-blue-500/20",
       vcenter_api: "bg-purple-500/10 text-purple-500 border-purple-500/20",
-      openmanage_api: "bg-orange-500/10 text-orange-500 border-orange-500/20"
+      openmanage_api: "bg-orange-500/10 text-orange-500 border-orange-500/20",
+      ldap_api: "bg-green-500/10 text-green-500 border-green-500/20"
     };
     
     const labels: Record<string, string> = {
       idrac_api: "iDRAC",
       vcenter_api: "vCenter",
-      openmanage_api: "OME"
+      openmanage_api: "OME",
+      ldap_api: "IDM/LDAP"
     };
 
     return (

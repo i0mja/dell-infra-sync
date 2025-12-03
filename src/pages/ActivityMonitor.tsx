@@ -42,7 +42,7 @@ interface IdracCommand {
   error_message: string | null;
   initiated_by: string | null;
   source: string;
-  operation_type: 'idrac_api' | 'vcenter_api' | 'openmanage_api';
+  operation_type: 'idrac_api' | 'vcenter_api' | 'openmanage_api' | 'ldap_api';
   servers?: { hostname: string | null; ip_address: string };
 }
 
