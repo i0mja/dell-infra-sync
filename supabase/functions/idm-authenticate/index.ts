@@ -401,21 +401,61 @@ serve(async (req) => {
                 userId = existingUser.id;
                 console.log(`[IDM Auth] Found existing auth user: ${userId}`);
                 
-                // Update their profile
-                await supabase
+                // Check if profile exists - it might have been deleted
+                const { data: existingProfileData } = await supabase
                   .from('profiles')
-                  .update({
-                    idm_uid: idmUid,
-                    idm_source: authResult.is_ad_trust_user ? 'ad_trust' : 'freeipa',
-                    idm_user_dn: authResult.user_dn,
-                    idm_groups: authResult.groups || [],
-                    idm_disabled: false,
-                    idm_mail: isValidEmail(userAttributes.email) ? userAttributes.email : null,
-                    idm_title: userAttributes.title,
-                    idm_department: userAttributes.department,
-                    last_idm_sync: new Date().toISOString()
-                  })
-                  .eq('id', userId);
+                  .select('id')
+                  .eq('id', userId)
+                  .single();
+                
+                const profileData = {
+                  email: email,
+                  full_name: fullName,
+                  idm_uid: idmUid,
+                  idm_source: authResult.is_ad_trust_user ? 'ad_trust' : 'freeipa',
+                  idm_user_dn: authResult.user_dn,
+                  idm_groups: authResult.groups || [],
+                  idm_disabled: false,
+                  idm_mail: isValidEmail(userAttributes.email) ? userAttributes.email : null,
+                  idm_title: userAttributes.title,
+                  idm_department: userAttributes.department,
+                  last_idm_sync: new Date().toISOString()
+                };
+                
+                if (existingProfileData) {
+                  // Profile exists - update it
+                  console.log(`[IDM Auth] Profile exists, updating...`);
+                  await supabase
+                    .from('profiles')
+                    .update(profileData)
+                    .eq('id', userId);
+                } else {
+                  // Profile missing - create it
+                  console.log(`[IDM Auth] Profile missing for auth user, creating...`);
+                  const { error: insertError } = await supabase
+                    .from('profiles')
+                    .insert({
+                      id: userId,
+                      ...profileData
+                    });
+                  
+                  if (insertError) {
+                    console.error(`[IDM Auth] Failed to create profile:`, insertError);
+                  } else {
+                    console.log(`[IDM Auth] Successfully created missing profile for ${userId}`);
+                  }
+                }
+                
+                // Also ensure user_roles exists
+                const { data: existingRole } = await supabase
+                  .from('user_roles')
+                  .select('id')
+                  .eq('user_id', userId)
+                  .single();
+                
+                if (!existingRole) {
+                  console.log(`[IDM Auth] user_roles missing, will be created later in role mapping`);
+                }
               } else {
                 console.error('[IDM Auth] Could not find existing user despite email_exists error');
                 return new Response(
