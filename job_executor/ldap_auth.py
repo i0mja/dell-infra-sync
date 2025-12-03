@@ -185,7 +185,7 @@ class FreeIPAAuthenticator:
         """Get or create AD Domain Controller server connection."""
         if not self.ad_dc_host:
             return None
-            
+
         if self._ad_server is None:
             tls_config = None
             if self.ad_dc_use_ssl:
@@ -204,6 +204,22 @@ class FreeIPAAuthenticator:
                 connect_timeout=self.connection_timeout,
             )
         return self._ad_server
+
+    def _build_ad_search_base(self) -> Optional[str]:
+        """Build a DC= search base for AD queries using the configured domain."""
+        domain = self.ad_domain_fqdn
+        if not domain and self.trusted_domains:
+            # Fallback to first trusted domain if explicit domain not set
+            domain = self.trusted_domains[0]
+
+        if not domain:
+            return None
+
+        labels = [label.strip() for label in domain.split('.') if label.strip()]
+        if not labels:
+            return None
+
+        return ','.join([f"dc={label}" for label in labels])
     
     def _build_user_dn(self, username: str) -> str:
         """Build user DN from username for native FreeIPA users."""
@@ -1025,7 +1041,16 @@ class FreeIPAAuthenticator:
         
         return None
     
-    def _resolve_sids_to_usernames(self, conn: 'Connection', sids: List[str]) -> Dict[str, str]:
+    def _resolve_sids_to_usernames(
+        self,
+        conn: 'Connection',
+        sids: List[str],
+        *,
+        bind_dn: str,
+        bind_password: str,
+        ad_bind_dn: Optional[str] = None,
+        ad_bind_password: Optional[str] = None,
+    ) -> Dict[str, str]:
         """
         Resolve Windows SIDs to usernames using multiple strategies.
         
@@ -1199,11 +1224,16 @@ class FreeIPAAuthenticator:
                 try:
                     ad_server = self._get_ad_server()
                     if ad_server:
+                        ad_search_base = self._build_ad_search_base()
+                        if not ad_search_base:
+                            logger.warning("[SID RESOLVE] Strategy 4: No AD domain configured for search base; skipping AD lookup")
+                            return resolved
+
                         # AD uses objectSid attribute
                         ad_conn = Connection(
                             ad_server,
-                            user=self.bind_dn,  # Use FreeIPA service account for AD too
-                            password=self.bind_password,
+                            user=ad_bind_dn or bind_dn,
+                            password=ad_bind_password or bind_password,
                             auto_bind=True,
                         )
                         
@@ -1211,7 +1241,7 @@ class FreeIPAAuthenticator:
                             try:
                                 escaped_sid = self._ldap_escape(sid)
                                 ad_conn.search(
-                                    search_base=self.ad_domain_fqdn.replace('.', ',dc=') if self.ad_domain_fqdn else '',
+                                    search_base=ad_search_base,
                                     search_filter=f"(objectSid={escaped_sid})",
                                     search_scope=SUBTREE,
                                     attributes=["sAMAccountName", "cn", "userPrincipalName"],
@@ -1255,6 +1285,9 @@ class FreeIPAAuthenticator:
         bind_password: str,
         search_term: str = "",
         max_results: int = 100,
+        *,
+        ad_bind_dn: Optional[str] = None,
+        ad_bind_password: Optional[str] = None,
     ) -> List[Dict]:
         """
         Search for groups in FreeIPA.
@@ -1320,7 +1353,14 @@ class FreeIPAAuthenticator:
             sid_to_username = {}
             if all_sids:
                 logger.info(f"[GROUP SEARCH] Found {len(all_sids)} unique SIDs to resolve")
-                sid_to_username = self._resolve_sids_to_usernames(conn, list(all_sids))
+                sid_to_username = self._resolve_sids_to_usernames(
+                    conn,
+                    list(all_sids),
+                    bind_dn=bind_dn,
+                    bind_password=bind_password,
+                    ad_bind_dn=ad_bind_dn,
+                    ad_bind_password=ad_bind_password,
+                )
             
             # Second pass: build group results with resolved usernames
             groups = []
