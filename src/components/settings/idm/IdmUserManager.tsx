@@ -170,17 +170,21 @@ export function IdmUserManager() {
     },
   });
 
-  // Delete user mutation
+  // Delete user mutation - calls edge function for complete removal
   const deleteUserMutation = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase
-        .from('managed_users')
-        .delete()
-        .eq('id', id);
+      const { data, error } = await supabase.functions.invoke('delete-managed-user', {
+        body: { managed_user_id: id, complete_removal: true },
+      });
       if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      return data;
     },
-    onSuccess: () => {
-      toast.success('User removed');
+    onSuccess: (data) => {
+      const message = data?.details?.auth_user_deleted
+        ? 'User completely removed from system'
+        : 'User authorization removed';
+      toast.success(message);
       queryClient.invalidateQueries({ queryKey: ['managed-users'] });
     },
     onError: (error: any) => {
@@ -427,12 +431,17 @@ export function IdmUserManager() {
                         variant="ghost"
                         size="sm"
                         onClick={() => {
-                          if (confirm('Remove this user?')) {
+                          if (confirm('Remove this user? This will revoke their access and delete their profile if they have logged in.')) {
                             deleteUserMutation.mutate(user.id);
                           }
                         }}
+                        disabled={deleteUserMutation.isPending}
                       >
-                        <Trash2 className="h-4 w-4 text-destructive" />
+                        {deleteUserMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        )}
                       </Button>
                     </TableCell>
                   </TableRow>
