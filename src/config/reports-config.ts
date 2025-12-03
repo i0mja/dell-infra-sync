@@ -1,6 +1,6 @@
-import { BarChart3, Activity, Database, Shield } from "lucide-react";
+import { BarChart3, Activity, Database, Shield, RefreshCw } from "lucide-react";
 
-export type ReportCategory = "inventory" | "operations" | "compliance" | "maintenance" | "audit";
+export type ReportCategory = "inventory" | "operations" | "compliance" | "maintenance" | "updates";
 export type ReportType = 
   | "server_inventory" 
   | "cluster_summary"
@@ -9,7 +9,14 @@ export type ReportType =
   | "firmware_status"
   | "credential_coverage"
   | "maintenance_history"
-  | "cluster_safety";
+  | "cluster_safety"
+  // New update reports
+  | "update_history"
+  | "update_failures"
+  | "server_update_coverage"
+  | "component_compliance"
+  | "esxi_upgrade_history"
+  | "scp_backup_status";
 
 export interface ReportConfig {
   id: ReportType;
@@ -26,6 +33,7 @@ export const REPORT_CATEGORIES = [
   { id: "operations", label: "Operations", icon: Activity },
   { id: "compliance", label: "Compliance", icon: Shield },
   { id: "maintenance", label: "Maintenance", icon: BarChart3 },
+  { id: "updates", label: "Updates", icon: RefreshCw },
 ] as const;
 
 export const REPORTS: Record<ReportType, ReportConfig> = {
@@ -99,6 +107,61 @@ export const REPORTS: Record<ReportType, ReportConfig> = {
     category: "maintenance",
     icon: BarChart3,
     chartType: "area",
+    requiredRole: "viewer",
+  },
+  // New Update Reports
+  update_history: {
+    id: "update_history",
+    name: "Update History",
+    description: "Timeline of all firmware and system updates with status",
+    category: "updates",
+    icon: RefreshCw,
+    chartType: "line",
+    requiredRole: "viewer",
+  },
+  update_failures: {
+    id: "update_failures",
+    name: "Update Failures",
+    description: "Failed updates with error details and affected servers",
+    category: "updates",
+    icon: RefreshCw,
+    chartType: "pie",
+    requiredRole: "operator",
+  },
+  server_update_coverage: {
+    id: "server_update_coverage",
+    name: "Server Update Coverage",
+    description: "Servers by last update date - identify stale systems",
+    category: "updates",
+    icon: RefreshCw,
+    chartType: "pie",
+    requiredRole: "viewer",
+  },
+  component_compliance: {
+    id: "component_compliance",
+    name: "Component Compliance",
+    description: "Component versions compared against baseline packages",
+    category: "updates",
+    icon: RefreshCw,
+    chartType: "bar",
+    requiredRole: "operator",
+  },
+  esxi_upgrade_history: {
+    id: "esxi_upgrade_history",
+    name: "ESXi Upgrade History",
+    description: "ESXi host upgrade timeline and results",
+    category: "updates",
+    icon: RefreshCw,
+    chartType: "line",
+    requiredRole: "viewer",
+  },
+  scp_backup_status: {
+    id: "scp_backup_status",
+    name: "SCP Backup Status",
+    description: "Server Configuration Profile backup coverage and freshness",
+    category: "updates",
+    icon: RefreshCw,
+    chartType: "pie",
     requiredRole: "viewer",
   },
 };
