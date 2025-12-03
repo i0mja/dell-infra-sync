@@ -11,6 +11,82 @@ interface AuthenticateRequest {
   password: string;
 }
 
+// Helper function to validate email addresses properly
+const isValidEmail = (email: any): email is string => {
+  if (!email || typeof email !== 'string') return false;
+  // Reject empty strings, "[]", "{}" and other invalid formats
+  if (email === '[]' || email === '{}' || email.trim() === '' || email === 'null' || email === 'undefined') return false;
+  // Basic email format validation
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+};
+
+// Extract clean username from various formats
+const extractCleanUsername = (username: string, canonicalPrincipal?: string): string => {
+  // Prefer canonical_principal if available (e.g., "adm_jalexander@NEOPOST.AD" → "adm_jalexander")
+  if (canonicalPrincipal && canonicalPrincipal.includes('@')) {
+    return canonicalPrincipal.split('@')[0];
+  }
+  // Fallback to parsing input username
+  if (username.includes('@')) {
+    return username.split('@')[0];
+  }
+  if (username.includes('\\')) {
+    return username.split('\\').pop() || username;
+  }
+  return username;
+};
+
+// Construct proper email from authentication result
+const constructEmail = (
+  cleanUsername: string,
+  userAttributes: any,
+  authResult: any,
+  idmServerHost: string | null
+): string => {
+  // 1. Try user's actual email from LDAP if valid
+  const userEmail = userAttributes?.email || userAttributes?.mail;
+  if (isValidEmail(userEmail)) {
+    console.log(`[IDM Auth] Using valid user email: ${userEmail}`);
+    return userEmail;
+  }
+  
+  // 2. If canonical_principal is already in email format, use it
+  const canonicalPrincipal = authResult?.canonical_principal;
+  if (canonicalPrincipal && canonicalPrincipal.includes('@')) {
+    const email = canonicalPrincipal.toLowerCase();
+    console.log(`[IDM Auth] Using canonical_principal as email: ${email}`);
+    return email;
+  }
+  
+  // 3. Construct from realm for AD trust users (e.g., adm_jalexander@neopost.ad)
+  const realm = authResult?.realm;
+  const isAdTrustUser = authResult?.is_ad_trust_user;
+  if (isAdTrustUser && realm) {
+    const email = `${cleanUsername}@${realm.toLowerCase()}`;
+    console.log(`[IDM Auth] Constructed AD trust email: ${email}`);
+    return email;
+  }
+  
+  // 4. For native IDM users, use server_host domain (e.g., username@idm.neopost.grp)
+  if (idmServerHost) {
+    const email = `${cleanUsername}@${idmServerHost.toLowerCase()}`;
+    console.log(`[IDM Auth] Constructed IDM email from server_host: ${email}`);
+    return email;
+  }
+  
+  // 5. Fallback: construct from realm if available
+  if (realm) {
+    const email = `${cleanUsername}@${realm.toLowerCase()}`;
+    console.log(`[IDM Auth] Constructed email from realm: ${email}`);
+    return email;
+  }
+  
+  // 6. Last resort fallback
+  const fallbackEmail = `${cleanUsername.replace(/[^a-zA-Z0-9_.-]/g, '_')}@idm.local.invalid`;
+  console.log(`[IDM Auth] Using fallback email (should not happen): ${fallbackEmail}`);
+  return fallbackEmail;
+};
+
 serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
@@ -172,20 +248,17 @@ serve(async (req) => {
           p_success: true
         });
 
-        // Check if user exists by idm_uid - use clean username without domain
-        const cleanUsername = username.includes('@') 
-          ? username.split('@')[0] 
-          : username.includes('\\') 
-            ? username.split('\\').pop() || username
-            : username;
+        // Extract clean username - prefer canonical_principal from auth result
+        const cleanUsername = extractCleanUsername(username, authResult.canonical_principal);
+        const idmUid = cleanUsername; // Use clean username as idm_uid
         
-        const idmUid = userAttributes.uid || cleanUsername;
-        console.log(`[IDM Auth] Looking up user with idm_uid: ${idmUid} (clean: ${cleanUsername})`);
+        console.log(`[IDM Auth] Clean username: ${cleanUsername}, idm_uid: ${idmUid}`);
+        console.log(`[IDM Auth] Auth result - realm: ${authResult.realm}, is_ad_trust: ${authResult.is_ad_trust_user}, canonical: ${authResult.canonical_principal}`);
         
-        // Try multiple lookup strategies like idm-provision does
+        // Try multiple lookup strategies to find existing user
         let existingProfile = null;
         
-        // 1. Try exact idm_uid match
+        // 1. Try exact idm_uid match (clean username)
         const { data: profileByUid } = await supabase
           .from('profiles')
           .select('id, email, idm_uid')
@@ -194,38 +267,58 @@ serve(async (req) => {
         
         if (profileByUid) {
           existingProfile = profileByUid;
-          console.log(`[IDM Auth] Found user by exact idm_uid: ${existingProfile.id}`);
+          console.log(`[IDM Auth] Found user by idm_uid: ${existingProfile.id}`);
         }
         
-        // 2. Try clean username match
-        if (!existingProfile && cleanUsername !== idmUid) {
-          const { data: profileByCleanUid } = await supabase
+        // 2. Try case-insensitive idm_uid match
+        if (!existingProfile) {
+          const { data: profileByUidICase } = await supabase
             .from('profiles')
             .select('id, email, idm_uid')
-            .eq('idm_uid', cleanUsername)
+            .ilike('idm_uid', idmUid)
             .single();
           
-          if (profileByCleanUid) {
-            existingProfile = profileByCleanUid;
-            console.log(`[IDM Auth] Found user by clean username: ${existingProfile.id}`);
+          if (profileByUidICase) {
+            existingProfile = profileByUidICase;
+            console.log(`[IDM Auth] Found user by case-insensitive idm_uid: ${existingProfile.id}`);
           }
         }
         
-        // 3. Try email match with generated email
-        const generatedEmail = userAttributes.email || userAttributes.mail || `${cleanUsername.replace(/[^a-zA-Z0-9_.-]/g, '_')}@idm.example.com`;
+        // 3. Try email match with constructed email
+        const constructedEmail = constructEmail(cleanUsername, userAttributes, authResult, idmSettings.server_host);
         if (!existingProfile) {
-          // Also try legacy @idm.local format
-          const legacyEmail = `${cleanUsername}@idm.local`;
           const { data: profileByEmail } = await supabase
             .from('profiles')
             .select('id, email, idm_uid')
-            .or(`email.eq.${generatedEmail},email.eq.${legacyEmail}`)
-            .limit(1)
+            .eq('email', constructedEmail)
             .single();
           
           if (profileByEmail) {
             existingProfile = profileByEmail;
-            console.log(`[IDM Auth] Found user by email: ${existingProfile.id}`);
+            console.log(`[IDM Auth] Found user by constructed email: ${existingProfile.id}`);
+          }
+        }
+        
+        // 4. Try legacy email formats as fallback
+        if (!existingProfile) {
+          const legacyEmails = [
+            `${cleanUsername}@idm.local`,
+            `${cleanUsername}@idm.example.com`,
+            `${cleanUsername}@idm.internal`
+          ];
+          
+          for (const legacyEmail of legacyEmails) {
+            const { data: profileByLegacy } = await supabase
+              .from('profiles')
+              .select('id, email, idm_uid')
+              .eq('email', legacyEmail)
+              .single();
+            
+            if (profileByLegacy) {
+              existingProfile = profileByLegacy;
+              console.log(`[IDM Auth] Found user by legacy email ${legacyEmail}: ${existingProfile.id}`);
+              break;
+            }
           }
         }
 
@@ -242,11 +335,12 @@ serve(async (req) => {
           await supabase
             .from('profiles')
             .update({
-              idm_source: 'freeipa',
+              idm_uid: idmUid, // Update to clean username format
+              idm_source: authResult.is_ad_trust_user ? 'ad_trust' : 'freeipa',
               idm_user_dn: authResult.user_dn,
               idm_groups: authResult.groups || [],
               idm_disabled: false,
-              idm_mail: userAttributes.email,
+              idm_mail: isValidEmail(userAttributes.email) ? userAttributes.email : null,
               idm_title: userAttributes.title,
               idm_department: userAttributes.department,
               last_idm_sync: new Date().toISOString()
@@ -257,10 +351,11 @@ serve(async (req) => {
           // JIT user provisioning - create new user
           console.log(`[IDM Auth] Creating new user via JIT provisioning`);
           
-          // Use a valid email format - Supabase Auth rejects non-standard TLDs like .local or .internal
-          // Use example.com which is a reserved domain per RFC 2606
-          email = userAttributes.email || userAttributes.mail || `${idmUid.replace(/[^a-zA-Z0-9_.-]/g, '_')}@idm.example.com`;
-          const fullName = userAttributes.full_name || userAttributes.displayName || idmUid;
+          // Construct proper email based on realm/domain
+          email = constructedEmail;
+          const fullName = userAttributes.full_name || userAttributes.displayName || cleanUsername;
+
+          console.log(`[IDM Auth] Creating user with email: ${email}`);
 
           const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
             email,
@@ -268,36 +363,71 @@ serve(async (req) => {
             user_metadata: {
               full_name: fullName,
               idm_uid: idmUid,
-              idm_source: 'freeipa'
+              idm_source: authResult.is_ad_trust_user ? 'ad_trust' : 'freeipa'
             }
           });
 
           if (createError || !newUser.user) {
-            console.error('[IDM Auth] Failed to create user:', createError);
-            return new Response(
-              JSON.stringify({ success: false, error: 'Failed to provision user account' }),
-              { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-            );
+            // Handle email_exists error - try to find and use existing user
+            if (createError?.code === 'email_exists') {
+              console.log(`[IDM Auth] Email exists, looking up existing user...`);
+              
+              const { data: usersData } = await supabase.auth.admin.listUsers();
+              const existingUser = usersData?.users?.find(u => u.email === email);
+              
+              if (existingUser) {
+                userId = existingUser.id;
+                console.log(`[IDM Auth] Found existing auth user: ${userId}`);
+                
+                // Update their profile
+                await supabase
+                  .from('profiles')
+                  .update({
+                    idm_uid: idmUid,
+                    idm_source: authResult.is_ad_trust_user ? 'ad_trust' : 'freeipa',
+                    idm_user_dn: authResult.user_dn,
+                    idm_groups: authResult.groups || [],
+                    idm_disabled: false,
+                    idm_mail: isValidEmail(userAttributes.email) ? userAttributes.email : null,
+                    idm_title: userAttributes.title,
+                    idm_department: userAttributes.department,
+                    last_idm_sync: new Date().toISOString()
+                  })
+                  .eq('id', userId);
+              } else {
+                console.error('[IDM Auth] Could not find existing user despite email_exists error');
+                return new Response(
+                  JSON.stringify({ success: false, error: 'User account conflict - please contact administrator' }),
+                  { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+              }
+            } else {
+              console.error('[IDM Auth] Failed to create user:', createError);
+              return new Response(
+                JSON.stringify({ success: false, error: 'Failed to provision user account: ' + (createError?.message || 'Unknown error') }),
+                { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+              );
+            }
+          } else {
+            userId = newUser.user.id;
+
+            // Update profile (trigger should have created it)
+            await supabase
+              .from('profiles')
+              .update({
+                full_name: fullName,
+                idm_uid: idmUid,
+                idm_source: authResult.is_ad_trust_user ? 'ad_trust' : 'freeipa',
+                idm_user_dn: authResult.user_dn,
+                idm_groups: authResult.groups || [],
+                idm_disabled: false,
+                idm_mail: isValidEmail(userAttributes.email) ? userAttributes.email : null,
+                idm_title: userAttributes.title,
+                idm_department: userAttributes.department,
+                last_idm_sync: new Date().toISOString()
+              })
+              .eq('id', userId);
           }
-
-          userId = newUser.user.id;
-
-          // Update profile (trigger should have created it)
-          await supabase
-            .from('profiles')
-            .update({
-              full_name: fullName,
-              idm_uid: idmUid,
-              idm_source: 'freeipa',
-              idm_user_dn: authResult.user_dn,
-              idm_groups: authResult.groups || [],
-              idm_disabled: false,
-              idm_mail: userAttributes.email,
-              idm_title: userAttributes.title,
-              idm_department: userAttributes.department,
-              last_idm_sync: new Date().toISOString()
-            })
-            .eq('id', userId);
         }
 
         // Map groups to role - FIRST check managed_users table for direct assignment
@@ -305,7 +435,7 @@ serve(async (req) => {
         const userGroups = authResult.groups || [];
         
         // Normalize username for managed_users lookup
-        const normalizedUsername = (userAttributes.uid || username).split('@')[0].split('\\').pop()?.toLowerCase() || username.toLowerCase();
+        const normalizedUsername = cleanUsername.toLowerCase();
         
         // Check managed_users table first
         const { data: managedUser } = await supabase
@@ -380,7 +510,7 @@ serve(async (req) => {
             idm_user_dn: authResult.user_dn,
             idm_groups: authResult.groups || [],
             mapped_role: mappedRole,
-            auth_method: 'freeipa_ldap',
+            auth_method: authResult.is_ad_trust_user ? 'ad_trust' : 'freeipa_ldap',
             session_expires_at: sessionExpiresAt.toISOString(),
             ip_address: req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown'
           });
@@ -425,14 +555,16 @@ serve(async (req) => {
           .insert({
             user_id: userId,
             action: 'idm_login',
-            auth_source: 'freeipa',
-            auth_method: 'freeipa_ldap',
+            auth_source: authResult.is_ad_trust_user ? 'ad_trust' : 'freeipa',
+            auth_method: authResult.is_ad_trust_user ? 'ad_trust' : 'freeipa_ldap',
             idm_user_dn: authResult.user_dn,
             idm_groups_at_login: authResult.groups || [],
             ip_address: req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown',
             details: {
               username,
-              mapped_role: mappedRole
+              mapped_role: mappedRole,
+              canonical_principal: authResult.canonical_principal,
+              realm: authResult.realm
             }
           });
 
@@ -458,8 +590,9 @@ serve(async (req) => {
       }
 
       if (updatedJob.status === 'failed') {
-        console.error('[IDM Auth] Job failed:', updatedJob.details?.error);
-        
+        console.log('[IDM Auth] Job failed');
+        const errorMsg = updatedJob.details?.error || 'Authentication failed';
+
         // Record failed attempt
         await supabase.rpc('record_auth_attempt', {
           p_identifier: username,
@@ -472,7 +605,7 @@ serve(async (req) => {
         return new Response(
           JSON.stringify({
             success: false,
-            error: 'Authentication failed',
+            error: errorMsg,
             remaining_attempts: rateLimitCheck?.remaining_attempts ? rateLimitCheck.remaining_attempts - 1 : 4
           }),
           { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -480,10 +613,10 @@ serve(async (req) => {
       }
     }
 
-    // Timeout
-    console.error('[IDM Auth] Job timeout after 30 seconds');
+    // Job timed out
+    console.error('[IDM Auth] Job timed out');
     return new Response(
-      JSON.stringify({ success: false, error: 'Authentication timeout - job executor may be offline' }),
+      JSON.stringify({ success: false, error: 'Authentication timeout - please try again' }),
       { status: 504, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 

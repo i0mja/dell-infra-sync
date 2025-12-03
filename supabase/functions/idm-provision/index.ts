@@ -23,6 +23,81 @@ interface ProvisionRequest {
   canonical_principal?: string;
 }
 
+// Helper function to validate email addresses properly
+const isValidEmail = (email: any): email is string => {
+  if (!email || typeof email !== 'string') return false;
+  // Reject empty strings, "[]", "{}" and other invalid formats
+  if (email === '[]' || email === '{}' || email.trim() === '' || email === 'null' || email === 'undefined') return false;
+  // Basic email format validation
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+};
+
+// Extract clean username from various formats
+const extractCleanUsername = (username: string, canonicalPrincipal?: string): string => {
+  // Prefer canonical_principal if available (e.g., "adm_jalexander@NEOPOST.AD" → "adm_jalexander")
+  if (canonicalPrincipal && canonicalPrincipal.includes('@')) {
+    return canonicalPrincipal.split('@')[0];
+  }
+  // Fallback to parsing input username
+  if (username.includes('@')) {
+    return username.split('@')[0];
+  }
+  if (username.includes('\\')) {
+    return username.split('\\').pop() || username;
+  }
+  return username;
+};
+
+// Construct proper email from provisioning request
+const constructEmail = (
+  cleanUsername: string,
+  userInfo: any,
+  realm?: string,
+  isAdTrustUser?: boolean,
+  canonicalPrincipal?: string,
+  idmServerHost?: string | null
+): string => {
+  // 1. Try user's actual email from LDAP if valid
+  const userEmail = userInfo?.email;
+  if (isValidEmail(userEmail)) {
+    console.log(`[IDM Provision] Using valid user email: ${userEmail}`);
+    return userEmail;
+  }
+  
+  // 2. If canonical_principal is already in email format, use it
+  if (canonicalPrincipal && canonicalPrincipal.includes('@')) {
+    const email = canonicalPrincipal.toLowerCase();
+    console.log(`[IDM Provision] Using canonical_principal as email: ${email}`);
+    return email;
+  }
+  
+  // 3. Construct from realm for AD trust users (e.g., adm_jalexander@neopost.ad)
+  if (isAdTrustUser && realm) {
+    const email = `${cleanUsername}@${realm.toLowerCase()}`;
+    console.log(`[IDM Provision] Constructed AD trust email: ${email}`);
+    return email;
+  }
+  
+  // 4. For native IDM users, use server_host domain (e.g., username@idm.neopost.grp)
+  if (idmServerHost) {
+    const email = `${cleanUsername}@${idmServerHost.toLowerCase()}`;
+    console.log(`[IDM Provision] Constructed IDM email from server_host: ${email}`);
+    return email;
+  }
+  
+  // 5. Fallback: construct from realm if available
+  if (realm) {
+    const email = `${cleanUsername}@${realm.toLowerCase()}`;
+    console.log(`[IDM Provision] Constructed email from realm: ${email}`);
+    return email;
+  }
+  
+  // 6. Last resort fallback
+  const fallbackEmail = `${cleanUsername.replace(/[^a-zA-Z0-9_.-]/g, '_')}@idm.local.invalid`;
+  console.log(`[IDM Provision] Using fallback email (should not happen): ${fallbackEmail}`);
+  return fallbackEmail;
+};
+
 serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
@@ -34,6 +109,7 @@ serve(async (req) => {
     const { username, user_dn, user_info, groups, is_ad_trust_user, ad_domain, realm, canonical_principal } = data;
 
     console.log(`[IDM Provision] Provisioning user: ${username}`);
+    console.log(`[IDM Provision] Request data - realm: ${realm}, is_ad_trust: ${is_ad_trust_user}, canonical: ${canonical_principal}`);
 
     // Validate input
     if (!username) {
@@ -47,31 +123,29 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Get IDM settings for session timeout
+    // Get IDM settings for session timeout and server_host
     const { data: idmSettings } = await supabase
       .from('idm_settings')
-      .select('session_timeout_minutes, max_failed_attempts, lockout_duration_minutes')
+      .select('session_timeout_minutes, max_failed_attempts, lockout_duration_minutes, server_host')
       .single();
 
     const sessionTimeoutMinutes = idmSettings?.session_timeout_minutes || 480;
 
-    // Check if user exists by idm_uid
-    // Extract clean username (remove domain/realm if present)
-    const cleanUsername = username.includes('@') 
-      ? username.split('@')[0] 
-      : username.includes('\\') 
-        ? username.split('\\').pop() || username
-        : username;
+    // Extract clean username - prefer canonical_principal
+    const cleanUsername = extractCleanUsername(username, canonical_principal);
+    const idmUid = cleanUsername; // Use clean username as idm_uid
     
-    const idmUid = user_info?.uid || cleanUsername;
     console.log(`[IDM Provision] Clean username: ${cleanUsername}, idmUid: ${idmUid}`);
     
-    // Generate email early for lookup
-    // Use example.com which is a reserved domain per RFC 2606 - Supabase Auth rejects non-standard TLDs
-    let generatedEmail = user_info?.email;
-    if (!generatedEmail || !generatedEmail.includes('@') || generatedEmail.endsWith('.grp')) {
-      generatedEmail = `${cleanUsername.replace(/[^a-zA-Z0-9_.-]/g, '_')}@idm.example.com`;
-    }
+    // Construct proper email
+    const constructedEmail = constructEmail(
+      cleanUsername,
+      user_info,
+      realm,
+      is_ad_trust_user,
+      canonical_principal,
+      idmSettings?.server_host
+    );
     
     // Try multiple lookup strategies to find existing user
     let existingProfile = null;
@@ -88,31 +162,54 @@ serve(async (req) => {
       console.log(`[IDM Provision] Found user by exact idm_uid: ${existingProfile.id}`);
     }
     
-    // 2. Try clean username match (without domain)
+    // 2. Try case-insensitive idm_uid match
     if (!existingProfile) {
-      const { data: profileByCleanUid } = await supabase
+      const { data: profileByUidICase } = await supabase
         .from('profiles')
         .select('id, email, idm_uid')
-        .eq('idm_uid', cleanUsername)
+        .ilike('idm_uid', idmUid)
         .single();
       
-      if (profileByCleanUid) {
-        existingProfile = profileByCleanUid;
-        console.log(`[IDM Provision] Found user by clean username: ${existingProfile.id}`);
+      if (profileByUidICase) {
+        existingProfile = profileByUidICase;
+        console.log(`[IDM Provision] Found user by case-insensitive idm_uid: ${existingProfile.id}`);
       }
     }
     
-    // 3. Try email match
+    // 3. Try email match with constructed email
     if (!existingProfile) {
       const { data: profileByEmail } = await supabase
         .from('profiles')
         .select('id, email, idm_uid')
-        .eq('email', generatedEmail)
+        .eq('email', constructedEmail)
         .single();
       
       if (profileByEmail) {
         existingProfile = profileByEmail;
-        console.log(`[IDM Provision] Found user by email: ${existingProfile.id}`);
+        console.log(`[IDM Provision] Found user by constructed email: ${existingProfile.id}`);
+      }
+    }
+    
+    // 4. Try legacy email formats as fallback
+    if (!existingProfile) {
+      const legacyEmails = [
+        `${cleanUsername}@idm.local`,
+        `${cleanUsername}@idm.example.com`,
+        `${cleanUsername}@idm.internal`
+      ];
+      
+      for (const legacyEmail of legacyEmails) {
+        const { data: profileByLegacy } = await supabase
+          .from('profiles')
+          .select('id, email, idm_uid')
+          .eq('email', legacyEmail)
+          .single();
+        
+        if (profileByLegacy) {
+          existingProfile = profileByLegacy;
+          console.log(`[IDM Provision] Found user by legacy email ${legacyEmail}: ${existingProfile.id}`);
+          break;
+        }
       }
     }
 
@@ -129,12 +226,12 @@ serve(async (req) => {
       await supabase
         .from('profiles')
         .update({
-          idm_uid: idmUid, // Update to current format
+          idm_uid: idmUid, // Update to clean username format
           idm_source: is_ad_trust_user ? 'ad_trust' : 'freeipa',
           idm_user_dn: user_dn,
           idm_groups: groups || [],
           idm_disabled: false,
-          idm_mail: user_info?.email,
+          idm_mail: isValidEmail(user_info?.email) ? user_info.email : null,
           idm_title: user_info?.title,
           idm_department: user_info?.department,
           last_idm_sync: new Date().toISOString()
@@ -145,7 +242,7 @@ serve(async (req) => {
       // JIT user provisioning - create new user
       console.log(`[IDM Provision] Creating new user via JIT provisioning`);
       
-      email = generatedEmail;
+      email = constructedEmail;
       console.log(`[IDM Provision] Using email for provisioning: ${email}`);
       
       const fullName = user_info?.full_name || cleanUsername;
@@ -182,7 +279,7 @@ serve(async (req) => {
                 idm_user_dn: user_dn,
                 idm_groups: groups || [],
                 idm_disabled: false,
-                idm_mail: user_info?.email,
+                idm_mail: isValidEmail(user_info?.email) ? user_info.email : null,
                 idm_title: user_info?.title,
                 idm_department: user_info?.department,
                 last_idm_sync: new Date().toISOString()
@@ -198,7 +295,7 @@ serve(async (req) => {
         } else {
           console.error('[IDM Provision] Failed to create user:', createError);
           return new Response(
-            JSON.stringify({ success: false, error: 'Failed to provision user account' }),
+            JSON.stringify({ success: false, error: 'Failed to provision user account: ' + (createError?.message || 'Unknown error') }),
             { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         }
@@ -215,7 +312,7 @@ serve(async (req) => {
             idm_user_dn: user_dn,
             idm_groups: groups || [],
             idm_disabled: false,
-            idm_mail: user_info?.email,
+            idm_mail: isValidEmail(user_info?.email) ? user_info.email : null,
             idm_title: user_info?.title,
             idm_department: user_info?.department,
             last_idm_sync: new Date().toISOString()
