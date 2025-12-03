@@ -185,7 +185,7 @@ class FreeIPAAuthenticator:
         """Get or create AD Domain Controller server connection."""
         if not self.ad_dc_host:
             return None
-            
+
         if self._ad_server is None:
             tls_config = None
             if self.ad_dc_use_ssl:
@@ -204,6 +204,22 @@ class FreeIPAAuthenticator:
                 connect_timeout=self.connection_timeout,
             )
         return self._ad_server
+
+    def _build_ad_search_base(self) -> Optional[str]:
+        """Build a DC= search base for AD queries using the configured domain."""
+        domain = self.ad_domain_fqdn
+        if not domain and self.trusted_domains:
+            # Fallback to first trusted domain if explicit domain not set
+            domain = self.trusted_domains[0]
+
+        if not domain:
+            return None
+
+        labels = [label.strip() for label in domain.split('.') if label.strip()]
+        if not labels:
+            return None
+
+        return ','.join([f"dc={label}" for label in labels])
     
     def _build_user_dn(self, username: str) -> str:
         """Build user DN from username for native FreeIPA users."""
@@ -1208,6 +1224,11 @@ class FreeIPAAuthenticator:
                 try:
                     ad_server = self._get_ad_server()
                     if ad_server:
+                        ad_search_base = self._build_ad_search_base()
+                        if not ad_search_base:
+                            logger.warning("[SID RESOLVE] Strategy 4: No AD domain configured for search base; skipping AD lookup")
+                            return resolved
+
                         # AD uses objectSid attribute
                         ad_conn = Connection(
                             ad_server,
@@ -1220,7 +1241,7 @@ class FreeIPAAuthenticator:
                             try:
                                 escaped_sid = self._ldap_escape(sid)
                                 ad_conn.search(
-                                    search_base=self.ad_domain_fqdn.replace('.', ',dc=') if self.ad_domain_fqdn else '',
+                                    search_base=ad_search_base,
                                     search_filter=f"(objectSid={escaped_sid})",
                                     search_scope=SUBTREE,
                                     attributes=["sAMAccountName", "cn", "userPrincipalName"],
