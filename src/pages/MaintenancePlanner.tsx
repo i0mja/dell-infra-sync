@@ -179,8 +179,23 @@ export default function MaintenancePlanner() {
       vcenter_sync: "vCenter Sync",
       full_server_update: "Full Server Update",
       cluster_safety_check: "Safety Check",
+      rolling_cluster_update: "Rolling Cluster Update",
+      esxi_upgrade: "ESXi Upgrade",
+      esxi_then_firmware: "ESXi + Firmware Update",
+      firmware_then_esxi: "Firmware + ESXi Update",
+      scp_import: "Config Restore",
+      scp_export: "Config Backup",
+      prepare_host_for_update: "Prepare Host",
+      verify_host_after_update: "Verify Host",
+      power_control: "Power Control",
+      virtual_media_mount: "Virtual Media Mount",
+      virtual_media_unmount: "Virtual Media Unmount",
+      bios_config_read: "BIOS Config Read",
+      bios_config_write: "BIOS Config Write",
+      boot_config: "Boot Config",
+      credential_test: "Credential Test",
     };
-    return labels[type] || type;
+    return labels[type] || type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
   };
 
   // Helper function to format server targets with actual names
@@ -216,6 +231,14 @@ export default function MaintenancePlanner() {
   const operations = useMemo<Operation[]>(() => {
     const jobOps: Operation[] = jobs.map(j => {
       const serverIds = j.target_scope?.server_ids || [];
+      // Prioritize cluster name from details or target_scope for cluster-based jobs
+      const clusterName = j.details?.cluster_name || j.target_scope?.cluster_name;
+      const isClusterJob = j.job_type === 'rolling_cluster_update' || 
+                           j.job_type === 'esxi_upgrade' ||
+                           j.job_type === 'esxi_then_firmware' ||
+                           j.job_type === 'firmware_then_esxi' ||
+                           j.details?.target_type === 'cluster' ||
+                           !!clusterName;
       
       return {
         type: 'job' as const,
@@ -223,14 +246,17 @@ export default function MaintenancePlanner() {
         title: getJobTypeLabel(j.job_type),
         status: mapJobStatus(j),
         timestamp: new Date(j.started_at || j.created_at),
-        target: serverIds.length > 0
-          ? formatServerTarget(serverIds)
-          : j.target_scope?.cluster_name || 'N/A',
+        target: isClusterJob && clusterName 
+          ? clusterName 
+          : serverIds.length > 0 
+            ? formatServerTarget(serverIds) 
+            : 'N/A',
         targetMeta: {
-          type: serverIds.length === 1 ? 'server' : serverIds.length > 1 ? 'servers' : 
-                j.target_scope?.cluster_name ? 'cluster' : 'none',
+          type: isClusterJob && clusterName ? 'cluster' :
+                serverIds.length === 1 ? 'server' : 
+                serverIds.length > 1 ? 'servers' : 'none',
           serverIds: serverIds.length > 0 ? serverIds : undefined,
-          clusterName: j.target_scope?.cluster_name,
+          clusterName: clusterName,
         },
         data: j
       };
