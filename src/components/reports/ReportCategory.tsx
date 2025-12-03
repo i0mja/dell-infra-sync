@@ -16,7 +16,6 @@ interface ReportCategoryProps {
 export function ReportCategory({ reportType, dateRange }: ReportCategoryProps) {
   const report = REPORTS[reportType];
 
-  // Convert dateRange format for useReports hook
   const { data, isLoading, error } = useReports(reportType, {
     start: dateRange.from,
     end: dateRange.to,
@@ -237,6 +236,133 @@ function getTableColumns(reportType: ReportType) {
         { key: "check_timestamp", label: "Check Time", format: (value: string) => new Date(value).toLocaleString() },
       ];
 
+    // ============= NEW UPDATE REPORTS =============
+
+    case "update_history":
+      return [
+        { key: "server", label: "Server" },
+        { key: "server_ip", label: "IP Address" },
+        { key: "job_type", label: "Update Type" },
+        { 
+          key: "status", 
+          label: "Status",
+          format: (value: string) => (
+            <Badge variant={value === "completed" ? "default" : value === "failed" ? "destructive" : "secondary"}>
+              {value}
+            </Badge>
+          )
+        },
+        { key: "started_at", label: "Started", format: (value: string) => value ? new Date(value).toLocaleString() : "-" },
+        { key: "completed_at", label: "Completed", format: (value: string) => value ? new Date(value).toLocaleString() : "-" },
+        { 
+          key: "duration_ms", 
+          label: "Duration",
+          format: (value: number) => value ? `${Math.round(value / 1000)}s` : "-"
+        },
+      ];
+
+    case "update_failures":
+      return [
+        { key: "server", label: "Server" },
+        { key: "server_ip", label: "IP Address" },
+        { key: "job_type", label: "Update Type" },
+        { key: "error", label: "Error Message" },
+        { key: "attempted_at", label: "Attempted", format: (value: string) => value ? new Date(value).toLocaleString() : "-" },
+        { 
+          key: "duration_ms", 
+          label: "Duration",
+          format: (value: number) => value ? `${Math.round(value / 1000)}s` : "-"
+        },
+      ];
+
+    case "server_update_coverage":
+      return [
+        { key: "server", label: "Server" },
+        { key: "ip_address", label: "IP Address" },
+        { key: "model", label: "Model" },
+        { 
+          key: "coverage_status", 
+          label: "Coverage",
+          format: (value: string) => (
+            <Badge variant={
+              value === "Current (<30d)" ? "default" : 
+              value === "Stale (30-90d)" ? "secondary" : 
+              value === "Critical (>90d)" ? "destructive" : 
+              "outline"
+            }>
+              {value}
+            </Badge>
+          )
+        },
+        { key: "last_update", label: "Last Update", format: (value: string) => value ? new Date(value).toLocaleString() : "Never" },
+        { key: "days_since_update", label: "Days Ago", format: (value: number) => value !== null ? value : "-" },
+      ];
+
+    case "component_compliance":
+      return [
+        { key: "server", label: "Server" },
+        { key: "component", label: "Component" },
+        { key: "component_type", label: "Type" },
+        { key: "current_version", label: "Current Version" },
+        { key: "baseline_version", label: "Baseline" },
+        { 
+          key: "compliant", 
+          label: "Status",
+          format: (value: string) => (
+            <Badge variant={
+              value === "Compliant" ? "default" : 
+              value === "Non-compliant" ? "destructive" : 
+              "secondary"
+            }>
+              {value}
+            </Badge>
+          )
+        },
+      ];
+
+    case "esxi_upgrade_history":
+      return [
+        { key: "host", label: "Host" },
+        { key: "cluster", label: "Cluster" },
+        { key: "version_before", label: "From Version" },
+        { key: "version_after", label: "To Version" },
+        { 
+          key: "status", 
+          label: "Status",
+          format: (value: string) => (
+            <Badge variant={value === "completed" ? "default" : value === "failed" ? "destructive" : "secondary"}>
+              {value}
+            </Badge>
+          )
+        },
+        { key: "started_at", label: "Started", format: (value: string) => value ? new Date(value).toLocaleString() : "-" },
+        { key: "completed_at", label: "Completed", format: (value: string) => value ? new Date(value).toLocaleString() : "-" },
+      ];
+
+    case "scp_backup_status":
+      return [
+        { key: "server", label: "Server" },
+        { key: "ip_address", label: "IP Address" },
+        { key: "model", label: "Model" },
+        { 
+          key: "backup_status", 
+          label: "Status",
+          format: (value: string) => (
+            <Badge variant={
+              value === "Recent (<30d)" ? "default" : 
+              value === "Stale (30-90d)" ? "secondary" : 
+              value === "Very Old (>90d)" ? "destructive" : 
+              "outline"
+            }>
+              {value}
+            </Badge>
+          )
+        },
+        { key: "backup_name", label: "Backup Name" },
+        { key: "last_backup", label: "Last Backup", format: (value: string) => value ? new Date(value).toLocaleString() : "Never" },
+        { key: "days_since_backup", label: "Days Ago", format: (value: number) => value !== null ? value : "-" },
+      ];
+
     default:
       return [];
   }
@@ -249,7 +375,7 @@ function getExportColumns(reportType: ReportType): ExportColumn<any>[] {
     label: col.label,
     format: col.format ? (value, row) => {
       const result = col.format!(value, row);
-      return typeof result === "string" ? result : String(value);
+      return typeof result === "string" ? result : String(value ?? "");
     } : undefined,
   }));
 }
