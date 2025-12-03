@@ -3,7 +3,33 @@
  * Direct HTTP calls to Job Executor for instant operations (no job queue)
  */
 
-const API_BASE_URL = 'http://localhost:8081';
+const DEFAULT_URL = 'http://localhost:8081';
+let apiBaseUrl = localStorage.getItem('job_executor_url') || DEFAULT_URL;
+
+/**
+ * Set the Job Executor URL dynamically
+ */
+export function setJobExecutorUrl(url: string) {
+  apiBaseUrl = url;
+  localStorage.setItem('job_executor_url', url);
+}
+
+/**
+ * Get the current Job Executor URL
+ */
+export function getJobExecutorUrl(): string {
+  return apiBaseUrl;
+}
+
+/**
+ * Initialize URL from database settings (call on app load)
+ */
+export function initializeJobExecutorUrl(dbUrl: string | null) {
+  if (dbUrl) {
+    apiBaseUrl = dbUrl;
+    localStorage.setItem('job_executor_url', dbUrl);
+  }
+}
 
 export interface ConsoleSessionResponse {
   success: boolean;
@@ -49,12 +75,30 @@ export interface DatastoreBrowseResponse {
   error?: string;
 }
 
+export interface IdmAuthenticateResponse {
+  success: boolean;
+  user_id?: string;
+  email?: string;
+  idm_uid?: string;
+  canonical_principal?: string;
+  realm?: string;
+  is_ad_trust_user?: boolean;
+  role?: string;
+  idm_groups?: string[];
+  access_token?: string;
+  refresh_token?: string;
+  expires_at?: number;
+  error?: string;
+  remaining_attempts?: number;
+  lockout_remaining_seconds?: number;
+}
+
 /**
  * Launch iDRAC console session
  */
 export async function launchConsole(serverId: string): Promise<ConsoleSessionResponse> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/console-launch`, {
+    const response = await fetch(`${apiBaseUrl}/api/console-launch`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -88,7 +132,7 @@ export async function controlPower(
   action: 'on' | 'off' | 'graceful_shutdown' | 'reset' | 'graceful_restart'
 ): Promise<PowerControlResponse> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/power-control`, {
+    const response = await fetch(`${apiBaseUrl}/api/power-control`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -119,7 +163,7 @@ export async function controlPower(
  */
 export async function testConnectivity(serverId: string): Promise<ConnectivityTestResponse> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/connectivity-test`, {
+    const response = await fetch(`${apiBaseUrl}/api/connectivity-test`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -155,7 +199,7 @@ export async function browseDatastore(
   filePatterns: string[] = ['*.zip', '*.iso']
 ): Promise<DatastoreBrowseResponse> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/browse-datastore`, {
+    const response = await fetch(`${apiBaseUrl}/api/browse-datastore`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -187,6 +231,40 @@ export async function browseDatastore(
 }
 
 /**
+ * Authenticate via IDM (Job Executor)
+ */
+export async function authenticateIdm(
+  username: string,
+  password: string
+): Promise<IdmAuthenticateResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/idm-authenticate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ username, password }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok && !data.success) {
+      return data; // Return the error response with remaining_attempts etc.
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        throw new Error('JOB_EXECUTOR_UNREACHABLE');
+      }
+      throw error;
+    }
+    throw new Error('Unknown error during IDM authentication');
+  }
+}
+
+/**
  * Check if Job Executor API is reachable
  */
 export async function checkApiHealth(): Promise<boolean> {
@@ -194,7 +272,7 @@ export async function checkApiHealth(): Promise<boolean> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 2000);
     
-    await fetch(`${API_BASE_URL}/api/health`, {
+    await fetch(`${apiBaseUrl}/api/health`, {
       signal: controller.signal,
     });
     
@@ -202,5 +280,37 @@ export async function checkApiHealth(): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Test connection to a specific Job Executor URL
+ */
+export async function testJobExecutorConnection(url: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    
+    const response = await fetch(`${url}/api/health`, {
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (response.ok) {
+      return { success: true, message: 'Connection successful' };
+    }
+    return { success: false, message: `HTTP ${response.status}: ${response.statusText}` };
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.name === 'AbortError') {
+        return { success: false, message: 'Connection timed out after 5 seconds' };
+      }
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        return { success: false, message: 'Cannot reach Job Executor - check URL and ensure service is running' };
+      }
+      return { success: false, message: error.message };
+    }
+    return { success: false, message: 'Unknown error' };
   }
 }

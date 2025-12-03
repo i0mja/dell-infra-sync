@@ -27,6 +27,7 @@ export type Database = {
           idrac_max_concurrent: number | null
           idrac_request_delay_ms: number | null
           job_auto_cleanup_enabled: boolean | null
+          job_executor_url: string | null
           job_last_cleanup_at: string | null
           job_retention_days: number | null
           keep_statistics: boolean
@@ -60,6 +61,7 @@ export type Database = {
           idrac_max_concurrent?: number | null
           idrac_request_delay_ms?: number | null
           job_auto_cleanup_enabled?: boolean | null
+          job_executor_url?: string | null
           job_last_cleanup_at?: string | null
           job_retention_days?: number | null
           keep_statistics?: boolean
@@ -93,6 +95,7 @@ export type Database = {
           idrac_max_concurrent?: number | null
           idrac_request_delay_ms?: number | null
           job_auto_cleanup_enabled?: boolean | null
+          job_executor_url?: string | null
           job_last_cleanup_at?: string | null
           job_retention_days?: number | null
           keep_statistics?: boolean

@@ -6,17 +6,23 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { SettingsSection } from "@/components/settings/SettingsSection";
-import { Network, Activity, Terminal, Database, Loader2, Key, Eye, Copy } from "lucide-react";
+import { Network, Activity, Terminal, Database, Loader2, Key, Eye, Copy, Server, CheckCircle, XCircle } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle } from "lucide-react";
+import { setJobExecutorUrl, getJobExecutorUrl, testJobExecutorConnection, initializeJobExecutorUrl } from "@/lib/job-executor-api";
 
 export function SystemSettings() {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [cleaningUp, setCleaningUp] = useState(false);
   const [jobCleaningUp, setJobCleaningUp] = useState(false);
+
+  // Job Executor Settings
+  const [jobExecutorUrl, setJobExecutorUrlState] = useState(getJobExecutorUrl());
+  const [jobExecutorTesting, setJobExecutorTesting] = useState(false);
+  const [jobExecutorStatus, setJobExecutorStatus] = useState<'unknown' | 'connected' | 'failed'>('unknown');
 
   // Network Settings
   const [networkSettingsId, setNetworkSettingsId] = useState<string | null>(null);
@@ -91,6 +97,12 @@ export function SystemSettings() {
       setStalePendingHours(data.stale_pending_hours || 24);
       setStaleRunningHours(data.stale_running_hours || 48);
       setAutoCancelStaleJobs(data.auto_cancel_stale_jobs ?? true);
+      
+      // Load Job Executor URL from database
+      if (data.job_executor_url) {
+        setJobExecutorUrlState(data.job_executor_url);
+        initializeJobExecutorUrl(data.job_executor_url);
+      }
     }
   };
 
@@ -260,8 +272,141 @@ export function SystemSettings() {
     }
   };
 
+  const handleTestJobExecutor = async () => {
+    setJobExecutorTesting(true);
+    setJobExecutorStatus('unknown');
+    
+    const result = await testJobExecutorConnection(jobExecutorUrl);
+    
+    if (result.success) {
+      setJobExecutorStatus('connected');
+      toast({
+        title: "Connection Successful",
+        description: "Job Executor is reachable",
+      });
+    } else {
+      setJobExecutorStatus('failed');
+      toast({
+        title: "Connection Failed",
+        description: result.message,
+        variant: "destructive",
+      });
+    }
+    
+    setJobExecutorTesting(false);
+  };
+
+  const handleSaveJobExecutorUrl = async () => {
+    setLoading(true);
+    try {
+      // Update in memory and localStorage
+      setJobExecutorUrl(jobExecutorUrl);
+      
+      // Save to database
+      if (activitySettingsId) {
+        await supabase
+          .from('activity_settings')
+          .update({ job_executor_url: jobExecutorUrl })
+          .eq('id', activitySettingsId);
+      } else {
+        const { data } = await supabase
+          .from('activity_settings')
+          .insert([{ job_executor_url: jobExecutorUrl }])
+          .select()
+          .single();
+        if (data) setActivitySettingsId(data.id);
+      }
+
+      toast({
+        title: "Success",
+        description: "Job Executor URL saved",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {/* Job Executor Connection */}
+      <SettingsSection
+        id="job-executor"
+        title="Job Executor Connection"
+        description="Configure the URL for the Job Executor service"
+        icon={Server}
+      >
+        <div className="space-y-4">
+          <Alert>
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              The Job Executor runs on your server and handles iDRAC operations. 
+              When accessing this app remotely, set this to your server's IP/hostname 
+              (e.g., <code className="px-1 bg-muted rounded text-xs">http://192.168.1.100:8081</code>).
+            </AlertDescription>
+          </Alert>
+
+          <div className="space-y-2">
+            <Label>Job Executor URL</Label>
+            <div className="flex gap-2">
+              <Input
+                type="url"
+                value={jobExecutorUrl}
+                onChange={(e) => setJobExecutorUrlState(e.target.value)}
+                placeholder="http://localhost:8081"
+                className="font-mono"
+              />
+              <Button
+                variant="outline"
+                onClick={handleTestJobExecutor}
+                disabled={jobExecutorTesting}
+              >
+                {jobExecutorTesting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : jobExecutorStatus === 'connected' ? (
+                  <CheckCircle className="h-4 w-4 text-green-500" />
+                ) : jobExecutorStatus === 'failed' ? (
+                  <XCircle className="h-4 w-4 text-destructive" />
+                ) : (
+                  'Test'
+                )}
+              </Button>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Use <code className="px-1 bg-muted rounded text-xs">http://localhost:8081</code> when 
+              accessing from the same machine, or use the server's IP when accessing remotely.
+            </p>
+          </div>
+
+          {jobExecutorStatus === 'connected' && (
+            <Alert className="border-green-500/50 bg-green-500/10">
+              <CheckCircle className="h-4 w-4 text-green-500" />
+              <AlertDescription className="text-green-700 dark:text-green-400">
+                Job Executor is connected and responding
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {jobExecutorStatus === 'failed' && (
+            <Alert variant="destructive">
+              <XCircle className="h-4 w-4" />
+              <AlertDescription>
+                Cannot reach Job Executor. Ensure it's running and the URL is correct.
+              </AlertDescription>
+            </Alert>
+          )}
+
+          <Button onClick={handleSaveJobExecutorUrl} disabled={loading}>
+            {loading ? "Saving..." : "Save Job Executor URL"}
+          </Button>
+        </div>
+      </SettingsSection>
+
       {/* Network Settings */}
       <SettingsSection
         id="network"
