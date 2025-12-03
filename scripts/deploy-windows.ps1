@@ -758,16 +758,30 @@ nssm set DellServerManagerJobExecutor DisplayName "Dell Server Manager - Job Exe
 nssm set DellServerManagerJobExecutor Description "Processes iDRAC and vCenter jobs for Dell Server Manager"
 nssm set DellServerManagerJobExecutor Start SERVICE_AUTO_START
 
-# Set environment variables for Job Executor
+# Set environment variables for Job Executor (including SSL config - disabled by default)
+$SslDir = "C:\dell-server-manager\ssl"
+$SslCert = "$SslDir\server.crt"
+$SslKey = "$SslDir\server.key"
+
 if ($DeployMode -eq "1") {
-    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "SERVICE_ROLE_KEY=$ServiceRoleKey" "DSM_URL=http://127.0.0.1:54321"
+    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "SERVICE_ROLE_KEY=$ServiceRoleKey" "DSM_URL=http://127.0.0.1:54321" "API_SERVER_SSL_ENABLED=false" "API_SERVER_SSL_CERT=$SslCert" "API_SERVER_SSL_KEY=$SslKey"
 } else {
-    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "SERVICE_ROLE_KEY=$ServiceRoleKey" "DSM_URL=$SupabaseUrl"
+    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "SERVICE_ROLE_KEY=$ServiceRoleKey" "DSM_URL=$SupabaseUrl" "API_SERVER_SSL_ENABLED=false" "API_SERVER_SSL_CERT=$SslCert" "API_SERVER_SSL_KEY=$SslKey"
 }
 
 # Log files
 nssm set DellServerManagerJobExecutor AppStdout "$AppPath\job-executor-output.log"
 nssm set DellServerManagerJobExecutor AppStderr "$AppPath\job-executor-error.log"
+
+# Copy SSL certificate generation script
+$SslScriptSource = Join-Path $PSScriptRoot "generate-ssl-cert.ps1"
+if (Test-Path $SslScriptSource) {
+    Copy-Item $SslScriptSource -Destination $AppPath -Force
+    Write-Host "[OK] SSL certificate generation script copied to $AppPath" -ForegroundColor Green
+}
+
+# Add firewall rule for Job Executor API
+New-NetFirewallRule -DisplayName "Dell Server Manager Job Executor API" -Direction Inbound -LocalPort 8081 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue
 
 # Start Job Executor service
 nssm start DellServerManagerJobExecutor
@@ -905,9 +919,25 @@ if ($SetupSSL -ne "y" -and $SetupSSL -ne "Y") {
 Write-Host "   2. Configure regular backups (see docs\BACKUP_GUIDE.md)" -ForegroundColor Gray
 Write-Host "   3. View database: supabase db studio" -ForegroundColor Gray
 Write-Host ""
+Write-Host "[HTTPS] Job Executor HTTPS Setup (for remote browser access):" -ForegroundColor Yellow
+Write-Host "   If accessing Dell Server Manager over HTTPS from a browser," -ForegroundColor Gray
+Write-Host "   the Job Executor must also use HTTPS. To enable:" -ForegroundColor Gray
+Write-Host ""
+Write-Host "   1. Generate SSL certificate:" -ForegroundColor Gray
+Write-Host "      powershell $AppPath\generate-ssl-cert.ps1" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "   2. Enable SSL in service:" -ForegroundColor Gray
+Write-Host "      nssm set DellServerManagerJobExecutor AppEnvironmentExtra +API_SERVER_SSL_ENABLED=true" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "   3. Restart service:" -ForegroundColor Gray
+Write-Host "      nssm restart DellServerManagerJobExecutor" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "   4. Update Job Executor URL in Settings -> System to use https://" -ForegroundColor Gray
+Write-Host ""
 Write-Host "[SERVICE] Service Management:" -ForegroundColor Yellow
 Write-Host "   Supabase: supabase status, supabase stop, supabase restart" -ForegroundColor Gray
 Write-Host "   App: nssm status/restart/stop DellServerManager" -ForegroundColor Gray
+Write-Host "   Job Executor: nssm status/restart/stop DellServerManagerJobExecutor" -ForegroundColor Gray
 Write-Host ""
 
 # Save credentials to file
