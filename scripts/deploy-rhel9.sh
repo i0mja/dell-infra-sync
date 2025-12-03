@@ -1,6 +1,7 @@
 #!/bin/bash
 # Dell Server Manager - RHEL 9 Deployment Script
 # Automates complete self-hosted setup on RHEL 9
+# Includes comprehensive OS hardening and pre-flight checks
 
 set -e
 
@@ -13,6 +14,438 @@ if [ "$EUID" -ne 0 ]; then
    echo "❌ Please run as root (sudo ./deploy-rhel9.sh)"
    exit 1
 fi
+
+# ============================================
+# RHEL 9 HARDENING FUNCTIONS
+# ============================================
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_step() { echo -e "${BLUE}[STEP]${NC} $1"; }
+
+# ============================================
+# Pre-flight Checks
+# ============================================
+preflight_checks() {
+    echo ""
+    echo "🔍 Running RHEL 9 Pre-flight Checks..."
+    echo "========================================"
+    local errors=0
+    local warnings=0
+
+    # 1. Check OS Version
+    log_step "Checking OS version..."
+    if [ -f /etc/redhat-release ]; then
+        OS_VERSION=$(cat /etc/redhat-release)
+        echo "   Detected: $OS_VERSION"
+        if ! grep -q "release 9" /etc/redhat-release && ! grep -q "release 8" /etc/redhat-release; then
+            log_warn "This script is optimized for RHEL 9. Some features may not work correctly."
+            warnings=$((warnings + 1))
+        fi
+    else
+        log_warn "Not a Red Hat based system. Proceeding with caution."
+        warnings=$((warnings + 1))
+    fi
+
+    # 2. Check for Port Conflicts
+    log_step "Checking for port conflicts..."
+    local ports=(5432 3000 8000 8443 3100 4000 6543)
+    for port in "${ports[@]}"; do
+        if ss -tuln 2>/dev/null | grep -q ":$port "; then
+            log_error "Port $port is already in use!"
+            local process_info=$(ss -tulnp 2>/dev/null | grep ":$port " | head -1)
+            echo "   $process_info"
+            errors=$((errors + 1))
+        fi
+    done
+    if [ $errors -eq 0 ]; then
+        log_info "All required ports are available"
+    fi
+
+    # 3. Check for Conflicting Services
+    log_step "Checking for conflicting services..."
+    
+    # Check Podman (common on RHEL 9, conflicts with Docker)
+    if systemctl is-active --quiet podman.socket 2>/dev/null; then
+        log_warn "Podman socket is active - may conflict with Docker"
+        echo "   Podman and Docker can coexist but may cause issues"
+        warnings=$((warnings + 1))
+    fi
+    
+    if systemctl is-active --quiet podman.service 2>/dev/null; then
+        log_warn "Podman service is active"
+        warnings=$((warnings + 1))
+    fi
+
+    # Check native PostgreSQL
+    if systemctl is-active --quiet postgresql 2>/dev/null; then
+        log_error "Native PostgreSQL is running - will conflict with Supabase (port 5432)"
+        errors=$((errors + 1))
+    fi
+
+    # Check nginx/httpd
+    if systemctl is-active --quiet nginx 2>/dev/null; then
+        log_warn "nginx is running - may conflict if using same ports"
+        warnings=$((warnings + 1))
+    fi
+    
+    if systemctl is-active --quiet httpd 2>/dev/null; then
+        log_warn "httpd/Apache is running - may conflict if using same ports"
+        warnings=$((warnings + 1))
+    fi
+
+    # 4. Check System Resources
+    log_step "Checking system resources..."
+    
+    # Disk space
+    local free_disk=$(df -BG /opt 2>/dev/null | tail -1 | awk '{print $4}' | tr -d 'G')
+    if [ -n "$free_disk" ] && [ "$free_disk" -lt 20 ] 2>/dev/null; then
+        log_warn "Low disk space: ${free_disk}GB free in /opt (recommend 20GB+)"
+        warnings=$((warnings + 1))
+    else
+        log_info "Disk space: ${free_disk}GB available"
+    fi
+    
+    # RAM
+    local total_ram=$(free -g 2>/dev/null | awk '/^Mem:/{print $2}')
+    if [ -n "$total_ram" ] && [ "$total_ram" -lt 4 ] 2>/dev/null; then
+        log_warn "Low RAM: ${total_ram}GB (recommend 4GB+)"
+        warnings=$((warnings + 1))
+    else
+        log_info "RAM: ${total_ram}GB available"
+    fi
+    
+    # CPU cores
+    local cpu_cores=$(nproc 2>/dev/null || echo "unknown")
+    if [ "$cpu_cores" != "unknown" ] && [ "$cpu_cores" -lt 2 ] 2>/dev/null; then
+        log_warn "Low CPU cores: $cpu_cores (recommend 2+)"
+        warnings=$((warnings + 1))
+    else
+        log_info "CPU cores: $cpu_cores"
+    fi
+
+    # 5. Check SELinux Status
+    log_step "Checking SELinux status..."
+    if command -v getenforce &> /dev/null; then
+        local selinux_status=$(getenforce)
+        echo "   SELinux: $selinux_status"
+        if [ "$selinux_status" == "Enforcing" ]; then
+            # Check if container SELinux types are available
+            if ! seinfo -t container_file_t &>/dev/null 2>&1; then
+                log_warn "SELinux container types may not be available"
+                echo "   Install container-selinux: dnf install container-selinux"
+                warnings=$((warnings + 1))
+            fi
+        fi
+    else
+        log_info "SELinux not detected"
+    fi
+
+    # 6. Check Firewall Status  
+    log_step "Checking firewall status..."
+    if systemctl is-active --quiet firewalld 2>/dev/null; then
+        echo "   Firewalld: Active"
+        # Check if nftables backend is in use (causes Docker issues)
+        if grep -q "FirewallBackend=nftables" /etc/firewalld/firewalld.conf 2>/dev/null; then
+            log_warn "Firewalld using nftables backend - may cause Docker networking issues"
+            echo "   Will be reconfigured during installation"
+        fi
+    else
+        log_info "Firewalld: Inactive"
+    fi
+
+    # Summary
+    echo ""
+    echo "========================================"
+    if [ $errors -gt 0 ]; then
+        log_error "Pre-flight checks found $errors error(s) and $warnings warning(s)"
+        echo ""
+        echo "❌ Critical issues must be resolved before continuing:"
+        echo "   - Stop conflicting services (systemctl stop <service>)"
+        echo "   - Free up blocked ports"
+        echo ""
+        read -p "Continue anyway? (y/N): " continue_anyway
+        if [ "$continue_anyway" != "y" ] && [ "$continue_anyway" != "Y" ]; then
+            echo "Aborting installation."
+            exit 1
+        fi
+        echo ""
+    elif [ $warnings -gt 0 ]; then
+        log_warn "Pre-flight checks found $warnings warning(s)"
+        echo "   These may cause issues but are not blocking."
+        echo ""
+    else
+        log_info "All pre-flight checks passed!"
+        echo ""
+    fi
+}
+
+# ============================================
+# Kernel Module Configuration
+# ============================================
+configure_kernel_modules() {
+    log_step "Configuring kernel modules for container networking..."
+    
+    # Load required modules
+    modprobe br_netfilter 2>/dev/null || log_warn "br_netfilter module not available"
+    modprobe ip_tables 2>/dev/null || true
+    modprobe iptable_nat 2>/dev/null || true
+    modprobe iptable_filter 2>/dev/null || true
+    modprobe overlay 2>/dev/null || true
+    modprobe ip_vs 2>/dev/null || true
+    modprobe ip_vs_rr 2>/dev/null || true
+    
+    # Make persistent
+    cat > /etc/modules-load.d/docker-dsm.conf << 'EOF'
+# Dell Server Manager - Required kernel modules for Docker
+br_netfilter
+ip_tables
+iptable_nat
+iptable_filter
+overlay
+ip_vs
+ip_vs_rr
+EOF
+    
+    # Configure sysctl for container networking
+    cat > /etc/sysctl.d/99-docker-dsm.conf << 'EOF'
+# Dell Server Manager - Docker networking configuration
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward = 1
+net.ipv4.conf.all.forwarding = 1
+# Increase connection tracking for high-load scenarios
+net.netfilter.nf_conntrack_max = 131072
+EOF
+    
+    # Apply sysctl settings
+    sysctl --system > /dev/null 2>&1 || true
+    
+    log_info "Kernel modules configured"
+}
+
+# ============================================
+# Docker Daemon Configuration for RHEL 9
+# ============================================
+configure_docker_daemon() {
+    log_step "Configuring Docker daemon for RHEL 9..."
+    
+    mkdir -p /etc/docker
+    
+    # Create daemon.json optimized for RHEL 9 with cgroups v2
+    cat > /etc/docker/daemon.json << 'EOF'
+{
+  "exec-opts": ["native.cgroupdriver=systemd"],
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "100m",
+    "max-file": "3"
+  },
+  "storage-driver": "overlay2",
+  "storage-opts": [
+    "overlay2.override_kernel_check=true"
+  ],
+  "live-restore": true,
+  "iptables": true,
+  "ip-forward": true,
+  "userland-proxy": false,
+  "default-address-pools": [
+    {"base": "172.17.0.0/16", "size": 24},
+    {"base": "172.18.0.0/16", "size": 24}
+  ]
+}
+EOF
+    
+    log_info "Docker daemon configured for RHEL 9/cgroups v2"
+}
+
+# ============================================
+# Firewalld Configuration for Docker
+# ============================================
+configure_firewalld_for_docker() {
+    log_step "Configuring firewalld for Docker compatibility..."
+    
+    if ! systemctl is-active --quiet firewalld 2>/dev/null; then
+        log_info "Firewalld not active, skipping firewall configuration"
+        return 0
+    fi
+    
+    # Check and fix nftables backend issue
+    if grep -q "FirewallBackend=nftables" /etc/firewalld/firewalld.conf 2>/dev/null; then
+        log_info "Switching firewalld to iptables backend for Docker compatibility..."
+        sed -i 's/FirewallBackend=nftables/FirewallBackend=iptables/' /etc/firewalld/firewalld.conf
+        systemctl restart firewalld
+        sleep 2
+    fi
+    
+    # Create a trusted zone for Docker if it doesn't exist
+    firewall-cmd --permanent --zone=trusted --add-interface=docker0 2>/dev/null || true
+    
+    # Pre-open required ports BEFORE starting services
+    local ports=(5432 3000 8000 8443 3100 4000 6543)
+    for port in "${ports[@]}"; do
+        firewall-cmd --permanent --add-port=${port}/tcp 2>/dev/null || true
+    done
+    
+    # Enable masquerading for container networking (NAT)
+    firewall-cmd --permanent --add-masquerade 2>/dev/null || true
+    
+    # Allow Docker to manage its own iptables rules
+    firewall-cmd --permanent --direct --add-rule ipv4 filter FORWARD 0 -i docker0 -j ACCEPT 2>/dev/null || true
+    firewall-cmd --permanent --direct --add-rule ipv4 filter FORWARD 0 -o docker0 -j ACCEPT 2>/dev/null || true
+    
+    # Reload firewall
+    firewall-cmd --reload 2>/dev/null || true
+    
+    log_info "Firewalld configured for Docker"
+}
+
+# ============================================
+# SELinux Configuration for Docker
+# ============================================
+configure_selinux_for_docker() {
+    local volumes_dir="$1"
+    
+    log_step "Configuring SELinux for Docker..."
+    
+    if ! command -v getenforce &> /dev/null; then
+        log_info "SELinux not installed, skipping"
+        return 0
+    fi
+    
+    local selinux_status=$(getenforce)
+    if [ "$selinux_status" == "Disabled" ]; then
+        log_info "SELinux disabled, skipping configuration"
+        return 0
+    fi
+    
+    # Install container-selinux if not present
+    if ! rpm -q container-selinux &>/dev/null; then
+        log_info "Installing container-selinux..."
+        dnf install -y container-selinux 2>/dev/null || log_warn "Could not install container-selinux"
+    fi
+    
+    # Set required SELinux booleans
+    log_info "Setting SELinux booleans..."
+    
+    # Allow containers to manage cgroups (required for systemd in containers)
+    setsebool -P container_manage_cgroup 1 2>/dev/null || true
+    
+    # Allow containers to connect to any TCP port
+    setsebool -P container_connect_any 1 2>/dev/null || true
+    
+    # If volumes directory is provided, set proper context
+    if [ -n "$volumes_dir" ] && [ -d "$volumes_dir" ]; then
+        log_info "Setting SELinux context on volumes directory..."
+        
+        # Try container_file_t first (preferred), fall back to svirt_sandbox_file_t
+        if seinfo -t container_file_t &>/dev/null 2>&1; then
+            chcon -Rt container_file_t "$volumes_dir" 2>/dev/null || true
+        else
+            chcon -Rt svirt_sandbox_file_t "$volumes_dir" 2>/dev/null || true
+        fi
+        
+        # Also run restorecon to ensure consistency
+        restorecon -R "$volumes_dir" 2>/dev/null || true
+    fi
+    
+    log_info "SELinux configured for Docker"
+}
+
+# ============================================
+# Conflict Resolution
+# ============================================
+resolve_conflicts() {
+    log_step "Checking for service conflicts..."
+    
+    # Handle Podman conflict
+    if systemctl is-active --quiet podman.socket 2>/dev/null || systemctl is-active --quiet podman.service 2>/dev/null; then
+        echo ""
+        log_warn "Podman services detected - these may conflict with Docker"
+        echo "   Options:"
+        echo "     1) Stop and disable Podman (recommended for Docker use)"
+        echo "     2) Keep Podman running (may cause issues)"
+        echo ""
+        read -p "   Stop Podman services? (Y/n): " stop_podman
+        if [ "$stop_podman" != "n" ] && [ "$stop_podman" != "N" ]; then
+            systemctl stop podman.socket podman.service 2>/dev/null || true
+            systemctl disable podman.socket podman.service 2>/dev/null || true
+            log_info "Podman services stopped and disabled"
+        fi
+    fi
+    
+    # Handle native PostgreSQL conflict
+    if systemctl is-active --quiet postgresql 2>/dev/null; then
+        echo ""
+        log_error "Native PostgreSQL is running on this host"
+        echo "   This will conflict with Supabase's PostgreSQL container (port 5432)"
+        echo ""
+        read -p "   Stop native PostgreSQL? (Y/n): " stop_pg
+        if [ "$stop_pg" != "n" ] && [ "$stop_pg" != "N" ]; then
+            systemctl stop postgresql 2>/dev/null || true
+            systemctl disable postgresql 2>/dev/null || true
+            log_info "Native PostgreSQL stopped and disabled"
+        else
+            log_error "Cannot continue with PostgreSQL conflict on port 5432"
+            exit 1
+        fi
+    fi
+    
+    # Handle nginx conflict (only if it would block our ports)
+    if systemctl is-active --quiet nginx 2>/dev/null; then
+        if ss -tuln | grep -q ":3000 " || ss -tuln | grep -q ":8000 "; then
+            log_warn "nginx may be using ports needed by this application"
+            read -p "   Stop nginx? (y/N): " stop_nginx
+            if [ "$stop_nginx" = "y" ] || [ "$stop_nginx" = "Y" ]; then
+                systemctl stop nginx 2>/dev/null || true
+                log_info "nginx stopped"
+            fi
+        fi
+    fi
+    
+    log_info "Conflict resolution complete"
+}
+
+# ============================================
+# Docker Network Verification
+# ============================================
+verify_docker_networking() {
+    log_step "Verifying Docker networking..."
+    
+    if ! command -v docker &> /dev/null; then
+        log_warn "Docker not yet installed, skipping network verification"
+        return 0
+    fi
+    
+    if ! docker info &>/dev/null 2>&1; then
+        log_warn "Docker daemon not running, skipping network verification"
+        return 0
+    fi
+    
+    # Test if Docker can create networks
+    if docker network create dsm-preflight-test &>/dev/null 2>&1; then
+        docker network rm dsm-preflight-test &>/dev/null 2>&1 || true
+        log_info "Docker networking is functional"
+    else
+        log_warn "Docker may have networking issues"
+        echo "   Try: systemctl restart docker"
+    fi
+}
+
+# ============================================
+# END OF RHEL 9 HARDENING FUNCTIONS
+# ============================================
+
+# Run pre-flight checks first
+preflight_checks
 
 # Deployment mode selection
 echo "🔧 Deployment Mode"
@@ -37,18 +470,40 @@ else
 fi
 echo ""
 
+# Resolve conflicts before installing anything
+resolve_conflicts
+
 if [ "$DEPLOY_MODE" = "1" ]; then
+
+# Configure kernel modules BEFORE Docker installation
+configure_kernel_modules
+
 # Step 1: Install Docker
 echo "📦 Step 1/6: Installing Docker..."
 if ! command -v docker &> /dev/null; then
     dnf config-manager --add-repo=https://download.docker.com/linux/rhel/docker-ce.repo
     dnf install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    
+    # Configure Docker daemon for RHEL 9 BEFORE starting
+    configure_docker_daemon
+    
     systemctl start docker
     systemctl enable docker
-    echo "✅ Docker installed"
+    echo "✅ Docker installed and configured"
 else
     echo "✅ Docker already installed"
+    # Still configure daemon.json if not present
+    if [ ! -f /etc/docker/daemon.json ]; then
+        configure_docker_daemon
+        systemctl restart docker
+    fi
 fi
+
+# Configure firewalld for Docker BEFORE starting containers
+configure_firewalld_for_docker
+
+# Verify Docker networking
+verify_docker_networking
 
 # Step 2: Install Node.js 18
 echo "📦 Step 2/6: Installing Node.js 18..."
@@ -162,6 +617,9 @@ mkdir -p volumes/db/init
 if [ -f "$PROJECT_ROOT/supabase/docker/volumes/api/kong.yml" ]; then
     cp "$PROJECT_ROOT/supabase/docker/volumes/api/kong.yml" volumes/api/kong.yml
 fi
+
+# Configure SELinux for volumes directory
+configure_selinux_for_docker "$SUPABASE_DIR/volumes"
 
 # Get server IP
 SERVER_IP=$(hostname -I | awk '{print $1}')
@@ -307,14 +765,6 @@ echo "✅ Directory structure created"
 
 # Set world-readable permissions on volumes
 chmod -R 755 "$SUPABASE_DIR/volumes"
-
-# SELinux: Set proper context for RHEL 9 (only if Enforcing)
-if command -v getenforce &> /dev/null && [ "$(getenforce)" == "Enforcing" ]; then
-    echo "   Setting SELinux context for Docker volumes..."
-    chcon -Rt container_file_t "$SUPABASE_DIR/volumes" || \
-    chcon -Rt svirt_sandbox_file_t "$SUPABASE_DIR/volumes" || true
-    echo "✅ SELinux context set"
-fi
 
 # Generate proper JWT tokens that match the JWT_SECRET
 generate_jwt() {
@@ -983,11 +1433,14 @@ EOF
     SSL_URL="https://$DOMAIN_NAME"
     echo "✅ SSL/TLS configured successfully!"
 else
-    # Open firewall ports without SSL
-    echo "🔥 Opening firewall ports..."
-    firewall-cmd --permanent --add-port=3000/tcp  # Application
-    firewall-cmd --permanent --add-port=8000/tcp  # Supabase API
-    firewall-cmd --reload
+    # Firewall ports already configured by configure_firewalld_for_docker()
+    # Just ensure they're applied
+    if systemctl is-active --quiet firewalld 2>/dev/null; then
+        echo "🔥 Verifying firewall ports..."
+        firewall-cmd --permanent --add-port=3000/tcp 2>/dev/null || true
+        firewall-cmd --permanent --add-port=8000/tcp 2>/dev/null || true
+        firewall-cmd --reload 2>/dev/null || true
+    fi
     
     SSL_URL="http://$SERVER_IP:3000"
 fi
