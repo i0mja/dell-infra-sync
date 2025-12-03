@@ -14,9 +14,6 @@ import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
 import { StaleJobWarning } from "@/components/activity/StaleJobWarning";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuCheckboxItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Columns3, Download } from "lucide-react";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useActiveJobs } from "@/hooks/useActiveJobs";
 import { useJobsWithProgress } from "@/hooks/useJobsWithProgress";
@@ -628,78 +625,6 @@ export default function ActivityMonitor() {
               <span className="h-2 w-2 rounded-full bg-current" />
               {realtimeStatus === 'connected' ? 'Live' : 'Paused'}
             </div>
-
-            {/* Columns dropdown */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-8 ml-2">
-                  <Columns3 className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-56" align="end">
-                <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {activeTab === "operations" ? (
-                  <>
-                    <DropdownMenuCheckboxItem checked={isJobColVisible("job_type")} onCheckedChange={() => toggleJobColumn("job_type")}>
-                      Job Type
-                    </DropdownMenuCheckboxItem>
-                    <DropdownMenuCheckboxItem checked={isJobColVisible("status")} onCheckedChange={() => toggleJobColumn("status")}>
-                      Status
-                    </DropdownMenuCheckboxItem>
-                    <DropdownMenuCheckboxItem checked={isJobColVisible("priority")} onCheckedChange={() => toggleJobColumn("priority")}>
-                      Priority
-                    </DropdownMenuCheckboxItem>
-                    <DropdownMenuCheckboxItem checked={isJobColVisible("duration")} onCheckedChange={() => toggleJobColumn("duration")}>
-                      Duration
-                    </DropdownMenuCheckboxItem>
-                    <DropdownMenuCheckboxItem checked={isJobColVisible("target")} onCheckedChange={() => toggleJobColumn("target")}>
-                      Target
-                    </DropdownMenuCheckboxItem>
-                    <DropdownMenuCheckboxItem checked={isJobColVisible("started")} onCheckedChange={() => toggleJobColumn("started")}>
-                      Started
-                    </DropdownMenuCheckboxItem>
-                    <DropdownMenuCheckboxItem checked={isJobColVisible("progress")} onCheckedChange={() => toggleJobColumn("progress")}>
-                      Progress
-                    </DropdownMenuCheckboxItem>
-                    <DropdownMenuCheckboxItem checked={isJobColVisible("actions")} onCheckedChange={() => toggleJobColumn("actions")}>
-                      Actions
-                    </DropdownMenuCheckboxItem>
-                  </>
-                ) : (
-                  <>
-                    <DropdownMenuCheckboxItem checked={isCommandColVisible("time")} onCheckedChange={() => toggleCommandColumn("time")}>
-                      Time
-                    </DropdownMenuCheckboxItem>
-                    <DropdownMenuCheckboxItem checked={isCommandColVisible("operation")} onCheckedChange={() => toggleCommandColumn("operation")}>
-                      Operation
-                    </DropdownMenuCheckboxItem>
-                    <DropdownMenuCheckboxItem checked={isCommandColVisible("endpoint")} onCheckedChange={() => toggleCommandColumn("endpoint")}>
-                      Endpoint
-                    </DropdownMenuCheckboxItem>
-                    <DropdownMenuCheckboxItem checked={isCommandColVisible("type")} onCheckedChange={() => toggleCommandColumn("type")}>
-                      Type
-                    </DropdownMenuCheckboxItem>
-                    <DropdownMenuCheckboxItem checked={isCommandColVisible("status")} onCheckedChange={() => toggleCommandColumn("status")}>
-                      Status
-                    </DropdownMenuCheckboxItem>
-                    <DropdownMenuCheckboxItem checked={isCommandColVisible("response")} onCheckedChange={() => toggleCommandColumn("response")}>
-                      Response
-                    </DropdownMenuCheckboxItem>
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            {/* Export button */}
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="h-8 ml-1" 
-              onClick={activeTab === "operations" ? handleExportJobsCSV : handleExportCommandsCSV}
-            >
-              <Download className="h-4 w-4" />
-            </Button>
           </div>
 
           {/* Filter toolbar - contextual per tab */}
@@ -713,6 +638,12 @@ export default function ActivityMonitor() {
               onJobTypeFilterChange={setJobsTypeFilter}
               timeRangeFilter={jobsTimeRange}
               onTimeRangeFilterChange={setJobsTimeRange}
+              visibleColumns={jobsColumns}
+              onToggleColumn={toggleJobColumn}
+              onExport={handleExportJobsCSV}
+              onSaveView={(name) => {
+                toast.success(`View "${name}" saved`);
+              }}
             />
           )}
           {activeTab === "api-log" && (
@@ -732,6 +663,12 @@ export default function ActivityMonitor() {
               timeRangeFilter={commandTimeRange}
               onTimeRangeFilterChange={setCommandTimeRange}
               servers={servers || []}
+              visibleColumns={commandsColumns}
+              onToggleColumn={toggleCommandColumn}
+              onExport={handleExportCommandsCSV}
+              onSaveView={(name) => {
+                toast.success(`View "${name}" saved`);
+              }}
             />
           )}
 
