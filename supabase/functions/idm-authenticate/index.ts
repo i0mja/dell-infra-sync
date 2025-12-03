@@ -78,13 +78,24 @@ serve(async (req) => {
       );
     }
 
+    // Find a system/admin user to use as created_by
+    console.log('[IDM Auth] Finding system user for job creation...');
+    const { data: adminUser } = await supabase
+      .from('user_roles')
+      .select('user_id')
+      .eq('role', 'admin')
+      .limit(1)
+      .single();
+
+    const createdBy = adminUser?.user_id || null;
+
     // Create authentication job
     console.log('[IDM Auth] Creating authentication job...');
     const { data: job, error: jobError } = await supabase
       .from('jobs')
       .insert({
         job_type: 'idm_authenticate',
-        created_by: '00000000-0000-0000-0000-000000000000', // System user
+        created_by: createdBy,
         status: 'pending',
         details: {
           username,
@@ -98,7 +109,7 @@ serve(async (req) => {
     if (jobError || !job) {
       console.error('[IDM Auth] Failed to create job:', jobError);
       return new Response(
-        JSON.stringify({ success: false, error: 'Failed to create authentication job' }),
+        JSON.stringify({ success: false, error: 'Failed to create authentication job: ' + (jobError?.message || 'Unknown error') }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
