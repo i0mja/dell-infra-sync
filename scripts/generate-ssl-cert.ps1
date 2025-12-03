@@ -175,30 +175,69 @@ basicConstraints = CA:FALSE
         $dnsNames += $fqdn
     }
     
-    # Create certificate
+    # Create certificate using Microsoft Software Key Storage Provider
+    # This avoids the "security device is read only" error from TPM/HSM
     Write-ColorOutput "Generating certificate..." -Color $Colors.Info
     
     $certParams = @{
         DnsName = $dnsNames
         CertStoreLocation = "Cert:\LocalMachine\My"
         KeyExportPolicy = "Exportable"
-        KeySpec = "KeyExchange"
         KeyLength = 4096
         KeyAlgorithm = "RSA"
         HashAlgorithm = "SHA256"
         NotAfter = (Get-Date).AddDays($ValidDays)
         FriendlyName = "Dell Server Manager Job Executor"
+        Provider = "Microsoft Software Key Storage Provider"
+        KeyUsageProperty = "Sign"
         TextExtension = @("2.5.29.37={text}1.3.6.1.5.5.7.3.1")
     }
     
-    # Add IP SANs if possible (requires Windows Server 2016+)
+    $cert = $null
+    $windowsMethodFailed = $false
+    
+    # Try with full parameters first
     try {
-        $cert = New-SelfSignedCertificate @certParams
+        $cert = New-SelfSignedCertificate @certParams -ErrorAction Stop
     } catch {
-        Write-ColorOutput "Warning: Failed to create cert with all SANs: $_" -Color $Colors.Warning
-        # Fallback without some parameters
-        $certParams.Remove('TextExtension')
-        $cert = New-SelfSignedCertificate @certParams
+        $errorMsg = $_.Exception.Message
+        Write-ColorOutput "Warning: Failed with full params: $errorMsg" -Color $Colors.Warning
+        
+        # Check if it's the read-only security device error
+        if ($errorMsg -match "read.?only|security device|provider") {
+            Write-ColorOutput "Detected hardware security provider issue. Trying alternative..." -Color $Colors.Warning
+            
+            # Try without Provider parameter (let Windows choose)
+            try {
+                $certParams.Remove('Provider')
+                $certParams.Remove('KeyUsageProperty')
+                $certParams['KeySpec'] = 'Signature'  # Use Signature instead of KeyExchange
+                $cert = New-SelfSignedCertificate @certParams -ErrorAction Stop
+            } catch {
+                Write-ColorOutput "Alternative method also failed: $_" -Color $Colors.Warning
+                $windowsMethodFailed = $true
+            }
+        } else {
+            # Try simplified parameters
+            try {
+                $certParams.Remove('TextExtension')
+                $certParams.Remove('Provider')
+                $certParams.Remove('KeyUsageProperty')
+                $cert = New-SelfSignedCertificate @certParams -ErrorAction Stop
+            } catch {
+                Write-ColorOutput "Simplified method failed: $_" -Color $Colors.Warning
+                $windowsMethodFailed = $true
+            }
+        }
+    }
+    
+    # If Windows method failed completely, fall back to OpenSSL
+    if ($windowsMethodFailed -or $null -eq $cert) {
+        Write-ColorOutput "`nWindows certificate method failed. Falling back to OpenSSL..." -Color $Colors.Warning
+        
+        # Recursive call with OpenSSL flag
+        & $PSCommandPath -OutputDir $OutputDir -ValidDays $ValidDays -UseOpenSSL -Force
+        exit $LASTEXITCODE
     }
     
     Write-ColorOutput "Certificate created in Windows store: $($cert.Thumbprint)" -Color $Colors.Success
@@ -212,61 +251,77 @@ basicConstraints = CA:FALSE
     $certPem = "-----BEGIN CERTIFICATE-----`n$certBase64`n-----END CERTIFICATE-----"
     $certPem | Set-Content -Path $certPath -Force
     
-    # Export private key (requires more work in PowerShell)
-    # Get the private key
-    $privateKey = $cert.PrivateKey
+    # Export private key using modern CNG API
+    $privateKeyExported = $false
     
-    if ($privateKey) {
-        try {
-            # For RSA keys
-            $rsaParams = $privateKey.ExportParameters($true)
-            
-            # Build RSA private key in PKCS#1 format
-            $keyParams = @{
-                Modulus = $rsaParams.Modulus
-                Exponent = $rsaParams.Exponent
-                D = $rsaParams.D
-                P = $rsaParams.P
-                Q = $rsaParams.Q
-                DP = $rsaParams.DP
-                DQ = $rsaParams.DQ
-                InverseQ = $rsaParams.InverseQ
-            }
-            
-            # Use .NET to export as PKCS#8
-            $rsa = [System.Security.Cryptography.RSA]::Create()
-            $rsa.ImportParameters($rsaParams)
-            $pkcs8Bytes = $rsa.ExportPkcs8PrivateKey()
+    # Method 1: Try GetRSAPrivateKey() - modern .NET Core method
+    try {
+        $rsaPrivateKey = $cert.GetRSAPrivateKey()
+        if ($rsaPrivateKey) {
+            $pkcs8Bytes = $rsaPrivateKey.ExportPkcs8PrivateKey()
             $keyBase64 = [System.Convert]::ToBase64String($pkcs8Bytes, [System.Base64FormattingOptions]::InsertLineBreaks)
             $keyPem = "-----BEGIN PRIVATE KEY-----`n$keyBase64`n-----END PRIVATE KEY-----"
             $keyPem | Set-Content -Path $keyPath -Force
-            
+            $privateKeyExported = $true
+            Write-ColorOutput "Private key exported using CNG API" -Color $Colors.Success
+        }
+    } catch {
+        Write-ColorOutput "CNG export method not available: $_" -Color $Colors.Warning
+    }
+    
+    # Method 2: Try legacy PrivateKey property
+    if (-not $privateKeyExported) {
+        try {
+            $privateKey = $cert.PrivateKey
+            if ($privateKey) {
+                $rsaParams = $privateKey.ExportParameters($true)
+                $rsa = [System.Security.Cryptography.RSA]::Create()
+                $rsa.ImportParameters($rsaParams)
+                $pkcs8Bytes = $rsa.ExportPkcs8PrivateKey()
+                $keyBase64 = [System.Convert]::ToBase64String($pkcs8Bytes, [System.Base64FormattingOptions]::InsertLineBreaks)
+                $keyPem = "-----BEGIN PRIVATE KEY-----`n$keyBase64`n-----END PRIVATE KEY-----"
+                $keyPem | Set-Content -Path $keyPath -Force
+                $privateKeyExported = $true
+                Write-ColorOutput "Private key exported using legacy API" -Color $Colors.Success
+            }
         } catch {
-            Write-ColorOutput "Warning: Could not export private key directly: $_" -Color $Colors.Warning
-            Write-ColorOutput "Attempting PFX export method..." -Color $Colors.Info
-            
-            # Fallback: Export as PFX then convert
-            $pfxPath = Join-Path $OutputDir "temp.pfx"
-            $password = ConvertTo-SecureString -String "temppassword" -Force -AsPlainText
+            Write-ColorOutput "Legacy export method failed: $_" -Color $Colors.Warning
+        }
+    }
+    
+    # Method 3: Fall back to PFX export + OpenSSL conversion
+    if (-not $privateKeyExported) {
+        Write-ColorOutput "Direct export failed. Attempting PFX method..." -Color $Colors.Info
+        
+        $pfxPath = Join-Path $OutputDir "temp.pfx"
+        $password = ConvertTo-SecureString -String "temppassword" -Force -AsPlainText
+        
+        try {
             Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $password | Out-Null
             
             # Check if OpenSSL is available for conversion
             $opensslAvailable = Get-Command openssl -ErrorAction SilentlyContinue
             if ($opensslAvailable) {
-                # Convert PFX to PEM using OpenSSL
                 & openssl pkcs12 -in $pfxPath -nocerts -nodes -out $keyPath -password pass:temppassword 2>&1 | Out-Null
                 & openssl pkcs12 -in $pfxPath -clcerts -nokeys -out $certPath -password pass:temppassword 2>&1 | Out-Null
                 Remove-Item $pfxPath -Force -ErrorAction SilentlyContinue
+                $privateKeyExported = $true
+                Write-ColorOutput "Private key exported via PFX+OpenSSL" -Color $Colors.Success
             } else {
                 Write-ColorOutput "OpenSSL not available for PFX conversion." -Color $Colors.Warning
                 Write-ColorOutput "Certificate exported as PFX: $pfxPath" -Color $Colors.Info
                 Write-ColorOutput "Manual conversion required. Run:" -Color $Colors.Info
                 Write-ColorOutput "  openssl pkcs12 -in `"$pfxPath`" -nocerts -nodes -out `"$keyPath`" -password pass:temppassword" -Color $Colors.Highlight
-                Write-ColorOutput "  openssl pkcs12 -in `"$pfxPath`" -clcerts -nokeys -out `"$certPath`" -password pass:temppassword" -Color $Colors.Highlight
             }
+        } catch {
+            Write-ColorOutput "PFX export failed: $_" -Color $Colors.Warning
         }
-    } else {
-        Write-ColorOutput "Warning: Could not access private key" -Color $Colors.Warning
+    }
+    
+    if (-not $privateKeyExported) {
+        Write-ColorOutput "Warning: Could not export private key. Falling back to OpenSSL..." -Color $Colors.Warning
+        & $PSCommandPath -OutputDir $OutputDir -ValidDays $ValidDays -UseOpenSSL -Force
+        exit $LASTEXITCODE
     }
 }
 
