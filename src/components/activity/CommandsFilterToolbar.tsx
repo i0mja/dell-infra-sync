@@ -1,6 +1,25 @@
+import { useState } from "react";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+  DropdownMenuCheckboxItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Search, Columns3, Download, Save } from "lucide-react";
 
 interface Server {
   id: string;
@@ -24,7 +43,22 @@ interface CommandsFilterToolbarProps {
   timeRangeFilter: string;
   onTimeRangeFilterChange: (value: string) => void;
   servers: Server[];
+  // Optional - for integrated toolbar
+  visibleColumns?: string[];
+  onToggleColumn?: (column: string) => void;
+  onExport?: () => void;
+  selectedCount?: number;
+  onSaveView?: (name: string) => void;
 }
+
+const COLUMN_OPTIONS = [
+  { key: "time", label: "Time" },
+  { key: "operation", label: "Operation" },
+  { key: "endpoint", label: "Endpoint" },
+  { key: "type", label: "Type" },
+  { key: "status", label: "Status" },
+  { key: "response", label: "Response" },
+];
 
 export function CommandsFilterToolbar({
   searchTerm,
@@ -42,97 +76,184 @@ export function CommandsFilterToolbar({
   timeRangeFilter,
   onTimeRangeFilterChange,
   servers,
+  visibleColumns,
+  onToggleColumn,
+  onExport,
+  selectedCount = 0,
+  onSaveView,
 }: CommandsFilterToolbarProps) {
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [viewName, setViewName] = useState("");
+
+  const handleSaveView = () => {
+    if (viewName.trim() && onSaveView) {
+      onSaveView(viewName);
+      setSaveDialogOpen(false);
+      setViewName("");
+    }
+  };
+
+  const isColumnVisible = (key: string) => visibleColumns?.includes(key) ?? true;
+  const showActions = visibleColumns && onToggleColumn && onExport && onSaveView;
+
   return (
-    <div className="flex items-center gap-2 px-4 py-3 border-b bg-muted/30 flex-wrap">
-      <div className="relative flex-1 max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="Search commands..."
-          value={searchTerm}
-          onChange={(e) => onSearchChange(e.target.value)}
-          className="pl-9 h-9"
-        />
+    <>
+      <div className="flex items-center gap-3 px-4 py-3 border-b bg-muted/50 flex-wrap">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search commands..."
+            value={searchTerm}
+            onChange={(e) => onSearchChange(e.target.value)}
+            className="pl-9 h-9"
+          />
+        </div>
+
+        <Select value={operationTypeFilter} onValueChange={onOperationTypeFilterChange}>
+          <SelectTrigger className="w-[140px] h-9">
+            <SelectValue placeholder="Operation" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Operations</SelectItem>
+            <SelectItem value="idrac_api">iDRAC API</SelectItem>
+            <SelectItem value="vcenter_api">vCenter API</SelectItem>
+            <SelectItem value="openmanage_api">OpenManage API</SelectItem>
+            <SelectItem value="ldap_api">IDM/LDAP</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select value={serverFilter} onValueChange={onServerFilterChange}>
+          <SelectTrigger className="w-[160px] h-9">
+            <SelectValue placeholder="Server" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Servers</SelectItem>
+            {servers?.map((server) => (
+              <SelectItem key={server.id} value={server.id}>
+                {server.hostname || server.ip_address}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={commandTypeFilter} onValueChange={onCommandTypeFilterChange}>
+          <SelectTrigger className="w-[120px] h-9">
+            <SelectValue placeholder="Type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Types</SelectItem>
+            <SelectItem value="GET">GET</SelectItem>
+            <SelectItem value="POST">POST</SelectItem>
+            <SelectItem value="PATCH">PATCH</SelectItem>
+            <SelectItem value="PUT">PUT</SelectItem>
+            <SelectItem value="DELETE">DELETE</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select value={statusFilter} onValueChange={onStatusFilterChange}>
+          <SelectTrigger className="w-[120px] h-9">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Status</SelectItem>
+            <SelectItem value="success">Success</SelectItem>
+            <SelectItem value="failed">Failed</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select value={sourceFilter} onValueChange={onSourceFilterChange}>
+          <SelectTrigger className="w-[140px] h-9">
+            <SelectValue placeholder="Source" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Sources</SelectItem>
+            <SelectItem value="edge_function">Edge Function</SelectItem>
+            <SelectItem value="job_executor">Job Executor</SelectItem>
+            <SelectItem value="instant_api">Instant API</SelectItem>
+            <SelectItem value="manual">Manual</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select value={timeRangeFilter} onValueChange={onTimeRangeFilterChange}>
+          <SelectTrigger className="w-[120px] h-9">
+            <SelectValue placeholder="Time" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="1h">Last Hour</SelectItem>
+            <SelectItem value="6h">Last 6 Hours</SelectItem>
+            <SelectItem value="24h">Last 24 Hours</SelectItem>
+            <SelectItem value="7d">Last 7 Days</SelectItem>
+            <SelectItem value="30d">Last 30 Days</SelectItem>
+            <SelectItem value="all">All Time</SelectItem>
+          </SelectContent>
+        </Select>
+
+        {showActions && (
+          <>
+            <div className="flex-1" />
+
+            {selectedCount > 0 && (
+              <span className="text-sm text-muted-foreground">{selectedCount} selected</span>
+            )}
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <Columns3 className="mr-1 h-4 w-4" /> Columns
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {COLUMN_OPTIONS.map((col) => (
+                  <DropdownMenuCheckboxItem
+                    key={col.key}
+                    checked={isColumnVisible(col.key)}
+                    onCheckedChange={() => onToggleColumn?.(col.key)}
+                  >
+                    {col.label}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <Button variant="outline" size="sm" onClick={onExport}>
+              <Download className="mr-1 h-4 w-4" /> Export
+            </Button>
+
+            <Button variant="outline" size="sm" onClick={() => setSaveDialogOpen(true)}>
+              <Save className="mr-1 h-4 w-4" /> Save View
+            </Button>
+          </>
+        )}
       </div>
 
-      <Select value={operationTypeFilter} onValueChange={onOperationTypeFilterChange}>
-        <SelectTrigger className="w-[140px] h-9">
-          <SelectValue placeholder="Operation" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All Operations</SelectItem>
-          <SelectItem value="idrac_api">iDRAC API</SelectItem>
-          <SelectItem value="vcenter_api">vCenter API</SelectItem>
-          <SelectItem value="openmanage_api">OpenManage API</SelectItem>
-          <SelectItem value="ldap_api">IDM/LDAP</SelectItem>
-        </SelectContent>
-      </Select>
-
-      <Select value={serverFilter} onValueChange={onServerFilterChange}>
-        <SelectTrigger className="w-[160px] h-9">
-          <SelectValue placeholder="Server" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All Servers</SelectItem>
-          {servers?.map((server) => (
-            <SelectItem key={server.id} value={server.id}>
-              {server.hostname || server.ip_address}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-
-      <Select value={commandTypeFilter} onValueChange={onCommandTypeFilterChange}>
-        <SelectTrigger className="w-[120px] h-9">
-          <SelectValue placeholder="Type" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All Types</SelectItem>
-          <SelectItem value="GET">GET</SelectItem>
-          <SelectItem value="POST">POST</SelectItem>
-          <SelectItem value="PATCH">PATCH</SelectItem>
-          <SelectItem value="PUT">PUT</SelectItem>
-          <SelectItem value="DELETE">DELETE</SelectItem>
-        </SelectContent>
-      </Select>
-
-      <Select value={statusFilter} onValueChange={onStatusFilterChange}>
-        <SelectTrigger className="w-[120px] h-9">
-          <SelectValue placeholder="Status" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All Status</SelectItem>
-          <SelectItem value="success">Success</SelectItem>
-          <SelectItem value="failed">Failed</SelectItem>
-        </SelectContent>
-      </Select>
-
-      <Select value={sourceFilter} onValueChange={onSourceFilterChange}>
-        <SelectTrigger className="w-[140px] h-9">
-          <SelectValue placeholder="Source" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All Sources</SelectItem>
-          <SelectItem value="edge_function">Edge Function</SelectItem>
-          <SelectItem value="job_executor">Job Executor</SelectItem>
-          <SelectItem value="instant_api">Instant API</SelectItem>
-          <SelectItem value="manual">Manual</SelectItem>
-        </SelectContent>
-      </Select>
-
-      <Select value={timeRangeFilter} onValueChange={onTimeRangeFilterChange}>
-        <SelectTrigger className="w-[120px] h-9">
-          <SelectValue placeholder="Time" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="1h">Last Hour</SelectItem>
-          <SelectItem value="6h">Last 6 Hours</SelectItem>
-          <SelectItem value="24h">Last 24 Hours</SelectItem>
-          <SelectItem value="7d">Last 7 Days</SelectItem>
-          <SelectItem value="30d">Last 30 Days</SelectItem>
-          <SelectItem value="all">All Time</SelectItem>
-        </SelectContent>
-      </Select>
-    </div>
+      {showActions && (
+        <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Save View</DialogTitle>
+              <DialogDescription>Save your current filters and column settings as a view</DialogDescription>
+            </DialogHeader>
+            <div className="py-4">
+              <Label htmlFor="viewName">View Name</Label>
+              <Input
+                id="viewName"
+                value={viewName}
+                onChange={(e) => setViewName(e.target.value)}
+                placeholder="e.g., Failed API Calls"
+                className="mt-2"
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setSaveDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleSaveView}>Save View</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
   );
 }
