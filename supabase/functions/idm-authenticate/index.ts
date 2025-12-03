@@ -329,12 +329,20 @@ serve(async (req) => {
           // User exists
           console.log(`[IDM Auth] Existing user found: ${existingProfile.id}`);
           userId = existingProfile.id;
-          email = existingProfile.email;
+          
+          // Always use the correctly constructed email
+          email = constructedEmail;
+          const needsEmailUpdate = existingProfile.email !== constructedEmail;
+          
+          if (needsEmailUpdate) {
+            console.log(`[IDM Auth] Email migration needed: ${existingProfile.email} → ${constructedEmail}`);
+          }
 
-          // Update profile with latest IDM info
+          // Update profile with latest IDM info INCLUDING email
           await supabase
             .from('profiles')
             .update({
+              email: constructedEmail, // Update email to correct domain
               idm_uid: idmUid, // Update to clean username format
               idm_source: authResult.is_ad_trust_user ? 'ad_trust' : 'freeipa',
               idm_user_dn: authResult.user_dn,
@@ -346,6 +354,20 @@ serve(async (req) => {
               last_idm_sync: new Date().toISOString()
             })
             .eq('id', userId);
+          
+          // Update auth.users email if it changed
+          if (needsEmailUpdate) {
+            console.log(`[IDM Auth] Updating auth.users email for ${userId}`);
+            const { error: updateAuthError } = await supabase.auth.admin.updateUserById(userId, {
+              email: constructedEmail,
+              email_confirm: true
+            });
+            if (updateAuthError) {
+              console.error(`[IDM Auth] Failed to update auth.users email:`, updateAuthError);
+            } else {
+              console.log(`[IDM Auth] Successfully updated auth.users email to ${constructedEmail}`);
+            }
+          }
 
         } else {
           // JIT user provisioning - create new user
