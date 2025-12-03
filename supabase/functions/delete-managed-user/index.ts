@@ -84,13 +84,13 @@ serve(async (req) => {
 
     console.log(`Processing deletion for managed user: ${managedUser.ad_username}@${managedUser.ad_domain}`);
 
+    let userRolesDeleted = false;
     let profileDeleted = false;
     let authUserDeleted = false;
     let profileId: string | null = null;
 
     if (complete_removal) {
       // Find the corresponding profile by matching idm_uid to ad_username (case-insensitive)
-      // The idm_uid in profiles stores the username from IDM authentication
       const { data: profiles } = await supabaseAdmin
         .from('profiles')
         .select('id, email, idm_uid, idm_user_dn')
@@ -109,16 +109,41 @@ serve(async (req) => {
         profileId = matchedProfile.id;
         console.log(`Found matching profile: ${matchedProfile.email} (${matchedProfile.id})`);
 
-        // Delete the auth user - this will cascade to profiles and user_roles
+        // Step 1: Delete user_roles first (to avoid FK constraint issues)
+        const { error: deleteRolesError } = await supabaseAdmin
+          .from('user_roles')
+          .delete()
+          .eq('user_id', matchedProfile.id);
+
+        if (deleteRolesError) {
+          console.error(`Failed to delete user_roles: ${deleteRolesError.message}`);
+        } else {
+          console.log(`Deleted user_roles for user ${matchedProfile.id}`);
+          userRolesDeleted = true;
+        }
+
+        // Step 2: Delete profile (before auth.users to avoid cascade issues)
+        const { error: deleteProfileError } = await supabaseAdmin
+          .from('profiles')
+          .delete()
+          .eq('id', matchedProfile.id);
+
+        if (deleteProfileError) {
+          console.error(`Failed to delete profile: ${deleteProfileError.message}`);
+        } else {
+          console.log(`Deleted profile for user ${matchedProfile.id}`);
+          profileDeleted = true;
+        }
+
+        // Step 3: Delete the auth user (should now work without constraint issues)
         const { error: deleteAuthError } = await supabaseAdmin.auth.admin.deleteUser(matchedProfile.id);
 
         if (deleteAuthError) {
           console.error(`Failed to delete auth user: ${deleteAuthError.message}`);
-          // Continue anyway - the auth user might not exist
+          // Continue anyway - profile and roles are already cleaned up
         } else {
-          console.log(`Deleted auth user and cascaded to profiles/roles`);
+          console.log(`Deleted auth user ${matchedProfile.id}`);
           authUserDeleted = true;
-          profileDeleted = true;
         }
       } else {
         console.log(`No matching profile found for ${managedUser.ad_username} - user may not have logged in yet`);
@@ -149,6 +174,7 @@ serve(async (req) => {
         ad_domain: managedUser.ad_domain,
         display_name: managedUser.display_name,
         complete_removal,
+        user_roles_deleted: userRolesDeleted,
         profile_deleted: profileDeleted,
         auth_user_deleted: authUserDeleted,
         profile_id: profileId,
@@ -162,11 +188,14 @@ serve(async (req) => {
         success: true,
         message: complete_removal && authUserDeleted
           ? 'User completely removed from system'
-          : complete_removal && !profileDeleted
-            ? 'Authorization removed (user had not logged in yet)'
-            : 'Authorization removed',
+          : complete_removal && profileDeleted
+            ? 'User profile and roles removed (auth user may have been previously deleted)'
+            : complete_removal && !profileDeleted
+              ? 'Authorization removed (user had not logged in yet)'
+              : 'Authorization removed',
         details: {
           managed_user_deleted: true,
+          user_roles_deleted: userRolesDeleted,
           profile_deleted: profileDeleted,
           auth_user_deleted: authUserDeleted,
         },
