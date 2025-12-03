@@ -771,6 +771,19 @@ EOF
 
 # Create Job Executor systemd service
 echo_step "Creating job executor service..."
+
+# Copy SSL certificate generation script
+if [ -f "$APP_SOURCE/scripts/generate-ssl-cert.sh" ]; then
+    mkdir -p /opt/job-executor
+    cp "$APP_SOURCE/scripts/generate-ssl-cert.sh" /opt/job-executor/
+    chmod +x /opt/job-executor/generate-ssl-cert.sh
+    echo_info "SSL certificate generation script installed"
+fi
+
+# Create SSL directory
+mkdir -p /etc/idrac-manager/ssl
+chmod 755 /etc/idrac-manager/ssl
+
 cat > /etc/systemd/system/dell-job-executor.service << EOF
 [Unit]
 Description=Dell Server Manager Job Executor
@@ -786,6 +799,9 @@ Restart=always
 RestartSec=10
 Environment=SUPABASE_URL=http://${SERVER_IP}:8000
 Environment=SUPABASE_SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY
+Environment=API_SERVER_SSL_ENABLED=false
+Environment=API_SERVER_SSL_CERT=/etc/idrac-manager/ssl/server.crt
+Environment=API_SERVER_SSL_KEY=/etc/idrac-manager/ssl/server.key
 
 [Install]
 WantedBy=multi-user.target
@@ -850,6 +866,13 @@ echo "  1. Open http://${SERVER_IP}:3000 in your browser"
 echo "  2. Login with your admin credentials"
 echo "  3. Add iDRAC credentials in Settings > Infrastructure"
 echo "  4. Run a Discovery Scan to find servers"
+echo ""
+echo "Enable HTTPS for Remote Browser Access:"
+echo "  1. Run: sudo /opt/job-executor/generate-ssl-cert.sh"
+echo "  2. Edit /etc/systemd/system/dell-job-executor.service"
+echo "  3. Change API_SERVER_SSL_ENABLED=true"
+echo "  4. Run: systemctl daemon-reload && systemctl restart dell-job-executor"
+echo "  5. Update Job Executor URL in Settings to https://${SERVER_IP}:8081"
 echo ""
 
 # Save credentials

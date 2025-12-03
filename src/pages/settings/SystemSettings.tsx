@@ -397,9 +397,31 @@ export function SystemSettings() {
               <XCircle className="h-4 w-4" />
               <AlertDescription>
                 Cannot reach Job Executor. Ensure it's running and the URL is correct.
+                {jobExecutorUrl.startsWith('http://') && window.location.protocol === 'https:' && (
+                  <span className="block mt-2 font-medium">
+                    Note: You're accessing this app over HTTPS but trying to connect to HTTP. 
+                    Enable SSL on the Job Executor or use HTTPS URL.
+                  </span>
+                )}
               </AlertDescription>
             </Alert>
           )}
+
+          {/* HTTPS/SSL Guidance */}
+          <Alert className="border-amber-500/50 bg-amber-500/10">
+            <AlertCircle className="h-4 w-4 text-amber-600" />
+            <AlertDescription className="text-amber-700 dark:text-amber-400">
+              <strong>Remote HTTPS Access:</strong> If accessing this app over HTTPS from a remote browser, 
+              the Job Executor must also use HTTPS. Generate an SSL certificate on your server:
+              <code className="block mt-1 px-2 py-1 bg-muted rounded text-xs">
+                sudo /opt/job-executor/generate-ssl-cert.sh
+              </code>
+              Then enable SSL in <code className="px-1 bg-muted rounded text-xs">/opt/job-executor/.env</code>:
+              <code className="block mt-1 px-2 py-1 bg-muted rounded text-xs">
+                API_SERVER_SSL_ENABLED=true
+              </code>
+            </AlertDescription>
+          </Alert>
 
           <Button onClick={handleSaveJobExecutorUrl} disabled={loading}>
             {loading ? "Saving..." : "Save Job Executor URL"}

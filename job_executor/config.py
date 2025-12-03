@@ -11,6 +11,11 @@ SERVICE_ROLE_KEY = os.getenv("SERVICE_ROLE_KEY", "")  # Set via env var
 API_SERVER_PORT = int(os.getenv("API_SERVER_PORT", "8081"))
 API_SERVER_ENABLED = os.getenv("API_SERVER_ENABLED", "true").lower() == "true"
 
+# API Server SSL Configuration (required for remote HTTPS browser access)
+API_SERVER_SSL_ENABLED = os.getenv("API_SERVER_SSL_ENABLED", "false").lower() == "true"
+API_SERVER_SSL_CERT = os.getenv("API_SERVER_SSL_CERT", "/etc/idrac-manager/ssl/server.crt")
+API_SERVER_SSL_KEY = os.getenv("API_SERVER_SSL_KEY", "/etc/idrac-manager/ssl/server.key")
+
 # vCenter connection (for maintenance mode operations)
 VCENTER_HOST = os.getenv("VCENTER_HOST", "vcenter.example.com")
 VCENTER_USER = os.getenv("VCENTER_USER", "administrator@vsphere.local")
