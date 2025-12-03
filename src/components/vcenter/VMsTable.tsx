@@ -3,14 +3,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-  DropdownMenuCheckboxItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -21,9 +13,6 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  Download,
-  Columns3,
-  Save,
   HardDrive,
   X,
 } from "lucide-react";
@@ -293,58 +282,6 @@ export function VMsTable({
 
   return (
     <div className="flex flex-col h-full bg-background overflow-hidden">
-      {/* Toolbar */}
-      <div className="flex items-center justify-between gap-2 px-4 py-2 border-b">
-        <div className="flex items-center gap-2">
-          {selectedVms.size > 0 && (
-            <span className="text-sm text-muted-foreground">{selectedVms.size} selected</span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">
-                <Columns3 className="mr-1 h-4 w-4" /> Columns
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuCheckboxItem checked={isColVisible("name")} onCheckedChange={() => effectiveToggleColumn("name")}>
-                VM Name
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColVisible("power")} onCheckedChange={() => effectiveToggleColumn("power")}>
-                Power State
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColVisible("ip")} onCheckedChange={() => effectiveToggleColumn("ip")}>
-                IP Address
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColVisible("resources")} onCheckedChange={() => effectiveToggleColumn("resources")}>
-                CPU / RAM
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColVisible("disk")} onCheckedChange={() => effectiveToggleColumn("disk")}>
-                Disk
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColVisible("os")} onCheckedChange={() => effectiveToggleColumn("os")}>
-                Guest OS
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColVisible("tools")} onCheckedChange={() => effectiveToggleColumn("tools")}>
-                VMware Tools
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColVisible("cluster")} onCheckedChange={() => effectiveToggleColumn("cluster")}>
-                Cluster
-              </DropdownMenuCheckboxItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button variant="outline" size="sm" onClick={handleExportCSV}>
-            <Download className="mr-1 h-4 w-4" /> Export
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setSaveDialogOpen(true)}>
-            <Save className="mr-1 h-4 w-4" /> Save View
-          </Button>
-        </div>
-      </div>
-
       {filteredVms.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-4">
             <div className="text-center text-muted-foreground">
