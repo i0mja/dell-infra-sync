@@ -704,22 +704,37 @@ class IDMHandler(BaseHandler):
             idm_settings = self.executor.get_idm_settings()
             if not idm_settings:
                 raise ValueError("IDM not configured")
-            
+
             bind_dn = idm_settings.get('bind_dn')
             bind_password = self.executor.decrypt_bind_password(
                 idm_settings.get('bind_password_encrypted')
             )
-            
+
+            # Prefer dedicated AD service account for resolving external group members
+            ad_bind_dn = idm_settings.get('ad_bind_dn')
+            ad_bind_password = None
+            if idm_settings.get('ad_bind_password_encrypted'):
+                ad_bind_password = self.executor.decrypt_bind_password(
+                    idm_settings.get('ad_bind_password_encrypted')
+                )
+
             if not bind_dn or not bind_password:
                 raise ValueError("Service account credentials required")
-            
+
             authenticator = self.executor.create_freeipa_authenticator(idm_settings)
             if not authenticator:
                 raise ValueError("Failed to initialize FreeIPA authenticator")
-            
+
             # Search groups
             self.log(f"Searching groups matching: '{search_term}' (max {max_results})")
-            groups = authenticator.search_groups(bind_dn, bind_password, search_term, max_results)
+            groups = authenticator.search_groups(
+                bind_dn,
+                bind_password,
+                search_term,
+                max_results,
+                ad_bind_dn=ad_bind_dn,
+                ad_bind_password=ad_bind_password,
+            )
             
             self.log(f"[OK] Found {len(groups)} group(s)")
             
