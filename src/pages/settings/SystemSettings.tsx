@@ -426,10 +426,11 @@ export function SystemSettings() {
                   <code className="block px-2 py-1 bg-muted rounded text-xs">
                     C:\dell-server-manager\scripts\generate-ssl-cert.ps1
                   </code>
-                  <p className="text-xs">2. Enable SSL in service:</p>
-                  <code className="block px-2 py-1 bg-muted rounded text-xs">
-                    nssm set DellServerManagerJobExecutor AppEnvironmentExtra +API_SERVER_SSL_ENABLED=true
+                  <p className="text-xs">2. Set all environment variables together (NSSM overwrites, doesn't append):</p>
+                  <code className="block px-2 py-1 bg-muted rounded text-xs whitespace-pre-wrap break-all">
+{`nssm set DellServerManagerJobExecutor AppEnvironmentExtra "SERVICE_ROLE_KEY=<your-key>" "DSM_URL=<your-supabase-url>" "API_SERVER_SSL_ENABLED=true" "API_SERVER_SSL_CERT=C:\\dell-server-manager\\ssl\\server.crt" "API_SERVER_SSL_KEY=C:\\dell-server-manager\\ssl\\server.key"`}
                   </code>
+                  <p className="text-xs text-amber-600 dark:text-amber-400">⚠️ Replace &lt;your-key&gt; and &lt;your-supabase-url&gt; with actual values</p>
                   <p className="text-xs">3. Restart service:</p>
                   <code className="block px-2 py-1 bg-muted rounded text-xs">
                     nssm restart DellServerManagerJobExecutor
@@ -462,7 +463,7 @@ export function SystemSettings() {
                     variant="outline"
                     size="sm"
                     className="h-7 text-xs"
-                    onClick={() => window.open(`${jobExecutorUrl}/health`, '_blank')}
+                    onClick={() => window.open(`${jobExecutorUrl}/api/health`, '_blank')}
                   >
                     <ExternalLink className="h-3 w-3 mr-1" />
                     Trust Certificate
