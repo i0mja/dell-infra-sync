@@ -171,6 +171,11 @@ function Get-DefaultConfig {
         poll_interval = 10
         log_level = "INFO"
         max_concurrent_jobs = 3
+        # API Server SSL Configuration
+        api_server_ssl_enabled = $false
+        api_server_ssl_cert = "C:\dell-server-manager\ssl\server.crt"
+        api_server_ssl_key = "C:\dell-server-manager\ssl\server.key"
+        api_server_port = 8081
     }
 }
 
@@ -225,6 +230,12 @@ function Show-CurrentConfig {
     Write-ColorOutput "  Log Level:            $($config.log_level)" -Color $Colors.Info
     Write-ColorOutput "  Max Concurrent Jobs:  $($config.max_concurrent_jobs)" -Color $Colors.Info
     
+    Write-ColorOutput "`nAPI Server SSL Settings:" -Color $Colors.Highlight
+    Write-ColorOutput "  SSL Enabled:          $($config.api_server_ssl_enabled)" -Color $(if($config.api_server_ssl_enabled){$Colors.Success}else{$Colors.Warning})
+    Write-ColorOutput "  SSL Certificate:      $($config.api_server_ssl_cert)" -Color $Colors.Info
+    Write-ColorOutput "  SSL Private Key:      $($config.api_server_ssl_key)" -Color $Colors.Info
+    Write-ColorOutput "  API Server Port:      $($config.api_server_port)" -Color $Colors.Info
+    
     Write-ColorOutput "`nvCenter Settings:" -Color $Colors.Highlight
     Write-ColorOutput "  Host:                 $($config.vcenter_host)" -Color $Colors.Info
     Write-ColorOutput "  Port:                 $($config.vcenter_port)" -Color $Colors.Info
@@ -268,6 +279,23 @@ function Edit-Configuration {
     $maxJobs = Read-SecureInput "Max Concurrent Jobs" $config.max_concurrent_jobs
     if ($maxJobs -match '^\d+$') {
         $config.max_concurrent_jobs = [int]$maxJobs
+    }
+    
+    # API Server SSL settings
+    Write-ColorOutput "`n═══ API Server SSL Settings ═══" -Color $Colors.Highlight
+    Write-ColorOutput "SSL enables secure HTTPS connections from browser to Job Executor" -Color $Colors.Info
+    
+    $sslEnabled = Read-SecureInput "Enable SSL (true/false)" $config.api_server_ssl_enabled
+    if ($sslEnabled -match '^(true|false)$') {
+        $config.api_server_ssl_enabled = $sslEnabled -eq 'true'
+    }
+    
+    $config.api_server_ssl_cert = Read-SecureInput "SSL Certificate Path" $config.api_server_ssl_cert
+    $config.api_server_ssl_key = Read-SecureInput "SSL Private Key Path" $config.api_server_ssl_key
+    
+    $apiPort = Read-SecureInput "API Server Port" $config.api_server_port
+    if ($apiPort -match '^\d+$') {
+        $config.api_server_port = [int]$apiPort
     }
     
     # vCenter settings
@@ -1375,6 +1403,103 @@ function Show-ServiceMenu {
     }
 }
 
+function Start-SslCertificateGeneration {
+    Write-Header "Generate SSL Certificate"
+    
+    Write-ColorOutput "This will generate a self-signed SSL certificate for the Job Executor API server." -Color $Colors.Info
+    Write-ColorOutput "SSL is required when accessing Dell Server Manager over HTTPS from a browser.`n" -Color $Colors.Info
+    
+    $config = Load-ExecutorConfig
+    $sslDir = Split-Path $config.api_server_ssl_cert -Parent
+    
+    # Check if certificate already exists
+    if (Test-Path $config.api_server_ssl_cert) {
+        Write-ColorOutput "Existing certificate found at: $($config.api_server_ssl_cert)" -Color $Colors.Warning
+        $overwrite = Read-SecureInput "Overwrite existing certificate? (yes/no)" "no"
+        if ($overwrite -ne "yes") {
+            Write-ColorOutput "Certificate generation cancelled." -Color $Colors.Info
+            Wait-KeyPress
+            return
+        }
+    }
+    
+    # Check for generate-ssl-cert.ps1 script
+    $sslScript = Join-Path $ProjectRoot "scripts\generate-ssl-cert.ps1"
+    if (-not (Test-Path $sslScript)) {
+        $sslScript = Join-Path $ConfigDir "generate-ssl-cert.ps1"
+    }
+    
+    if (Test-Path $sslScript) {
+        Write-ColorOutput "Running SSL certificate generation script..." -Color $Colors.Info
+        try {
+            & $sslScript -OutputDir $sslDir -Force
+            
+            if ((Test-Path $config.api_server_ssl_cert) -and (Test-Path $config.api_server_ssl_key)) {
+                Write-ColorOutput "`nCertificate generated successfully!" -Color $Colors.Success
+                
+                # Prompt to enable SSL
+                $enableSsl = Read-SecureInput "`nEnable SSL for Job Executor now? (yes/no)" "yes"
+                if ($enableSsl -eq "yes") {
+                    $config.api_server_ssl_enabled = $true
+                    Save-ExecutorConfig $config
+                    
+                    # Update NSSM service environment
+                    Write-ColorOutput "Updating service configuration..." -Color $Colors.Info
+                    nssm set $TaskName AppEnvironmentExtra +API_SERVER_SSL_ENABLED=true 2>&1 | Out-Null
+                    
+                    Write-ColorOutput "SSL enabled. Restart the service for changes to take effect." -Color $Colors.Warning
+                }
+            }
+        } catch {
+            Write-ColorOutput "Error generating certificate: $_" -Color $Colors.Error
+        }
+    } else {
+        # Fallback: Manual generation instructions
+        Write-ColorOutput "SSL generation script not found. Creating certificate manually..." -Color $Colors.Warning
+        
+        # Create SSL directory
+        if (-not (Test-Path $sslDir)) {
+            New-Item -ItemType Directory -Path $sslDir -Force | Out-Null
+        }
+        
+        $hostname = $env:COMPUTERNAME
+        $fqdn = [System.Net.Dns]::GetHostEntry($env:COMPUTERNAME).HostName
+        
+        # Check for OpenSSL
+        $opensslPath = Get-Command openssl -ErrorAction SilentlyContinue
+        if ($opensslPath) {
+            Write-ColorOutput "Using OpenSSL to generate certificate..." -Color $Colors.Info
+            
+            $certPath = $config.api_server_ssl_cert
+            $keyPath = $config.api_server_ssl_key
+            
+            $opensslArgs = @(
+                "req", "-x509", "-newkey", "rsa:4096",
+                "-keyout", $keyPath,
+                "-out", $certPath,
+                "-days", "365",
+                "-nodes",
+                "-subj", "/CN=$fqdn/O=Dell Server Manager"
+            )
+            
+            & openssl @opensslArgs 2>&1 | Out-Null
+            
+            if ((Test-Path $certPath) -and (Test-Path $keyPath)) {
+                Write-ColorOutput "Certificate generated successfully!" -Color $Colors.Success
+                Write-ColorOutput "  Certificate: $certPath" -Color $Colors.Highlight
+                Write-ColorOutput "  Private Key: $keyPath" -Color $Colors.Highlight
+            } else {
+                Write-ColorOutput "Failed to generate certificate" -Color $Colors.Error
+            }
+        } else {
+            Write-ColorOutput "OpenSSL not found. Please install OpenSSL or use the generate-ssl-cert.ps1 script." -Color $Colors.Error
+            Write-ColorOutput "  choco install openssl" -Color $Colors.Highlight
+        }
+    }
+    
+    Wait-KeyPress
+}
+
 function Show-ConfigMenu {
     while ($true) {
         Write-Header "Configuration Management"
@@ -1385,6 +1510,7 @@ function Show-ConfigMenu {
         Write-Host "  3. Quick Setup Wizard"
         Write-Host "  4. Export Configuration"
         Write-Host "  5. Import Configuration"
+        Write-Host "  6. Generate SSL Certificate"
         Write-Host ""
         Write-Host "  0. Back to Main Menu"
         Write-Host ""
@@ -1397,6 +1523,7 @@ function Show-ConfigMenu {
             "3" { Start-QuickSetup }
             "4" { Export-Configuration }
             "5" { Import-Configuration }
+            "6" { Start-SslCertificateGeneration }
             "0" { return }
             default { 
                 Write-ColorOutput "Invalid option" -Color $Colors.Error
