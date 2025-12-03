@@ -64,6 +64,7 @@ export function CommandsFilterToolbar({
           <SelectItem value="idrac_api">iDRAC API</SelectItem>
           <SelectItem value="vcenter_api">vCenter API</SelectItem>
           <SelectItem value="openmanage_api">OpenManage API</SelectItem>
+          <SelectItem value="ldap_api">IDM/LDAP</SelectItem>
         </SelectContent>
       </Select>
 
