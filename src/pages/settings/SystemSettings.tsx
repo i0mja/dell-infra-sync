@@ -422,7 +422,7 @@ export function SystemSettings() {
                 </TabsList>
                 
                 <TabsContent value="windows" className="mt-2 space-y-2">
-                  <p className="text-xs">1. Generate SSL certificate:</p>
+                  <p className="text-xs">1. Generate SSL certificate (uses OpenSSL):</p>
                   <code className="block px-2 py-1 bg-muted rounded text-xs">
                     C:\dell-server-manager\scripts\generate-ssl-cert.ps1
                   </code>
@@ -438,7 +438,7 @@ export function SystemSettings() {
                 </TabsContent>
                 
                 <TabsContent value="linux" className="mt-2 space-y-2">
-                  <p className="text-xs">1. Generate SSL certificate:</p>
+                  <p className="text-xs">1. Generate SSL certificate (uses OpenSSL):</p>
                   <code className="block px-2 py-1 bg-muted rounded text-xs">
                     sudo /opt/job-executor/generate-ssl-cert.sh
                   </code>

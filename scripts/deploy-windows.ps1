@@ -190,6 +190,17 @@ if (!(Get-Command git -ErrorAction SilentlyContinue)) {
     Write-Host "[OK] Git already installed" -ForegroundColor Green
 }
 
+# Step 4.5: Install OpenSSL (required for SSL certificate generation)
+Write-Host "[INSTALL] Installing OpenSSL..." -ForegroundColor Yellow
+if (!(Get-Command openssl -ErrorAction SilentlyContinue)) {
+    choco install openssl -y
+    Refresh-Path
+    Start-Sleep -Seconds 2
+    Write-Host "[OK] OpenSSL installed" -ForegroundColor Green
+} else {
+    Write-Host "[OK] OpenSSL already installed" -ForegroundColor Green
+}
+
 # Step 5: Install Scoop (Package Manager for Supabase CLI)
 Write-Host "[INSTALL] Step 5/8: Installing Scoop package manager..." -ForegroundColor Yellow
 if (!(Get-Command scoop -ErrorAction SilentlyContinue)) {
