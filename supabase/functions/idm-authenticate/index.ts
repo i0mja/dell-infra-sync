@@ -208,7 +208,9 @@ serve(async (req) => {
           // JIT user provisioning - create new user
           console.log(`[IDM Auth] Creating new user via JIT provisioning`);
           
-          email = userAttributes.email || `${idmUid}@idm.local`;
+          // Use a valid email format - .local TLD is rejected by Supabase Auth
+          // Use .internal or construct from username with valid domain
+          email = userAttributes.email || userAttributes.mail || `${idmUid.replace(/[^a-zA-Z0-9_.-]/g, '_')}@idm.internal`;
           const fullName = userAttributes.full_name || userAttributes.displayName || idmUid;
 
           const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
