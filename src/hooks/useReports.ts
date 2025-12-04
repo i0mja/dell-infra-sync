@@ -462,11 +462,15 @@ async function fetchUpdateHistory(dateRange: { start: Date; end: Date }): Promis
     // Job with tasks - return task-level rows
     return jobTasks.map(task => {
       const server = serverMap[task.server_id];
+      // If task is pending but job has terminated, show the job outcome
+      const effectiveStatus = (task.status === 'pending' && ['failed', 'cancelled', 'completed'].includes(job.status))
+        ? (job.status === 'completed' ? 'skipped' : job.status)
+        : task.status;
       return {
         job_id: job.id,
         job_type: job.job_type,
         job_type_label: JOB_TYPE_LABELS[job.job_type] || job.job_type,
-        status: task.status,
+        status: effectiveStatus,
         server: server?.hostname || '-',
         server_ip: server?.ip_address || '-',
         component,
