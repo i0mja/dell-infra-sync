@@ -53,6 +53,10 @@ async function fetchReportData(
       return fetchEsxiUpgradeHistory(dateRange);
     case "scp_backup_status":
       return fetchScpBackupStatus();
+    case "backup_history":
+      return fetchBackupHistory(dateRange);
+    case "backup_coverage":
+      return fetchBackupCoverage();
     default:
       throw new Error(`Unknown report type: ${reportType}`);
   }
@@ -916,4 +920,166 @@ async function fetchScpBackupStatus(): Promise<ReportData> {
   const chartData = Object.entries(statusCounts).map(([name, value]) => ({ name, value }));
 
   return { rows, summary, chartData };
+}
+
+async function fetchBackupHistory(dateRange: { start: Date; end: Date }): Promise<ReportData> {
+  // Get SCP backups within date range
+  const { data: backups, error: backupsError } = await supabase
+    .from("scp_backups")
+    .select("*")
+    .gte("exported_at", dateRange.start.toISOString())
+    .lte("exported_at", dateRange.end.toISOString())
+    .order("exported_at", { ascending: false });
+
+  if (backupsError) throw backupsError;
+
+  // Get servers for hostname lookup
+  const { data: servers } = await supabase
+    .from("servers")
+    .select("id, hostname, ip_address, model");
+
+  const serverMap = (servers || []).reduce((acc, s) => {
+    acc[s.id] = s;
+    return acc;
+  }, {} as Record<string, any>);
+
+  const rows = (backups || []).map(b => {
+    const server = serverMap[b.server_id];
+    return {
+      server: server?.hostname || "-",
+      ip_address: server?.ip_address || "-",
+      model: server?.model || "-",
+      backup_name: b.backup_name,
+      components: b.components || "-",
+      file_size: b.scp_file_size_bytes,
+      is_valid: b.is_valid,
+      exported_at: b.exported_at,
+      export_job_id: b.export_job_id,
+    };
+  });
+
+  // Calculate total size
+  const totalSize = rows.reduce((sum, r) => sum + (r.file_size || 0), 0);
+  const validCount = rows.filter(r => r.is_valid).length;
+
+  const summary = {
+    totalBackups: rows.length,
+    validBackups: validCount,
+    invalidBackups: rows.length - validCount,
+    totalSize: formatBytes(totalSize),
+  };
+
+  // Chart: backups per day
+  const backupsByDay = rows.reduce((acc, r) => {
+    if (!r.exported_at) return acc;
+    const day = format(new Date(r.exported_at), "yyyy-MM-dd");
+    if (!acc[day]) acc[day] = { count: 0, size: 0 };
+    acc[day].count++;
+    acc[day].size += r.file_size || 0;
+    return acc;
+  }, {} as Record<string, any>);
+
+  const chartData = Object.entries(backupsByDay)
+    .map(([date, stats]) => ({ date, count: stats.count, size: stats.size }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  return { rows, summary, chartData };
+}
+
+async function fetchBackupCoverage(): Promise<ReportData> {
+  // Get all servers
+  const { data: servers, error: serversError } = await supabase
+    .from("servers")
+    .select("id, hostname, ip_address, model")
+    .order("hostname");
+
+  if (serversError) throw serversError;
+
+  // Get SCP backups
+  const { data: backups } = await supabase
+    .from("scp_backups")
+    .select("id, server_id, backup_name, exported_at, is_valid")
+    .order("exported_at", { ascending: false });
+
+  // Build map of server -> latest backup
+  const latestBackupMap: Record<string, any> = {};
+  (backups || []).forEach(b => {
+    if (!latestBackupMap[b.server_id] || new Date(b.exported_at) > new Date(latestBackupMap[b.server_id].exported_at)) {
+      latestBackupMap[b.server_id] = b;
+    }
+  });
+
+  const now = new Date();
+  const rows = (servers || [])
+    .map(server => {
+      const backup = latestBackupMap[server.id];
+      const daysSinceBackup = backup ? differenceInDays(now, new Date(backup.exported_at)) : null;
+      
+      let coverageStatus: string;
+      let actionNeeded: string;
+      
+      if (!backup) {
+        coverageStatus = "Critical";
+        actionNeeded = "Create initial backup";
+      } else if (!backup.is_valid) {
+        coverageStatus = "Warning";
+        actionNeeded = "Invalid backup - re-export";
+      } else if (daysSinceBackup! > 90) {
+        coverageStatus = "Critical";
+        actionNeeded = "Backup very stale (>90d)";
+      } else if (daysSinceBackup! > 30) {
+        coverageStatus = "Warning";
+        actionNeeded = "Backup stale (>30d)";
+      } else {
+        coverageStatus = "OK";
+        actionNeeded = "None";
+      }
+
+      return {
+        server: server.hostname,
+        ip_address: server.ip_address,
+        model: server.model,
+        coverage_status: coverageStatus,
+        days_since_backup: daysSinceBackup,
+        last_backup: backup?.exported_at || null,
+        is_valid: backup?.is_valid ?? null,
+        action_needed: actionNeeded,
+      };
+    })
+    // Filter to only show servers needing attention (Critical or Warning)
+    .filter(r => r.coverage_status !== "OK");
+
+  const statusCounts = {
+    critical: rows.filter(r => r.coverage_status === "Critical").length,
+    warning: rows.filter(r => r.coverage_status === "Warning").length,
+  };
+
+  // Also count total servers for context
+  const totalServers = servers?.length || 0;
+  const compliant = totalServers - statusCounts.critical - statusCounts.warning;
+
+  const summary = {
+    needsAttention: rows.length,
+    critical: statusCounts.critical,
+    warning: statusCounts.warning,
+    compliant,
+    totalServers,
+  };
+
+  const chartData = [
+    { name: "Critical", value: statusCounts.critical },
+    { name: "Warning", value: statusCounts.warning },
+    { name: "Compliant", value: compliant },
+  ];
+
+  return { rows, summary, chartData };
+}
+
+// Helper to format bytes
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }

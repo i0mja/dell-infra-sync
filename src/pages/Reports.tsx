@@ -276,9 +276,47 @@ function getTableColumns(reportType: ReportType): ReportColumn[] {
         { key: "days_since_backup", label: "Days Ago", format: (value: number) => value !== null ? value : "-" },
       ];
 
+    case "backup_history":
+      return [
+        { key: "server", label: "Server" },
+        { key: "ip_address", label: "IP Address" },
+        { key: "backup_name", label: "Backup Name" },
+        { key: "components", label: "Components" },
+        { key: "file_size", label: "Size", format: (value: number) => value ? formatFileSize(value) : "-" },
+        { key: "is_valid", label: "Valid", format: (value: boolean) => value ? "✓" : "✗" },
+        { key: "exported_at", label: "Exported", format: (value: string) => value ? new Date(value).toLocaleString() : "-" },
+      ];
+
+    case "backup_coverage":
+      return [
+        { key: "server", label: "Server" },
+        { key: "ip_address", label: "IP Address" },
+        { key: "model", label: "Model" },
+        { 
+          key: "coverage_status", 
+          label: "Status",
+          format: (value: string) => (
+            <Badge variant={value === "Critical" ? "destructive" : value === "Warning" ? "secondary" : "default"}>
+              {value}
+            </Badge>
+          )
+        },
+        { key: "days_since_backup", label: "Days Ago", format: (value: number) => value !== null ? value : "Never" },
+        { key: "action_needed", label: "Action Needed" },
+      ];
+
     default:
       return [];
   }
+}
+
+// Helper to format file size
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }
 
 export default function Reports() {

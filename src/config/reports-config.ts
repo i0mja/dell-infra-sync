@@ -1,6 +1,6 @@
-import { BarChart3, Activity, Database, Shield, RefreshCw } from "lucide-react";
+import { BarChart3, Activity, Database, Shield, RefreshCw, Archive } from "lucide-react";
 
-export type ReportCategory = "inventory" | "operations" | "compliance" | "maintenance" | "updates";
+export type ReportCategory = "inventory" | "operations" | "compliance" | "maintenance" | "updates" | "backups";
 export type ReportType = 
   | "server_inventory" 
   | "cluster_summary"
@@ -10,13 +10,16 @@ export type ReportType =
   | "credential_coverage"
   | "maintenance_history"
   | "cluster_safety"
-  // New update reports
+  // Update reports
   | "update_history"
   | "update_failures"
   | "server_update_coverage"
   | "component_compliance"
   | "esxi_upgrade_history"
-  | "scp_backup_status";
+  // Backup reports
+  | "scp_backup_status"
+  | "backup_history"
+  | "backup_coverage";
 
 export interface ReportConfig {
   id: ReportType;
@@ -34,6 +37,7 @@ export const REPORT_CATEGORIES = [
   { id: "compliance", label: "Compliance", icon: Shield },
   { id: "maintenance", label: "Maintenance", icon: BarChart3 },
   { id: "updates", label: "Updates", icon: RefreshCw },
+  { id: "backups", label: "Backups", icon: Archive },
 ] as const;
 
 export const REPORTS: Record<ReportType, ReportConfig> = {
@@ -155,14 +159,33 @@ export const REPORTS: Record<ReportType, ReportConfig> = {
     chartType: "line",
     requiredRole: "viewer",
   },
+  // Backup Reports (moved scp_backup_status to backups category)
   scp_backup_status: {
     id: "scp_backup_status",
-    name: "SCP Backup Status",
+    name: "Backup Status",
     description: "Server Configuration Profile backup coverage and freshness",
-    category: "updates",
-    icon: RefreshCw,
+    category: "backups",
+    icon: Archive,
     chartType: "pie",
     requiredRole: "viewer",
+  },
+  backup_history: {
+    id: "backup_history",
+    name: "Backup History",
+    description: "Timeline of SCP backup operations with export details",
+    category: "backups",
+    icon: Archive,
+    chartType: "line",
+    requiredRole: "viewer",
+  },
+  backup_coverage: {
+    id: "backup_coverage",
+    name: "Backup Coverage",
+    description: "Servers requiring backup attention - missing or stale backups",
+    category: "backups",
+    icon: Archive,
+    chartType: "pie",
+    requiredRole: "operator",
   },
 };
 
