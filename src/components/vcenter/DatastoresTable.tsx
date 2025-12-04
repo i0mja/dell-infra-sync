@@ -63,8 +63,20 @@ export function DatastoresTable({
 
   if (sortField) {
     filteredDatastores = [...filteredDatastores].sort((a, b) => {
-      let aVal: any = a[sortField as keyof typeof a];
-      let bVal: any = b[sortField as keyof typeof b];
+      let aVal: any;
+      let bVal: any;
+      
+      // Special handling for usage (calculated field)
+      if (sortField === "usage") {
+        aVal = a.capacity_bytes && a.free_bytes 
+          ? ((a.capacity_bytes - a.free_bytes) / a.capacity_bytes) * 100 : 0;
+        bVal = b.capacity_bytes && b.free_bytes 
+          ? ((b.capacity_bytes - b.free_bytes) / b.capacity_bytes) * 100 : 0;
+      } else {
+        aVal = a[sortField as keyof typeof a];
+        bVal = b[sortField as keyof typeof b];
+      }
+      
       if (aVal == null) return 1;
       if (bVal == null) return -1;
       const comparison = aVal > bVal ? 1 : aVal < bVal ? -1 : 0;
@@ -146,13 +158,13 @@ export function DatastoresTable({
               <TableRow>
                 <TableHead className="w-12"><Checkbox checked={selectedDatastores.size === filteredDatastores.length} onCheckedChange={toggleAllDatastores} /></TableHead>
                 {isColumnVisible("name") && <TableHead className="w-[250px] cursor-pointer" onClick={() => handleSort("name")}><div className="flex items-center">Name {getSortIcon("name")}</div></TableHead>}
-                {isColumnVisible("type") && <TableHead className="w-[100px]">Type</TableHead>}
+                {isColumnVisible("type") && <TableHead className="w-[100px] cursor-pointer" onClick={() => handleSort("type")}><div className="flex items-center">Type {getSortIcon("type")}</div></TableHead>}
                 {isColumnVisible("capacity") && <TableHead className="w-[120px] cursor-pointer" onClick={() => handleSort("capacity_bytes")}><div className="flex items-center">Capacity {getSortIcon("capacity_bytes")}</div></TableHead>}
-                {isColumnVisible("free") && <TableHead className="w-[120px]">Free</TableHead>}
-                {isColumnVisible("usage") && <TableHead className="w-[200px]">Usage</TableHead>}
-                {isColumnVisible("hosts") && <TableHead className="w-[80px]">Hosts</TableHead>}
-                {isColumnVisible("vms") && <TableHead className="w-[80px]">VMs</TableHead>}
-                {isColumnVisible("status") && <TableHead className="w-[100px]">Status</TableHead>}
+                {isColumnVisible("free") && <TableHead className="w-[120px] cursor-pointer" onClick={() => handleSort("free_bytes")}><div className="flex items-center">Free {getSortIcon("free_bytes")}</div></TableHead>}
+                {isColumnVisible("usage") && <TableHead className="w-[200px] cursor-pointer" onClick={() => handleSort("usage")}><div className="flex items-center">Usage {getSortIcon("usage")}</div></TableHead>}
+                {isColumnVisible("hosts") && <TableHead className="w-[80px] cursor-pointer" onClick={() => handleSort("host_count")}><div className="flex items-center">Hosts {getSortIcon("host_count")}</div></TableHead>}
+                {isColumnVisible("vms") && <TableHead className="w-[80px] cursor-pointer" onClick={() => handleSort("vm_count")}><div className="flex items-center">VMs {getSortIcon("vm_count")}</div></TableHead>}
+                {isColumnVisible("status") && <TableHead className="w-[100px] cursor-pointer" onClick={() => handleSort("accessible")}><div className="flex items-center">Status {getSortIcon("accessible")}</div></TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
