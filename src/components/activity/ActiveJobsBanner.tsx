@@ -1,14 +1,15 @@
-import { useState } from "react";
-import { X, ChevronDown, ChevronUp, ExternalLink, XCircle } from "lucide-react";
+import { useState, useEffect } from "react";
+import { X, ChevronDown, ChevronUp, ExternalLink, XCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useNavigate } from "react-router-dom";
 import { useJobsWithProgress } from "@/hooks/useJobsWithProgress";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
-
+import { formatDistanceToNow } from "date-fns";
 interface Job {
   id: string;
   job_type: string;
@@ -34,9 +35,29 @@ export const ActiveJobsBanner = () => {
   const [isDismissed, setIsDismissed] = useState(false);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const navigate = useNavigate();
   const { toast } = useToast();
   const { data: jobs = [], refetch } = useJobsWithProgress();
+
+  // Real-time subscription for job status updates
+  useEffect(() => {
+    const channel = supabase
+      .channel('active-jobs-banner')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'jobs' },
+        () => {
+          refetch();
+          setLastUpdated(new Date());
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [refetch]);
 
   if (isDismissed || jobs.length === 0) {
     return null;
@@ -45,7 +66,8 @@ export const ActiveJobsBanner = () => {
   const runningJobs = jobs.filter(j => j.status === 'running').length;
   const pendingJobs = jobs.filter(j => j.status === 'pending').length;
 
-  const getJobTypeLabel = (type: string) => {
+  const getJobTypeLabel = (type: string, details?: any) => {
+    // More descriptive labels that clarify what the job includes
     const labels: Record<string, string> = {
       firmware_update: "Firmware Update",
       discovery_scan: "Initial Server Sync",
@@ -66,10 +88,30 @@ export const ActiveJobsBanner = () => {
       cluster_safety_check: "Cluster Safety Check",
       prepare_host_for_update: "Prepare Host",
       verify_host_after_update: "Verify Host",
-      rolling_cluster_update: "Rolling Cluster Update",
+      rolling_cluster_update: "Cluster Update",
+      esxi_upgrade: "ESXi Upgrade",
+      esxi_then_firmware: "ESXi + Firmware",
+      firmware_then_esxi: "Firmware + ESXi",
       server_group_safety_check: "Server Group Safety Check"
     };
-    return labels[type] || type;
+    return labels[type] || type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  };
+
+  // Get subtitle showing what workflow jobs include
+  const getJobSubtitle = (type: string, details?: any) => {
+    if (type === 'rolling_cluster_update') {
+      const parts: string[] = [];
+      if (details?.include_firmware) parts.push('Firmware');
+      if (details?.include_esxi) parts.push('ESXi');
+      if (details?.include_scp_backup) parts.push('Backup');
+      return parts.length > 0 ? `Includes: ${parts.join(', ')}` : 'Full cluster workflow';
+    }
+    return null;
+  };
+
+  const handleRefresh = () => {
+    refetch();
+    setLastUpdated(new Date());
   };
 
   const handleCancelJob = async (jobId: string, e: React.MouseEvent) => {
@@ -142,6 +184,23 @@ export const ActiveJobsBanner = () => {
         </div>
 
         <div className="flex items-center gap-2">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="text-[10px] text-muted-foreground">
+                {formatDistanceToNow(lastUpdated, { addSuffix: true })}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>Last updated</TooltipContent>
+          </Tooltip>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={handleRefresh}
+            title="Refresh"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -195,9 +254,16 @@ export const ActiveJobsBanner = () => {
                     >
                       {job.status}
                     </Badge>
-                    <span className="text-sm font-medium truncate">
-                      {getJobTypeLabel(job.job_type)}
-                    </span>
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-sm font-medium truncate">
+                        {getJobTypeLabel(job.job_type, job.details)}
+                      </span>
+                      {getJobSubtitle(job.job_type, job.details) && (
+                        <span className="text-[10px] text-muted-foreground truncate">
+                          {getJobSubtitle(job.job_type, job.details)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     {job.status === 'running' && (

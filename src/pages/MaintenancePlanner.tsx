@@ -172,17 +172,18 @@ export default function MaintenancePlanner() {
     return 'planned';
   };
 
-  const getJobTypeLabel = (type: string) => {
+  const getJobTypeLabel = (type: string, details?: any) => {
+    // Base labels
     const labels: Record<string, string> = {
       firmware_update: "Firmware Update",
       discovery_scan: "Discovery Scan",
       vcenter_sync: "vCenter Sync",
       full_server_update: "Full Server Update",
       cluster_safety_check: "Safety Check",
-      rolling_cluster_update: "Rolling Cluster Update",
+      rolling_cluster_update: "Cluster Update",
       esxi_upgrade: "ESXi Upgrade",
-      esxi_then_firmware: "ESXi + Firmware Update",
-      firmware_then_esxi: "Firmware + ESXi Update",
+      esxi_then_firmware: "ESXi + Firmware",
+      firmware_then_esxi: "Firmware + ESXi",
       scp_import: "Config Restore",
       scp_export: "Config Backup",
       prepare_host_for_update: "Prepare Host",
@@ -195,6 +196,17 @@ export default function MaintenancePlanner() {
       boot_config: "Boot Config",
       credential_test: "Credential Test",
     };
+    
+    // For rolling_cluster_update, add detail about what's included
+    if (type === 'rolling_cluster_update' && details) {
+      const parts: string[] = [];
+      if (details.include_firmware) parts.push('FW');
+      if (details.include_esxi) parts.push('ESXi');
+      if (parts.length > 0) {
+        return `Cluster Update (${parts.join('+')})`;
+      }
+    }
+    
     return labels[type] || type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
   };
 
@@ -243,7 +255,7 @@ export default function MaintenancePlanner() {
       return {
         type: 'job' as const,
         id: j.id,
-        title: getJobTypeLabel(j.job_type),
+        title: getJobTypeLabel(j.job_type, j.details),
         status: mapJobStatus(j),
         timestamp: new Date(j.started_at || j.created_at),
         target: isClusterJob && clusterName 

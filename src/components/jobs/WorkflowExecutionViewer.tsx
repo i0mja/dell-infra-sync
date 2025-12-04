@@ -211,22 +211,46 @@ export const WorkflowExecutionViewer = ({
   const progress = calculateProgress();
   const overallStatus = getOverallStatus();
 
+  const getWorkflowDescription = () => {
+    const descriptions: Record<string, string> = {
+      rolling_cluster_update: 'This job updates an entire cluster host-by-host. It includes firmware updates, ESXi upgrades, configuration backups, and maintenance mode handling.',
+      esxi_upgrade: 'This job upgrades ESXi on selected hosts with automated maintenance mode handling.',
+      firmware_update: 'This job applies firmware updates to selected servers.',
+      full_server_update: 'This job performs a complete server update including firmware and configuration.',
+    };
+    return descriptions[workflowType] || 'This job contains multiple workflow steps that execute in sequence.';
+  };
+
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
-          <div>
-            <CardTitle>
-              {workflowType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-            </CardTitle>
-            <CardDescription>Job ID: {jobId}</CardDescription>
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-lg">
+                {workflowType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+              </CardTitle>
+              {getStatusBadge(overallStatus)}
+            </div>
+            <CardDescription className="text-xs">
+              Job ID: <span className="font-mono">{jobId.slice(0, 8)}</span>
+            </CardDescription>
           </div>
-          <div className="flex items-center gap-2">
-            {getStatusBadge(overallStatus)}
-            <Button variant="ghost" size="icon" onClick={fetchSteps}>
-              <RefreshCw className="h-4 w-4" />
-            </Button>
-          </div>
+          <Button variant="ghost" size="icon" onClick={fetchSteps}>
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+        </div>
+        
+        {/* Job hierarchy explanation */}
+        <div className="mt-3 p-3 rounded-md bg-muted/50 border border-border/50">
+          <p className="text-xs text-muted-foreground">
+            {getWorkflowDescription()}
+          </p>
+          {steps.length > 0 && (
+            <p className="text-xs text-muted-foreground mt-1">
+              <span className="font-medium text-foreground">{steps.length} workflow steps</span> are part of this single job.
+            </p>
+          )}
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -342,6 +366,13 @@ export const WorkflowExecutionViewer = ({
         <Separator />
 
         {/* Workflow Steps Timeline */}
+        {steps.length > 0 && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <div className="h-px flex-1 bg-border" />
+            <span className="px-2 font-medium uppercase tracking-wide">Workflow Steps</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+        )}
         <div className="space-y-1">
           {steps.map((step, index) => {
             const isExpanded = expandedSteps.has(step.id);
