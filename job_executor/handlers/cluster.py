@@ -926,6 +926,35 @@ class ClusterHandler(BaseHandler):
                         )
                         dell_ops = DellOperations(adapter)
                         
+                        # Clear stale iDRAC jobs before firmware update to prevent RED014/JCP042 errors
+                        clear_stale_jobs = details.get('clear_stale_jobs_before_update', True)
+                        if clear_stale_jobs:
+                            self.log(f"    Checking for stale iDRAC jobs that could block updates...")
+                            try:
+                                clear_result = dell_ops.clear_stale_idrac_jobs(
+                                    ip=server['ip_address'],
+                                    username=username,
+                                    password=password,
+                                    clear_failed=True,
+                                    clear_completed_errors=True,
+                                    clear_old_scheduled=details.get('clear_old_scheduled_jobs', False),
+                                    stale_age_hours=details.get('stale_job_max_age_hours', 24),
+                                    server_id=host['server_id'],
+                                    job_id=job['id'],
+                                    user_id=job['created_by']
+                                )
+                                
+                                if clear_result.get('cleared_count', 0) > 0:
+                                    self.log(f"    ✓ Cleared {clear_result['cleared_count']} stale jobs from queue")
+                                    for cleared_job in clear_result.get('cleared_jobs', [])[:5]:
+                                        self.log(f"      - {cleared_job['id']}: {cleared_job.get('name', 'Unknown')} ({cleared_job.get('state')})")
+                                else:
+                                    self.log(f"    ✓ Job queue is clean - no stale jobs to clear")
+                                    
+                            except Exception as clear_error:
+                                self.log(f"    ⚠ Error clearing stale jobs (non-fatal): {clear_error}", "WARN")
+                                # Continue with firmware update - this is not a fatal error
+                        
                         # Apply firmware based on source
                         firmware_source = details.get('firmware_source', 'manual_repository')
                         reboot_required = False  # Track if reboot is actually needed

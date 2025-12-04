@@ -2737,3 +2737,163 @@ class DellOperations:
                 'warnings': [],
                 'message': f"Unable to check thermal status: {str(e)}"
             }
+
+    def clear_stale_idrac_jobs(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        clear_failed: bool = True,
+        clear_completed_errors: bool = True,
+        clear_old_scheduled: bool = False,
+        stale_age_hours: int = 24,
+        server_id: str = None,
+        job_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Selectively clear stale/problematic jobs from iDRAC queue.
+        
+        Unlike clear_idrac_job_queue() which clears everything, this function:
+        - Clears Failed and CompletedWithErrors jobs (blocking new updates)
+        - Optionally clears old Scheduled jobs (stuck >stale_age_hours)
+        - Preserves Running, Downloading, Starting jobs
+        
+        Dell Redfish endpoint: GET /redfish/v1/Managers/iDRAC.Embedded.1/Jobs
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            clear_failed: Clear jobs with Failed status (default True)
+            clear_completed_errors: Clear jobs with CompletedWithErrors status (default True)
+            clear_old_scheduled: Clear Scheduled jobs older than stale_age_hours (default False)
+            stale_age_hours: Age threshold for "old" scheduled jobs (default 24)
+            server_id: Optional server ID for logging
+            job_id: Optional parent job ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict: 'cleared_count', 'cleared_jobs', 'skipped_jobs', 'errors'
+        """
+        from datetime import datetime, timedelta
+        
+        result = {
+            'success': True,
+            'cleared_count': 0,
+            'cleared_jobs': [],
+            'skipped_jobs': [],
+            'errors': []
+        }
+        
+        # States to clear
+        states_to_clear = set()
+        if clear_failed:
+            states_to_clear.add('Failed')
+        if clear_completed_errors:
+            states_to_clear.add('CompletedWithErrors')
+        
+        # States to always preserve
+        states_to_preserve = {'Running', 'Downloading', 'Starting', 'Waiting'}
+        
+        try:
+            # Get all jobs from queue
+            job_queue = self.get_idrac_job_queue(
+                ip=ip,
+                username=username,
+                password=password,
+                server_id=server_id,
+                user_id=user_id
+            )
+            
+            jobs = job_queue.get('jobs', [])
+            
+            if not jobs:
+                result['message'] = 'Job queue is empty'
+                return result
+            
+            # Calculate age threshold for old scheduled jobs
+            age_threshold = datetime.utcnow() - timedelta(hours=stale_age_hours)
+            
+            for idrac_job in jobs:
+                job_state = idrac_job.get('JobState', idrac_job.get('state', ''))
+                job_name = idrac_job.get('Name', idrac_job.get('name', 'Unknown'))
+                idrac_job_id = idrac_job.get('Id', idrac_job.get('id', ''))
+                
+                # Skip if no job ID
+                if not idrac_job_id:
+                    continue
+                
+                # Check if job should be preserved
+                if job_state in states_to_preserve:
+                    result['skipped_jobs'].append({
+                        'id': idrac_job_id,
+                        'name': job_name,
+                        'state': job_state,
+                        'reason': 'Active job - preserved'
+                    })
+                    continue
+                
+                # Check if job should be cleared based on state
+                should_clear = False
+                clear_reason = ''
+                
+                if job_state in states_to_clear:
+                    should_clear = True
+                    clear_reason = f'State: {job_state}'
+                    
+                elif clear_old_scheduled and job_state in ('Scheduled', 'New'):
+                    # Check job age for scheduled jobs
+                    start_time_str = idrac_job.get('StartTime', idrac_job.get('created_at', ''))
+                    if start_time_str:
+                        try:
+                            # Parse ISO format timestamp
+                            if 'T' in start_time_str:
+                                start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00').replace('+00:00', ''))
+                            else:
+                                start_time = datetime.strptime(start_time_str, '%Y-%m-%d %H:%M:%S')
+                            
+                            if start_time < age_threshold:
+                                should_clear = True
+                                clear_reason = f'Old {job_state} job (>{stale_age_hours}h)'
+                        except (ValueError, TypeError):
+                            pass  # Can't parse date, skip age check
+                
+                if should_clear:
+                    try:
+                        self.delete_idrac_job(
+                            ip=ip,
+                            username=username,
+                            password=password,
+                            idrac_job_id=idrac_job_id,
+                            server_id=server_id,
+                            user_id=user_id
+                        )
+                        result['cleared_count'] += 1
+                        result['cleared_jobs'].append({
+                            'id': idrac_job_id,
+                            'name': job_name,
+                            'state': job_state,
+                            'reason': clear_reason
+                        })
+                    except Exception as del_error:
+                        result['errors'].append({
+                            'id': idrac_job_id,
+                            'error': str(del_error)
+                        })
+                else:
+                    result['skipped_jobs'].append({
+                        'id': idrac_job_id,
+                        'name': job_name,
+                        'state': job_state,
+                        'reason': 'Does not match clear criteria'
+                    })
+            
+            result['message'] = f"Cleared {result['cleared_count']} stale jobs from queue"
+            
+        except Exception as e:
+            result['success'] = False
+            result['error'] = str(e)
+            result['message'] = f"Failed to clear stale jobs: {str(e)}"
+        
+        return result
