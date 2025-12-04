@@ -628,6 +628,20 @@ class APIHandler(BaseHTTPRequestHandler):
             )
             
             if auth_result.get('success'):
+                # Normalize identity to get realm and canonical_principal for AD users
+                realm = auth_result.get('realm')
+                canonical_principal = auth_result.get('canonical_principal')
+                
+                if not realm or not canonical_principal:
+                    try:
+                        normalized = authenticator.normalize_identity(username)
+                        if normalized:
+                            realm = getattr(normalized, 'realm', None) or realm
+                            canonical_principal = getattr(normalized, 'canonical_principal', None) or canonical_principal
+                            self.executor.log(f"Normalized identity: {canonical_principal} (realm: {realm})", "DEBUG")
+                    except Exception as e:
+                        self.executor.log(f"Identity normalization failed (non-fatal): {e}", "WARNING")
+                
                 # Return auth result for provisioning
                 response = {
                     'success': True,
@@ -636,8 +650,8 @@ class APIHandler(BaseHTTPRequestHandler):
                     'groups': auth_result.get('groups', []),
                     'is_ad_trust_user': auth_result.get('is_ad_trust_user', False),
                     'ad_domain': auth_result.get('ad_domain'),
-                    'realm': auth_result.get('realm'),
-                    'canonical_principal': auth_result.get('canonical_principal'),
+                    'realm': realm,
+                    'canonical_principal': canonical_principal,
                     'response_time_ms': response_time_ms,
                 }
                 self._send_json(response)
