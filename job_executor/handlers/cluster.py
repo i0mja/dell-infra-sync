@@ -303,7 +303,7 @@ class ClusterHandler(BaseHandler):
                 adapter = DellRedfishAdapter(
                     self.executor.throttler, 
                     self.executor._get_dell_logger(), 
-                    self.executor.log_idrac_command
+                    self.executor._log_dell_redfish_command
                 )
                 dell_ops = DellOperations(adapter)
                 dell_ops.clear_idrac_job_queue(
@@ -922,7 +922,7 @@ class ClusterHandler(BaseHandler):
                         adapter = DellRedfishAdapter(
                             self.executor.throttler, 
                             self.executor._get_dell_logger(), 
-                            self.executor.log_idrac_command
+                            self.executor._log_dell_redfish_command
                         )
                         dell_ops = DellOperations(adapter)
                         
@@ -1234,54 +1234,54 @@ class ClusterHandler(BaseHandler):
                                 
                                 time.sleep(10)
                             
-                                            if not esxi_online:
-                                                raise Exception(f"Timeout waiting for host to come online after {max_attempts * 10}s")
-                                            
-                                            # Post-reboot job verification: Check for failed firmware jobs
-                                            self.log(f"    Checking for failed firmware jobs...")
-                                            try:
-                                                failed_jobs = dell_ops.get_failed_idrac_jobs(
-                                                    ip=server['ip_address'],
-                                                    username=username,
-                                                    password=password,
-                                                    job_id=job['id'],
-                                                    server_id=host['server_id']
-                                                )
-                                                
-                                                if failed_jobs:
-                                                    self.log(f"    ⚠ Found {len(failed_jobs)} failed firmware jobs:", "WARN")
-                                                    failed_job_ids = []
-                                                    for fj in failed_jobs[:5]:  # Show first 5
-                                                        self.log(f"      - {fj['id']}: {fj['message']}", "WARN")
-                                                        failed_job_ids.append(fj['id'])
-                                                    
-                                                    # Track partial failure but continue
-                                                    host_result['failed_jobs'] = failed_job_ids
-                                                    host_result['partial_failure'] = True
-                                                    
-                                                    # Check if retry is configured
-                                                    max_firmware_retries = details.get('max_firmware_retries', 0)
-                                                    retry_wait_seconds = details.get('retry_wait_seconds', 180)
-                                                    
-                                                    if max_firmware_retries > 0 and host_result.get('firmware_retry_count', 0) < max_firmware_retries:
-                                                        self.log(f"    Retry {host_result.get('firmware_retry_count', 0) + 1}/{max_firmware_retries}: Re-triggering failed updates...")
-                                                        host_result['firmware_retry_count'] = host_result.get('firmware_retry_count', 0) + 1
-                                                        
-                                                        # Clear failed jobs from queue
-                                                        dell_ops.clear_idrac_job_queue(
-                                                            ip=server['ip_address'],
-                                                            username=username,
-                                                            password=password,
-                                                            force=True,
-                                                            server_id=host['server_id']
-                                                        )
-                                                        time.sleep(retry_wait_seconds)
-                                                        # Note: Full retry would require re-running firmware apply step
-                                                        # For now just log the failure and continue
-                                                else:
-                                                    self.log(f"    ✓ No failed firmware jobs detected")
-                                            except Exception as verify_err:
-                                                self.log(f"    ⚠ Could not verify job status: {verify_err}", "WARN")
+                            if not esxi_online:
+                                raise Exception(f"Timeout waiting for host to come online after {max_attempts * 10}s")
+                            
+                            # Post-reboot job verification: Check for failed firmware jobs
+                            self.log(f"    Checking for failed firmware jobs...")
+                            try:
+                                failed_jobs = dell_ops.get_failed_idrac_jobs(
+                                    ip=server['ip_address'],
+                                    username=username,
+                                    password=password,
+                                    job_id=job['id'],
+                                    server_id=host['server_id']
+                                )
+                                
+                                if failed_jobs:
+                                    self.log(f"    ⚠ Found {len(failed_jobs)} failed firmware jobs:", "WARN")
+                                    failed_job_ids = []
+                                    for fj in failed_jobs[:5]:  # Show first 5
+                                        self.log(f"      - {fj['id']}: {fj['message']}", "WARN")
+                                        failed_job_ids.append(fj['id'])
+                                    
+                                    # Track partial failure but continue
+                                    host_result['failed_jobs'] = failed_job_ids
+                                    host_result['partial_failure'] = True
+                                    
+                                    # Check if retry is configured
+                                    max_firmware_retries = details.get('max_firmware_retries', 0)
+                                    retry_wait_seconds = details.get('retry_wait_seconds', 180)
+                                    
+                                    if max_firmware_retries > 0 and host_result.get('firmware_retry_count', 0) < max_firmware_retries:
+                                        self.log(f"    Retry {host_result.get('firmware_retry_count', 0) + 1}/{max_firmware_retries}: Re-triggering failed updates...")
+                                        host_result['firmware_retry_count'] = host_result.get('firmware_retry_count', 0) + 1
+                                        
+                                        # Clear failed jobs from queue
+                                        dell_ops.clear_idrac_job_queue(
+                                            ip=server['ip_address'],
+                                            username=username,
+                                            password=password,
+                                            force=True,
+                                            server_id=host['server_id']
+                                        )
+                                        time.sleep(retry_wait_seconds)
+                                        # Note: Full retry would require re-running firmware apply step
+                                        # For now just log the failure and continue
+                                else:
+                                    self.log(f"    ✓ No failed firmware jobs detected")
+                            except Exception as verify_err:
+                                self.log(f"    ⚠ Could not verify job status: {verify_err}", "WARN")
                         else:
                             # No reboot required - skip reboot wait
                             self.log(f"  [3/5] Skipping reboot wait - no updates required reboot")
