@@ -34,7 +34,7 @@ class DatastoreHandler(BaseHandler):
             
             # Connect to vCenter
             self.log(f"Connecting to vCenter {vcenter_settings['host']}")
-            si = self.executor._connect_vcenter(vcenter_settings)
+            si = self.executor.connect_vcenter(settings=vcenter_settings)
             content = si.RetrieveContent()
             
             # Find datastore
