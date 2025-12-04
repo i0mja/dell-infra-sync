@@ -231,10 +231,13 @@ export const ActiveJobsBanner = () => {
 
       {!isCollapsed && (
         <div className="px-4 pb-3 space-y-3">
-          {jobs.slice(0, 3).map((job) => {
-            const progressPercent = job.totalTasks > 0 
-              ? Math.round((job.completedTasks / job.totalTasks) * 100)
-              : 0;
+        {jobs.slice(0, 3).map((job) => {
+            // Use calculatedProgress from job.details first, then task-based, then minimum for running jobs
+            const progressPercent = job.calculatedProgress !== null 
+              ? job.calculatedProgress
+              : (job.totalTasks > 0 
+                  ? Math.round((job.completedTasks / job.totalTasks) * 100)
+                  : (job.status === 'running' ? 5 : 0)); // Show 5% minimum for running jobs with no progress data
 
             return (
               <div
@@ -284,10 +287,14 @@ export const ActiveJobsBanner = () => {
                 </div>
 
                 {/* Progress bar and task count */}
-                {job.totalTasks > 0 && (
+                {(job.totalTasks > 0 || progressPercent > 0) && (
                   <div className="space-y-1">
                     <div className="flex justify-between text-xs text-muted-foreground">
-                      <span>{job.completedTasks}/{job.totalTasks} tasks completed</span>
+                      {job.totalTasks > 0 ? (
+                        <span>{job.completedTasks}/{job.totalTasks} tasks completed</span>
+                      ) : (
+                        <span>Processing...</span>
+                      )}
                       <span>{progressPercent}%</span>
                     </div>
                     <Progress value={progressPercent} className="h-1.5" />
