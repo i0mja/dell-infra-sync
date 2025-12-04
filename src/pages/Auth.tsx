@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { Server, AlertCircle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { logActivityDirect } from "@/hooks/useActivityLog";
 
 const Auth = () => {
   const [email, setEmail] = useState("");
@@ -199,12 +200,22 @@ const Auth = () => {
             access_token: provisionResult.access_token,
             refresh_token: provisionResult.refresh_token,
           });
+
+          // Log activity
+          logActivityDirect('idm_login', 'idm', username, { 
+            is_ad_trust_user: authResult.is_ad_trust_user, 
+            ad_domain: authResult.ad_domain 
+          }, { success: true });
+
           toast({
             title: "Welcome",
             description: `Authenticated via ${authResult.is_ad_trust_user ? 'Active Directory' : 'FreeIPA'}`,
           });
           navigate("/");
         } else {
+          // Log failed provisioning
+          logActivityDirect('idm_login', 'idm', username, {}, { success: false, error: provisionResult.error || 'Failed to create user session' });
+
           toast({
             title: "Provisioning Failed",
             description: provisionResult.error || 'Failed to create user session',
@@ -212,6 +223,9 @@ const Auth = () => {
           });
         }
       } else {
+        // Log failed authentication
+        logActivityDirect('idm_login', 'idm', username, {}, { success: false, error: authResult.error || 'Invalid username or password' });
+
         toast({
           title: "Authentication Failed",
           description: authResult.error || 'Invalid username or password',

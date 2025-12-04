@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { logActivityDirect } from "@/hooks/useActivityLog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -125,6 +126,9 @@ export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialo
         description: "Reading settings from server...",
       });
 
+      // Log activity
+      logActivityDirect('bios_fetch', 'server', server.hostname || server.ip_address, { notes: notes || 'Manual snapshot' }, { targetId: server.id, success: true });
+
       // Poll for job completion
       const pollInterval = setInterval(async () => {
         const { data: updatedJob } = await supabase
@@ -165,6 +169,9 @@ export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialo
         description: error.message,
         variant: "destructive",
       });
+
+      // Log failed activity
+      logActivityDirect('bios_fetch', 'server', server.hostname || server.ip_address, {}, { targetId: server.id, success: false, error: error.message });
     }
   };
 

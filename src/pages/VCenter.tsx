@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
+import { logActivityDirect } from "@/hooks/useActivityLog";
 import { VCenterStatsBar } from "@/components/vcenter/VCenterStatsBar";
 import { HostsTable } from "@/components/vcenter/HostsTable";
 import { HostFilterToolbar } from "@/components/vcenter/HostFilterToolbar";
@@ -307,6 +308,9 @@ export default function VCenter() {
         description: `Job ${data.id} created`,
       });
 
+      // Log activity
+      logActivityDirect('connectivity_test', 'vcenter', 'vCenter', { test_type: 'full_connectivity_test' }, { success: true });
+
       setTestDialogOpen(true);
     } catch (error: any) {
       toast({
@@ -314,6 +318,9 @@ export default function VCenter() {
         description: error.message,
         variant: "destructive",
       });
+
+      // Log failed activity
+      logActivityDirect('connectivity_test', 'vcenter', 'vCenter', { test_type: 'full_connectivity_test' }, { success: false, error: error.message });
     } finally {
       setTesting(false);
     }

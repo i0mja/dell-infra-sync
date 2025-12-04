@@ -13,6 +13,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useIsoImages } from "@/hooks/useIsoImages";
+import { logActivityDirect } from "@/hooks/useActivityLog";
 
 interface VirtualMediaDialogProps {
   open: boolean;
@@ -249,6 +250,9 @@ export const VirtualMediaDialog = ({ open, onOpenChange, server }: VirtualMediaD
         description: `Virtual media mount job created. Check Maintenance Planner → Jobs for status.`,
       });
 
+      // Log activity
+      logActivityDirect('virtual_media_mount', 'server', server.hostname || server.ip_address, { imageName, mediaType }, { targetId: server.id, success: true });
+
       // Refresh status after a delay
       setTimeout(() => {
         fetchCurrentSession();
@@ -264,6 +268,9 @@ export const VirtualMediaDialog = ({ open, onOpenChange, server }: VirtualMediaD
         description: error.message || "Failed to create mount job",
         variant: "destructive",
       });
+
+      // Log failed activity
+      logActivityDirect('virtual_media_mount', 'server', server.hostname || server.ip_address, { imageName, mediaType }, { targetId: server.id, success: false, error: error.message });
     } finally {
       setLoading(false);
     }
@@ -307,6 +314,9 @@ export const VirtualMediaDialog = ({ open, onOpenChange, server }: VirtualMediaD
         description: `Virtual media unmount job created. Check Maintenance Planner → Jobs for status.`,
       });
 
+      // Log activity
+      logActivityDirect('virtual_media_unmount', 'server', server.hostname || server.ip_address, { mediaType: currentSession.media_type, imageName: currentSession.image_name }, { targetId: server.id, success: true });
+
       // Refresh status after a delay
       setTimeout(() => {
         fetchCurrentSession();
@@ -318,6 +328,9 @@ export const VirtualMediaDialog = ({ open, onOpenChange, server }: VirtualMediaD
         description: error.message || "Failed to create unmount job",
         variant: "destructive",
       });
+
+      // Log failed activity
+      logActivityDirect('virtual_media_unmount', 'server', server.hostname || server.ip_address, { mediaType: currentSession?.media_type }, { targetId: server.id, success: false, error: error.message });
     } finally {
       setLoading(false);
     }

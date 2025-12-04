@@ -8,6 +8,7 @@ import { Activity, RefreshCw, Thermometer, Fan, Zap, HardDrive, Cpu, MemoryStick
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { logActivityDirect } from "@/hooks/useActivityLog";
 
 interface ServerHealthDialogProps {
   open: boolean;
@@ -92,6 +93,9 @@ export function ServerHealthDialog({ open, onOpenChange, server }: ServerHealthD
         description: 'Results will be available shortly'
       });
 
+      // Log activity
+      logActivityDirect('health_check', 'server', server.hostname || server.ip_address, {}, { targetId: server.id, success: true });
+
       setTimeout(() => {
         fetchHealthHistory();
       }, 5000);
@@ -100,6 +104,9 @@ export function ServerHealthDialog({ open, onOpenChange, server }: ServerHealthD
       toast.error('Failed to initiate health check', {
         description: error.message
       });
+
+      // Log failed activity
+      logActivityDirect('health_check', 'server', server.hostname || server.ip_address, {}, { targetId: server.id, success: false, error: error.message });
     } finally {
       setIsRefreshing(false);
     }

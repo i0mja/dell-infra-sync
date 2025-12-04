@@ -9,6 +9,7 @@ import { FileText, RefreshCw, Search, AlertCircle, AlertTriangle, Info } from "l
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { logActivityDirect } from "@/hooks/useActivityLog";
 
 interface EventLogDialogProps {
   open: boolean;
@@ -91,11 +92,17 @@ export function EventLogDialog({ open, onOpenChange, server }: EventLogDialogPro
       toast.success('Event log fetch initiated', {
         description: 'New events will be available shortly'
       });
+
+      // Log activity
+      logActivityDirect('event_log_fetch', 'server', server.hostname || server.ip_address, {}, { targetId: server.id, success: true });
     } catch (error: any) {
       console.error('Error initiating event log fetch:', error);
       toast.error('Failed to initiate event log fetch', {
         description: error.message
       });
+
+      // Log failed activity
+      logActivityDirect('event_log_fetch', 'server', server.hostname || server.ip_address, {}, { targetId: server.id, success: false, error: error.message });
     } finally {
       setIsRefreshing(false);
     }
