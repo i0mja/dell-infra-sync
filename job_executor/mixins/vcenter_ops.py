@@ -23,6 +23,153 @@ from job_executor.utils import _safe_json_parse
 class VCenterMixin:
     """Mixin providing vCenter operations for Job Executor"""
     
+    def detect_vcsa_on_hosts(self, host_ids: List[str], cluster_name: str = None) -> Dict:
+        """
+        Detect which host(s) in a list contain the vCenter Server Appliance (VCSA).
+        
+        VCSA detection patterns:
+        - VM name contains 'vcsa' or 'vcenter' (case-insensitive)
+        - VM guest OS is 'VMware Photon OS' (VCSA 6.7+)
+        - VM name matches common patterns like '*-VCSA', 'vCSA-*'
+        
+        Args:
+            host_ids: List of vcenter_host database IDs to check
+            cluster_name: Optional cluster name for logging
+            
+        Returns:
+            {
+                'vcsa_host_id': str or None,  # The host_id containing VCSA
+                'vcsa_host_name': str or None,
+                'vcsa_vm_name': str or None,
+                'vcsa_vm_details': dict or None,
+                'critical_vms': list,  # List of critical infra VMs found
+                'checked_hosts': int
+            }
+        """
+        result = {
+            'vcsa_host_id': None,
+            'vcsa_host_name': None,
+            'vcsa_vm_name': None,
+            'vcsa_vm_details': None,
+            'critical_vms': [],
+            'checked_hosts': 0
+        }
+        
+        if not host_ids:
+            return result
+        
+        try:
+            self.log(f"  Scanning {len(host_ids)} hosts for VCSA...")
+            
+            # Fetch host details including source_vcenter_id
+            host_id_list = ','.join([f'"{h}"' for h in host_ids])
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_hosts?id=in.({host_id_list})&select=id,name,vcenter_id,source_vcenter_id",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL
+            )
+            
+            if response.status_code != 200:
+                self.log(f"    Failed to fetch host details: {response.status_code}", "WARN")
+                return result
+            
+            hosts = _safe_json_parse(response) or []
+            if not hosts:
+                return result
+            
+            # Get vCenter connection
+            source_vcenter_id = hosts[0].get('source_vcenter_id')
+            vcenter_settings = self.get_vcenter_settings(source_vcenter_id) if source_vcenter_id else None
+            
+            vc = self.connect_vcenter(settings=vcenter_settings)
+            if not vc:
+                self.log(f"    Cannot connect to vCenter for VCSA detection", "WARN")
+                return result
+            
+            content = vc.RetrieveContent()
+            
+            # Build vcenter_id to host mapping
+            host_vcenter_ids = {h['vcenter_id']: h for h in hosts}
+            
+            # Get all hosts
+            host_container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.HostSystem], True
+            )
+            
+            vcsa_patterns = ['vcsa', 'vcenter', 'vcs']
+            critical_vm_patterns = ['vcsa', 'vcenter', 'vra', 'nsx', 'vrops', 'vrealize', 'dc', 'domain']
+            
+            for host_obj in host_container.view:
+                host_vcenter_id = str(host_obj._moId)
+                if host_vcenter_id not in host_vcenter_ids:
+                    continue
+                
+                host_info = host_vcenter_ids[host_vcenter_id]
+                result['checked_hosts'] += 1
+                
+                # Check VMs on this host
+                for vm in host_obj.vm:
+                    try:
+                        vm_name = vm.name.lower()
+                        vm_power_state = str(vm.runtime.powerState) if vm.runtime else 'unknown'
+                        
+                        # Only care about powered-on VMs
+                        if vm_power_state != 'poweredOn':
+                            continue
+                        
+                        guest_os = ''
+                        if vm.summary and vm.summary.config:
+                            guest_os = (vm.summary.config.guestFullName or '').lower()
+                        
+                        # Check for VCSA specifically
+                        is_vcsa = (
+                            any(p in vm_name for p in vcsa_patterns) or
+                            'photon' in guest_os  # VCSA 6.7+ uses Photon OS
+                        )
+                        
+                        if is_vcsa and not result['vcsa_host_id']:
+                            result['vcsa_host_id'] = host_info['id']
+                            result['vcsa_host_name'] = host_info['name']
+                            result['vcsa_vm_name'] = vm.name
+                            result['vcsa_vm_details'] = {
+                                'name': vm.name,
+                                'power_state': vm_power_state,
+                                'guest_os': guest_os,
+                                'cpu_count': vm.summary.config.numCpu if vm.summary and vm.summary.config else None,
+                                'memory_mb': vm.summary.config.memorySizeMB if vm.summary and vm.summary.config else None
+                            }
+                            self.log(f"    ⚠️ VCSA detected on {host_info['name']}: {vm.name}")
+                        
+                        # Track other critical VMs
+                        if any(p in vm_name for p in critical_vm_patterns):
+                            result['critical_vms'].append({
+                                'vm_name': vm.name,
+                                'host_id': host_info['id'],
+                                'host_name': host_info['name'],
+                                'type': next((p for p in critical_vm_patterns if p in vm_name), 'unknown')
+                            })
+                            
+                    except Exception as vm_err:
+                        continue
+            
+            host_container.Destroy()
+            
+            if result['vcsa_host_id']:
+                self.log(f"    VCSA host identified: {result['vcsa_host_name']} (will be updated last)")
+            else:
+                self.log(f"    No VCSA detected on checked hosts")
+            
+            if result['critical_vms']:
+                unique_vms = list({v['vm_name']: v for v in result['critical_vms']}.values())
+                result['critical_vms'] = unique_vms
+                self.log(f"    Found {len(unique_vms)} critical infrastructure VM(s)")
+            
+            return result
+            
+        except Exception as e:
+            self.log(f"    VCSA detection error: {e}", "WARN")
+            return result
+    
     def log_vcenter_activity(
         self,
         operation: str,
