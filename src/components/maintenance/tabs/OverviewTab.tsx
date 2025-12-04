@@ -2,10 +2,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { format, formatDistanceToNow } from "date-fns";
-import { Calendar, Clock, User, CheckCircle, AlertCircle, Zap, ExternalLink, XCircle, PlayCircle, Loader2 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { Calendar, Clock, User, CheckCircle, AlertCircle, Zap, ExternalLink, XCircle, PlayCircle, Loader2, RefreshCw } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getNextExecutionsFromConfig } from "@/lib/cron-utils";
+import { useState } from "react";
+import { toast } from "sonner";
 
 interface OverviewTabProps {
   window: any;
@@ -14,6 +16,9 @@ interface OverviewTabProps {
 }
 
 export function OverviewTab({ window, onUpdate, onViewJob }: OverviewTabProps) {
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const queryClient = useQueryClient();
+
   const { data: creator } = useQuery({
     queryKey: ['profile', window.created_by],
     queryFn: async () => {
@@ -56,6 +61,66 @@ export function OverviewTab({ window, onUpdate, onViewJob }: OverviewTabProps) {
     enabled: !!window.job_ids && window.job_ids.length > 0,
     refetchInterval: 5000 // Poll for status updates
   });
+
+  // Function to manually sync window status from linked jobs
+  const handleRefreshStatus = async () => {
+    if (!linkedJobs || linkedJobs.length === 0) {
+      toast.info('No linked jobs to sync status from');
+      return;
+    }
+
+    setIsRefreshing(true);
+    try {
+      // Find the most relevant job status
+      const activeJob = linkedJobs.find(j => j.status === 'running' || j.status === 'pending');
+      const failedJob = linkedJobs.find(j => j.status === 'failed');
+      const completedJob = linkedJobs.find(j => j.status === 'completed');
+      const cancelledJob = linkedJobs.find(j => j.status === 'cancelled');
+
+      let newStatus = window.status;
+      let completedAt = window.completed_at;
+      let startedAt = window.started_at;
+
+      if (failedJob) {
+        newStatus = 'failed';
+        completedAt = failedJob.completed_at || new Date().toISOString();
+      } else if (cancelledJob && !activeJob && !completedJob) {
+        newStatus = 'cancelled';
+        completedAt = cancelledJob.completed_at || new Date().toISOString();
+      } else if (completedJob && !activeJob) {
+        newStatus = 'completed';
+        completedAt = completedJob.completed_at || new Date().toISOString();
+      } else if (activeJob?.status === 'running') {
+        newStatus = 'in_progress';
+        startedAt = startedAt || activeJob.started_at || new Date().toISOString();
+      }
+
+      if (newStatus !== window.status) {
+        const { error } = await supabase
+          .from('maintenance_windows')
+          .update({
+            status: newStatus,
+            completed_at: completedAt,
+            started_at: startedAt,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', window.id);
+
+        if (error) throw error;
+        
+        toast.success(`Status synced: ${window.status} → ${newStatus}`);
+        queryClient.invalidateQueries({ queryKey: ['maintenance-windows'] });
+        onUpdate?.();
+      } else {
+        toast.info('Status already in sync');
+      }
+    } catch (error) {
+      console.error('Error syncing status:', error);
+      toast.error('Failed to sync status');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const getNextRun = () => {
     if (window.status === 'completed' || window.status === 'failed') {
@@ -129,7 +194,19 @@ export function OverviewTab({ window, onUpdate, onViewJob }: OverviewTabProps) {
                 <Zap className="h-4 w-4" />
                 {activeJob ? 'Active Job' : 'Latest Job'}
               </CardTitle>
-              {getJobStatusBadge(displayJob.status)}
+              <div className="flex items-center gap-2">
+                {getJobStatusBadge(displayJob.status)}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={handleRefreshStatus}
+                  disabled={isRefreshing}
+                  title="Sync window status from job"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                </Button>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
