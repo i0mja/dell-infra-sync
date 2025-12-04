@@ -242,7 +242,7 @@ function getTableColumns(reportType: ReportType) {
       return [
         { key: "server", label: "Server" },
         { key: "server_ip", label: "IP Address" },
-        { key: "job_type", label: "Update Type" },
+        { key: "job_type_label", label: "Update Type" },
         { 
           key: "status", 
           label: "Status",
@@ -265,7 +265,7 @@ function getTableColumns(reportType: ReportType) {
       return [
         { key: "server", label: "Server" },
         { key: "server_ip", label: "IP Address" },
-        { key: "job_type", label: "Update Type" },
+        { key: "job_type_label", label: "Update Type" },
         { key: "error", label: "Error Message" },
         { key: "attempted_at", label: "Attempted", format: (value: string) => value ? new Date(value).toLocaleString() : "-" },
         { 
