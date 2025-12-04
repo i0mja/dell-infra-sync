@@ -1151,6 +1151,59 @@ class DellOperations:
             job_id, server_id, user_id
         )
     
+    def reset_idrac(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        job_id: str = None,
+        server_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Reset the iDRAC management controller.
+        
+        Dell pattern: POST /redfish/v1/Managers/iDRAC.Embedded.1/Actions/Manager.Reset
+        
+        This resets the iDRAC itself, NOT the server. Useful for:
+        - Applying iDRAC configuration changes that require a reset
+        - Recovering a hung iDRAC management interface
+        - Completing iDRAC firmware updates if they don't auto-reset
+        
+        Note: The iDRAC will be temporarily unavailable (typically 2-5 minutes)
+        during the reset. The server/host continues running unaffected.
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            job_id: Optional job ID for logging
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict: Operation status with 'status' key
+            
+        Raises:
+            DellRedfishError: On API errors
+        """
+        payload = {'ResetType': 'GracefulRestart'}
+        
+        response = self.adapter.make_request(
+            method='POST',
+            ip=ip,
+            endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Manager.Reset',
+            username=username,
+            password=password,
+            payload=payload,
+            operation_name='iDRAC Reset',
+            job_id=job_id,
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        return {'status': 'success', 'reset_type': 'iDRAC GracefulRestart', 'response': response}
+    
     def _reset_system(
         self,
         ip: str,
