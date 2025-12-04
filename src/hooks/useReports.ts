@@ -343,7 +343,7 @@ const JOB_TYPE_LABELS: Record<string, string> = {
 };
 
 async function fetchUpdateHistory(dateRange: { start: Date; end: Date }): Promise<ReportData> {
-  // Fetch jobs that are update-related
+  // Fetch jobs that are update-related - EXCLUDE pending for audit purposes
   const { data: jobs, error: jobsError } = await supabase
     .from("jobs")
     .select(`
@@ -358,6 +358,7 @@ async function fetchUpdateHistory(dateRange: { start: Date; end: Date }): Promis
       priority
     `)
     .in("job_type", UPDATE_JOB_TYPES)
+    .in("status", ["completed", "failed"]) // Only completed/failed for audit
     .gte("created_at", dateRange.start.toISOString())
     .lte("created_at", dateRange.end.toISOString())
     .order("created_at", { ascending: false });
@@ -396,9 +397,46 @@ async function fetchUpdateHistory(dateRange: { start: Date; end: Date }): Promis
     return acc;
   }, {} as Record<string, any>);
 
+  // Fetch profiles for "initiated by" column
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("id, full_name, email");
+
+  const profileMap = (profiles || []).reduce((acc, p) => {
+    acc[p.id] = p;
+    return acc;
+  }, {} as Record<string, any>);
+
+  // Fetch ESXi upgrade history for version info
+  const { data: esxiHistory } = await supabase
+    .from("esxi_upgrade_history")
+    .select("job_id, version_before, version_after, status")
+    .in("job_id", jobIds);
+
+  const esxiHistoryMap = (esxiHistory || []).reduce((acc, h) => {
+    acc[h.job_id] = h;
+    return acc;
+  }, {} as Record<string, any>);
+
   // Build rows with task-level detail
   const rows = (jobs || []).flatMap(job => {
     const jobTasks = tasks.filter(t => t.job_id === job.id);
+    const details = job.details as any || {};
+    const profile = profileMap[job.created_by];
+    const initiatedBy = profile?.full_name || profile?.email || 'System';
+    const esxiUpgrade = esxiHistoryMap[job.id];
+
+    // Extract component and version info
+    const component = details.component || 
+                      details.firmware_component ||
+                      (job.job_type === 'rolling_cluster_update' ? 'Full Stack' : 
+                       job.job_type === 'esxi_upgrade' ? 'ESXi' :
+                       job.job_type === 'bios_config_write' ? 'BIOS Config' : '-');
+
+    // Version info - check ESXi history first, then job details
+    let versionBefore = esxiUpgrade?.version_before || details.version_before || '-';
+    let versionAfter = esxiUpgrade?.version_after || details.version_after || details.target_version || details.version || '-';
+
     if (jobTasks.length === 0) {
       // Job without tasks - return job-level row
       return [{
@@ -406,8 +444,12 @@ async function fetchUpdateHistory(dateRange: { start: Date; end: Date }): Promis
         job_type: job.job_type,
         job_type_label: JOB_TYPE_LABELS[job.job_type] || job.job_type,
         status: job.status,
-        server: (job.details as any)?.server_hostname || (job.details as any)?.cluster_name || '-',
-        server_ip: (job.details as any)?.server_ip || '-',
+        server: details.server_hostname || details.cluster_name || '-',
+        server_ip: details.server_ip || '-',
+        component,
+        version_before: versionBefore,
+        version_after: versionAfter,
+        initiated_by: initiatedBy,
         started_at: job.started_at,
         completed_at: job.completed_at,
         duration_ms: job.completed_at && job.started_at 
@@ -427,6 +469,10 @@ async function fetchUpdateHistory(dateRange: { start: Date; end: Date }): Promis
         status: task.status,
         server: server?.hostname || '-',
         server_ip: server?.ip_address || '-',
+        component,
+        version_before: versionBefore,
+        version_after: versionAfter,
+        initiated_by: initiatedBy,
         started_at: task.started_at,
         completed_at: task.completed_at,
         duration_ms: task.completed_at && task.started_at 
