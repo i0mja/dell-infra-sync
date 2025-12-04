@@ -641,6 +641,62 @@ class ClusterHandler(BaseHandler):
             
             self.log(f"  [OK] Found {len(eligible_hosts)} eligible hosts/servers")
             
+            # =================================================================
+            # VCSA DETECTION AND HOST ORDERING
+            # =================================================================
+            self.log("")
+            self.log("=" * 80)
+            self.log("VCSA DETECTION & HOST ORDERING")
+            self.log("=" * 80)
+            
+            # Get all vcenter_host_ids from servers
+            vcenter_host_ids = []
+            for host in eligible_hosts:
+                server = self.get_server_by_id(host['server_id'])
+                if server and server.get('vcenter_host_id'):
+                    vcenter_host_ids.append(server['vcenter_host_id'])
+            
+            vcsa_info = {'vcsa_host_id': None, 'vcsa_host_name': None}
+            if vcenter_host_ids:
+                vcsa_info = self.executor.detect_vcsa_on_hosts(
+                    vcenter_host_ids, 
+                    cluster_name=workflow_results.get('cluster_id')
+                )
+                workflow_results['vcsa_detection'] = vcsa_info
+            
+            # Reorder hosts: put VCSA host last if detected
+            if vcsa_info.get('vcsa_host_id'):
+                vcsa_vcenter_host_id = vcsa_info['vcsa_host_id']
+                
+                # Find which eligible_host has this vcenter_host_id
+                vcsa_host_index = None
+                for idx, host in enumerate(eligible_hosts):
+                    server = self.get_server_by_id(host['server_id'])
+                    if server and server.get('vcenter_host_id') == vcsa_vcenter_host_id:
+                        vcsa_host_index = idx
+                        break
+                
+                if vcsa_host_index is not None and vcsa_host_index < len(eligible_hosts) - 1:
+                    # Move VCSA host to the end
+                    vcsa_host = eligible_hosts.pop(vcsa_host_index)
+                    eligible_hosts.append(vcsa_host)
+                    self.log(f"  ✓ Host order adjusted: {vcsa_info['vcsa_host_name']} moved to position {len(eligible_hosts)} (last)")
+                    self.log(f"    Reason: Contains VCSA VM '{vcsa_info.get('vcsa_vm_name')}' - must be updated after VCSA can migrate")
+                    workflow_results['host_order_adjusted'] = True
+                    workflow_results['vcsa_host_position'] = len(eligible_hosts)
+                else:
+                    self.log(f"  ✓ VCSA host already in last position")
+            else:
+                self.log(f"  ✓ No VCSA detected - using default host order")
+            
+            # Log final host order
+            self.log(f"  Final update order:")
+            for idx, host in enumerate(eligible_hosts, 1):
+                is_vcsa = host.get('server_id') and vcsa_info.get('vcsa_host_id')
+                server = self.get_server_by_id(host['server_id']) if host.get('server_id') else None
+                marker = " ⚠️ [VCSA HOST]" if server and server.get('vcenter_host_id') == vcsa_info.get('vcsa_host_id') else ""
+                self.log(f"    {idx}. {host['name']}{marker}")
+            
             # Log workflow initialization step
             self._log_workflow_step(
                 job['id'], 
@@ -652,7 +708,10 @@ class ClusterHandler(BaseHandler):
                 step_details={
                     'total_hosts': len(eligible_hosts),
                     'target_type': workflow_results.get('target_type'),
-                    'update_scope': update_scope
+                    'update_scope': update_scope,
+                    'vcsa_detected': bool(vcsa_info.get('vcsa_host_id')),
+                    'vcsa_host': vcsa_info.get('vcsa_host_name'),
+                    'host_order_adjusted': workflow_results.get('host_order_adjusted', False)
                 },
                 step_started_at=datetime.now().isoformat(),
                 step_completed_at=datetime.now().isoformat()
