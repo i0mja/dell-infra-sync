@@ -91,7 +91,7 @@ class DatastoreHandler(BaseHandler):
                         files.append({
                             'name': file_info.path,
                             'size': file_info.fileSize if hasattr(file_info, 'fileSize') else 0,
-                            'modified': file_info.modification.isoformat() if hasattr(file_info, 'modification') else None,
+                            'modified': file_info.modification.isoformat() if hasattr(file_info, 'modification') and file_info.modification else None,
                             'folder': folder_path_result,
                             'full_path': full_path,
                             'is_directory': isinstance(file_info, vim.host.DatastoreBrowser.FolderInfo)
