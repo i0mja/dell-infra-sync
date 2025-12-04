@@ -142,7 +142,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     }
   }, [settings.maxRecentItems]);
 
-  // Calculate job progress with weighted running task progress
+  // Calculate job progress - use job.details first, then task-based fallback
   const calculateJobProgress = useCallback(async (job: Job) => {
     try {
       const { data: tasks, error } = await supabase
@@ -166,7 +166,6 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       let currentStatus = 'Queued';
       if (job.status === 'running') {
         if (runningTask) {
-          // Extract status from task log
           const logLines = runningTask.log?.split('\n') || [];
           const lastLine = logLines[logLines.length - 1] || '';
           currentStatus = lastLine.trim() || 'Processing...';
@@ -175,18 +174,74 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // Calculate weighted progress including running task's progress
+      // Calculate progress from job.details first (same logic as useJobsWithProgress)
+      const calculatedFromDetails = (() => {
+        const details = job.details;
+        if (!details || typeof details !== 'object' || Array.isArray(details)) return null;
+        
+        // Explicit progress_percent
+        if ('progress_percent' in details && details.progress_percent !== undefined && details.progress_percent !== null) {
+          return typeof details.progress_percent === 'number' ? details.progress_percent : null;
+        }
+        
+        // vCenter sync: vms_processed / vms_total
+        if ('vms_total' in details && 'vms_processed' in details && 
+            typeof details.vms_total === 'number' && typeof details.vms_processed === 'number' && 
+            details.vms_total > 0) {
+          return Math.round((details.vms_processed / details.vms_total) * 100);
+        }
+        
+        // Discovery scan: servers_scanned / total_ips
+        if ('total_ips' in details && 'servers_scanned' in details && 
+            typeof details.total_ips === 'number' && typeof details.servers_scanned === 'number' && 
+            details.total_ips > 0) {
+          return Math.round((details.servers_scanned / details.total_ips) * 100);
+        }
+        
+        // Hosts sync: hosts_processed / hosts_total
+        if ('hosts_total' in details && typeof details.hosts_total === 'number' && details.hosts_total > 0) {
+          const processed = ('hosts_processed' in details && typeof details.hosts_processed === 'number') 
+            ? details.hosts_processed 
+            : ('hosts_synced' in details && typeof details.hosts_synced === 'number') 
+            ? details.hosts_synced 
+            : null;
+          if (processed !== null) {
+            return Math.round((processed / details.hosts_total) * 100);
+          }
+        }
+        
+        // Multi-server jobs: current_server_index / total_servers
+        if ('total_servers' in details && 'current_server_index' in details && 
+            typeof details.total_servers === 'number' && typeof details.current_server_index === 'number' && 
+            details.total_servers > 0) {
+          return Math.round(((details.current_server_index + 1) / details.total_servers) * 100);
+        }
+        
+        // Health check or multi-server with counts
+        if ('total_servers' in details && typeof details.total_servers === 'number' && details.total_servers > 0) {
+          if ('success_count' in details || 'failed_count' in details) {
+            const completed = (typeof details.success_count === 'number' ? details.success_count : 0) + 
+                             (typeof details.failed_count === 'number' ? details.failed_count : 0);
+            return Math.round((completed / details.total_servers) * 100);
+          }
+          if ('results' in details && Array.isArray(details.results)) {
+            return Math.round((details.results.length / details.total_servers) * 100);
+          }
+        }
+        
+        return null;
+      })();
+
+      // Use details-based progress if available, otherwise task-based, otherwise minimum for running
       let progressPercent = 0;
-      if (totalTasks > 0) {
-        // Each completed task contributes (100 / totalTasks)%
+      if (calculatedFromDetails !== null) {
+        progressPercent = calculatedFromDetails;
+      } else if (totalTasks > 0) {
         const completedProgress = (completedTasks / totalTasks) * 100;
-        
-        // Running task contributes its progress * (100 / totalTasks)%
-        const runningProgress = runningTask 
-          ? ((runningTask.progress || 0) / totalTasks)
-          : 0;
-        
+        const runningProgress = runningTask ? ((runningTask.progress || 0) / totalTasks) : 0;
         progressPercent = Math.min(100, Math.round(completedProgress + runningProgress));
+      } else if (job.status === 'running') {
+        progressPercent = 5; // Minimum indicator for running jobs with no progress data
       }
 
       const progress: JobProgress = {
