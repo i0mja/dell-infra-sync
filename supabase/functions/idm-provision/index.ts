@@ -217,24 +217,92 @@ serve(async (req) => {
     let email: string;
 
     if (existingProfile) {
-      // User exists - update profile
-      console.log(`[IDM Provision] Existing user found: ${existingProfile.id}`);
+      // User exists in profiles - verify auth.users also exists
+      console.log(`[IDM Provision] Existing profile found: ${existingProfile.id}`);
       userId = existingProfile.id;
-      
-      // Always use the correctly constructed email
       email = constructedEmail;
-      const needsEmailUpdate = existingProfile.email !== constructedEmail;
       
-      if (needsEmailUpdate) {
-        console.log(`[IDM Provision] Email migration needed: ${existingProfile.email} → ${constructedEmail}`);
+      // CRITICAL: Verify auth.users record exists (profiles can be orphaned)
+      const { data: authUser, error: authUserError } = await supabase.auth.admin.getUserById(userId);
+      
+      if (authUserError || !authUser?.user) {
+        // Profile exists but auth.users is missing - create it
+        console.log(`[IDM Provision] Profile exists but auth.users missing, creating auth record...`);
+        
+        const fullName = user_info?.full_name || cleanUsername;
+        const { data: newAuthUser, error: createAuthError } = await supabase.auth.admin.createUser({
+          id: userId, // Use same ID as existing profile
+          email: constructedEmail,
+          email_confirm: true,
+          user_metadata: {
+            full_name: fullName,
+            idm_uid: idmUid,
+            idm_source: is_ad_trust_user ? 'ad_trust' : 'freeipa'
+          }
+        });
+        
+        if (createAuthError) {
+          console.error(`[IDM Provision] Failed to create missing auth.users:`, createAuthError);
+          // If ID conflict, try without specifying ID (will create new auth user)
+          if (createAuthError.message?.includes('already exists')) {
+            console.log(`[IDM Provision] Auth user ID conflict, creating with new ID...`);
+            const { data: freshAuthUser, error: freshError } = await supabase.auth.admin.createUser({
+              email: constructedEmail,
+              email_confirm: true,
+              user_metadata: {
+                full_name: fullName,
+                idm_uid: idmUid,
+                idm_source: is_ad_trust_user ? 'ad_trust' : 'freeipa'
+              }
+            });
+            
+            if (freshError) {
+              console.error(`[IDM Provision] Failed to create fresh auth.users:`, freshError);
+              return new Response(
+                JSON.stringify({ success: false, error: 'Failed to sync user account' }),
+                { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+              );
+            }
+            
+            // Update profile to point to new auth user ID
+            userId = freshAuthUser.user.id;
+            await supabase
+              .from('profiles')
+              .update({ id: userId })
+              .eq('id', existingProfile.id);
+            console.log(`[IDM Provision] Updated profile to new auth user ID: ${userId}`);
+          } else {
+            return new Response(
+              JSON.stringify({ success: false, error: 'Failed to sync user account' }),
+              { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+        } else {
+          console.log(`[IDM Provision] Successfully created missing auth.users record`);
+        }
+      } else {
+        // Auth user exists - check if email needs update
+        const needsEmailUpdate = authUser.user.email !== constructedEmail;
+        if (needsEmailUpdate) {
+          console.log(`[IDM Provision] Email migration needed: ${authUser.user.email} → ${constructedEmail}`);
+          const { error: updateAuthError } = await supabase.auth.admin.updateUserById(userId, {
+            email: constructedEmail,
+            email_confirm: true
+          });
+          if (updateAuthError) {
+            console.error(`[IDM Provision] Failed to update auth.users email:`, updateAuthError);
+          } else {
+            console.log(`[IDM Provision] Successfully updated auth.users email to ${constructedEmail}`);
+          }
+        }
       }
 
-      // Update profile with latest IDM info INCLUDING email
+      // Update profile with latest IDM info
       await supabase
         .from('profiles')
         .update({
-          email: constructedEmail, // Update email to correct domain
-          idm_uid: idmUid, // Update to clean username format
+          email: constructedEmail,
+          idm_uid: idmUid,
           idm_source: is_ad_trust_user ? 'ad_trust' : 'freeipa',
           idm_user_dn: user_dn,
           idm_groups: groups || [],
@@ -245,20 +313,6 @@ serve(async (req) => {
           last_idm_sync: new Date().toISOString()
         })
         .eq('id', userId);
-      
-      // Update auth.users email if it changed
-      if (needsEmailUpdate) {
-        console.log(`[IDM Provision] Updating auth.users email for ${userId}`);
-        const { error: updateAuthError } = await supabase.auth.admin.updateUserById(userId, {
-          email: constructedEmail,
-          email_confirm: true
-        });
-        if (updateAuthError) {
-          console.error(`[IDM Provision] Failed to update auth.users email:`, updateAuthError);
-        } else {
-          console.log(`[IDM Provision] Successfully updated auth.users email to ${constructedEmail}`);
-        }
-      }
 
     } else {
       // JIT user provisioning - create new user
