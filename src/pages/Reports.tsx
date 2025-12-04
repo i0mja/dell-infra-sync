@@ -417,7 +417,7 @@ export default function Reports() {
             <TabsContent
               key={category.id}
               value={category.id}
-              className="flex-1 mt-0 overflow-hidden p-4"
+              className="flex-1 mt-0 overflow-hidden"
             >
               {error ? (
                 <div className="flex items-center justify-center h-48 text-destructive">
