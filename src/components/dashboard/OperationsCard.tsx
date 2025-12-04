@@ -1,13 +1,14 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Calendar, Activity, CheckCircle2 } from "lucide-react";
+import { Calendar, Activity, CheckCircle2, Server, Circle } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
-import { format, formatDistanceToNow, isFuture } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export const OperationsCard = () => {
   const { data: nextMaintenance, isLoading: maintenanceLoading } = useQuery({
@@ -58,7 +59,40 @@ export const OperationsCard = () => {
     refetchInterval: 60000
   });
 
-  const isLoading = maintenanceLoading || jobsLoading || apiLoading;
+  // Job Executor status check
+  const { data: executorStatus, isLoading: executorLoading } = useQuery({
+    queryKey: ['job-executor-status'],
+    queryFn: async () => {
+      const { data: settings } = await supabase
+        .from('activity_settings')
+        .select('job_executor_url')
+        .single();
+      
+      if (!settings?.job_executor_url) {
+        return { status: 'not_configured', url: null };
+      }
+
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        const response = await fetch(`${settings.job_executor_url}/health`, {
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        
+        if (response.ok) {
+          return { status: 'online', url: settings.job_executor_url };
+        }
+        return { status: 'offline', url: settings.job_executor_url };
+      } catch {
+        return { status: 'offline', url: settings.job_executor_url };
+      }
+    },
+    refetchInterval: 30000
+  });
+
+  const isLoading = maintenanceLoading || jobsLoading || apiLoading || executorLoading;
 
   if (isLoading) {
     return (
@@ -115,6 +149,34 @@ export const OperationsCard = () => {
               {activeJobs?.filter(j => j.status === 'running').length || 0} running, 
               {activeJobs?.filter(j => j.status === 'pending').length || 0} pending
             </div>
+          </div>
+        </div>
+
+        {/* Job Executor Status */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <Server className="h-4 w-4 text-primary" />
+            Job Executor
+          </div>
+          <div className="p-3 bg-muted/30 rounded-lg">
+            <div className="flex items-center gap-2">
+              <Circle 
+                className={cn(
+                  "h-3 w-3 fill-current",
+                  executorStatus?.status === 'online' && "text-green-500",
+                  executorStatus?.status === 'offline' && "text-destructive",
+                  executorStatus?.status === 'not_configured' && "text-muted-foreground"
+                )} 
+              />
+              <span className="text-sm font-medium capitalize">
+                {executorStatus?.status === 'not_configured' ? 'Not Configured' : executorStatus?.status}
+              </span>
+            </div>
+            {executorStatus?.status === 'not_configured' && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Configure in Settings → System
+              </p>
+            )}
           </div>
         </div>
 
