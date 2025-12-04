@@ -151,8 +151,8 @@ export function HostsTable({
 
   const displayGroups = sortField ? sortedClusterGroups : clusterGroups;
 
-  // Apply pagination to all hosts
-  const pagination = usePagination(allHosts, "vcenter-hosts-pagination", 50);
+  // Apply pagination to sorted hosts
+  const pagination = usePagination(sortedHosts, "vcenter-hosts-pagination", 50);
 
   const toggleCluster = (clusterName: string) => {
     const newCollapsed = new Set(collapsedClusters);
