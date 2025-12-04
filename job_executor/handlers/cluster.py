@@ -25,11 +25,12 @@ class ClusterHandler(BaseHandler):
         self, 
         job: Dict, 
         eligible_hosts: List[Dict],
-        cleanup_state: Dict
+        cleanup_state: Dict,
+        check_maintenance_blockers: bool = True
     ) -> Dict[str, Dict]:
         """
-        Phase 0: Test iDRAC connectivity for ALL hosts before proceeding.
-        Returns dict mapping server_id -> {credentials, session_validated, server}
+        Phase 0: Test iDRAC connectivity and analyze maintenance blockers for ALL hosts.
+        Returns dict mapping server_id -> {credentials, session_validated, server, maintenance_blockers}
         Raises exception if ANY host fails pre-flight.
         """
         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
@@ -42,6 +43,8 @@ class ClusterHandler(BaseHandler):
         
         host_credentials = {}
         failed_hosts = []
+        all_maintenance_blockers = {}
+        critical_blockers_found = False
         
         for idx, host in enumerate(eligible_hosts, 1):
             # Check for cancellation
@@ -78,13 +81,41 @@ class ClusterHandler(BaseHandler):
                     session, server['ip_address'], host['server_id'], job['id']
                 )
                 
+                self.log(f"    ✓ iDRAC connectivity OK")
+                
+                # Analyze maintenance blockers if this host has vCenter link
+                blocker_analysis = None
+                if check_maintenance_blockers and host.get('id'):  # host['id'] is vcenter_host_id
+                    self.log(f"    Analyzing maintenance blockers...")
+                    blocker_analysis = self.executor.analyze_maintenance_blockers(
+                        host_id=host['id'],
+                        source_vcenter_id=host.get('source_vcenter_id')
+                    )
+                    
+                    if blocker_analysis:
+                        all_maintenance_blockers[host['server_id']] = blocker_analysis
+                        
+                        # Check for critical blockers
+                        critical_blockers = [b for b in blocker_analysis.get('blockers', []) 
+                                           if b.get('severity') == 'critical']
+                        
+                        if critical_blockers:
+                            critical_blockers_found = True
+                            blocker_names = [b['vm_name'] for b in critical_blockers[:3]]
+                            self.log(f"    ⚠️ Critical blockers: {', '.join(blocker_names)}", "WARN")
+                        elif blocker_analysis.get('blockers'):
+                            warning_count = len(blocker_analysis['blockers'])
+                            self.log(f"    ⚠️ {warning_count} warning-level blocker(s)")
+                        else:
+                            self.log(f"    ✓ No maintenance blockers detected")
+                
                 host_credentials[host['server_id']] = {
                     'username': username,
                     'password': password,
                     'server': server,
-                    'validated': True
+                    'validated': True,
+                    'maintenance_blockers': blocker_analysis
                 }
-                self.log(f"    ✓ iDRAC connectivity OK")
                 
             except Exception as e:
                 self.log(f"    ✗ FAILED: {e}", "ERROR")
@@ -94,7 +125,21 @@ class ClusterHandler(BaseHandler):
             error_summary = ", ".join([f"{h['host']}: {h['error']}" for h in failed_hosts])
             raise Exception(f"Pre-flight checks failed for {len(failed_hosts)} hosts: {error_summary}")
         
+        # Update job details with maintenance blocker analysis
+        job_details = job.get('details', {})
+        job_details['maintenance_blockers'] = all_maintenance_blockers
+        job_details['critical_blockers_found'] = critical_blockers_found
+        
+        self.executor.update_job_status(
+            job['id'],
+            'running',
+            details=job_details
+        )
+        
         self.log(f"  ✓ All {len(eligible_hosts)} hosts passed pre-flight checks")
+        if critical_blockers_found:
+            self.log(f"  ⚠️ WARNING: Critical maintenance blockers detected - review before proceeding", "WARN")
+        
         return host_credentials
     
     def _export_single_scp(

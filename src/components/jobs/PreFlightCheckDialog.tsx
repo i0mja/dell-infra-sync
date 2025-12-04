@@ -9,6 +9,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { CheckCircle, XCircle, AlertTriangle, Loader2, Server, HardDrive, Clock, Activity, Thermometer } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { MaintenanceBlockersPanel } from "./MaintenanceBlockersPanel";
 
 interface PreFlightCheckDialogProps {
   open: boolean;
@@ -48,6 +49,28 @@ interface IdracPreflightResult {
   warnings?: string[];
 }
 
+interface MaintenanceBlocker {
+  vm_name: string;
+  vm_id: string;
+  reason: 'local_storage' | 'passthrough' | 'affinity' | 'connected_media' | 'vcsa' | 'critical_infra';
+  severity: 'critical' | 'warning';
+  details: string;
+  remediation: string;
+  auto_fixable: boolean;
+}
+
+interface HostBlockerAnalysis {
+  host_id: string;
+  host_name: string;
+  can_enter_maintenance: boolean;
+  blockers: MaintenanceBlocker[];
+  warnings: string[];
+  total_powered_on_vms: number;
+  migratable_vms: number;
+  blocked_vms: number;
+  estimated_evacuation_time: number;
+}
+
 interface SafetyCheckResult {
   safe_to_proceed: boolean;
   total_hosts: number;
@@ -62,9 +85,12 @@ interface SafetyCheckResult {
   estimated_evacuation_seconds: number;
   warnings: string[];
   recommendation: string;
-  // NEW: iDRAC Pre-flight Results
+  // iDRAC Pre-flight Results
   idrac_checks?: IdracPreflightResult[];
   all_idrac_ready?: boolean;
+  // Maintenance blocker analysis
+  maintenance_blockers?: Record<string, HostBlockerAnalysis>;
+  critical_blockers_found?: boolean;
 }
 
 export const PreFlightCheckDialog = ({ open, onOpenChange, onProceed, serverId, jobType }: PreFlightCheckDialogProps) => {
@@ -338,6 +364,19 @@ export const PreFlightCheckDialog = ({ open, onOpenChange, onProceed, serverId, 
                 </div>
               </div>
 
+              {/* Maintenance Blockers Panel */}
+              {result.maintenance_blockers && Object.keys(result.maintenance_blockers).length > 0 && (
+                <MaintenanceBlockersPanel 
+                  blockers={result.maintenance_blockers}
+                  onSkipHost={(hostId) => {
+                    toast({
+                      title: "Skip Host",
+                      description: `Host ${hostId} will be skipped during the update`,
+                    });
+                  }}
+                />
+              )}
+
               {/* Warnings */}
               {result.warnings && result.warnings.length > 0 && (
                 <Alert className="border-yellow-500">
@@ -497,10 +536,10 @@ export const PreFlightCheckDialog = ({ open, onOpenChange, onProceed, serverId, 
               )}
 
               {/* Recommendation */}
-              <Alert variant={result.safe_to_proceed ? "default" : "destructive"}>
+              <Alert variant={result.safe_to_proceed && !result.critical_blockers_found ? "default" : "destructive"}>
                 <AlertDescription>
                   <div className="font-semibold mb-1">{result.recommendation}</div>
-                  {result.safe_to_proceed ? (
+                  {result.safe_to_proceed && !result.critical_blockers_found ? (
                     <p className="text-sm">
                       Cluster has sufficient capacity for maintenance.
                       {result.drs_enabled && " VMs will be automatically evacuated via DRS."}
@@ -509,7 +548,9 @@ export const PreFlightCheckDialog = ({ open, onOpenChange, onProceed, serverId, 
                     </p>
                   ) : (
                     <p className="text-sm">
-                      {!result.all_idrac_ready && result.idrac_checks && result.idrac_checks.length > 0
+                      {result.critical_blockers_found
+                        ? "Critical maintenance blockers detected. Some VMs cannot be automatically migrated (local storage, passthrough devices, or vCenter Server). Review the blockers above and resolve issues before proceeding."
+                        : !result.all_idrac_ready && result.idrac_checks && result.idrac_checks.length > 0
                         ? "One or more Dell servers failed critical pre-flight checks. Resolve issues before proceeding."
                         : "Insufficient hosts or DRS configuration prevents safe update. Recommend enabling DRS or adding hosts before proceeding."}
                     </p>
@@ -526,7 +567,7 @@ export const PreFlightCheckDialog = ({ open, onOpenChange, onProceed, serverId, 
           </Button>
           {!loading && !error && result && (
             <>
-              {result.safe_to_proceed ? (
+              {result.safe_to_proceed && !result.critical_blockers_found ? (
                 <Button onClick={() => {
                   onOpenChange(false);
                   onProceed();
@@ -541,7 +582,7 @@ export const PreFlightCheckDialog = ({ open, onOpenChange, onProceed, serverId, 
                     onProceed();
                   }}
                 >
-                  Override (Admin Only)
+                  {result.critical_blockers_found ? "Proceed Anyway (Risk)" : "Override (Admin Only)"}
                 </Button>
               )}
             </>

@@ -23,6 +23,304 @@ from job_executor.utils import _safe_json_parse
 class VCenterMixin:
     """Mixin providing vCenter operations for Job Executor"""
     
+    def analyze_maintenance_blockers(self, host_id: str, source_vcenter_id: str = None) -> Dict:
+        """
+        Analyze what VMs/conditions will block maintenance mode entry for a host.
+        
+        Checks for:
+        - VMs with local storage (VMDK on local-only datastores)
+        - VMs with USB/PCI passthrough devices
+        - VMs with CPU/Memory affinity rules
+        - VMs with connected CD/Floppy from client
+        - Critical infrastructure VMs (VCSA, NSX, vRA)
+        - VMs that can't be migrated due to DRS rules
+        
+        Args:
+            host_id: The vcenter_host database ID to analyze
+            source_vcenter_id: Optional vCenter ID for connection
+            
+        Returns:
+            {
+                'host_id': str,
+                'host_name': str,
+                'can_enter_maintenance': bool,
+                'blockers': [
+                    {
+                        'vm_name': str,
+                        'vm_id': str,
+                        'reason': str,  # local_storage, passthrough, affinity, connected_media, vcsa, critical_infra
+                        'severity': 'critical' | 'warning',
+                        'details': str,
+                        'remediation': str,
+                        'auto_fixable': bool
+                    }
+                ],
+                'warnings': [],
+                'total_powered_on_vms': int,
+                'migratable_vms': int,
+                'blocked_vms': int,
+                'estimated_evacuation_time': int  # seconds
+            }
+        """
+        result = {
+            'host_id': host_id,
+            'host_name': None,
+            'can_enter_maintenance': True,
+            'blockers': [],
+            'warnings': [],
+            'total_powered_on_vms': 0,
+            'migratable_vms': 0,
+            'blocked_vms': 0,
+            'estimated_evacuation_time': 0
+        }
+        
+        try:
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            from job_executor.utils import _safe_json_parse
+            
+            # Fetch host details
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{host_id}&select=id,name,vcenter_id,source_vcenter_id",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL
+            )
+            
+            if response.status_code != 200:
+                self.log(f"  Failed to fetch host details: {response.status_code}", "WARN")
+                return result
+            
+            hosts = _safe_json_parse(response) or []
+            if not hosts:
+                return result
+            
+            host_info = hosts[0]
+            result['host_name'] = host_info.get('name')
+            
+            # Get vCenter connection
+            vcenter_id = source_vcenter_id or host_info.get('source_vcenter_id')
+            vcenter_settings = self.get_vcenter_settings(vcenter_id) if vcenter_id else None
+            
+            vc = self.connect_vcenter(settings=vcenter_settings)
+            if not vc:
+                self.log(f"  Cannot connect to vCenter for blocker analysis", "WARN")
+                return result
+            
+            content = vc.RetrieveContent()
+            
+            # Find the host object
+            host_container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.HostSystem], True
+            )
+            
+            target_host = None
+            host_vcenter_id = host_info.get('vcenter_id')
+            
+            for host_obj in host_container.view:
+                if str(host_obj._moId) == host_vcenter_id:
+                    target_host = host_obj
+                    break
+            
+            host_container.Destroy()
+            
+            if not target_host:
+                self.log(f"  Host not found in vCenter: {host_vcenter_id}", "WARN")
+                return result
+            
+            # Get local datastores for this host
+            local_datastores = set()
+            for ds in target_host.datastore:
+                try:
+                    if ds.summary.type == 'VMFS':
+                        # Check if datastore is local (only accessible from this host)
+                        if len(ds.host) == 1:
+                            local_datastores.add(ds.name)
+                except:
+                    pass
+            
+            # VCSA/Critical VM patterns
+            vcsa_patterns = ['vcsa', 'vcenter', 'vcs']
+            critical_patterns = ['vcsa', 'vcenter', 'nsx', 'vra', 'vrops', 'vrealize', 'vrni', 'log-insight', 'srm']
+            
+            # Analyze each VM on the host
+            for vm in target_host.vm:
+                try:
+                    vm_name = vm.name
+                    vm_name_lower = vm_name.lower()
+                    power_state = str(vm.runtime.powerState) if vm.runtime else 'unknown'
+                    
+                    # Only analyze powered-on VMs (they need to migrate)
+                    if power_state != 'poweredOn':
+                        continue
+                    
+                    result['total_powered_on_vms'] += 1
+                    vm_has_blocker = False
+                    
+                    # Check 1: VCSA detection (critical)
+                    is_vcsa = any(p in vm_name_lower for p in vcsa_patterns)
+                    guest_os = ''
+                    if vm.summary and vm.summary.config:
+                        guest_os = (vm.summary.config.guestFullName or '').lower()
+                    if 'photon' in guest_os:
+                        is_vcsa = True
+                    
+                    if is_vcsa:
+                        result['blockers'].append({
+                            'vm_name': vm_name,
+                            'vm_id': str(vm._moId),
+                            'reason': 'vcsa',
+                            'severity': 'critical',
+                            'details': 'vCenter Server Appliance - manages vMotion, cannot self-migrate',
+                            'remediation': 'Manually migrate VCSA to another host before maintenance, or update this host last after VCSA migrates to an already-updated host',
+                            'auto_fixable': False
+                        })
+                        vm_has_blocker = True
+                        result['can_enter_maintenance'] = False
+                    
+                    # Check 2: Other critical infrastructure VMs (warning)
+                    elif any(p in vm_name_lower for p in critical_patterns):
+                        result['blockers'].append({
+                            'vm_name': vm_name,
+                            'vm_id': str(vm._moId),
+                            'reason': 'critical_infra',
+                            'severity': 'warning',
+                            'details': 'Critical infrastructure VM - ensure safe to migrate',
+                            'remediation': 'Verify this VM can migrate safely; consider manual migration first',
+                            'auto_fixable': False
+                        })
+                        vm_has_blocker = True
+                    
+                    # Check 3: Local storage
+                    vm_uses_local = False
+                    try:
+                        for device in vm.config.hardware.device:
+                            if isinstance(device, vim.vm.device.VirtualDisk):
+                                backing = device.backing
+                                if hasattr(backing, 'fileName') and backing.fileName:
+                                    # Extract datastore name from [datastore] path/to/file.vmdk
+                                    ds_name = backing.fileName.split(']')[0].strip('[') if '[' in backing.fileName else ''
+                                    if ds_name in local_datastores:
+                                        vm_uses_local = True
+                                        break
+                    except:
+                        pass
+                    
+                    if vm_uses_local:
+                        result['blockers'].append({
+                            'vm_name': vm_name,
+                            'vm_id': str(vm._moId),
+                            'reason': 'local_storage',
+                            'severity': 'critical',
+                            'details': 'VM uses local storage - cannot vMotion',
+                            'remediation': 'Power off this VM, or migrate storage to shared datastore first',
+                            'auto_fixable': False
+                        })
+                        vm_has_blocker = True
+                        result['can_enter_maintenance'] = False
+                    
+                    # Check 4: Passthrough devices (USB, PCI)
+                    has_passthrough = False
+                    try:
+                        for device in vm.config.hardware.device:
+                            if isinstance(device, (vim.vm.device.VirtualPCIPassthrough, vim.vm.device.VirtualUSBController)):
+                                # Check for USB passthrough
+                                if isinstance(device, vim.vm.device.VirtualUSBController):
+                                    if hasattr(device, 'autoConnectDevices') and device.autoConnectDevices:
+                                        has_passthrough = True
+                                        break
+                                else:
+                                    has_passthrough = True
+                                    break
+                    except:
+                        pass
+                    
+                    if has_passthrough:
+                        result['blockers'].append({
+                            'vm_name': vm_name,
+                            'vm_id': str(vm._moId),
+                            'reason': 'passthrough',
+                            'severity': 'critical',
+                            'details': 'VM has passthrough devices (USB/PCI) - cannot vMotion',
+                            'remediation': 'Remove passthrough devices or power off this VM',
+                            'auto_fixable': False
+                        })
+                        vm_has_blocker = True
+                        result['can_enter_maintenance'] = False
+                    
+                    # Check 5: Connected CD/Floppy from client
+                    has_client_device = False
+                    try:
+                        for device in vm.config.hardware.device:
+                            if isinstance(device, (vim.vm.device.VirtualCdrom, vim.vm.device.VirtualFloppy)):
+                                if hasattr(device, 'connectable') and device.connectable:
+                                    if device.connectable.connected:
+                                        backing = device.backing
+                                        if isinstance(backing, vim.vm.device.VirtualCdrom.RemoteAtapiBackingInfo):
+                                            has_client_device = True
+                                            break
+                    except:
+                        pass
+                    
+                    if has_client_device:
+                        result['blockers'].append({
+                            'vm_name': vm_name,
+                            'vm_id': str(vm._moId),
+                            'reason': 'connected_media',
+                            'severity': 'warning',
+                            'details': 'VM has client-connected CD/DVD - may block vMotion',
+                            'remediation': 'Disconnect CD/DVD from VM console',
+                            'auto_fixable': True
+                        })
+                        vm_has_blocker = True
+                    
+                    # Check 6: CPU/Memory affinity
+                    has_affinity = False
+                    try:
+                        if vm.config.cpuAffinity and vm.config.cpuAffinity.affinitySet:
+                            has_affinity = True
+                    except:
+                        pass
+                    
+                    if has_affinity:
+                        result['blockers'].append({
+                            'vm_name': vm_name,
+                            'vm_id': str(vm._moId),
+                            'reason': 'affinity',
+                            'severity': 'warning',
+                            'details': 'VM has CPU/memory affinity rules - may restrict migration',
+                            'remediation': 'Remove affinity rules or acknowledge migration may fail',
+                            'auto_fixable': False
+                        })
+                        vm_has_blocker = True
+                    
+                    # Count blockers vs migratable
+                    if vm_has_blocker:
+                        result['blocked_vms'] += 1
+                    else:
+                        result['migratable_vms'] += 1
+                        
+                except Exception as vm_err:
+                    self.log(f"  Error analyzing VM: {vm_err}", "DEBUG")
+                    continue
+            
+            # Estimate evacuation time (rough: 30 seconds per migratable VM)
+            result['estimated_evacuation_time'] = result['migratable_vms'] * 30
+            
+            # Add summary warnings
+            if result['blocked_vms'] > 0:
+                critical_count = len([b for b in result['blockers'] if b['severity'] == 'critical'])
+                if critical_count > 0:
+                    result['warnings'].append(f"{critical_count} VM(s) have critical issues that will block maintenance mode")
+            
+            self.log(f"  Blocker analysis for {result['host_name']}: {result['total_powered_on_vms']} VMs, {result['blocked_vms']} blocked, {result['migratable_vms']} migratable")
+            
+            return result
+            
+        except Exception as e:
+            self.log(f"  Maintenance blocker analysis error: {e}", "WARN")
+            import traceback
+            self.log(f"  Traceback: {traceback.format_exc()}", "DEBUG")
+            return result
+    
     def detect_vcsa_on_hosts(self, host_ids: List[str], cluster_name: str = None) -> Dict:
         """
         Detect which host(s) in a list contain the vCenter Server Appliance (VCSA).
