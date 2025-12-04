@@ -43,6 +43,7 @@ interface BiosConfig {
 
 export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialogProps) {
   const [loading, setLoading] = useState(false);
+  const [capturingSnapshot, setCapturingSnapshot] = useState(false);
   const [activeTab, setActiveTab] = useState<'view' | 'edit' | 'compare' | 'history'>('view');
   const [configurations, setConfigurations] = useState<BiosConfig[]>([]);
   const [currentConfig, setCurrentConfig] = useState<BiosConfig | null>(null);
@@ -96,12 +97,12 @@ export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialo
   };
 
   const handleCaptureSnapshot = async (notes?: string) => {
-    setLoading(true);
+    setCapturingSnapshot(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
-      const { error: jobError } = await supabase
+      const { data: job, error: jobError } = await supabase
         .from('jobs')
         .insert({
           job_type: 'bios_config_read',
@@ -113,24 +114,57 @@ export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialo
             snapshot_type: 'current',
             notes: notes || 'Manual snapshot'
           }
-        });
+        })
+        .select()
+        .single();
 
       if (jobError) throw jobError;
 
       toast({
-        title: "Snapshot Job Created",
-        description: "BIOS configuration will be captured shortly",
+        title: "Capturing BIOS Configuration",
+        description: "Reading settings from server...",
       });
 
-      setTimeout(() => fetchConfigurations(), 3000);
+      // Poll for job completion
+      const pollInterval = setInterval(async () => {
+        const { data: updatedJob } = await supabase
+          .from('jobs')
+          .select('*')
+          .eq('id', job.id)
+          .single();
+
+        if (updatedJob?.status === 'completed') {
+          clearInterval(pollInterval);
+          setCapturingSnapshot(false);
+          await fetchConfigurations();
+          toast({
+            title: "Snapshot Complete",
+            description: "BIOS configuration captured successfully",
+          });
+        } else if (updatedJob?.status === 'failed') {
+          clearInterval(pollInterval);
+          setCapturingSnapshot(false);
+          toast({
+            title: "Snapshot Failed",
+            description: (updatedJob.details as any)?.error || "Failed to capture BIOS configuration",
+            variant: "destructive",
+          });
+        }
+      }, 2000);
+
+      // Timeout after 60 seconds
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        setCapturingSnapshot(false);
+      }, 60000);
+
     } catch (error: any) {
+      setCapturingSnapshot(false);
       toast({
         title: "Error",
         description: error.message,
         variant: "destructive",
       });
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -504,9 +538,18 @@ export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialo
                   className="pl-8"
                 />
               </div>
-              <Button onClick={() => handleCaptureSnapshot()} disabled={loading}>
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                <span className="ml-2">Capture Snapshot</span>
+              <Button onClick={() => handleCaptureSnapshot()} disabled={capturingSnapshot || loading}>
+                {capturingSnapshot ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span className="ml-2">Capturing...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="h-4 w-4" />
+                    <span className="ml-2">Capture Snapshot</span>
+                  </>
+                )}
               </Button>
             </div>
 
