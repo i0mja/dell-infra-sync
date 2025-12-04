@@ -36,7 +36,8 @@ export function compareValues(aVal: any, bVal: any, direction: "asc" | "desc" = 
   return direction === "asc" ? comparison : -comparison;
 }
 
-export function formatBytes(bytes: number, decimals: number = 2): string {
+export function formatBytes(bytes: number | null | undefined, decimals: number = 2): string {
+  if (bytes === null || bytes === undefined || isNaN(bytes)) return '-';
   if (bytes === 0) return '0 Bytes';
   
   const k = 1024;
