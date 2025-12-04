@@ -10,6 +10,7 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { INTERNAL_JOB_TYPES } from "@/lib/job-constants";
 
 export const OperationsCard = () => {
   const { data: nextMaintenance, isLoading: maintenanceLoading } = useQuery({
@@ -33,7 +34,8 @@ export const OperationsCard = () => {
       const { data } = await supabase
         .from('jobs')
         .select('id, status')
-        .in('status', ['pending', 'running']);
+        .in('status', ['pending', 'running'])
+        .not('job_type', 'in', `(${INTERNAL_JOB_TYPES.join(',')})`);
       return data || [];
     },
     refetchInterval: 5000
