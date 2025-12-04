@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { compareValues } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -110,14 +111,9 @@ export function VMsTable({
   // Apply sorting
   if (sortField) {
     filteredVms = [...filteredVms].sort((a, b) => {
-      let aVal: any = a[sortField as keyof typeof a];
-      let bVal: any = b[sortField as keyof typeof b];
-
-      if (aVal == null) return 1;
-      if (bVal == null) return -1;
-
-      const comparison = aVal > bVal ? 1 : aVal < bVal ? -1 : 0;
-      return sortDirection === "asc" ? comparison : -comparison;
+      const aVal = a[sortField as keyof typeof a];
+      const bVal = b[sortField as keyof typeof b];
+      return compareValues(aVal, bVal, sortDirection);
     });
   }
 

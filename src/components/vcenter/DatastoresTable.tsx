@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { compareValues } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Progress } from "@/components/ui/progress";
@@ -77,10 +78,7 @@ export function DatastoresTable({
         bVal = b[sortField as keyof typeof b];
       }
       
-      if (aVal == null) return 1;
-      if (bVal == null) return -1;
-      const comparison = aVal > bVal ? 1 : aVal < bVal ? -1 : 0;
-      return sortDirection === "asc" ? comparison : -comparison;
+      return compareValues(aVal, bVal, sortDirection);
     });
   }
 

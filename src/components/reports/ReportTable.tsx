@@ -10,7 +10,7 @@ import {
 import { TablePagination } from "@/components/ui/table-pagination";
 import { usePagination } from "@/hooks/usePagination";
 import { ArrowUp, ArrowDown, ArrowUpDown, Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, compareValues } from "@/lib/utils";
 
 export interface ReportColumn {
   key: string;
@@ -63,29 +63,7 @@ export function ReportTable({
     return [...filteredData].sort((a, b) => {
       const aVal = a[sortColumn];
       const bVal = b[sortColumn];
-      
-      // Handle null/undefined
-      if (aVal == null && bVal == null) return 0;
-      if (aVal == null) return sortDirection === "asc" ? 1 : -1;
-      if (bVal == null) return sortDirection === "asc" ? -1 : 1;
-      
-      // Handle dates
-      if (typeof aVal === "string" && aVal.match(/^\d{4}-\d{2}-\d{2}/)) {
-        const dateA = new Date(aVal).getTime();
-        const dateB = new Date(bVal).getTime();
-        return sortDirection === "asc" ? dateA - dateB : dateB - dateA;
-      }
-      
-      // Handle numbers
-      if (typeof aVal === "number" && typeof bVal === "number") {
-        return sortDirection === "asc" ? aVal - bVal : bVal - aVal;
-      }
-      
-      // Handle strings
-      const strA = String(aVal).toLowerCase();
-      const strB = String(bVal).toLowerCase();
-      const comparison = strA.localeCompare(strB);
-      return sortDirection === "asc" ? comparison : -comparison;
+      return compareValues(aVal, bVal, sortDirection);
     });
   }, [filteredData, sortColumn, sortDirection]);
 

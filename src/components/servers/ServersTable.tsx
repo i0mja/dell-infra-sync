@@ -1,5 +1,6 @@
 import { useState, Fragment } from "react";
 import { Server } from "@/hooks/useServers";
+import { compareValues } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -191,14 +192,9 @@ export function ServersTable({
   // Apply sorting
   const sortedServers = sortField
     ? [...allServers].sort((a, b) => {
-        let aVal: any = a[sortField as keyof typeof a];
-        let bVal: any = b[sortField as keyof typeof b];
-
-        if (aVal == null) return 1;
-        if (bVal == null) return -1;
-
-        const comparison = aVal > bVal ? 1 : aVal < bVal ? -1 : 0;
-        return sortDirection === "asc" ? comparison : -comparison;
+        const aVal = a[sortField as keyof typeof a];
+        const bVal = b[sortField as keyof typeof b];
+        return compareValues(aVal, bVal, sortDirection);
       })
     : allServers;
 
