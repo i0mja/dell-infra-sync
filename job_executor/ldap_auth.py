@@ -753,6 +753,185 @@ class FreeIPAAuthenticator:
         
         return list(variants)
     
+    def _search_ipa_groups_for_external_member(
+        self,
+        conn: 'Connection',
+        username: str,
+    ) -> List[str]:
+        """
+        Search IPA groups (cn=groups,cn=accounts) for external AD Trust members.
+        
+        AD Trust users are added to IPA groups as 'external members' which stores
+        their SID or DN in ipaExternalMember/member attributes. This method searches
+        for groups containing the user in any of these formats.
+        
+        Args:
+            conn: Active LDAP connection (bound with service account)
+            username: Full username with domain (user@domain or DOMAIN\\user)
+            
+        Returns:
+            List of group DNs from IPA groups tree
+        """
+        groups = set()
+        
+        try:
+            # IPA groups are in cn=groups,cn=accounts,dc=...
+            ipa_groups_base = f"{self.group_search_base},{self.base_dn}"
+            logger.info(f"[IPA GROUP SEARCH] Searching IPA groups in: {ipa_groups_base}")
+            
+            # Get username variants
+            is_ad_user, clean_username, domain = self._is_ad_trust_user(username)
+            username_variants = self._extract_username_variants(username)
+            
+            logger.info(f"[IPA GROUP SEARCH] Searching for user variants: {username_variants[:5]}")
+            
+            # Strategy 1: Search for member attribute containing user's compat DN
+            # AD trust users appear in cn=users,cn=compat tree
+            compat_user_dns = []
+            for variant in username_variants:
+                # Build potential compat user DN
+                compat_dn = f"uid={variant},cn=users,cn=compat,{self.base_dn}"
+                compat_user_dns.append(compat_dn)
+            
+            for compat_dn in compat_user_dns[:3]:  # Limit to avoid too many queries
+                escaped_dn = self._ldap_escape(compat_dn)
+                try:
+                    conn.search(
+                        search_base=ipa_groups_base,
+                        search_filter=f"(member={escaped_dn})",
+                        search_scope=SUBTREE,
+                        attributes=["cn", "dn"],
+                    )
+                    for entry in conn.entries:
+                        group_dn = str(entry.entry_dn)
+                        if group_dn not in groups:
+                            groups.add(group_dn)
+                            logger.info(f"[IPA GROUP SEARCH] Found group via member DN: {group_dn}")
+                except Exception as e:
+                    logger.debug(f"[IPA GROUP SEARCH] Search with DN {compat_dn[:50]}... failed: {e}")
+            
+            # Strategy 2: Search for ipaExternalMember containing username
+            # External members may be stored with SID or other formats
+            for variant in username_variants[:3]:
+                escaped = self._ldap_escape(variant)
+                try:
+                    conn.search(
+                        search_base=ipa_groups_base,
+                        search_filter=f"(ipaExternalMember=*{escaped}*)",
+                        search_scope=SUBTREE,
+                        attributes=["cn", "dn", "ipaExternalMember"],
+                    )
+                    for entry in conn.entries:
+                        group_dn = str(entry.entry_dn)
+                        if group_dn not in groups:
+                            groups.add(group_dn)
+                            logger.info(f"[IPA GROUP SEARCH] Found group via ipaExternalMember: {group_dn}")
+                except Exception as e:
+                    logger.debug(f"[IPA GROUP SEARCH] Search with ipaExternalMember={escaped} failed: {e}")
+            
+            # Strategy 3: Check memberOf on compat user entry
+            compat_user_base = f"cn=users,cn=compat,{self.base_dn}"
+            for variant in username_variants[:3]:
+                escaped = self._ldap_escape(variant)
+                try:
+                    conn.search(
+                        search_base=compat_user_base,
+                        search_filter=f"(uid={escaped})",
+                        search_scope=SUBTREE,
+                        attributes=["memberOf"],
+                    )
+                    if conn.entries:
+                        user_entry = conn.entries[0]
+                        if hasattr(user_entry, 'memberOf') and user_entry.memberOf:
+                            for group_dn in user_entry.memberOf.values:
+                                group_dn_str = str(group_dn)
+                                if group_dn_str not in groups:
+                                    groups.add(group_dn_str)
+                                    logger.info(f"[IPA GROUP SEARCH] Found group via compat user memberOf: {group_dn_str}")
+                except Exception as e:
+                    logger.debug(f"[IPA GROUP SEARCH] memberOf lookup for {escaped} failed: {e}")
+            
+            logger.info(f"[IPA GROUP SEARCH] Found {len(groups)} IPA group(s) for AD trust user")
+            
+        except Exception as e:
+            logger.error(f"[IPA GROUP SEARCH] Error searching IPA groups for {username}: {e}")
+            import traceback
+            logger.debug(f"[IPA GROUP SEARCH] Traceback: {traceback.format_exc()}")
+        
+        return list(groups)
+    
+    def _resolve_nested_groups(
+        self,
+        conn: 'Connection',
+        groups: List[str],
+        max_depth: int = 3,
+    ) -> List[str]:
+        """
+        Find parent groups that contain the given groups as members.
+        
+        This handles nested group membership (group-in-group) where:
+        - allow_cdo_all_ext is a member of allow_cdo_all
+        - User is in allow_cdo_all_ext, so also effectively in allow_cdo_all
+        
+        Args:
+            conn: Active LDAP connection
+            groups: List of group DNs to find parents for
+            max_depth: Maximum nesting depth to traverse (default 3)
+            
+        Returns:
+            List of parent group DNs
+        """
+        nested = set()
+        to_check = set(groups)
+        checked = set()
+        depth = 0
+        
+        try:
+            # Search in both IPA groups and compat groups
+            search_bases = [
+                f"{self.group_search_base},{self.base_dn}",  # cn=groups,cn=accounts
+                f"cn=groups,cn=compat,{self.base_dn}",  # cn=groups,cn=compat
+            ]
+            
+            while to_check and depth < max_depth:
+                depth += 1
+                current_batch = list(to_check - checked)
+                to_check = set()
+                
+                logger.debug(f"[NESTED GROUPS] Depth {depth}: checking {len(current_batch)} group(s)")
+                
+                for group_dn in current_batch:
+                    checked.add(group_dn)
+                    escaped_dn = self._ldap_escape(group_dn)
+                    
+                    for search_base in search_bases:
+                        try:
+                            # Search for groups where this group is a member
+                            conn.search(
+                                search_base=search_base,
+                                search_filter=f"(member={escaped_dn})",
+                                search_scope=SUBTREE,
+                                attributes=["dn", "cn"],
+                            )
+                            
+                            for entry in conn.entries:
+                                parent_dn = str(entry.entry_dn)
+                                if parent_dn not in nested and parent_dn not in checked:
+                                    nested.add(parent_dn)
+                                    to_check.add(parent_dn)  # Check this parent for further nesting
+                                    cn = entry.cn.value if hasattr(entry, 'cn') else parent_dn
+                                    logger.info(f"[NESTED GROUPS] Found parent group: {cn}")
+                        except Exception as e:
+                            logger.debug(f"[NESTED GROUPS] Search in {search_base} failed: {e}")
+            
+            if nested:
+                logger.info(f"[NESTED GROUPS] Found {len(nested)} parent group(s) via nesting")
+            
+        except Exception as e:
+            logger.error(f"[NESTED GROUPS] Error resolving nested groups: {e}")
+        
+        return list(nested)
+    
     def _lookup_ad_trust_groups_via_service_account(
         self,
         username: str,
@@ -760,7 +939,12 @@ class FreeIPAAuthenticator:
         service_bind_password: Optional[str],
     ) -> List[str]:
         """
-        Look up AD Trust user groups in FreeIPA compat tree using service account.
+        Look up AD Trust user groups in FreeIPA using service account.
+        
+        Searches multiple locations for group memberships:
+        1. Compat groups tree (cn=groups,cn=compat) - POSIX groups with memberUid
+        2. IPA groups tree (cn=groups,cn=accounts) - Groups with external members
+        3. Nested group resolution - Parent groups containing the user's groups
         
         This is used after AD DC pass-through authentication to get group memberships.
         
@@ -770,15 +954,15 @@ class FreeIPAAuthenticator:
             service_bind_password: Service account password
             
         Returns:
-            List of group DNs
+            List of group DNs (both direct and nested memberships)
         """
-        groups = []
+        all_groups = []
         
         if not service_bind_dn or not service_bind_password:
             logger.warning("No service account configured for group lookup after AD DC auth")
-            return groups
+            return all_groups
         
-        logger.info(f"[GROUP LOOKUP] Starting FreeIPA group lookup for AD trust user: {username}")
+        logger.info(f"[GROUP LOOKUP] Starting comprehensive FreeIPA group lookup for AD trust user: {username}")
         logger.debug(f"[GROUP LOOKUP] Using service account: {service_bind_dn}")
         
         try:
@@ -794,24 +978,42 @@ class FreeIPAAuthenticator:
             
             logger.info(f"[GROUP LOOKUP] Service account bind successful")
             
-            # Search compat groups tree with multiple username variants
-            groups = self._search_ad_trust_groups(conn, username)
+            # Step 1: Search compat groups tree (existing behavior)
+            compat_groups = self._search_ad_trust_groups(conn, username)
+            logger.info(f"[GROUP LOOKUP] Found {len(compat_groups)} group(s) in compat tree")
+            
+            # Step 2: Search IPA groups for external members (NEW)
+            ipa_groups = self._search_ipa_groups_for_external_member(conn, username)
+            logger.info(f"[GROUP LOOKUP] Found {len(ipa_groups)} group(s) in IPA groups tree")
+            
+            # Combine unique groups
+            all_groups = list(set(compat_groups + ipa_groups))
+            logger.info(f"[GROUP LOOKUP] Total direct groups: {len(all_groups)}")
+            
+            # Step 3: Resolve nested group memberships (NEW)
+            if all_groups:
+                nested_groups = self._resolve_nested_groups(conn, all_groups)
+                # Add nested groups that aren't already in the list
+                for ng in nested_groups:
+                    if ng not in all_groups:
+                        all_groups.append(ng)
+                logger.info(f"[GROUP LOOKUP] Total groups (including nested): {len(all_groups)}")
             
             conn.unbind()
             
-            if groups:
-                logger.info(f"[GROUP LOOKUP] Found {len(groups)} group(s) for {username}")
-                for g in groups:
+            if all_groups:
+                logger.info(f"[GROUP LOOKUP] Final result: {len(all_groups)} group(s) for {username}")
+                for g in all_groups:
                     logger.debug(f"[GROUP LOOKUP]   - {g}")
             else:
-                logger.warning(f"[GROUP LOOKUP] No groups found for {username} in FreeIPA compat tree")
+                logger.warning(f"[GROUP LOOKUP] No groups found for {username} in any FreeIPA tree")
             
         except Exception as e:
             logger.error(f"[GROUP LOOKUP] Error looking up groups for AD trust user {username}: {e}")
             import traceback
             logger.debug(f"[GROUP LOOKUP] Traceback: {traceback.format_exc()}")
         
-        return groups
+        return all_groups
     
     def _search_ad_trust_groups(self, conn: 'Connection', username: str) -> List[str]:
         """
