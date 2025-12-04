@@ -424,7 +424,7 @@ class FreeIPAAuthenticator:
                     search_base=ad_base_dn,
                     search_filter=f"(sAMAccountName={user_part})",
                     search_scope=SUBTREE,
-                    attributes=['cn', 'mail', 'displayName', 'memberOf', 'distinguishedName'],
+                    attributes=['cn', 'mail', 'displayName', 'memberOf', 'distinguishedName', 'objectSid'],
                 )
                 
                 if conn.entries:
@@ -432,6 +432,12 @@ class FreeIPAAuthenticator:
                     user_info["full_name"] = str(entry.displayName) if hasattr(entry, 'displayName') else str(entry.cn) if hasattr(entry, 'cn') else None
                     user_info["email"] = str(entry.mail) if hasattr(entry, 'mail') else None
                     user_info["ad_dn"] = str(entry.distinguishedName) if hasattr(entry, 'distinguishedName') else None
+                    
+                    # Extract and convert user SID
+                    if hasattr(entry, 'objectSid') and entry.objectSid.value:
+                        sid_binary = entry.objectSid.value
+                        user_info["sid"] = self._convert_sid_to_string(sid_binary)
+                        logger.info(f"Retrieved AD user SID: {user_info['sid']}")
                     
                     logger.info(f"Retrieved AD user attributes for {username}")
             except Exception as e:
@@ -519,12 +525,14 @@ class FreeIPAAuthenticator:
                     return ad_result
 
                 groups: List[str] = []
+                user_sid = ad_result.get('user_info', {}).get('sid')
                 if service_bind_dn and service_bind_password:
                     try:
                         groups = self._lookup_ad_trust_groups_via_service_account(
                             username,
                             service_bind_dn,
                             service_bind_password,
+                            user_sid=user_sid,
                         )
                     except Exception as e:
                         logger.warning(f"Error looking up AD trust groups via service account: {e}")
@@ -692,6 +700,48 @@ class FreeIPAAuthenticator:
                 "response_time_ms": elapsed_ms,
             }
     
+    def _convert_sid_to_string(self, sid_binary: bytes) -> Optional[str]:
+        """
+        Convert Windows binary SID to string format (S-1-5-21-...).
+        
+        Windows SIDs are stored as binary data in AD and need to be converted
+        to their string representation for LDAP searches in FreeIPA.
+        
+        Args:
+            sid_binary: Binary SID bytes from AD objectSid attribute
+            
+        Returns:
+            String SID (e.g., S-1-5-21-123456789-987654321-111222333-12345) or None
+        """
+        try:
+            if not sid_binary or len(sid_binary) < 8:
+                logger.warning(f"[SID] Invalid SID binary: too short ({len(sid_binary) if sid_binary else 0} bytes)")
+                return None
+            
+            revision = sid_binary[0]
+            sub_auth_count = sid_binary[1]
+            
+            # Authority is 6 bytes, big-endian
+            authority = int.from_bytes(sid_binary[2:8], 'big')
+            
+            # Sub-authorities are 4 bytes each, little-endian
+            sub_authorities = []
+            for i in range(sub_auth_count):
+                offset = 8 + i * 4
+                if offset + 4 > len(sid_binary):
+                    logger.warning(f"[SID] SID binary truncated at sub-authority {i}")
+                    break
+                sub_auth = int.from_bytes(sid_binary[offset:offset+4], 'little')
+                sub_authorities.append(sub_auth)
+            
+            sid_string = f"S-{revision}-{authority}-{'-'.join(map(str, sub_authorities))}"
+            logger.debug(f"[SID] Converted binary SID to string: {sid_string}")
+            return sid_string
+            
+        except Exception as e:
+            logger.error(f"[SID] Failed to convert binary SID: {e}")
+            return None
+    
     def _ldap_escape(self, value: str) -> str:
         """
         Escape special characters for LDAP search filters.
@@ -757,17 +807,19 @@ class FreeIPAAuthenticator:
         self,
         conn: 'Connection',
         username: str,
+        user_sid: Optional[str] = None,
     ) -> List[str]:
         """
         Search IPA groups (cn=groups,cn=accounts) for external AD Trust members.
         
         AD Trust users are added to IPA groups as 'external members' which stores
-        their SID or DN in ipaExternalMember/member attributes. This method searches
-        for groups containing the user in any of these formats.
+        their SID in the ipaExternalMember attribute. This method searches for groups
+        containing the user's SID (primary) or falls back to username-based search.
         
         Args:
             conn: Active LDAP connection (bound with service account)
             username: Full username with domain (user@domain or DOMAIN\\user)
+            user_sid: User's Windows SID (e.g., S-1-5-21-...) - most reliable method
             
         Returns:
             List of group DNs from IPA groups tree
@@ -783,7 +835,54 @@ class FreeIPAAuthenticator:
             is_ad_user, clean_username, domain = self._is_ad_trust_user(username)
             username_variants = self._extract_username_variants(username)
             
-            logger.info(f"[IPA GROUP SEARCH] Searching for user variants: {username_variants[:5]}")
+            logger.info(f"[IPA GROUP SEARCH] User SID: {user_sid or 'NOT PROVIDED'}")
+            logger.info(f"[IPA GROUP SEARCH] Username variants: {username_variants[:5]}")
+            
+            # Strategy 0 (PRIMARY): Search by user's SID - most reliable for AD Trust users
+            # FreeIPA stores AD trust external members by their SID in ipaExternalMember
+            if user_sid:
+                logger.info(f"[IPA GROUP SEARCH] Searching by user SID: {user_sid}")
+                try:
+                    conn.search(
+                        search_base=ipa_groups_base,
+                        search_filter=f"(ipaExternalMember={user_sid})",
+                        search_scope=SUBTREE,
+                        attributes=["cn", "dn", "ipaExternalMember"],
+                    )
+                    for entry in conn.entries:
+                        group_dn = str(entry.entry_dn)
+                        group_cn = entry.cn.value if hasattr(entry, 'cn') else group_dn
+                        if group_dn not in groups:
+                            groups.add(group_dn)
+                            logger.info(f"[IPA GROUP SEARCH] *** FOUND GROUP VIA SID: {group_cn} ({group_dn})")
+                    
+                    if not groups:
+                        logger.info(f"[IPA GROUP SEARCH] No groups found with exact SID match, trying wildcard...")
+                        # Try wildcard in case there's formatting differences
+                        # Extract the RID (last part) which is user-specific
+                        sid_parts = user_sid.split('-')
+                        if len(sid_parts) >= 4:
+                            rid = sid_parts[-1]
+                            conn.search(
+                                search_base=ipa_groups_base,
+                                search_filter=f"(ipaExternalMember=*{rid})",
+                                search_scope=SUBTREE,
+                                attributes=["cn", "dn", "ipaExternalMember"],
+                            )
+                            for entry in conn.entries:
+                                # Verify this is actually our user's SID
+                                ext_members = entry.ipaExternalMember.values if hasattr(entry, 'ipaExternalMember') else []
+                                for em in ext_members:
+                                    if user_sid in str(em) or str(em) == user_sid:
+                                        group_dn = str(entry.entry_dn)
+                                        if group_dn not in groups:
+                                            groups.add(group_dn)
+                                            group_cn = entry.cn.value if hasattr(entry, 'cn') else group_dn
+                                            logger.info(f"[IPA GROUP SEARCH] *** FOUND GROUP VIA SID RID: {group_cn}")
+                except Exception as e:
+                    logger.warning(f"[IPA GROUP SEARCH] SID search failed: {e}")
+            else:
+                logger.warning(f"[IPA GROUP SEARCH] No user SID provided - SID-based search skipped")
             
             # Strategy 1: Search for member attribute containing user's compat DN
             # AD trust users appear in cn=users,cn=compat tree
@@ -810,7 +909,7 @@ class FreeIPAAuthenticator:
                 except Exception as e:
                     logger.debug(f"[IPA GROUP SEARCH] Search with DN {compat_dn[:50]}... failed: {e}")
             
-            # Strategy 2: Search for ipaExternalMember containing username
+            # Strategy 2: Search for ipaExternalMember containing username (fallback)
             # External members may be stored with SID or other formats
             for variant in username_variants[:3]:
                 escaped = self._ldap_escape(variant)
@@ -937,14 +1036,16 @@ class FreeIPAAuthenticator:
         username: str,
         service_bind_dn: Optional[str],
         service_bind_password: Optional[str],
+        user_sid: Optional[str] = None,
     ) -> List[str]:
         """
         Look up AD Trust user groups in FreeIPA using service account.
         
         Searches multiple locations for group memberships:
-        1. Compat groups tree (cn=groups,cn=compat) - POSIX groups with memberUid
-        2. IPA groups tree (cn=groups,cn=accounts) - Groups with external members
-        3. Nested group resolution - Parent groups containing the user's groups
+        1. IPA groups tree using user's SID (most reliable for AD trust users)
+        2. Compat groups tree (cn=groups,cn=compat) - POSIX groups with memberUid
+        3. IPA groups tree (cn=groups,cn=accounts) - Groups with external members
+        4. Nested group resolution - Parent groups containing the user's groups
         
         This is used after AD DC pass-through authentication to get group memberships.
         
@@ -952,6 +1053,7 @@ class FreeIPAAuthenticator:
             username: Full username with domain (user@domain)
             service_bind_dn: Service account DN
             service_bind_password: Service account password
+            user_sid: User's Windows SID from AD (e.g., S-1-5-21-...)
             
         Returns:
             List of group DNs (both direct and nested memberships)
@@ -963,6 +1065,7 @@ class FreeIPAAuthenticator:
             return all_groups
         
         logger.info(f"[GROUP LOOKUP] Starting comprehensive FreeIPA group lookup for AD trust user: {username}")
+        logger.info(f"[GROUP LOOKUP] User SID: {user_sid or 'NOT PROVIDED'}")
         logger.debug(f"[GROUP LOOKUP] Using service account: {service_bind_dn}")
         
         try:
@@ -982,8 +1085,8 @@ class FreeIPAAuthenticator:
             compat_groups = self._search_ad_trust_groups(conn, username)
             logger.info(f"[GROUP LOOKUP] Found {len(compat_groups)} group(s) in compat tree")
             
-            # Step 2: Search IPA groups for external members (NEW)
-            ipa_groups = self._search_ipa_groups_for_external_member(conn, username)
+            # Step 2: Search IPA groups for external members (with SID if available)
+            ipa_groups = self._search_ipa_groups_for_external_member(conn, username, user_sid=user_sid)
             logger.info(f"[GROUP LOOKUP] Found {len(ipa_groups)} group(s) in IPA groups tree")
             
             # Combine unique groups
