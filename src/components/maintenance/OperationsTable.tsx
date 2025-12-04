@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -29,7 +29,9 @@ import {
   Sparkles,
   Search,
   Download,
-  Columns3
+  Columns3,
+  Link2,
+  CornerDownRight
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -38,8 +40,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { format } from "date-fns";
 import { useJobProgress, formatElapsed } from "@/hooks/useJobProgress";
+import { cn } from "@/lib/utils";
 
 interface Job {
   id: string;
@@ -101,6 +105,7 @@ interface MaintenanceWindow {
   maintenance_type: string;
   cluster_ids: string[] | null;
   server_group_ids: string[] | null;
+  job_ids?: string[] | null;
 }
 
 interface TargetMeta {
@@ -119,6 +124,10 @@ interface Operation {
   target: string;
   targetMeta?: TargetMeta;
   data: Job | MaintenanceWindow;
+  // Linking metadata
+  parentWindowId?: string;
+  parentWindowTitle?: string;
+  linkedJobIds?: string[];
 }
 
 interface OptimalWindow {
@@ -218,7 +227,45 @@ export function OperationsTable({
     }
   };
 
-  const filteredOps = operations.filter(op => {
+  // Group operations: windows with their linked jobs
+  const groupedOperations = useMemo(() => {
+    const windowMap = new Map<string, Operation>();
+    const jobToWindowMap = new Map<string, { id: string; title: string }>();
+    
+    // First pass: identify windows and their linked jobs
+    operations.forEach(op => {
+      if (op.type === 'maintenance') {
+        windowMap.set(op.id, op);
+        const window = op.data as MaintenanceWindow;
+        (window.job_ids || []).forEach(jobId => {
+          jobToWindowMap.set(jobId, { id: op.id, title: op.title });
+        });
+      }
+    });
+    
+    // Second pass: annotate jobs with their parent window
+    return operations.map(op => {
+      if (op.type === 'job') {
+        const parentWindow = jobToWindowMap.get(op.id);
+        if (parentWindow) {
+          return {
+            ...op,
+            parentWindowId: parentWindow.id,
+            parentWindowTitle: parentWindow.title
+          };
+        }
+      } else if (op.type === 'maintenance') {
+        const window = op.data as MaintenanceWindow;
+        return {
+          ...op,
+          linkedJobIds: window.job_ids || []
+        };
+      }
+      return op;
+    });
+  }, [operations]);
+
+  const filteredOps = groupedOperations.filter(op => {
     // Search filter
     if (searchTerm) {
       const searchLower = searchTerm.toLowerCase();
@@ -443,12 +490,17 @@ export function OperationsTable({
                 const isSelected = selectedOps.has(op.id);
                 const job = op.type === 'job' ? op.data as Job : null;
                 const window = op.type === 'maintenance' ? op.data as MaintenanceWindow : null;
+                const isLinkedJob = op.type === 'job' && op.parentWindowId;
+                const hasLinkedJobs = op.type === 'maintenance' && op.linkedJobIds && op.linkedJobIds.length > 0;
 
                 return (
                   <ContextMenu key={op.id}>
                     <ContextMenuTrigger asChild>
                       <TableRow 
-                        className="cursor-pointer hover:bg-muted/50" 
+                        className={cn(
+                          "cursor-pointer hover:bg-muted/50",
+                          isLinkedJob && "bg-muted/20"
+                        )}
                         onClick={() => onRowClick(op)}
                       >
                         <TableCell onClick={(e) => e.stopPropagation()}>
@@ -459,8 +511,44 @@ export function OperationsTable({
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
-                            {op.type === 'job' ? <Zap className="h-4 w-4 text-primary" /> : <Calendar className="h-4 w-4 text-purple-500" />}
-                            <span className="font-medium">{op.title}</span>
+                            {isLinkedJob ? (
+                              <CornerDownRight className="h-4 w-4 text-muted-foreground" />
+                            ) : op.type === 'job' ? (
+                              <Zap className="h-4 w-4 text-primary" />
+                            ) : (
+                              <Calendar className="h-4 w-4 text-purple-500" />
+                            )}
+                            <div className="flex flex-col">
+                              <span className="font-medium">{op.title}</span>
+                              {/* Link badge for jobs that belong to a window */}
+                              {isLinkedJob && op.parentWindowTitle && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span 
+                                      className="text-xs text-muted-foreground flex items-center gap-1 hover:text-primary cursor-pointer"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const parentOp = groupedOperations.find(o => o.id === op.parentWindowId);
+                                        if (parentOp) onRowClick(parentOp);
+                                      }}
+                                    >
+                                      <Link2 className="h-3 w-3" />
+                                      Part of: {op.parentWindowTitle}
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>Click to view parent maintenance window</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
+                              {/* Linked jobs indicator for windows */}
+                              {hasLinkedJobs && (
+                                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                  <Zap className="h-3 w-3" />
+                                  {op.linkedJobIds?.length} linked job{op.linkedJobIds?.length !== 1 ? 's' : ''}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">
@@ -534,6 +622,17 @@ export function OperationsTable({
                                   <FileText className="mr-2 h-4 w-4" />
                                   View Details
                                 </DropdownMenuItem>
+                                {/* Link to parent window */}
+                                {isLinkedJob && op.parentWindowId && (
+                                  <DropdownMenuItem onClick={(e) => {
+                                    e.stopPropagation();
+                                    const parentOp = groupedOperations.find(o => o.id === op.parentWindowId);
+                                    if (parentOp) onRowClick(parentOp);
+                                  }}>
+                                    <Link2 className="mr-2 h-4 w-4" />
+                                    View Parent Window
+                                  </DropdownMenuItem>
+                                )}
                                 {job && ['pending', 'running'].includes(job.status) && onCancel && (
                                   <>
                                     <DropdownMenuSeparator />
@@ -602,6 +701,15 @@ export function OperationsTable({
                         <FileText className="mr-2 h-4 w-4" />
                         View Details
                       </ContextMenuItem>
+                      {isLinkedJob && op.parentWindowId && (
+                        <ContextMenuItem onClick={() => {
+                          const parentOp = groupedOperations.find(o => o.id === op.parentWindowId);
+                          if (parentOp) onRowClick(parentOp);
+                        }}>
+                          <Link2 className="mr-2 h-4 w-4" />
+                          View Parent Window
+                        </ContextMenuItem>
+                      )}
                       {job && ['pending', 'running'].includes(job.status) && canManage && onCancel && (
                         <ContextMenuItem onClick={() => onCancel(op.id)}>
                           <XCircle className="mr-2 h-4 w-4" />

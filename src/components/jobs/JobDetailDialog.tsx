@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CheckCircle, XCircle, PlayCircle, Clock, AlertCircle, FileCode, ListChecks, Activity } from "lucide-react";
+import { CheckCircle, XCircle, PlayCircle, Clock, AlertCircle, FileCode, ListChecks, Activity, Link2, ExternalLink, Calendar } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
 import { ApiCallStream } from "./ApiCallStream";
@@ -36,11 +37,19 @@ interface Job {
   component_order?: number | null;
 }
 
+interface ParentWindow {
+  id: string;
+  title: string;
+  status: string;
+  maintenance_type: string;
+  planned_start: string;
+}
 
 interface JobDetailDialogProps {
   job: Job | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onViewWindow?: (windowId: string) => void;
 }
 
 type IdracCommand = {
@@ -55,18 +64,24 @@ type IdracCommand = {
   success: boolean | null;
 };
 
-export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProps) => {
+export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDetailDialogProps) => {
   const [subJobs, setSubJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [idracCommands, setIdracCommands] = useState<IdracCommand[]>([]);
   const [idracLoading, setIdracLoading] = useState(false);
+  const [parentWindow, setParentWindow] = useState<ParentWindow | null>(null);
 
   // Check if this is a workflow job type (safe even when job is null)
   const workflowJobTypes = ['prepare_host_for_update', 'verify_host_after_update', 'rolling_cluster_update'];
   const isWorkflowJob = job ? workflowJobTypes.includes(job.job_type) : false;
 
   useEffect(() => {
-    if (!open || !job || isWorkflowJob) return;
+    if (!open || !job) return;
+
+    // Check if this job belongs to a maintenance window
+    fetchParentWindow();
+
+    if (isWorkflowJob) return;
 
     fetchIdracCommands();
 
@@ -117,6 +132,27 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
       </Dialog>
     );
   }
+
+  const fetchParentWindow = async () => {
+    if (!job) return;
+    
+    try {
+      // Find any maintenance window that has this job in its job_ids
+      const { data, error } = await supabase
+        .from('maintenance_windows')
+        .select('id, title, status, maintenance_type, planned_start')
+        .contains('job_ids', [job.id])
+        .single();
+      
+      if (error && error.code !== 'PGRST116') { // PGRST116 = no rows returned
+        console.error('Error fetching parent window:', error);
+      }
+      
+      setParentWindow(data || null);
+    } catch (error) {
+      console.error('Error fetching parent window:', error);
+    }
+  };
 
   const fetchSubJobs = async () => {
     if (!job) return;
@@ -230,6 +266,36 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
     }
   };
 
+  // Parent window banner component
+  const ParentWindowBanner = () => {
+    if (!parentWindow) return null;
+    
+    return (
+      <div className="mb-4 p-3 bg-muted/50 border rounded-lg flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Link2 className="h-4 w-4 text-muted-foreground" />
+          <div>
+            <p className="text-sm font-medium">Part of Maintenance Window</p>
+            <p className="text-sm text-muted-foreground flex items-center gap-1">
+              <Calendar className="h-3 w-3" />
+              {parentWindow.title}
+            </p>
+          </div>
+        </div>
+        {onViewWindow && (
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={() => onViewWindow(parentWindow.id)}
+          >
+            <ExternalLink className="h-3 w-3 mr-1" />
+            View Window
+          </Button>
+        )}
+      </div>
+    );
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {isWorkflowJob ? (
@@ -242,6 +308,7 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
               Workflow execution details for job {job.id}
             </DialogDescription>
           </DialogHeader>
+          <ParentWindowBanner />
           <WorkflowExecutionViewer 
             jobId={job.id} 
             workflowType={job.job_type}
@@ -257,6 +324,8 @@ export const JobDetailDialog = ({ job, open, onOpenChange }: JobDetailDialogProp
               {getStatusBadge(job.status)}
             </div>
           </DialogHeader>
+
+          <ParentWindowBanner />
 
           <Tabs defaultValue="progress" className="w-full">
             <TabsList className="grid w-full grid-cols-4">
