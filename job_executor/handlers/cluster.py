@@ -928,6 +928,7 @@ class ClusterHandler(BaseHandler):
                         
                         # Apply firmware based on source
                         firmware_source = details.get('firmware_source', 'manual_repository')
+                        reboot_required = False  # Track if reboot is actually needed
                         
                         if firmware_source == 'dell_online_catalog':
                             dell_catalog_url = details.get('dell_catalog_url', 'https://downloads.dell.com/catalog/Catalog.xml')
@@ -944,6 +945,109 @@ class ClusterHandler(BaseHandler):
                                 server_id=host['server_id'],
                                 user_id=job['created_by']
                             )
+                            
+                            if not update_result.get('success'):
+                                raise Exception(f"Firmware catalog update failed: {update_result.get('error')}")
+                            
+                            # Extract job ID and poll for completion
+                            repo_job_id = update_result.get('job_id')
+                            repo_task_uri = update_result.get('task_uri')
+                            
+                            if repo_job_id or repo_task_uri:
+                                self.log(f"    Repository scan job created: {repo_job_id or repo_task_uri}")
+                                self.log(f"    Waiting for catalog scan and update scheduling...")
+                                
+                                # Poll the repository update job
+                                try:
+                                    if repo_job_id and repo_job_id.startswith('JID_'):
+                                        # Poll using job endpoint
+                                        job_result = dell_ops.helpers.wait_for_job(
+                                            ip=server['ip_address'],
+                                            username=username,
+                                            password=password,
+                                            job_id_str=repo_job_id,
+                                            timeout=1800,  # 30 minutes for catalog scan
+                                            poll_interval=15,
+                                            operation_name='Repository Firmware Update',
+                                            parent_job_id=job['id'],
+                                            server_id=host['server_id'],
+                                            user_id=job['created_by']
+                                        )
+                                    elif repo_task_uri:
+                                        # Extract job ID from task URI if present
+                                        if '/Jobs/' in repo_task_uri:
+                                            extracted_job_id = repo_task_uri.split('/Jobs/')[-1]
+                                            job_result = dell_ops.helpers.wait_for_job(
+                                                ip=server['ip_address'],
+                                                username=username,
+                                                password=password,
+                                                job_id_str=extracted_job_id,
+                                                timeout=1800,
+                                                poll_interval=15,
+                                                operation_name='Repository Firmware Update',
+                                                parent_job_id=job['id'],
+                                                server_id=host['server_id'],
+                                                user_id=job['created_by']
+                                            )
+                                        else:
+                                            # Poll using task endpoint
+                                            job_result = dell_ops.helpers.wait_for_task(
+                                                ip=server['ip_address'],
+                                                username=username,
+                                                password=password,
+                                                task_uri=repo_task_uri,
+                                                timeout=1800,
+                                                poll_interval=15,
+                                                operation_name='Repository Firmware Update',
+                                                job_id=job['id'],
+                                                server_id=host['server_id'],
+                                                user_id=job['created_by']
+                                            )
+                                    else:
+                                        job_result = {}
+                                    
+                                    # Check the result to determine if updates were applied
+                                    job_message = job_result.get('Message', '').lower()
+                                    job_state = job_result.get('JobState', '')
+                                    
+                                    # Dell messages that indicate no updates needed
+                                    no_update_indicators = [
+                                        'no applicable',
+                                        'no updates',
+                                        'already at latest',
+                                        'current version',
+                                        'up to date',
+                                        'no new updates'
+                                    ]
+                                    
+                                    if any(indicator in job_message for indicator in no_update_indicators):
+                                        self.log(f"    ℹ️ No firmware updates needed - server is already up to date")
+                                        update_result['no_updates_needed'] = True
+                                        reboot_required = False
+                                    elif job_state == 'Completed':
+                                        # Check if reboot was scheduled
+                                        if 'reboot' in job_message or 'restart' in job_message:
+                                            self.log(f"    ✓ Firmware updates applied, reboot scheduled")
+                                            reboot_required = True
+                                        else:
+                                            # Assume updates were applied - check for pending reboot
+                                            self.log(f"    ✓ Firmware update job completed: {job_result.get('Message', 'Success')}")
+                                            reboot_required = True
+                                    else:
+                                        self.log(f"    ✓ Firmware update job completed with state: {job_state}")
+                                        reboot_required = True
+                                    
+                                    update_result['job_result'] = job_result
+                                    
+                                except Exception as poll_error:
+                                    self.log(f"    ⚠ Error polling repository job: {poll_error}", "WARN")
+                                    # Assume updates were applied if we can't poll
+                                    reboot_required = True
+                            else:
+                                self.log(f"    ⚠ No job ID returned from catalog update - cannot track progress", "WARN")
+                                # Assume updates were applied
+                                reboot_required = True
+                            
                         else:
                             firmware_uri = details.get('firmware_uri')
                             if not firmware_uri and firmware_updates:
@@ -962,11 +1066,16 @@ class ClusterHandler(BaseHandler):
                                 job_id=job['id'],
                                 server_id=host['server_id']
                             )
+                            
+                            if not update_result.get('success'):
+                                raise Exception(f"Firmware update failed: {update_result.get('error')}")
+                            
+                            # Manual firmware updates always require reboot
+                            reboot_required = True
                         
-                        if not update_result.get('success'):
-                            raise Exception(f"Firmware update failed: {update_result.get('error')}")
-                        
-                        self.log(f"    ✓ Firmware update initiated")
+                        self.log(f"    ✓ Firmware update step completed (reboot_required={reboot_required})")
+                        update_result['reboot_required'] = reboot_required
+                        host_result['no_updates_needed'] = update_result.get('no_updates_needed', False)
                         self._log_workflow_step(
                             job['id'], 'rolling_cluster_update',
                             step_number=base_step + 2,
@@ -978,128 +1087,157 @@ class ClusterHandler(BaseHandler):
                         )
                         host_result['steps'].append('firmware_update')
                         
-                        # STEP 3: Reboot and wait for system to come online
-                        self._log_workflow_step(
-                            job['id'], 'rolling_cluster_update',
-                            step_number=base_step + 3,
-                            step_name=f"Reboot and wait: {host['name']}",
-                            status='running',
-                            server_id=host['server_id'],
-                            step_started_at=datetime.now().isoformat()
-                        )
-                        
-                        self.log(f"  [3/5] Waiting for system reboot...")
-                        self.log(f"    Initial wait: 3 minutes for BIOS POST and reboot...")
-                        time.sleep(180)  # Wait 3 minutes for reboot to start (BIOS POST can be slow)
-                        
-                        # Wait for system to come back online - phase 1: iDRAC, phase 2: ESXi
-                        max_attempts = 180  # 30 minutes (180 * 10s) - enough for BIOS updates
-                        idrac_online = False
-                        esxi_online = False
-                        
-                        for attempt in range(max_attempts):
-                            # Check for cancellation during reboot wait
-                            if self._check_and_handle_cancellation(job, cleanup_state):
-                                self.update_job_status(job['id'], 'cancelled', details={
-                                    'cancelled_during': 'reboot_wait',
-                                    'cleanup_performed': True,
-                                    'workflow_results': workflow_results
-                                })
-                                return
-                            
-                            # Phase 1: Wait for iDRAC to come back online
-                            if not idrac_online:
-                                try:
-                                    test_session = self.executor.create_idrac_session(
-                                        server['ip_address'], username, password,
-                                        log_to_db=False, timeout=10
-                                    )
-                                    if test_session:
-                                        self.executor.delete_idrac_session(
-                                            test_session, 
-                                            server['ip_address'], 
-                                            host['server_id'], 
-                                            job['id']
-                                        )
-                                        idrac_online = True
-                                        self.log(f"    ✓ iDRAC back online (attempt {attempt+1}/{max_attempts})")
-                                except:
-                                    pass
-                            
-                            # Phase 2: Wait for ESXi to be accessible (only after iDRAC is up)
-                            if idrac_online and not esxi_online:
-                                if self._check_esxi_accessible(server['ip_address'], timeout=5):
-                                    esxi_online = True
-                                    self.log(f"    ✓ ESXi accessible on port 443")
-                                    break
-                            
-                            # Progress logging every 30 seconds
-                            if attempt > 0 and attempt % 3 == 0:
-                                elapsed = (attempt + 1) * 10
-                                status = "Waiting for iDRAC..." if not idrac_online else "Waiting for ESXi..."
-                                self.log(f"    [{elapsed}s] {status}")
-                            
-                            time.sleep(10)
-                        
-                        if not esxi_online:
-                            raise Exception(f"Timeout waiting for host to come online after {max_attempts * 10}s")
-                        
-                        self._log_workflow_step(
-                            job['id'], 'rolling_cluster_update',
-                            step_number=base_step + 3,
-                            step_name=f"Reboot and wait: {host['name']}",
-                            status='completed',
-                            server_id=host['server_id'],
-                            step_completed_at=datetime.now().isoformat()
-                        )
-                        host_result['steps'].append('reboot')
-                        
-                        # STEP 4: Verify firmware update
-                        self._log_workflow_step(
-                            job['id'], 'rolling_cluster_update',
-                            step_number=base_step + 4,
-                            step_name=f"Verify update: {host['name']}",
-                            status='running',
-                            server_id=host['server_id'],
-                            step_started_at=datetime.now().isoformat()
-                        )
-                        
-                        self.log(f"  [4/5] Verifying firmware update...")
-                        
-                        # Create new session for verification
-                        verify_session = self.executor.create_idrac_session(
-                            server['ip_address'], username, password,
-                            log_to_db=True, server_id=host['server_id'], job_id=job['id']
-                        )
-                        
-                        if verify_session:
-                            new_fw_inventory = dell_ops.get_firmware_inventory(
-                                ip=server['ip_address'],
-                                username=username,
-                                password=password,
+                        # STEP 3: Reboot and wait for system to come online (only if reboot required)
+                        if reboot_required:
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=base_step + 3,
+                                step_name=f"Reboot and wait: {host['name']}",
+                                status='running',
                                 server_id=host['server_id'],
-                                job_id=job['id']
+                                step_started_at=datetime.now().isoformat()
                             )
                             
-                            self.executor.delete_idrac_session(
-                                verify_session, 
-                                server['ip_address'], 
-                                host['server_id'], 
-                                job['id']
-                            )
+                            self.log(f"  [3/5] Waiting for system reboot...")
+                            self.log(f"    Initial wait: 3 minutes for BIOS POST and reboot...")
+                            time.sleep(180)  # Wait 3 minutes for reboot to start (BIOS POST can be slow)
                             
-                            self.log(f"    ✓ Firmware inventory refreshed")
+                            # Wait for system to come back online - phase 1: iDRAC, phase 2: ESXi
+                            max_attempts = 180  # 30 minutes (180 * 10s) - enough for BIOS updates
+                            idrac_online = False
+                            esxi_online = False
+                            
+                            for attempt in range(max_attempts):
+                                # Check for cancellation during reboot wait
+                                if self._check_and_handle_cancellation(job, cleanup_state):
+                                    self.update_job_status(job['id'], 'cancelled', details={
+                                        'cancelled_during': 'reboot_wait',
+                                        'cleanup_performed': True,
+                                        'workflow_results': workflow_results
+                                    })
+                                    return
+                                
+                                # Phase 1: Wait for iDRAC to come back online
+                                if not idrac_online:
+                                    try:
+                                        test_session = self.executor.create_idrac_session(
+                                            server['ip_address'], username, password,
+                                            log_to_db=False, timeout=10
+                                        )
+                                        if test_session:
+                                            self.executor.delete_idrac_session(
+                                                test_session, 
+                                                server['ip_address'], 
+                                                host['server_id'], 
+                                                job['id']
+                                            )
+                                            idrac_online = True
+                                            self.log(f"    ✓ iDRAC back online (attempt {attempt+1}/{max_attempts})")
+                                    except:
+                                        pass
+                                
+                                # Phase 2: Wait for ESXi to be accessible (only after iDRAC is up)
+                                if idrac_online and not esxi_online:
+                                    if self._check_esxi_accessible(server['ip_address'], timeout=5):
+                                        esxi_online = True
+                                        self.log(f"    ✓ ESXi accessible on port 443")
+                                        break
+                                
+                                # Progress logging every 30 seconds
+                                if attempt > 0 and attempt % 3 == 0:
+                                    elapsed = (attempt + 1) * 10
+                                    status = "Waiting for iDRAC..." if not idrac_online else "Waiting for ESXi..."
+                                    self.log(f"    [{elapsed}s] {status}")
+                                
+                                time.sleep(10)
+                            
+                            if not esxi_online:
+                                raise Exception(f"Timeout waiting for host to come online after {max_attempts * 10}s")
+                        else:
+                            # No reboot required - skip reboot wait
+                            self.log(f"  [3/5] Skipping reboot wait - no updates required reboot")
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=base_step + 3,
+                                step_name=f"Reboot and wait: {host['name']}",
+                                status='skipped',
+                                server_id=host['server_id'],
+                                step_details={'reason': 'no_updates_needed'},
+                                step_started_at=datetime.now().isoformat(),
+                                step_completed_at=datetime.now().isoformat()
+                            )
                         
-                        self._log_workflow_step(
-                            job['id'], 'rolling_cluster_update',
-                            step_number=base_step + 4,
-                            step_name=f"Verify update: {host['name']}",
-                            status='completed',
-                            server_id=host['server_id'],
-                            step_details={'verified': True},
-                            step_completed_at=datetime.now().isoformat()
-                        )
-                        host_result['steps'].append('verify')
+                        if reboot_required:
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=base_step + 3,
+                                step_name=f"Reboot and wait: {host['name']}",
+                                status='completed',
+                                server_id=host['server_id'],
+                                step_completed_at=datetime.now().isoformat()
+                            )
+                            host_result['steps'].append('reboot')
+                        
+                        # STEP 4: Verify firmware update (only if updates were applied)
+                        if reboot_required:
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=base_step + 4,
+                                step_name=f"Verify update: {host['name']}",
+                                status='running',
+                                server_id=host['server_id'],
+                                step_started_at=datetime.now().isoformat()
+                            )
+                            
+                            self.log(f"  [4/5] Verifying firmware update...")
+                            
+                            # Create new session for verification
+                            verify_session = self.executor.create_idrac_session(
+                                server['ip_address'], username, password,
+                                log_to_db=True, server_id=host['server_id'], job_id=job['id']
+                            )
+                            
+                            if verify_session:
+                                new_fw_inventory = dell_ops.get_firmware_inventory(
+                                    ip=server['ip_address'],
+                                    username=username,
+                                    password=password,
+                                    server_id=host['server_id'],
+                                    job_id=job['id']
+                                )
+                                
+                                self.executor.delete_idrac_session(
+                                    verify_session, 
+                                    server['ip_address'], 
+                                    host['server_id'], 
+                                    job['id']
+                                )
+                                
+                                self.log(f"    ✓ Firmware inventory refreshed")
+                            
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=base_step + 4,
+                                step_name=f"Verify update: {host['name']}",
+                                status='completed',
+                                server_id=host['server_id'],
+                                step_details={'verified': True},
+                                step_completed_at=datetime.now().isoformat()
+                            )
+                            host_result['steps'].append('verify')
+                        else:
+                            # Skip verification for no-updates case
+                            self.log(f"  [4/5] Skipping verification - no updates were applied")
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=base_step + 4,
+                                step_name=f"Verify update: {host['name']}",
+                                status='skipped',
+                                server_id=host['server_id'],
+                                step_details={'reason': 'no_updates_applied'},
+                                step_started_at=datetime.now().isoformat(),
+                                step_completed_at=datetime.now().isoformat()
+                            )
                         
                         # STEP 5: Exit maintenance mode (if applicable)
                         if vcenter_host_id:
