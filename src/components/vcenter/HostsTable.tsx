@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { compareValues } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -130,11 +131,7 @@ export function HostsTable({
           bVal = b.server_id ? 1 : 0;
         }
 
-        if (aVal == null) return 1;
-        if (bVal == null) return -1;
-
-        const comparison = aVal > bVal ? 1 : aVal < bVal ? -1 : 0;
-        return sortDirection === "asc" ? comparison : -comparison;
+        return compareValues(aVal, bVal, sortDirection);
       })
     : allHosts;
 

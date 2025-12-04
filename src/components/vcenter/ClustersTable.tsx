@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { compareValues } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
@@ -92,11 +93,7 @@ export function ClustersTable({
           bVal = getUsagePercent(b.used_storage_bytes, b.total_storage_bytes);
         }
 
-        if (aVal == null) return 1;
-        if (bVal == null) return -1;
-
-        const comparison = aVal > bVal ? 1 : aVal < bVal ? -1 : 0;
-        return sortDirection === "asc" ? comparison : -comparison;
+        return compareValues(aVal, bVal, sortDirection);
       })
     : filteredClusters;
 
