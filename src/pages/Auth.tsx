@@ -150,51 +150,6 @@ const Auth = () => {
     };
 
     try {
-      // Step 1: Check rate limits first via edge function
-      const rateLimitResponse = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/idm-provision`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, password }),
-        }
-      );
-
-      const fallbackResult = await fallbackResponse.json();
-
-      if (fallbackResponse.status === 429) {
-        setLockoutRemaining(fallbackResult.lockout_remaining_seconds);
-        toast({
-          title: "Account Locked",
-          description: fallbackResult.error || `Too many failed attempts. Please try again in ${Math.ceil(fallbackResult.lockout_remaining_seconds / 60)} minutes.`,
-          variant: "destructive",
-        });
-        return true;
-      }
-
-      if (fallbackResult.success) {
-        await supabase.auth.setSession({
-          access_token: fallbackResult.access_token,
-          refresh_token: fallbackResult.refresh_token,
-        });
-        toast({
-          title: "Welcome",
-          description: "Authenticated via FreeIPA",
-        });
-        navigate("/");
-        return true;
-      }
-
-      toast({
-        title: "Authentication Failed",
-        description: fallbackResult.error || 'Invalid username or password',
-        variant: "destructive",
-      });
-
-      return true;
-    };
-
-    try {
       // Step 1: Authenticate directly via Job Executor API (synchronous)
       const jobExecutorUrl = localStorage.getItem('job_executor_url') || 'http://localhost:8081';
 
