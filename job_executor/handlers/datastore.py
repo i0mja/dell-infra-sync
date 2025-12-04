@@ -32,10 +32,27 @@ class DatastoreHandler(BaseHandler):
             if not vcenter_settings:
                 raise Exception(f"vCenter {vcenter_id} not found")
             
-            # Connect to vCenter
+            # Connect to vCenter with fresh session
             self.log(f"Connecting to vCenter {vcenter_settings['host']}")
+            
+            # Clear any cached connection to ensure fresh session for browse operation
+            if hasattr(self.executor, 'vcenter_conn'):
+                self.executor.vcenter_conn = None
+            
             si = self.executor.connect_vcenter(settings=vcenter_settings)
+            if not si:
+                raise Exception(f"Failed to connect to vCenter {vcenter_settings['host']}")
+            
             content = si.RetrieveContent()
+            
+            # Validate session is active
+            if hasattr(self.executor, 'check_vcenter_connection') and not self.executor.check_vcenter_connection(content):
+                self.log("Session expired, reconnecting...", "WARN")
+                self.executor.vcenter_conn = None
+                si = self.executor.connect_vcenter(settings=vcenter_settings)
+                if not si:
+                    raise Exception("Failed to reconnect to vCenter")
+                content = si.RetrieveContent()
             
             # Find datastore
             self.log(f"Finding datastore: {datastore_name}")
