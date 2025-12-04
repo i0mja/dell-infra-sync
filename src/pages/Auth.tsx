@@ -105,23 +105,58 @@ const Auth = () => {
     e.preventDefault();
     setLoading(true);
 
-    try {
-      // Step 1: Check rate limits first via edge function
-      const rateLimitResponse = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/idm-provision`,
+    const authenticateViaEdgeFunction = async () => {
+      const fallbackResponse = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/idm-authenticate`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ check_rate_limit: true, username }),
+          body: JSON.stringify({ username, password }),
         }
       );
 
-      // Step 2: Authenticate directly via Job Executor API (synchronous)
+      const fallbackResult = await fallbackResponse.json();
+
+      if (fallbackResponse.status === 429) {
+        setLockoutRemaining(fallbackResult.lockout_remaining_seconds);
+        toast({
+          title: "Account Locked",
+          description: fallbackResult.error || `Too many failed attempts. Please try again in ${Math.ceil(fallbackResult.lockout_remaining_seconds / 60)} minutes.`,
+          variant: "destructive",
+        });
+        return true;
+      }
+
+      if (fallbackResult.success) {
+        await supabase.auth.setSession({
+          access_token: fallbackResult.access_token,
+          refresh_token: fallbackResult.refresh_token,
+        });
+        toast({
+          title: "Welcome",
+          description: "Authenticated via FreeIPA",
+        });
+        navigate("/");
+        return true;
+      }
+
+      toast({
+        title: "Authentication Failed",
+        description: fallbackResult.error || 'Invalid username or password',
+        variant: "destructive",
+      });
+
+      return true;
+    };
+
+    try {
+      // Step 1: Authenticate directly via Job Executor API (synchronous)
       const jobExecutorUrl = localStorage.getItem('job_executor_url') || 'http://localhost:8081';
-      
+
       let authResult;
+      let authResponse: Response | null = null;
       try {
-        const authResponse = await fetch(`${jobExecutorUrl}/api/idm-authenticate`, {
+        authResponse = await fetch(`${jobExecutorUrl}/api/idm-authenticate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username, password }),
@@ -130,50 +165,19 @@ const Auth = () => {
       } catch (networkError) {
         // Job Executor not reachable - fallback to edge function (job-based)
         console.warn('Job Executor not reachable, falling back to edge function');
-        const fallbackResponse = await fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/idm-authenticate`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password }),
-          }
-        );
-        
-        const fallbackResult = await fallbackResponse.json();
-        
-        if (fallbackResponse.status === 429) {
-          setLockoutRemaining(fallbackResult.lockout_remaining_seconds);
-          toast({
-            title: "Account Locked",
-            description: fallbackResult.error || `Too many failed attempts. Please try again in ${Math.ceil(fallbackResult.lockout_remaining_seconds / 60)} minutes.`,
-            variant: "destructive",
-          });
-          setLoading(false);
-          return;
-        }
-        
-        if (fallbackResult.success) {
-          await supabase.auth.setSession({
-            access_token: fallbackResult.access_token,
-            refresh_token: fallbackResult.refresh_token,
-          });
-          toast({
-            title: "Welcome",
-            description: "Authenticated via FreeIPA",
-          });
-          navigate("/");
-        } else {
-          toast({
-            title: "Authentication Failed",
-            description: fallbackResult.error || 'Invalid username or password',
-            variant: "destructive",
-          });
-        }
+        await authenticateViaEdgeFunction();
         setLoading(false);
         return;
       }
 
-      // Step 3: If auth succeeded, provision user via edge function
+      if (!authResponse?.ok || !authResult?.success) {
+        // Attempt resilient fallback when Job Executor returns an auth failure
+        await authenticateViaEdgeFunction();
+        setLoading(false);
+        return;
+      }
+
+      // Step 2: If auth succeeded, provision user via edge function
       if (authResult.success) {
         const provisionResponse = await fetch(
           `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/idm-provision`,
@@ -193,7 +197,17 @@ const Auth = () => {
           }
         );
 
-        const provisionResult = await provisionResponse.json();
+        let provisionResult: any;
+        try {
+          provisionResult = await provisionResponse.json();
+        } catch (parseError) {
+          console.error('Failed to parse IDM provisioning response:', parseError);
+          provisionResult = { success: false, error: 'Unexpected provisioning response' };
+        }
+
+        if (!provisionResponse.ok) {
+          console.error('IDM provisioning failed:', provisionResult?.error || provisionResponse.statusText);
+        }
 
         if (provisionResult.success) {
           await supabase.auth.setSession({
