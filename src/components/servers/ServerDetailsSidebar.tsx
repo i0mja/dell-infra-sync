@@ -34,9 +34,7 @@ import type { Server } from "@/hooks/useServers";
 import { useServerDrives } from "@/hooks/useServerDrives";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { useState } from "react";
-import { launchConsole } from "@/lib/job-executor-api";
-import { logActivityDirect } from "@/hooks/useActivityLog";
+import { useConsoleLauncher } from "@/hooks/useConsoleLauncher";
 
 interface GroupData {
   name: string;
@@ -92,48 +90,14 @@ export function ServerDetailsSidebar({
   onAssignCredentials,
   onCreateJob,
 }: ServerDetailsSidebarProps) {
-  const [launchingConsole, setLaunchingConsole] = useState(false);
+  const { launching: launchingConsole, launchConsole } = useConsoleLauncher();
   
   // Fetch drives for selected server
   const { data: drives, isLoading: drivesLoading } = useServerDrives(selectedServer?.id || null);
 
   const handleLaunchConsole = async () => {
     if (!selectedServer) return;
-    
-    setLaunchingConsole(true);
-    try {
-      const result = await launchConsole(selectedServer.id);
-      
-      if (result.success && result.console_url) {
-        // Open console in new tab
-        window.open(result.console_url, '_blank');
-        
-        // Log activity
-        logActivityDirect('console_launch', 'server', selectedServer.hostname || selectedServer.ip_address, { requires_login: result.requires_login }, { targetId: selectedServer.id, success: true });
-        
-        if (result.requires_login) {
-          toast.success('Console opened (iDRAC8)', {
-            description: 'Please log in manually in the new tab'
-          });
-        } else {
-          toast.success('Console opened with SSO', {
-            description: 'Session authenticated automatically'
-          });
-        }
-      } else {
-        throw new Error(result.error || 'Failed to get console URL');
-      }
-    } catch (error) {
-      console.error('Error launching console:', error);
-      toast.error('Failed to launch console', {
-        description: error instanceof Error ? error.message : 'Unknown error'
-      });
-
-      // Log failed activity
-      logActivityDirect('console_launch', 'server', selectedServer.hostname || selectedServer.ip_address, {}, { targetId: selectedServer.id, success: false, error: error instanceof Error ? error.message : 'Unknown error' });
-    } finally {
-      setLaunchingConsole(false);
-    }
+    await launchConsole(selectedServer.id, selectedServer.hostname || selectedServer.ip_address);
   };
 
   // Server Details View
