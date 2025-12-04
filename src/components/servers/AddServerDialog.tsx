@@ -230,16 +230,6 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
           .insert([jobData]);
 
         if (jobError) throw jobError;
-
-        toast({
-          title: "Server Added Successfully",
-          description: "Initial sync job created - check Activity Monitor for progress",
-        });
-      } else {
-        toast({
-          title: "Server Added",
-          description: "Server has been added to inventory",
-        });
       }
 
       // Reset form
@@ -331,7 +321,6 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
             message: details?.message || 'Connection successful',
             details: details
           });
-          toast({ title: "✓ Connection successful", variant: "default" });
         } else if (updatedJob?.status === 'failed') {
           clearInterval(pollInterval);
           setTestingConnection(false);

@@ -43,10 +43,6 @@ export function PowerControlDialog({ open, onOpenChange, server }: PowerControlD
 
       if (jobError) throw jobError;
 
-      toast.success(`Power action "${action}" initiated`, {
-        description: `Job created for ${server.hostname || server.ip_address}`
-      });
-
       // Log activity
       logActivityDirect('power_action', 'server', server.hostname || server.ip_address, { action }, { targetId: server.id, success: true });
       

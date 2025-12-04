@@ -68,6 +68,7 @@ import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { useSavedViews } from "@/hooks/useSavedViews";
 import { usePagination } from "@/hooks/usePagination";
 import { TablePagination } from "@/components/ui/table-pagination";
+import { ServerOperationIndicator } from "./ServerOperationIndicator";
 
 interface GroupData {
   id: string;
@@ -141,6 +142,7 @@ export function ServersTable({
   onConsoleLaunch,
   loading,
   refreshing,
+  hasActiveHealthCheck,
   groupMemberships = [],
   vCenterHosts = [],
   renderExpandedRow,
@@ -288,7 +290,6 @@ export function ServersTable({
       selectedServers.size > 0 ? allServers.filter((s) => selectedServers.has(s.id)) : allServers;
 
     exportToCSV(serversToExport, columns, "servers");
-    toast({ title: "Export successful", description: `Exported ${serversToExport.length} servers` });
   };
 
   const handleSaveView = () => {
@@ -297,7 +298,6 @@ export function ServersTable({
       return;
     }
     saveView(viewName, {}, sortField || undefined, sortDirection, visibleColumns);
-    toast({ title: "View saved", description: `"${viewName}" saved successfully` });
     setSaveDialogOpen(false);
     setViewName("");
   };
@@ -305,7 +305,6 @@ export function ServersTable({
   const handleRefreshSelected = () => {
     const selected = allServers.filter((s) => selectedServers.has(s.id));
     selected.forEach((server) => onServerRefresh(server));
-    toast({ title: "Refreshing servers", description: `Started refresh for ${selected.length} servers` });
   };
 
   const copyToClipboard = async (value: string | null | undefined, label: string) => {
@@ -316,7 +315,6 @@ export function ServersTable({
 
     try {
       await navigator.clipboard.writeText(value);
-      toast({ title: `${label} copied`, description: value });
     } catch (error: any) {
       toast({ title: "Copy failed", description: error?.message, variant: "destructive" });
     }
@@ -348,10 +346,6 @@ export function ServersTable({
     ];
 
     exportToCSV(group.servers, columns, `servers-${group.name.toLowerCase().replace(/\s+/g, '-')}`);
-    toast({ 
-      title: "Export successful", 
-      description: `Exported ${group.servers.length} servers from "${group.name}"` 
-    });
   };
 
   const getStatusBadge = (server: Server) => {
@@ -669,7 +663,16 @@ export function ServersTable({
                           />
                         </TableCell>
                         {isColumnVisible("hostname") && (
-                          <TableCell className="font-medium py-2 px-3">{server.hostname || "—"}</TableCell>
+                          <TableCell className="font-medium py-2 px-3">
+                            <div className="flex items-center gap-2">
+                              <span>{server.hostname || "—"}</span>
+                              <ServerOperationIndicator 
+                                serverId={server.id}
+                                refreshing={refreshing === server.id}
+                                hasActiveHealthCheck={hasActiveHealthCheck(server.id)}
+                              />
+                            </div>
+                          </TableCell>
                         )}
                         {isColumnVisible("ip") && (
                           <TableCell className="font-mono text-sm py-2 px-3">{server.ip_address}</TableCell>
