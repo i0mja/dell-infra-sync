@@ -14,6 +14,7 @@ import { ExecutionHistoryTab } from "./tabs/ExecutionHistoryTab";
 import { EditTargetsDialog } from "./EditTargetsDialog";
 import { EditScheduleDialog } from "./EditScheduleDialog";
 import { EditConfigurationDialog } from "./EditConfigurationDialog";
+import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useState } from "react";
@@ -42,6 +43,20 @@ export function MaintenanceWindowDetailDialog({
   const [editTargetsOpen, setEditTargetsOpen] = useState(false);
   const [editScheduleOpen, setEditScheduleOpen] = useState(false);
   const [editConfigOpen, setEditConfigOpen] = useState(false);
+  const [selectedJob, setSelectedJob] = useState<any>(null);
+  const [jobDialogOpen, setJobDialogOpen] = useState(false);
+
+  const handleViewJob = async (jobId: string) => {
+    const { data } = await supabase
+      .from('jobs')
+      .select('*')
+      .eq('id', jobId)
+      .single();
+    if (data) {
+      setSelectedJob(data);
+      setJobDialogOpen(true);
+    }
+  };
 
   const handleRunNow = async () => {
     try {
@@ -380,7 +395,7 @@ export function MaintenanceWindowDetailDialog({
 
             <div className="flex-1 overflow-auto mt-4">
               <TabsContent value="overview" className="mt-0">
-                <OverviewTab window={window} onUpdate={onUpdate} />
+                <OverviewTab window={window} onUpdate={onUpdate} onViewJob={handleViewJob} />
               </TabsContent>
               <TabsContent value="schedule" className="mt-0">
                 <ScheduleTab window={window} onUpdate={onUpdate} onEdit={() => setEditScheduleOpen(true)} canEdit={canEdit} />
@@ -469,6 +484,15 @@ export function MaintenanceWindowDetailDialog({
         open={editConfigOpen}
         onOpenChange={setEditConfigOpen}
         window={window}
+      />
+      
+      <JobDetailDialog
+        job={selectedJob}
+        open={jobDialogOpen}
+        onOpenChange={setJobDialogOpen}
+        onViewWindow={() => {
+          setJobDialogOpen(false);
+        }}
       />
     </>
   );
