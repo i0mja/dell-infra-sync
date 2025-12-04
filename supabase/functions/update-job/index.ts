@@ -72,8 +72,9 @@ serve(async (req) => {
 
       console.log(`Job updated: ${jobId} - status: ${job.status}`);
 
-      // If job is cancelled or failed, cascade to child jobs
+      // If job is cancelled or failed, cascade to child jobs and cancel pending tasks
       if (job.status && ['cancelled', 'failed'].includes(job.status)) {
+        // Cancel child jobs
         const { error: childError } = await supabase
           .from('jobs')
           .update({
@@ -90,6 +91,23 @@ serve(async (req) => {
           console.error('Error cascading cancellation to child jobs:', childError);
         } else {
           console.log(`Cascaded ${job.status} status to child jobs of ${jobId}`);
+        }
+
+        // Cancel pending tasks for this job
+        const { error: taskError } = await supabase
+          .from('job_tasks')
+          .update({
+            status: 'cancelled',
+            completed_at: new Date().toISOString(),
+            log: job.status === 'failed' ? 'Cancelled - parent job failed' : 'Cancelled by user'
+          })
+          .eq('job_id', jobId)
+          .eq('status', 'pending');
+
+        if (taskError) {
+          console.error('Error cancelling pending tasks:', taskError);
+        } else {
+          console.log(`Cancelled pending tasks for job ${jobId}`);
         }
 
         // Also cascade status to workflow execution steps
