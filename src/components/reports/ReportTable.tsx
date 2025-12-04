@@ -128,7 +128,7 @@ export function ReportTable({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-auto rounded-md border">
+      <div className="flex-1 overflow-auto">
         <Table>
           <TableHeader className="sticky top-0 bg-muted/80 backdrop-blur-sm z-10">
             <TableRow>
