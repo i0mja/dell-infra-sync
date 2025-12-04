@@ -8,6 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { FileJson, Download, Loader2, Copy, Check } from "lucide-react";
 import { format } from "date-fns";
+import { logActivityDirect } from "@/hooks/useActivityLog";
 
 interface BackupPreviewDialogProps {
   open: boolean;
@@ -39,9 +40,15 @@ export function BackupPreviewDialog({ open, onOpenChange, backupId }: BackupPrev
 
       if (error) throw error;
       setBackup(data);
+
+      // Log activity
+      logActivityDirect('scp_preview', 'server', data?.backup_name || 'SCP Backup', { backupId }, { targetId: backupId || undefined, success: true });
     } catch (error: any) {
       console.error("Error fetching backup details:", error);
       toast.error("Failed to load backup details");
+
+      // Log failed activity
+      logActivityDirect('scp_preview', 'server', 'SCP Backup', { backupId }, { targetId: backupId || undefined, success: false, error: error.message });
     } finally {
       setLoading(false);
     }

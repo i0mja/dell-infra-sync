@@ -7,6 +7,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { logActivityDirect } from "@/hooks/useActivityLog";
 
 interface AssignCredentialsDialogProps {
   open: boolean;
@@ -124,6 +125,9 @@ export function AssignCredentialsDialog({ open, onOpenChange, server, onSuccess 
             description: `Successfully assigned credentials to ${server.hostname || server.ip_address}`,
           });
 
+          // Log activity
+          logActivityDirect('credential_test', 'server', server.hostname || server.ip_address, { responseTime: details?.response_time_ms }, { targetId: server.id, success: true, durationMs: details?.response_time_ms });
+
           setTimeout(() => {
             onSuccess?.();
             onOpenChange(false);
@@ -137,6 +141,9 @@ export function AssignCredentialsDialog({ open, onOpenChange, server, onSuccess 
             success: false,
             message: details?.message || "Authentication failed",
           });
+
+          // Log failed activity
+          logActivityDirect('credential_test', 'server', server.hostname || server.ip_address, {}, { targetId: server.id, success: false, error: details?.message || "Authentication failed" });
         }
       }, 2000);
 

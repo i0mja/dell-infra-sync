@@ -6,6 +6,7 @@ import { Power, Zap, Square, RefreshCw, AlertTriangle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { logActivityDirect } from "@/hooks/useActivityLog";
 
 interface PowerControlDialogProps {
   open: boolean;
@@ -45,6 +46,9 @@ export function PowerControlDialog({ open, onOpenChange, server }: PowerControlD
       toast.success(`Power action "${action}" initiated`, {
         description: `Job created for ${server.hostname || server.ip_address}`
       });
+
+      // Log activity
+      logActivityDirect('power_action', 'server', server.hostname || server.ip_address, { action }, { targetId: server.id, success: true });
       
       onOpenChange(false);
     } catch (error: any) {
@@ -52,6 +56,9 @@ export function PowerControlDialog({ open, onOpenChange, server }: PowerControlD
       toast.error('Failed to initiate power action', {
         description: error.message
       });
+
+      // Log failed activity
+      logActivityDirect('power_action', 'server', server.hostname || server.ip_address, { action }, { targetId: server.id, success: false, error: error.message });
     } finally {
       setIsSubmitting(false);
       setConfirmAction(null);

@@ -8,6 +8,7 @@ import { useServerActions } from "@/hooks/useServerActions";
 import { useAutoLinkVCenter } from "@/hooks/useAutoLinkVCenter";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { logActivityDirect } from "@/hooks/useActivityLog";
 import { ServerStatsBar } from "@/components/servers/ServerStatsBar";
 import { ServersTable } from "@/components/servers/ServersTable";
 import { ServerQuickView } from "@/components/servers/ServerQuickView";
@@ -219,6 +220,9 @@ export default function Servers() {
       if (result.success && result.console_url) {
         window.open(result.console_url, '_blank');
         
+        // Log activity
+        logActivityDirect('console_launch', 'server', server.hostname || server.ip_address, { requires_login: result.requires_login }, { targetId: server.id, success: true });
+        
         if (result.requires_login) {
           toast({
             title: "Console Opened",
@@ -239,6 +243,9 @@ export default function Servers() {
         description: error.message,
         variant: "destructive",
       });
+
+      // Log failed activity
+      logActivityDirect('console_launch', 'server', server.hostname || server.ip_address, {}, { targetId: server.id, success: false, error: error.message });
     } finally {
       setLaunchingConsole(false);
     }
@@ -397,6 +404,11 @@ export default function Servers() {
       toast({
         title: "Credential Test Started",
         description: `Testing credentials for ${serverIds.length} server(s)`,
+      });
+
+      // Log activity for each server
+      serverIds.forEach(serverId => {
+        logActivityDirect('credential_test', 'server', `Server ${serverId}`, { batch: true, total: serverIds.length }, { targetId: serverId, success: true });
       });
     } catch (error: any) {
       toast({
