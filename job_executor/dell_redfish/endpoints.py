@@ -14,6 +14,7 @@ CANONICAL_REDFISH_ENDPOINTS = {
     "/redfish/v1/Chassis/System.Embedded.1/Power",
     "/redfish/v1/Chassis/System.Embedded.1/Thermal",
     "/redfish/v1/Managers/iDRAC.Embedded.1",
+    "/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Manager.Reset",
     "/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ExportSystemConfiguration",
     "/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/EID_674_Manager.ImportSystemConfiguration",
     "/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DelliDRACCardService/Actions/DelliDRACCardService.GetKVMSession",
