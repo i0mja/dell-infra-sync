@@ -313,13 +313,34 @@ async function fetchClusterSafety(dateRange: { start: Date; end: Date }): Promis
 // ============= NEW UPDATE REPORTS =============
 
 const UPDATE_JOB_TYPES = [
+  // Firmware updates
   'firmware_update',
   'full_server_update',
   'firmware_inventory_scan',
+  // BIOS configuration
   'bios_config_write',
-  'scp_export',
-  'scp_import',
+  // Cluster-level updates
+  'rolling_cluster_update',
+  'prepare_host_for_update',
+  'verify_host_after_update',
+  // ESXi upgrades
+  'esxi_upgrade',
+  'esxi_then_firmware',
+  'firmware_then_esxi',
 ] as const;
+
+const JOB_TYPE_LABELS: Record<string, string> = {
+  firmware_update: 'Firmware Update',
+  full_server_update: 'Full Server Update',
+  firmware_inventory_scan: 'Firmware Scan',
+  bios_config_write: 'BIOS Configuration',
+  rolling_cluster_update: 'Rolling Cluster Update',
+  prepare_host_for_update: 'Host Preparation',
+  verify_host_after_update: 'Host Verification',
+  esxi_upgrade: 'ESXi Upgrade',
+  esxi_then_firmware: 'ESXi + Firmware',
+  firmware_then_esxi: 'Firmware + ESXi',
+};
 
 async function fetchUpdateHistory(dateRange: { start: Date; end: Date }): Promise<ReportData> {
   // Fetch jobs that are update-related
@@ -383,8 +404,9 @@ async function fetchUpdateHistory(dateRange: { start: Date; end: Date }): Promis
       return [{
         job_id: job.id,
         job_type: job.job_type,
+        job_type_label: JOB_TYPE_LABELS[job.job_type] || job.job_type,
         status: job.status,
-        server: (job.details as any)?.server_hostname || '-',
+        server: (job.details as any)?.server_hostname || (job.details as any)?.cluster_name || '-',
         server_ip: (job.details as any)?.server_ip || '-',
         started_at: job.started_at,
         completed_at: job.completed_at,
@@ -401,6 +423,7 @@ async function fetchUpdateHistory(dateRange: { start: Date; end: Date }): Promis
       return {
         job_id: job.id,
         job_type: job.job_type,
+        job_type_label: JOB_TYPE_LABELS[job.job_type] || job.job_type,
         status: task.status,
         server: server?.hostname || '-',
         server_ip: server?.ip_address || '-',
@@ -496,7 +519,8 @@ async function fetchUpdateFailures(dateRange: { start: Date; end: Date }): Promi
     return {
       job_id: job.id,
       job_type: job.job_type,
-      server: server?.hostname || details?.server_hostname || "-",
+      job_type_label: JOB_TYPE_LABELS[job.job_type] || job.job_type,
+      server: server?.hostname || details?.server_hostname || details?.cluster_name || "-",
       server_ip: server?.ip_address || details?.server_ip || "-",
       error: errorMsg.substring(0, 200),
       attempted_at: job.started_at || job.created_at,
