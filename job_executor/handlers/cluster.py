@@ -445,7 +445,9 @@ class ClusterHandler(BaseHandler):
                 if not maintenance_result['success']:
                     self._log_workflow_step(job['id'], 'prepare', 3, 'Enter Maintenance Mode', 'failed',
                                           server_id=server_id, host_id=vcenter_host_id,
-                                          step_error=maintenance_result.get('error'))
+                                          step_error=maintenance_result.get('error'),
+                                          step_details={'evacuation_blockers': maintenance_result.get('evacuation_blockers')})
+                    workflow_results['evacuation_blockers'] = maintenance_result.get('evacuation_blockers')
                     raise Exception(f"Failed to enter maintenance mode: {maintenance_result.get('error')}")
                 
                 self.log(f"  [OK] Maintenance mode active ({maintenance_result.get('vms_evacuated', 0)} VMs evacuated)")
@@ -880,6 +882,9 @@ class ClusterHandler(BaseHandler):
                             )
                             
                             if not maintenance_result.get('success'):
+                                # Store evacuation blockers if available (VMs that prevented maintenance mode)
+                                if maintenance_result.get('evacuation_blockers'):
+                                    host_result['evacuation_blockers'] = maintenance_result['evacuation_blockers']
                                 raise Exception(f"Failed to enter maintenance mode: {maintenance_result.get('error')}")
                             
                             vms_evacuated = maintenance_result.get('vms_evacuated', 0)

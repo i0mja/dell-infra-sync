@@ -321,8 +321,64 @@ export const WorkflowExecutionViewer = ({
           <Progress value={progress} className="h-2" />
         </div>
 
-        {/* Job-Level Error Alert - Show when job failed */}
-        {overallStatus === 'failed' && jobDetails?.error && (
+        {/* Host-Specific Errors from workflow_results - show these when available */}
+        {overallStatus === 'failed' && jobDetails?.workflow_results?.host_results?.some((h: any) => h.status === 'failed') && (
+          <>
+            <Separator />
+            <Card className="border-destructive/50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-destructive">Failed Hosts</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {jobDetails.workflow_results.host_results
+                  .filter((h: any) => h.status === 'failed')
+                  .map((host: any, idx: number) => (
+                    <div key={idx} className="p-3 rounded bg-destructive/10 border border-destructive/20 space-y-2">
+                      <div className="font-medium text-sm">{host.host_name}</div>
+                      {host.error && (
+                        <div className="text-xs font-mono text-destructive">
+                          {host.error}
+                        </div>
+                      )}
+                      {/* Show VMs that blocked evacuation */}
+                      {host.evacuation_blockers && (
+                        <div className="mt-2 pt-2 border-t border-destructive/20">
+                          <div className="text-xs font-medium text-destructive mb-1">
+                            VMs blocking evacuation ({host.evacuation_blockers.vms_remaining?.length || 0}):
+                          </div>
+                          <div className="space-y-1">
+                            {host.evacuation_blockers.vms_remaining?.slice(0, 10).map((vm: any, vmIdx: number) => (
+                              <div key={vmIdx} className="text-xs font-mono ml-2 flex items-center gap-2">
+                                <span className="text-destructive">•</span>
+                                <span>{typeof vm === 'string' ? vm : vm.name}</span>
+                                {typeof vm === 'object' && vm.reason && (
+                                  <span className="text-muted-foreground">({vm.reason})</span>
+                                )}
+                              </div>
+                            ))}
+                            {host.evacuation_blockers.vms_remaining?.length > 10 && (
+                              <div className="text-xs text-muted-foreground ml-2">
+                                ...and {host.evacuation_blockers.vms_remaining.length - 10} more
+                              </div>
+                            )}
+                          </div>
+                          {host.evacuation_blockers.reason && (
+                            <div className="text-xs text-muted-foreground mt-2">
+                              {host.evacuation_blockers.reason}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+              </CardContent>
+            </Card>
+          </>
+        )}
+
+        {/* Job-Level Error - only show if NO host-specific errors (avoid duplication) */}
+        {overallStatus === 'failed' && jobDetails?.error && 
+         !jobDetails?.workflow_results?.host_results?.some((h: any) => h.status === 'failed') && (
           <>
             <Separator />
             <Alert variant="destructive">
@@ -334,32 +390,6 @@ export const WorkflowExecutionViewer = ({
                 </div>
               </AlertDescription>
             </Alert>
-          </>
-        )}
-
-        {/* Host-Specific Errors from workflow_results */}
-        {overallStatus === 'failed' && jobDetails?.workflow_results?.host_results && (
-          <>
-            <Separator />
-            <Card className="border-destructive/50">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-destructive">Failed Hosts</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {jobDetails.workflow_results.host_results
-                  .filter((h: any) => h.status === 'failed')
-                  .map((host: any, idx: number) => (
-                    <div key={idx} className="p-2 rounded bg-destructive/10 border border-destructive/20">
-                      <div className="font-medium text-sm">{host.host_name}</div>
-                      {host.error && (
-                        <div className="text-xs font-mono mt-1 text-destructive">
-                          {host.error}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-              </CardContent>
-            </Card>
           </>
         )}
 

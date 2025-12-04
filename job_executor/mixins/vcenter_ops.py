@@ -1514,6 +1514,100 @@ class VCenterMixin:
             
             return {'synced': 0, 'auto_linked': 0, 'error': str(e)}
 
+    def _get_evacuation_blockers(self, host_obj, host_name: str) -> dict:
+        """
+        Get details about VMs blocking evacuation when maintenance mode times out.
+        
+        Returns:
+            {
+                'vms_remaining': [
+                    {'name': str, 'power_state': str, 'reason': str},
+                    ...
+                ],
+                'total_vms': int,
+                'reason': str
+            }
+        """
+        blockers = {
+            'vms_remaining': [],
+            'total_vms': 0,
+            'reason': None
+        }
+        
+        try:
+            # Get all powered-on VMs still on the host
+            powered_on_vms = []
+            for vm in host_obj.vm:
+                try:
+                    power_state = str(vm.runtime.powerState) if vm.runtime else 'unknown'
+                    if power_state == 'poweredOn':
+                        vm_info = {
+                            'name': vm.name,
+                            'power_state': power_state,
+                            'reason': None
+                        }
+                        
+                        # Try to determine why this VM couldn't migrate
+                        vm_name_lower = vm.name.lower()
+                        
+                        # Check for VCSA
+                        if any(p in vm_name_lower for p in ['vcsa', 'vcenter', 'vcs']):
+                            vm_info['reason'] = 'vCenter Server - cannot self-migrate'
+                        
+                        # Check for local storage
+                        elif hasattr(vm, 'config') and vm.config:
+                            for device in vm.config.hardware.device:
+                                if isinstance(device, vim.vm.device.VirtualDisk):
+                                    backing = device.backing
+                                    if hasattr(backing, 'fileName') and backing.fileName:
+                                        # Check if this is local storage
+                                        if '[datastore1]' in backing.fileName or '[Local]' in backing.fileName:
+                                            vm_info['reason'] = 'local storage'
+                                            break
+                        
+                        # Check for passthrough devices
+                        if not vm_info['reason'] and hasattr(vm, 'config') and vm.config:
+                            for device in vm.config.hardware.device:
+                                if isinstance(device, vim.vm.device.VirtualPCIPassthrough):
+                                    vm_info['reason'] = 'PCI passthrough device'
+                                    break
+                        
+                        # Check for affinity rules
+                        if not vm_info['reason'] and hasattr(vm, 'config') and vm.config:
+                            if hasattr(vm.config, 'cpuAffinity') and vm.config.cpuAffinity:
+                                if vm.config.cpuAffinity.affinitySet:
+                                    vm_info['reason'] = 'CPU affinity rules'
+                        
+                        # Default reason
+                        if not vm_info['reason']:
+                            vm_info['reason'] = 'DRS could not find suitable destination'
+                        
+                        powered_on_vms.append(vm_info)
+                except Exception as vm_err:
+                    # Still add the VM even if we can't get details
+                    powered_on_vms.append({
+                        'name': getattr(vm, 'name', 'unknown'),
+                        'power_state': 'unknown',
+                        'reason': 'could not analyze'
+                    })
+            
+            blockers['vms_remaining'] = powered_on_vms
+            blockers['total_vms'] = len(powered_on_vms)
+            
+            if powered_on_vms:
+                blockers['reason'] = f"DRS could not evacuate {len(powered_on_vms)} VM(s) within the timeout period"
+                self.log(f"  ⚠️ {len(powered_on_vms)} VMs still on host after timeout:", "WARN")
+                for vm in powered_on_vms[:5]:
+                    self.log(f"    - {vm['name']}: {vm['reason']}", "WARN")
+                if len(powered_on_vms) > 5:
+                    self.log(f"    ... and {len(powered_on_vms) - 5} more", "WARN")
+                    
+        except Exception as e:
+            self.log(f"  Failed to get evacuation blockers: {e}", "WARN")
+            blockers['reason'] = f"Could not determine blocking VMs: {e}"
+        
+        return blockers
+
     def enter_vcenter_maintenance_mode(self, host_id: str, timeout: int = 600) -> dict:
         """Put ESXi host into maintenance mode"""
         start_time = time.time()
@@ -1626,6 +1720,9 @@ class VCenterMixin:
             while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
                 time.sleep(2)
                 if time.time() - start_time > timeout:
+                    # Capture which VMs are still on the host (blocking evacuation)
+                    evacuation_blockers = self._get_evacuation_blockers(host_obj, host_name)
+                    
                     self.log_vcenter_activity(
                         operation="enter_maintenance_mode",
                         endpoint=host_name,
@@ -1633,7 +1730,11 @@ class VCenterMixin:
                         response_time_ms=int((time.time() - start_time) * 1000),
                         error=f'Maintenance mode timeout after {timeout}s'
                     )
-                    return {'success': False, 'error': f'Maintenance mode timeout after {timeout}s'}
+                    return {
+                        'success': False, 
+                        'error': f'Maintenance mode timeout after {timeout}s',
+                        'evacuation_blockers': evacuation_blockers
+                    }
 
             if task.info.state == vim.TaskInfo.State.error:
                 error_msg = str(task.info.error) if task.info.error else 'Unknown error'
