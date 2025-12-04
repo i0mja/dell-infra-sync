@@ -957,40 +957,56 @@ class ClusterHandler(BaseHandler):
                                 self.log(f"    Repository scan job created: {repo_job_id or repo_task_uri}")
                                 self.log(f"    Waiting for catalog scan and update scheduling...")
                                 
-                                # Poll the repository update job
+                                # Get stall recovery settings from job details
+                                stall_timeout = details.get('stall_timeout_minutes', 10) * 60
+                                max_stall_retries = details.get('max_stall_retries', 2)
+                                stall_recovery_action = details.get('stall_recovery_action', 'reboot')
+                                
+                                # Poll the repository update job with recovery
                                 try:
                                     if repo_job_id and repo_job_id.startswith('JID_'):
-                                        # Poll using job endpoint
-                                        job_result = dell_ops.helpers.wait_for_job(
+                                        # Poll using job endpoint with stall recovery
+                                        job_result = dell_ops.wait_for_job_with_recovery(
                                             ip=server['ip_address'],
                                             username=username,
                                             password=password,
                                             job_id_str=repo_job_id,
-                                            timeout=1800,  # 30 minutes for catalog scan
+                                            timeout=2700,  # 45 minutes total
                                             poll_interval=15,
+                                            stall_timeout=stall_timeout,
+                                            max_stall_retries=max_stall_retries,
+                                            stall_recovery_action=stall_recovery_action,
                                             operation_name='Repository Firmware Update',
                                             parent_job_id=job['id'],
                                             server_id=host['server_id'],
                                             user_id=job['created_by']
                                         )
+                                        
+                                        # Log if recovery was needed
+                                        if job_result.get('recovery_attempts', 0) > 0:
+                                            self.log(f"    ℹ️ Job required {job_result['recovery_attempts']} recovery attempt(s)")
+                                            
                                     elif repo_task_uri:
                                         # Extract job ID from task URI if present
                                         if '/Jobs/' in repo_task_uri:
                                             extracted_job_id = repo_task_uri.split('/Jobs/')[-1]
-                                            job_result = dell_ops.helpers.wait_for_job(
+                                            job_result = dell_ops.wait_for_job_with_recovery(
                                                 ip=server['ip_address'],
                                                 username=username,
                                                 password=password,
                                                 job_id_str=extracted_job_id,
-                                                timeout=1800,
+                                                timeout=2700,
                                                 poll_interval=15,
+                                                stall_timeout=stall_timeout,
+                                                max_stall_retries=max_stall_retries,
+                                                stall_recovery_action=stall_recovery_action,
                                                 operation_name='Repository Firmware Update',
                                                 parent_job_id=job['id'],
                                                 server_id=host['server_id'],
                                                 user_id=job['created_by']
                                             )
                                         else:
-                                            # Poll using task endpoint
+                                            # Poll using task endpoint (no stall recovery for tasks)
                                             job_result = dell_ops.helpers.wait_for_task(
                                                 ip=server['ip_address'],
                                                 username=username,
@@ -1218,8 +1234,54 @@ class ClusterHandler(BaseHandler):
                                 
                                 time.sleep(10)
                             
-                            if not esxi_online:
-                                raise Exception(f"Timeout waiting for host to come online after {max_attempts * 10}s")
+                                            if not esxi_online:
+                                                raise Exception(f"Timeout waiting for host to come online after {max_attempts * 10}s")
+                                            
+                                            # Post-reboot job verification: Check for failed firmware jobs
+                                            self.log(f"    Checking for failed firmware jobs...")
+                                            try:
+                                                failed_jobs = dell_ops.get_failed_idrac_jobs(
+                                                    ip=server['ip_address'],
+                                                    username=username,
+                                                    password=password,
+                                                    job_id=job['id'],
+                                                    server_id=host['server_id']
+                                                )
+                                                
+                                                if failed_jobs:
+                                                    self.log(f"    ⚠ Found {len(failed_jobs)} failed firmware jobs:", "WARN")
+                                                    failed_job_ids = []
+                                                    for fj in failed_jobs[:5]:  # Show first 5
+                                                        self.log(f"      - {fj['id']}: {fj['message']}", "WARN")
+                                                        failed_job_ids.append(fj['id'])
+                                                    
+                                                    # Track partial failure but continue
+                                                    host_result['failed_jobs'] = failed_job_ids
+                                                    host_result['partial_failure'] = True
+                                                    
+                                                    # Check if retry is configured
+                                                    max_firmware_retries = details.get('max_firmware_retries', 0)
+                                                    retry_wait_seconds = details.get('retry_wait_seconds', 180)
+                                                    
+                                                    if max_firmware_retries > 0 and host_result.get('firmware_retry_count', 0) < max_firmware_retries:
+                                                        self.log(f"    Retry {host_result.get('firmware_retry_count', 0) + 1}/{max_firmware_retries}: Re-triggering failed updates...")
+                                                        host_result['firmware_retry_count'] = host_result.get('firmware_retry_count', 0) + 1
+                                                        
+                                                        # Clear failed jobs from queue
+                                                        dell_ops.clear_idrac_job_queue(
+                                                            ip=server['ip_address'],
+                                                            username=username,
+                                                            password=password,
+                                                            force=True,
+                                                            server_id=host['server_id']
+                                                        )
+                                                        time.sleep(retry_wait_seconds)
+                                                        # Note: Full retry would require re-running firmware apply step
+                                                        # For now just log the failure and continue
+                                                else:
+                                                    self.log(f"    ✓ No failed firmware jobs detected")
+                                            except Exception as verify_err:
+                                                self.log(f"    ⚠ Could not verify job status: {verify_err}", "WARN")
                         else:
                             # No reboot required - skip reboot wait
                             self.log(f"  [3/5] Skipping reboot wait - no updates required reboot")

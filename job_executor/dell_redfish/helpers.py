@@ -119,6 +119,7 @@ class DellRedfishHelpers:
         job_id_str: str,
         timeout: int = 1800,
         poll_interval: int = 10,
+        stall_timeout: int = 600,
         operation_name: str = "Job",
         parent_job_id: str = None,
         server_id: str = None,
@@ -139,6 +140,8 @@ class DellRedfishHelpers:
             job_id_str: Dell job ID (e.g., JID_123456789)
             timeout: Maximum wait time in seconds
             poll_interval: Seconds between polls
+            stall_timeout: Maximum time job can stay in New/Scheduled state before 
+                          raising JOB_STALLED error (default 10 minutes)
             operation_name: Operation name for logging
             parent_job_id: Optional parent job ID for logging
             server_id: Optional server ID for logging
@@ -148,11 +151,12 @@ class DellRedfishHelpers:
             dict: Final job response
             
         Raises:
-            DellRedfishError: If job fails or times out
+            DellRedfishError: If job fails, times out, or stalls
         """
         job_uri = f"/redfish/v1/Managers/iDRAC.Embedded.1/Jobs/{job_id_str}"
         start_time = time.time()
         last_percent = -1
+        stall_start = None  # Track when job entered stalled state
         
         while (time.time() - start_time) < timeout:
             job_response = self.adapter.make_request(
@@ -188,6 +192,24 @@ class DellRedfishHelpers:
                     message=f"{operation_name} failed: {message}",
                     error_code=job_state
                 )
+            
+            # Detect stalled jobs (stuck in New/Scheduled at 0% progress)
+            if job_state in ('New', 'Scheduled', 'Starting') and percent_complete == 0:
+                if stall_start is None:
+                    stall_start = time.time()
+                    self.adapter.logger.info(
+                        f"{operation_name}: Job in '{job_state}' state, monitoring for stall..."
+                    )
+                elif (time.time() - stall_start) > stall_timeout:
+                    stall_duration = int(time.time() - stall_start)
+                    raise DellRedfishError(
+                        message=f"Job {job_id_str} stalled in '{job_state}' state for {stall_duration}s. "
+                                f"May need reboot to trigger execution.",
+                        error_code='JOB_STALLED'
+                    )
+            else:
+                # Job is progressing, reset stall timer
+                stall_start = None
             
             # Sleep before next poll
             time.sleep(poll_interval)

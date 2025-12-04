@@ -113,6 +113,14 @@ class DellErrorCodes:
         "retry": True,
         "wait_seconds": 30,
     }
+    
+    # Stalled job error
+    JOB_STALLED = {
+        "code": "JOB_STALLED",
+        "message": "Job stuck in New/Scheduled state. May need reboot to trigger execution.",
+        "retry": True,
+        "wait_seconds": 60,
+    }
 
 
 def map_dell_error(error_response: dict) -> dict:
@@ -180,6 +188,9 @@ def map_dell_error(error_response: dict) -> dict:
     
     if "not found" in error_message_lower or "404" in error_message_lower:
         return DellErrorCodes.RES001
+    
+    if "stall" in error_message_lower or "stuck" in error_message_lower:
+        return DellErrorCodes.JOB_STALLED
     
     if "timeout" in error_message_lower or "timed out" in error_message_lower:
         return DellErrorCodes.TIMEOUT
