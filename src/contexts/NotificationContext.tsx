@@ -7,6 +7,19 @@ import { useAuth } from '@/hooks/useAuth';
 type Job = Database['public']['Tables']['jobs']['Row'];
 type IdracCommand = Database['public']['Tables']['idrac_commands']['Row'];
 
+// Internal job types that should not appear in notifications
+const INTERNAL_JOB_TYPES = [
+  'idm_authenticate',
+  'idm_test_auth',
+  'idm_test_connection',
+  'idm_network_check',
+  'idm_test_ad_connection',
+  'idm_search_groups',
+  'idm_search_ad_groups',
+  'idm_search_ad_users',
+  'idm_sync_users',
+];
+
 export interface JobProgress {
   jobId: string;
   totalTasks: number;
@@ -109,13 +122,14 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     previousJobStatusesRef.current = previousJobStatuses;
   }, [previousJobStatuses]);
 
-  // Fetch active jobs
+  // Fetch active jobs (excluding internal job types)
   const fetchActiveJobs = useCallback(async () => {
     try {
       const { data, error } = await supabase
         .from('jobs')
         .select('*')
         .in('status', ['pending', 'running'])
+        .not('job_type', 'in', `(${INTERNAL_JOB_TYPES.join(',')})`)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -286,6 +300,11 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
           
           const newJob = payload.new as Job | null;
           const oldJob = payload.old as Job | null;
+          
+          // Skip notifications for internal job types
+          if (newJob && INTERNAL_JOB_TYPES.includes(newJob.job_type)) {
+            return;
+          }
           
           // Detect state transitions and show toasts
           if (payload.eventType === 'UPDATE' && oldJob && newJob) {
