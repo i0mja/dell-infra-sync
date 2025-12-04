@@ -18,7 +18,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useSearchParams } from "react-router-dom";
 import { NotificationCenter } from "@/components/notifications/NotificationCenter";
 import { getSettingsNavigation } from "@/config/settings-tabs";
-
+import { useJobExecutorInit } from "@/hooks/useJobExecutorInit";
 const Layout = () => {
   const { user, signOut, loading } = useAuth();
   const navigate = useNavigate();
@@ -26,6 +26,9 @@ const Layout = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchParams] = useSearchParams();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  
+  // Initialize Job Executor URL from database on app load
+  useJobExecutorInit();
 
   useEffect(() => {
     setSettingsOpen(location.pathname === '/settings');
