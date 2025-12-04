@@ -240,20 +240,22 @@ function getTableColumns(reportType: ReportType) {
 
     case "update_history":
       return [
-        { key: "server", label: "Server" },
-        { key: "server_ip", label: "IP Address" },
+        { key: "server", label: "Server/Host" },
         { key: "job_type_label", label: "Update Type" },
+        { key: "component", label: "Component" },
+        { key: "version_before", label: "Previous Version" },
+        { key: "version_after", label: "New Version" },
         { 
           key: "status", 
-          label: "Status",
+          label: "Result",
           format: (value: string) => (
             <Badge variant={value === "completed" ? "default" : value === "failed" ? "destructive" : "secondary"}>
-              {value}
+              {value === "completed" ? "Success" : value === "failed" ? "Failed" : value}
             </Badge>
           )
         },
+        { key: "initiated_by", label: "Initiated By" },
         { key: "started_at", label: "Started", format: (value: string) => value ? new Date(value).toLocaleString() : "-" },
-        { key: "completed_at", label: "Completed", format: (value: string) => value ? new Date(value).toLocaleString() : "-" },
         { 
           key: "duration_ms", 
           label: "Duration",

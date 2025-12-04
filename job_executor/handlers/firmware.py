@@ -99,8 +99,9 @@ class FirmwareHandler(BaseHandler):
                         log="✓ Connected to iDRAC\nChecking current firmware..."
                     )
                     
-                    # Step 2: Get current firmware inventory
+                    # Step 2: Get current firmware inventory and capture version before update
                     current_fw = self.executor.get_firmware_inventory(ip, session_token)
+                    version_before = self._find_component_version(current_fw, component)
                     
                     # Step 3: Put host in maintenance mode (if vCenter linked)
                     maintenance_mode_enabled = False
@@ -215,13 +216,39 @@ class FirmwareHandler(BaseHandler):
                     # Step 6-9: Reboot, wait, exit maintenance mode (if applicable)
                     # ... keep existing code ...
                     
+                    # Step 10: Get firmware version after update for audit trail
+                    version_after = None
+                    try:
+                        # Re-authenticate if session expired during reboot
+                        post_session = self.executor.create_idrac_session(ip, username, password)
+                        if post_session:
+                            post_fw = self.executor.get_firmware_inventory(ip, post_session)
+                            version_after = self._find_component_version(post_fw, component)
+                            self.executor.close_idrac_session(ip, post_session)
+                    except Exception as ver_err:
+                        self.log(f"  Warning: Could not capture post-update version: {ver_err}", "WARN")
+                    
+                    # Build completion log with version info for audit
+                    completion_log = f"✓ Firmware update successful"
+                    if version_before and version_after:
+                        completion_log = f"✓ {component}: {version_before} → {version_after}"
+                    elif version_after:
+                        completion_log = f"✓ {component} updated to {version_after}"
+                    
                     self.update_task_status(
                         task['id'], 'completed',
-                        log=f"✓ Firmware update successful",
+                        log=completion_log,
                         completed_at=datetime.now().isoformat()
                     )
                     
-                    self.log(f"  ✓ Firmware update completed successfully")
+                    # Store version info in job details for reporting
+                    self._update_job_version_details(job['id'], {
+                        'version_before': version_before,
+                        'version_after': version_after,
+                        'component': component
+                    })
+                    
+                    self.log(f"  ✓ Firmware update completed: {version_before or '?'} → {version_after or '?'}")
                     
                 except Exception as e:
                     self.log(f"  ✗ Failed: {e}", "ERROR")
@@ -348,3 +375,70 @@ class FirmwareHandler(BaseHandler):
                 completed_at=datetime.now().isoformat(),
                 details={"error": str(e)}
             )
+    
+    def _find_component_version(self, firmware_inventory: list, component: str) -> str:
+        """Find the version of a specific component in firmware inventory"""
+        if not firmware_inventory or not component:
+            return None
+        
+        component_lower = component.lower()
+        
+        for item in firmware_inventory:
+            name = (item.get('Name') or item.get('component_name') or '').lower()
+            comp_type = (item.get('component_type') or '').lower()
+            
+            # Match by component type or name
+            if component_lower in name or component_lower in comp_type:
+                return item.get('Version') or item.get('version')
+            
+            # Common mappings
+            if component_lower == 'bios' and 'bios' in name:
+                return item.get('Version') or item.get('version')
+            if component_lower == 'idrac' and ('idrac' in name or 'integrated dell remote access' in name):
+                return item.get('Version') or item.get('version')
+            if component_lower == 'raid' and ('raid' in name or 'perc' in name):
+                return item.get('Version') or item.get('version')
+        
+        return None
+    
+    def _update_job_version_details(self, job_id: str, version_info: dict):
+        """Update job details with version information for audit reporting"""
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        import requests
+        
+        try:
+            # First get current job details
+            url = f"{DSM_URL}/rest/v1/jobs"
+            headers = {
+                "apikey": SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal"
+            }
+            
+            response = requests.get(
+                url, 
+                params={'id': f'eq.{job_id}', 'select': 'details'},
+                headers=headers, 
+                verify=VERIFY_SSL
+            )
+            
+            current_details = {}
+            if response.status_code == 200:
+                data = response.json()
+                if data:
+                    current_details = data[0].get('details') or {}
+            
+            # Merge version info
+            current_details.update(version_info)
+            
+            # Update job
+            requests.patch(
+                url,
+                params={'id': f'eq.{job_id}'},
+                headers=headers,
+                json={'details': current_details},
+                verify=VERIFY_SSL
+            )
+        except Exception as e:
+            self.log(f"Warning: Could not update job version details: {e}", "WARN")
