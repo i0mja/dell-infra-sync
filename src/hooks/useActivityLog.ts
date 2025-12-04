@@ -65,7 +65,13 @@ export async function logActivityDirect(
 ) {
   try {
     const { data: { user } } = await supabase.auth.getUser();
-    
+
+    // Skip logging when there is no authenticated session to avoid RLS errors
+    if (!user?.id) {
+      console.warn('Skipping activity log: no authenticated user session');
+      return;
+    }
+
     const { error } = await supabase.from('user_activity').insert({
       activity_type: activityType,
       target_type: targetType,
