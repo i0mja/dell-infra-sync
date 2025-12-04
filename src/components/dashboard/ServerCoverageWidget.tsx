@@ -37,7 +37,7 @@ export const ServerCoverageWidget = () => {
       const { data: backupData } = await client
         .from('scp_backups')
         .select('server_id')
-        .eq('status', 'completed');
+        .not('exported_at', 'is', null);
       
       const serversWithBackup = new Set((backupData || []).map((b: any) => b.server_id).filter(Boolean)).size;
       
