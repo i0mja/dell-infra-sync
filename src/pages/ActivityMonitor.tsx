@@ -16,7 +16,7 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useActiveJobs } from "@/hooks/useActiveJobs";
-import { useJobsWithProgress } from "@/hooks/useJobsWithProgress";
+// useJobsWithProgress is used by other components for active job progress tracking
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { useAuth } from "@/hooks/useAuth";
@@ -112,14 +112,18 @@ export default function ActivityMonitor() {
   // Fetch active jobs for live view with real-time updates
   const { activeJobs, refetch: refetchActiveJobs } = useActiveJobs();
 
-  // Fetch jobs with progress
-  const { data: jobsWithProgress, refetch: refetchJobs } = useJobsWithProgress();
-
-  useEffect(() => {
-    if (jobsWithProgress) {
-      setJobs(jobsWithProgress as Job[]);
-    }
-  }, [jobsWithProgress]);
+  // Internal job types that should not appear in Activity Monitor
+  const INTERNAL_JOB_TYPES = [
+    'idm_authenticate',
+    'idm_test_auth',
+    'idm_test_connection',
+    'idm_network_check',
+    'idm_test_ad_connection',
+    'idm_search_groups',
+    'idm_search_ad_groups',
+    'idm_search_ad_users',
+    'idm_sync_users',
+  ];
 
   // Calculate time range
   const getTimeRangeDate = (filter: string) => {
@@ -134,6 +138,48 @@ export default function ActivityMonitor() {
       default: return new Date(now.getTime() - 24 * 60 * 60 * 1000);
     }
   };
+
+  // Fetch jobs with all filters applied at database level
+  const { data: jobsData, refetch: refetchJobs } = useQuery({
+    queryKey: ['activity-jobs', jobsStatusFilter, jobsTypeFilter, jobsTimeRange],
+    queryFn: async () => {
+      let query = supabase
+        .from('jobs')
+        .select('*')
+        .is('parent_job_id', null)
+        .not('job_type', 'in', `(${INTERNAL_JOB_TYPES.join(',')})`)
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      // Apply status filter
+      if (jobsStatusFilter !== 'all') {
+        query = query.eq('status', jobsStatusFilter as 'pending' | 'running' | 'completed' | 'failed' | 'cancelled');
+      }
+
+      // Apply job type filter
+      if (jobsTypeFilter !== 'all') {
+        query = query.eq('job_type', jobsTypeFilter as any);
+      }
+
+      // Apply time range filter
+      if (jobsTimeRange !== 'all') {
+        const cutoff = getTimeRangeDate(jobsTimeRange).toISOString();
+        query = query.gte('created_at', cutoff);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return data || [];
+    },
+    // Poll more frequently when viewing active jobs
+    refetchInterval: (jobsStatusFilter === 'running' || jobsStatusFilter === 'pending' || jobsStatusFilter === 'all') ? 5000 : false,
+  });
+
+  useEffect(() => {
+    if (jobsData) {
+      setJobs(jobsData as Job[]);
+    }
+  }, [jobsData]);
 
   // Fetch commands
   const { data: commandsData, refetch, isError, error } = useQuery({
@@ -516,10 +562,8 @@ export default function ActivityMonitor() {
     );
   });
 
-  // Filter jobs based on search and filters
+  // Filter jobs based on search only (status/type/time are handled by database query)
   const filteredJobs = jobs.filter(job => {
-    if (jobsStatusFilter !== "all" && job.status !== jobsStatusFilter) return false;
-    if (jobsTypeFilter !== "all" && job.job_type !== jobsTypeFilter) return false;
     if (jobsSearch) {
       const search = jobsSearch.toLowerCase();
       if (!job.job_type.toLowerCase().includes(search)) return false;
