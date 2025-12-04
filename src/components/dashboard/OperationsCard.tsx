@@ -76,7 +76,7 @@ export const OperationsCard = () => {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000);
         
-        const response = await fetch(`${settings.job_executor_url}/health`, {
+        const response = await fetch(`${settings.job_executor_url}/api/health`, {
           signal: controller.signal
         });
         clearTimeout(timeoutId);
