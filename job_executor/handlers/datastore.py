@@ -44,15 +44,23 @@ class DatastoreHandler(BaseHandler):
             )
             
             datastore = None
+            datastore_name_lower = datastore_name.lower()
+            available_datastores = []
+            
             for ds in container.view:
-                if ds.summary.name == datastore_name:
+                ds_name = ds.summary.name
+                available_datastores.append(ds_name)
+                # Case-insensitive match
+                if ds_name.lower() == datastore_name_lower:
                     datastore = ds
+                    self.log(f"Found datastore: {ds_name}")
                     break
             
             container.Destroy()
             
             if not datastore:
-                raise Exception(f"Datastore '{datastore_name}' not found")
+                self.log(f"Available datastores in vCenter: {available_datastores}", "DEBUG")
+                raise Exception(f"Datastore '{datastore_name}' not found. Available: {', '.join(available_datastores[:10])}")
             
             # Browse datastore using DatastoreBrowser
             self.log(f"Browsing datastore '{datastore_name}' for files matching {file_patterns}")
