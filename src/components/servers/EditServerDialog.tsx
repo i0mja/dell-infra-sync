@@ -83,10 +83,7 @@ export const EditServerDialog = ({ open, onOpenChange, server, onSuccess }: Edit
         },
       });
 
-      toast({
-        title: "Server updated",
-        description: "Server details have been updated successfully",
-      });
+      // Success - no toast needed
 
       onOpenChange(false);
       onSuccess();

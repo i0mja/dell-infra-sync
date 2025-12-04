@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useServers } from "@/hooks/useServers";
 import { useConsoleLauncher } from "@/hooks/useConsoleLauncher";
@@ -35,7 +35,6 @@ import type { Server } from "@/hooks/useServers";
 export default function Servers() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { toast } = useToast();
   const { user } = useAuth();
 
   // Filter state (managed by table)
@@ -126,18 +125,11 @@ export default function Servers() {
 
       if (error) throw error;
 
-      toast({
-        title: "Bulk Refresh Started",
-        description: `Refreshing information for ${serverIds.length} server(s). Check Jobs panel for progress.`,
-      });
-
       // Navigate to dashboard to view job progress
       navigate("/");
     } catch (error: any) {
-      toast({
-        title: "Failed to Start Bulk Refresh",
+      toast.error("Failed to Start Bulk Refresh", {
         description: error.message || "An error occurred",
-        variant: "destructive",
       });
     } finally {
       setBulkRefreshing(false);
@@ -257,16 +249,9 @@ export default function Servers() {
       });
       
       if (error) throw error;
-      
-      toast({
-        title: "Safety Check Started",
-        description: `Running pre-flight checks for cluster "${clusterName}"`,
-      });
     } catch (error: any) {
-      toast({
-        title: "Failed to Start Safety Check",
+      toast.error("Failed to Start Safety Check", {
         description: error.message,
-        variant: "destructive",
       });
     }
   };
@@ -284,16 +269,9 @@ export default function Servers() {
       });
       
       if (error) throw error;
-      
-      toast({
-        title: "Firmware Inventory Collection Started",
-        description: `Collecting firmware inventory for ${serverIds.length} server(s)`,
-      });
     } catch (error: any) {
-      toast({
-        title: "Failed to Start Firmware Inventory",
+      toast.error("Failed to Start Firmware Inventory", {
         description: error.message,
-        variant: "destructive",
       });
     }
   };
@@ -311,16 +289,9 @@ export default function Servers() {
       });
       
       if (error) throw error;
-      
-      toast({
-        title: "Bulk Refresh Started",
-        description: `Refreshing ${serverIds.length} server(s)`,
-      });
     } catch (error: any) {
-      toast({
-        title: "Failed to Start Refresh",
+      toast.error("Failed to Start Refresh", {
         description: error.message,
-        variant: "destructive",
       });
     }
   };
@@ -338,16 +309,9 @@ export default function Servers() {
       });
       
       if (error) throw error;
-      
-      toast({
-        title: "Health Check Started",
-        description: `Running health checks for ${serverIds.length} server(s)`,
-      });
     } catch (error: any) {
-      toast({
-        title: "Failed to Start Health Check",
+      toast.error("Failed to Start Health Check", {
         description: error.message,
-        variant: "destructive",
       });
     }
   };
@@ -365,21 +329,14 @@ export default function Servers() {
       });
       
       if (error) throw error;
-      
-      toast({
-        title: "Credential Test Started",
-        description: `Testing credentials for ${serverIds.length} server(s)`,
-      });
 
       // Log activity for each server
       serverIds.forEach(serverId => {
         logActivityDirect('credential_test', 'server', `Server ${serverId}`, { batch: true, total: serverIds.length }, { targetId: serverId, success: true });
       });
     } catch (error: any) {
-      toast({
-        title: "Failed to Start Credential Test",
+      toast.error("Failed to Start Credential Test", {
         description: error.message,
-        variant: "destructive",
       });
     }
   };

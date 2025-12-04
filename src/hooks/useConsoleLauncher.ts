@@ -1,11 +1,10 @@
 import { useState } from "react";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { launchConsole as launchConsoleApi } from "@/lib/job-executor-api";
 import { supabase } from "@/integrations/supabase/client";
 import { logActivityDirect } from "@/hooks/useActivityLog";
 
 export function useConsoleLauncher() {
-  const { toast } = useToast();
   const [launching, setLaunching] = useState(false);
 
   const launchConsole = async (
@@ -32,17 +31,6 @@ export function useConsoleLauncher() {
           { targetId: serverId, success: true, durationMs: Date.now() - startTime }
         );
         
-        if (result.requires_login) {
-          toast({
-            title: "Console Opened",
-            description: "Please log in manually in the new tab (iDRAC8)",
-          });
-        } else {
-          toast({
-            title: "Console Launched",
-            description: "iDRAC console opened with SSO",
-          });
-        }
         return { success: true };
       } else {
         throw new Error(result.error || "Failed to get console URL");
@@ -62,10 +50,8 @@ export function useConsoleLauncher() {
           { targetId: serverId, success: false, durationMs: Date.now() - startTime, error: error.message }
         );
         
-        toast({
-          title: "Console launch failed",
+        toast.error("Console launch failed", {
           description: error.message,
-          variant: "destructive",
         });
         setLaunching(false);
         return { success: false, error: error.message };
@@ -102,11 +88,6 @@ export function useConsoleLauncher() {
           .single();
 
         if (jobError) throw jobError;
-
-        toast({
-          title: "Launching console",
-          description: "Using job queue (may take a few seconds)...",
-        });
 
         // Poll for results
         let pollCount = 0;
@@ -145,17 +126,6 @@ export function useConsoleLauncher() {
                 { targetId: serverId, success: true, durationMs: Date.now() - startTime }
               );
               
-              if (details?.requires_login) {
-                toast({
-                  title: "Console Opened",
-                  description: "Please log in manually in the new tab (iDRAC8)",
-                });
-              } else {
-                toast({
-                  title: "Console Launched",
-                  description: "iDRAC console opened with SSO",
-                });
-              }
               setLaunching(false);
               resolve({ success: true });
             } else {
@@ -167,10 +137,8 @@ export function useConsoleLauncher() {
                 { method: 'job_queue' },
                 { targetId: serverId, success: false, durationMs: Date.now() - startTime, error: errorMsg }
               );
-              toast({
-                title: "Console launch failed",
+              toast.error("Console launch failed", {
                 description: errorMsg,
-                variant: "destructive",
               });
               setLaunching(false);
               resolve({ success: false, error: errorMsg });
@@ -188,19 +156,15 @@ export function useConsoleLauncher() {
               { targetId: serverId, success: false, durationMs: Date.now() - startTime, error: errorMsg }
             );
             
-            toast({
-              title: "Console launch failed",
+            toast.error("Console launch failed", {
               description: errorMsg,
-              variant: "destructive",
             });
             setLaunching(false);
             resolve({ success: false, error: errorMsg });
           } else if (pollCount >= maxPolls) {
             clearInterval(pollInterval);
-            toast({
-              title: "Console launch timeout",
+            toast.error("Console launch timeout", {
               description: "Job took too long to complete",
-              variant: "destructive",
             });
             setLaunching(false);
             resolve({ success: false, error: "Timeout" });
@@ -208,10 +172,8 @@ export function useConsoleLauncher() {
         }, 2000);
       } catch (error: any) {
         setLaunching(false);
-        toast({
-          title: "Console launch failed",
+        toast.error("Console launch failed", {
           description: error.message,
-          variant: "destructive",
         });
         resolve({ success: false, error: error.message });
       }

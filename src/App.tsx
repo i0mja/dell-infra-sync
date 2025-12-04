@@ -7,6 +7,7 @@ import { ThemeProvider } from "next-themes";
 import { AuthProvider } from "@/hooks/useAuth";
 import { NotificationProvider } from "@/contexts/NotificationContext";
 import { MinimizedJobsProvider } from "@/contexts/MinimizedJobsContext";
+import { ServerOperationsProvider } from "@/contexts/ServerOperationsContext";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { GlobalMinimizedJobs } from "@/components/jobs/GlobalMinimizedJobs";
 import Layout from "@/components/Layout";
@@ -33,20 +34,22 @@ const App = () => (
             <AuthProvider>
               <MinimizedJobsProvider>
                 <NotificationProvider>
-                  <GlobalMinimizedJobs />
-                  <Routes>
-                  <Route path="/auth" element={<Auth />} />
-                  <Route path="/" element={<Layout />}>
-                    <Route index element={<Dashboard />} />
-            <Route path="servers" element={<Servers />} />
-            <Route path="vcenter" element={<VCenter />} />
-            <Route path="maintenance-planner" element={<MaintenancePlanner />} />
-            <Route path="activity" element={<ActivityMonitor />} />
-            <Route path="reports" element={<Reports />} />
-            <Route path="settings" element={<Settings />} />
-                  </Route>
-                  <Route path="*" element={<NotFound />} />
-                  </Routes>
+                  <ServerOperationsProvider>
+                    <GlobalMinimizedJobs />
+                    <Routes>
+                    <Route path="/auth" element={<Auth />} />
+                    <Route path="/" element={<Layout />}>
+                      <Route index element={<Dashboard />} />
+              <Route path="servers" element={<Servers />} />
+              <Route path="vcenter" element={<VCenter />} />
+              <Route path="maintenance-planner" element={<MaintenancePlanner />} />
+              <Route path="activity" element={<ActivityMonitor />} />
+              <Route path="reports" element={<Reports />} />
+              <Route path="settings" element={<Settings />} />
+                    </Route>
+                    <Route path="*" element={<NotFound />} />
+                    </Routes>
+                  </ServerOperationsProvider>
                 </NotificationProvider>
               </MinimizedJobsProvider>
             </AuthProvider>

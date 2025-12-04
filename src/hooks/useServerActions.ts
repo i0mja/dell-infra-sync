@@ -1,14 +1,13 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import type { Server } from "./useServers";
 
 export function useServerActions() {
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
   const queryClient = useQueryClient();
-  const { toast } = useToast();
 
   const handleTestConnection = async (server: Server) => {
     setTesting(server.id);
@@ -27,11 +26,6 @@ export function useServerActions() {
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || "Failed to create job");
 
-      toast({
-        title: "Connection test started",
-        description: "Testing credentials and connectivity...",
-      });
-
       // Poll for completion
       const jobId = data.job?.id;
       const pollInterval = setInterval(async () => {
@@ -46,17 +40,10 @@ export function useServerActions() {
           setTesting(null);
           queryClient.invalidateQueries({ queryKey: ["servers"] });
 
-          if (job.status === "completed") {
-            toast({
-              title: "Connection test successful",
-              description: "Server is reachable with provided credentials",
-            });
-          } else {
+          if (job.status === "failed") {
             const details = job.details as any;
-            toast({
-              title: "Connection test failed",
+            toast.error("Connection test failed", {
               description: details?.error || "Unable to connect to server",
-              variant: "destructive",
             });
           }
         }
@@ -68,10 +55,8 @@ export function useServerActions() {
       }, 30000);
     } catch (error: any) {
       setTesting(null);
-      toast({
-        title: "Failed to start connection test",
+      toast.error("Failed to start connection test", {
         description: error.message,
-        variant: "destructive",
       });
     }
   };
@@ -93,11 +78,6 @@ export function useServerActions() {
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || "Failed to create job");
 
-      toast({
-        title: "Discovery started",
-        description: "Refreshing server information...",
-      });
-
       // Poll for completion
       const jobId = data.job?.id;
       const pollInterval = setInterval(async () => {
@@ -112,17 +92,10 @@ export function useServerActions() {
           setRefreshing(null);
           queryClient.invalidateQueries({ queryKey: ["servers"] });
 
-          if (job.status === "completed") {
-            toast({
-              title: "Discovery completed",
-              description: "Server information updated",
-            });
-          } else {
+          if (job.status === "failed") {
             const details = job.details as any;
-            toast({
-              title: "Discovery failed",
+            toast.error("Discovery failed", {
               description: details?.error || "Failed to refresh server info",
-              variant: "destructive",
             });
           }
         }
@@ -134,10 +107,8 @@ export function useServerActions() {
       }, 60000);
     } catch (error: any) {
       setRefreshing(null);
-      toast({
-        title: "Failed to start discovery",
+      toast.error("Failed to start discovery", {
         description: error.message,
-        variant: "destructive",
       });
     }
   };
@@ -170,17 +141,10 @@ export function useServerActions() {
 
       if (error) throw error;
 
-      toast({
-        title: "Server removed",
-        description: "Server has been removed from inventory",
-      });
-
       queryClient.invalidateQueries({ queryKey: ["servers"] });
     } catch (error: any) {
-      toast({
-        title: "Error removing server",
+      toast.error("Error removing server", {
         description: error.message,
-        variant: "destructive",
       });
     }
   };
