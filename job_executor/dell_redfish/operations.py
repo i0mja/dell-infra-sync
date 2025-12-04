@@ -1204,6 +1204,262 @@ class DellOperations:
         
         return {'status': 'success', 'reset_type': 'iDRAC GracefulRestart', 'response': response}
     
+    def get_failed_idrac_jobs(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        job_id: str = None,
+        server_id: str = None,
+        user_id: str = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Query iDRAC for jobs with Failed or CompletedWithErrors status.
+        
+        Useful for post-reboot verification to detect firmware updates that
+        failed silently or were interrupted by manual resets.
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            job_id: Optional job ID for logging
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            list: List of failed jobs with id, message, job_state
+        """
+        response = self.adapter.make_request(
+            method='GET',
+            ip=ip,
+            endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Jobs?$expand=*($levels=1)',
+            username=username,
+            password=password,
+            operation_name='Get Failed Jobs',
+            job_id=job_id,
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        failed_jobs = []
+        members = response.get('Members', [])
+        
+        for job in members:
+            job_state = job.get('JobState', '')
+            if job_state in ('Failed', 'CompletedWithErrors'):
+                failed_jobs.append({
+                    'id': job.get('Id', ''),
+                    'name': job.get('Name', ''),
+                    'message': job.get('Message', ''),
+                    'job_state': job_state,
+                    'percent_complete': job.get('PercentComplete', 0),
+                    'start_time': job.get('StartTime'),
+                    'end_time': job.get('EndTime'),
+                })
+        
+        return failed_jobs
+    
+    def wait_for_job_with_recovery(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        job_id_str: str,
+        timeout: int = 2700,
+        poll_interval: int = 10,
+        stall_timeout: int = 600,
+        max_stall_retries: int = 2,
+        stall_recovery_action: str = 'reboot',
+        operation_name: str = "Job",
+        parent_job_id: str = None,
+        server_id: str = None,
+        user_id: str = None,
+        wait_after_recovery: int = 180
+    ) -> Dict[str, Any]:
+        """
+        Poll a Dell Job with automatic recovery from stalled states.
+        
+        If job gets stuck in New/Scheduled state for too long, will:
+        1. Trigger a GracefulRestart (or iDRAC reset based on stall_recovery_action)
+        2. Wait for system to come back
+        3. Resume polling the job
+        4. Give up after max_stall_retries attempts
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            job_id_str: Dell job ID (e.g., JID_123456789)
+            timeout: Maximum total wait time in seconds (default 45 min)
+            poll_interval: Seconds between polls
+            stall_timeout: Max time in New/Scheduled state before recovery (default 10 min)
+            max_stall_retries: Number of recovery attempts before giving up (default 2)
+            stall_recovery_action: Recovery action - 'reboot', 'reset_idrac', or 'none'
+            operation_name: Operation name for logging
+            parent_job_id: Optional parent job ID for logging
+            server_id: Optional server ID for logging
+            user_id: Optional user ID for logging
+            wait_after_recovery: Seconds to wait after triggering recovery (default 3 min)
+            
+        Returns:
+            dict: Final job response with optional recovery_attempts field
+            
+        Raises:
+            DellRedfishError: If job fails, times out, or cannot be recovered
+        """
+        recovery_attempts = 0
+        total_start = time.time()
+        
+        for attempt in range(max_stall_retries + 1):
+            try:
+                # Calculate remaining time for this attempt
+                elapsed = time.time() - total_start
+                remaining_timeout = max(timeout - int(elapsed), 300)  # At least 5 min
+                
+                result = self.helpers.wait_for_job(
+                    ip=ip,
+                    username=username,
+                    password=password,
+                    job_id_str=job_id_str,
+                    timeout=remaining_timeout,
+                    poll_interval=poll_interval,
+                    stall_timeout=stall_timeout,
+                    operation_name=operation_name,
+                    parent_job_id=parent_job_id,
+                    server_id=server_id,
+                    user_id=user_id
+                )
+                
+                # Success - add recovery info and return
+                result['recovery_attempts'] = recovery_attempts
+                return result
+                
+            except DellRedfishError as e:
+                if e.error_code == 'JOB_STALLED' and attempt < max_stall_retries:
+                    recovery_attempts += 1
+                    self.adapter.logger.warning(
+                        f"Job {job_id_str} stalled - attempting recovery "
+                        f"({recovery_attempts}/{max_stall_retries}) via {stall_recovery_action}"
+                    )
+                    
+                    # Perform recovery action
+                    if stall_recovery_action == 'reboot':
+                        try:
+                            self.graceful_reboot(
+                                ip=ip,
+                                username=username,
+                                password=password,
+                                job_id=parent_job_id,
+                                server_id=server_id,
+                                user_id=user_id
+                            )
+                            self.adapter.logger.info(
+                                f"Triggered GracefulRestart - waiting {wait_after_recovery}s for system"
+                            )
+                        except Exception as reboot_err:
+                            self.adapter.logger.warning(f"Reboot failed: {reboot_err}, trying ForceRestart")
+                            try:
+                                self._reset_system(
+                                    ip=ip, username=username, password=password,
+                                    reset_type='ForceRestart',
+                                    job_id=parent_job_id, server_id=server_id, user_id=user_id
+                                )
+                            except:
+                                pass
+                                
+                    elif stall_recovery_action == 'reset_idrac':
+                        try:
+                            self.reset_idrac(
+                                ip=ip,
+                                username=username,
+                                password=password,
+                                job_id=parent_job_id,
+                                server_id=server_id,
+                                user_id=user_id
+                            )
+                            self.adapter.logger.info(
+                                f"Triggered iDRAC reset - waiting {wait_after_recovery}s"
+                            )
+                        except Exception as reset_err:
+                            self.adapter.logger.warning(f"iDRAC reset failed: {reset_err}")
+                    
+                    elif stall_recovery_action == 'none':
+                        self.adapter.logger.info("Stall recovery disabled, re-polling only")
+                    
+                    # Wait for system to recover
+                    time.sleep(wait_after_recovery)
+                    
+                    # Wait for iDRAC to be accessible again
+                    self._wait_for_idrac_accessible(
+                        ip=ip, username=username, password=password,
+                        timeout=300, server_id=server_id
+                    )
+                    
+                    continue
+                    
+                # Re-raise if not stall error or out of retries
+                raise
+        
+        # Should not reach here, but handle gracefully
+        raise DellRedfishError(
+            message=f"Job {job_id_str} failed after {max_stall_retries} recovery attempts",
+            error_code='MAX_RETRIES_EXCEEDED'
+        )
+    
+    def _wait_for_idrac_accessible(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        timeout: int = 300,
+        poll_interval: int = 10,
+        server_id: str = None
+    ) -> bool:
+        """
+        Wait for iDRAC to become accessible after reboot/reset.
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            timeout: Maximum wait time in seconds
+            poll_interval: Seconds between connection attempts
+            server_id: Optional server ID for logging
+            
+        Returns:
+            bool: True if iDRAC is accessible
+            
+        Raises:
+            DellRedfishError: If timeout waiting for iDRAC
+        """
+        start_time = time.time()
+        
+        while (time.time() - start_time) < timeout:
+            try:
+                # Try to get basic system info
+                self.adapter.make_request(
+                    method='GET',
+                    ip=ip,
+                    endpoint='/redfish/v1/Managers/iDRAC.Embedded.1',
+                    username=username,
+                    password=password,
+                    operation_name='iDRAC Connectivity Check',
+                    server_id=server_id
+                )
+                self.adapter.logger.info(f"iDRAC at {ip} is accessible")
+                return True
+            except Exception:
+                elapsed = int(time.time() - start_time)
+                if elapsed % 30 == 0:  # Log every 30 seconds
+                    self.adapter.logger.info(f"Waiting for iDRAC at {ip}... ({elapsed}s)")
+                time.sleep(poll_interval)
+        
+        raise DellRedfishError(
+            message=f"Timeout waiting for iDRAC at {ip} to become accessible after {timeout}s",
+            error_code='IDRAC_UNREACHABLE'
+        )
+    
     def _reset_system(
         self,
         ip: str,
