@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { useServers } from "@/hooks/useServers";
-import { launchConsole } from "@/lib/job-executor-api";
+import { useConsoleLauncher } from "@/hooks/useConsoleLauncher";
 import { useServerActions } from "@/hooks/useServerActions";
 import { useAutoLinkVCenter } from "@/hooks/useAutoLinkVCenter";
 import { supabase } from "@/integrations/supabase/client";
@@ -69,7 +69,7 @@ export default function Servers() {
   const [updateWizardOpen, setUpdateWizardOpen] = useState(false);
   const [bulkUpdateServerIds, setBulkUpdateServerIds] = useState<string[]>([]);
   const [preSelectedClusterForUpdate, setPreSelectedClusterForUpdate] = useState<string | undefined>();
-  const [launchingConsole, setLaunchingConsole] = useState(false);
+  const { launching: launchingConsole, launchConsole } = useConsoleLauncher();
 
   // Hooks
   const {
@@ -213,42 +213,7 @@ export default function Servers() {
   };
 
   const handleLaunchConsole = async (server: Server) => {
-    setLaunchingConsole(true);
-    try {
-      const result = await launchConsole(server.id);
-      
-      if (result.success && result.console_url) {
-        window.open(result.console_url, '_blank');
-        
-        // Log activity
-        logActivityDirect('console_launch', 'server', server.hostname || server.ip_address, { requires_login: result.requires_login }, { targetId: server.id, success: true });
-        
-        if (result.requires_login) {
-          toast({
-            title: "Console Opened",
-            description: "Please log in manually in the new tab (iDRAC8)"
-          });
-        } else {
-          toast({
-            title: "Console Launched",
-            description: "iDRAC console opened in new tab"
-          });
-        }
-      } else {
-        throw new Error(result.error || "Failed to get console URL");
-      }
-    } catch (error: any) {
-      toast({
-        title: "Failed to Launch Console",
-        description: error.message,
-        variant: "destructive",
-      });
-
-      // Log failed activity
-      logActivityDirect('console_launch', 'server', server.hostname || server.ip_address, {}, { targetId: server.id, success: false, error: error.message });
-    } finally {
-      setLaunchingConsole(false);
-    }
+    await launchConsole(server.id, server.hostname || server.ip_address);
   };
 
   // Handle cluster expansion request from wizard
