@@ -77,6 +77,7 @@ export default function ActivityMonitor() {
   const [activityTypeFilter, setActivityTypeFilter] = useState("all");
   const [activityTargetFilter, setActivityTargetFilter] = useState("all");
   const [activityStatusFilter, setActivityStatusFilter] = useState("all");
+  const [activityTimeRange, setActivityTimeRange] = useState("24h");
 
   // Connection state
   const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
@@ -244,7 +245,7 @@ export default function ActivityMonitor() {
 
   // Fetch user activities
   const { data: activitiesData, isLoading: activitiesLoading, refetch: refetchActivities } = useQuery({
-    queryKey: ['user-activities', activityTypeFilter, activityTargetFilter, activityStatusFilter],
+    queryKey: ['user-activities', activityTypeFilter, activityTargetFilter, activityStatusFilter, activityTimeRange],
     queryFn: async () => {
       let query = supabase
         .from('user_activity')
@@ -252,6 +253,9 @@ export default function ActivityMonitor() {
         .order('timestamp', { ascending: false })
         .limit(500);
 
+      if (activityTimeRange !== 'all') {
+        query = query.gte('timestamp', getTimeRangeDate(activityTimeRange).toISOString());
+      }
       if (activityTypeFilter !== 'all') {
         query = query.eq('activity_type', activityTypeFilter);
       }
@@ -487,12 +491,6 @@ export default function ActivityMonitor() {
     setExpandedJobId(null);
   };
 
-  const handleClearActivityFilters = () => {
-    setActivitySearch("");
-    setActivityTypeFilter("all");
-    setActivityTargetFilter("all");
-    setActivityStatusFilter("all");
-  };
 
   const handleExportJobsCSV = () => {
     const columns: ExportColumn<Job>[] = [
@@ -785,7 +783,8 @@ export default function ActivityMonitor() {
               onTargetTypeChange={setActivityTargetFilter}
               statusFilter={activityStatusFilter}
               onStatusChange={setActivityStatusFilter}
-              onClearFilters={handleClearActivityFilters}
+              timeRangeFilter={activityTimeRange}
+              onTimeRangeChange={setActivityTimeRange}
             />
           )}
 
