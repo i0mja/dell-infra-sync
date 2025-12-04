@@ -1,8 +1,16 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { launchConsole as launchConsoleApi } from "@/lib/job-executor-api";
+import { launchConsole as launchConsoleApi, getJobExecutorUrl } from "@/lib/job-executor-api";
 import { supabase } from "@/integrations/supabase/client";
 import { logActivityDirect } from "@/hooks/useActivityLog";
+
+// Check if we're in a mixed content scenario (HTTPS page trying HTTP API)
+const checkMixedContent = (): boolean => {
+  if (window.location.protocol !== 'https:') return false;
+  
+  const url = getJobExecutorUrl();
+  return url?.startsWith('http://') ?? false;
+};
 
 export function useConsoleLauncher() {
   const [launching, setLaunching] = useState(false);
@@ -13,6 +21,13 @@ export function useConsoleLauncher() {
   ) => {
     setLaunching(true);
     const startTime = Date.now();
+
+    // Skip instant API entirely if mixed content detected
+    const isMixedContent = checkMixedContent();
+    if (isMixedContent) {
+      console.log("[ConsoleLauncher] Mixed content detected (HTTPS→HTTP), using job queue directly");
+      return await launchViaJobQueue(serverId, serverName, startTime);
+    }
 
     try {
       // Try instant API first (fast response)

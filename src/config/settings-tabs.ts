@@ -160,6 +160,12 @@ export const settingsTabs: SettingsTab[] = [
     icon: Activity,
     subsections: [
       {
+        id: 'job-executor',
+        name: 'Job Executor',
+        description: 'Configure the Python backend service for server operations',
+        icon: Server,
+      },
+      {
         id: 'network',
         name: 'Network Connectivity',
         description: 'Test connectivity and configure network settings',
