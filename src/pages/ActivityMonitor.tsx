@@ -12,6 +12,8 @@ import { CommandDetailDialog } from "@/components/activity/CommandDetailDialog";
 import { JobsTable, Job } from "@/components/activity/JobsTable";
 import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
 import { StaleJobWarning } from "@/components/activity/StaleJobWarning";
+import { ActivityTable } from "@/components/activity/ActivityTable";
+import { ActivityFilterToolbar } from "@/components/activity/ActivityFilterToolbar";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMediaQuery } from "@/hooks/use-media-query";
@@ -20,7 +22,6 @@ import { useActiveJobs } from "@/hooks/useActiveJobs";
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { useAuth } from "@/hooks/useAuth";
-
 interface IdracCommand {
   id: string;
   timestamp: string;
@@ -70,6 +71,12 @@ export default function ActivityMonitor() {
   const [commandSource, setCommandSource] = useState<string>("all");
   const [commandTimeRange, setCommandTimeRange] = useState<string>("24h");
   const [commandSearchTerm, setCommandSearchTerm] = useState("");
+
+  // Activity filters
+  const [activitySearch, setActivitySearch] = useState("");
+  const [activityTypeFilter, setActivityTypeFilter] = useState("all");
+  const [activityTargetFilter, setActivityTargetFilter] = useState("all");
+  const [activityStatusFilter, setActivityStatusFilter] = useState("all");
 
   // Connection state
   const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
@@ -234,6 +241,45 @@ export default function ActivityMonitor() {
       setCommands(commandsData);
     }
   }, [commandsData]);
+
+  // Fetch user activities
+  const { data: activitiesData, isLoading: activitiesLoading, refetch: refetchActivities } = useQuery({
+    queryKey: ['user-activities', activityTypeFilter, activityTargetFilter, activityStatusFilter],
+    queryFn: async () => {
+      let query = supabase
+        .from('user_activity')
+        .select('*, profiles(email, full_name)')
+        .order('timestamp', { ascending: false })
+        .limit(500);
+
+      if (activityTypeFilter !== 'all') {
+        query = query.eq('activity_type', activityTypeFilter);
+      }
+      if (activityTargetFilter !== 'all') {
+        query = query.eq('target_type', activityTargetFilter);
+      }
+      if (activityStatusFilter === 'success') {
+        query = query.eq('success', true);
+      } else if (activityStatusFilter === 'failed') {
+        query = query.eq('success', false);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
+  const filteredActivities = useMemo(() => {
+    if (!activitiesData) return [];
+    if (!activitySearch) return activitiesData;
+    const search = activitySearch.toLowerCase();
+    return activitiesData.filter(a => 
+      a.activity_type.toLowerCase().includes(search) ||
+      a.target_name?.toLowerCase().includes(search) ||
+      a.target_type?.toLowerCase().includes(search)
+    );
+  }, [activitiesData, activitySearch]);
 
   useEffect(() => {
     if (isError) {
@@ -409,6 +455,7 @@ export default function ActivityMonitor() {
     refetch();
     refetchActiveJobs();
     refetchJobs();
+    refetchActivities();
   };
 
   const handleRowClick = (cmd: IdracCommand) => {
@@ -438,6 +485,13 @@ export default function ActivityMonitor() {
     setActiveTab(value);
     setSelectedCommand(null);
     setExpandedJobId(null);
+  };
+
+  const handleClearActivityFilters = () => {
+    setActivitySearch("");
+    setActivityTypeFilter("all");
+    setActivityTargetFilter("all");
+    setActivityStatusFilter("all");
   };
 
   const handleExportJobsCSV = () => {
@@ -645,6 +699,12 @@ export default function ActivityMonitor() {
                 >
                   API Calls
                 </TabsTrigger>
+                <TabsTrigger 
+                  value="activity"
+                  className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
+                >
+                  Activity
+                </TabsTrigger>
               </TabsList>
             
             {activeJobs.length > 0 && activeTab === "operations" && (
@@ -715,6 +775,19 @@ export default function ActivityMonitor() {
               }}
             />
           )}
+          {activeTab === "activity" && (
+            <ActivityFilterToolbar
+              searchQuery={activitySearch}
+              onSearchChange={setActivitySearch}
+              activityTypeFilter={activityTypeFilter}
+              onActivityTypeChange={setActivityTypeFilter}
+              targetTypeFilter={activityTargetFilter}
+              onTargetTypeChange={setActivityTargetFilter}
+              statusFilter={activityStatusFilter}
+              onStatusChange={setActivityStatusFilter}
+              onClearFilters={handleClearActivityFilters}
+            />
+          )}
 
           {/* Tab content */}
           <TabsContent value="operations" className="flex-1 mt-0 overflow-hidden">
@@ -752,6 +825,13 @@ export default function ActivityMonitor() {
               isLive={realtimeStatus === 'connected'}
               visibleColumns={commandsColumns}
               onToggleColumn={toggleCommandColumn}
+            />
+          </TabsContent>
+
+          <TabsContent value="activity" className="flex-1 mt-0 overflow-auto p-4">
+            <ActivityTable
+              activities={filteredActivities}
+              isLoading={activitiesLoading}
             />
           </TabsContent>
           </Tabs>

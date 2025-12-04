@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { browseDatastore as browseDatastoreApi } from "@/lib/job-executor-api";
 import { supabase } from "@/integrations/supabase/client";
+import { logActivityDirect } from "@/hooks/useActivityLog";
 
 export interface DatastoreFile {
   name: string;
@@ -25,6 +26,7 @@ export function useDatastoreBrowser() {
   ) => {
     setBrowsing(true);
     setFiles([]);
+    const startTime = Date.now();
 
     try {
       // Try instant API first (fast response)
@@ -40,6 +42,17 @@ export function useDatastoreBrowser() {
           is_directory: f.is_directory,
         }));
         setFiles(mappedFiles);
+        setBrowsing(false);
+        
+        // Log activity
+        await logActivityDirect(
+          'datastore_browse',
+          'datastore',
+          datastoreName,
+          { vcenter_id: vcenterId, folder_path: folderPath, files_found: mappedFiles.length },
+          { success: true, durationMs: Date.now() - startTime }
+        );
+        
         toast({
           title: "Datastore browsed",
           description: `Found ${mappedFiles.length} file(s)`,
@@ -51,8 +64,17 @@ export function useDatastoreBrowser() {
       // If instant API fails due to unreachable, fall back to job queue
       if (error.message?.includes("not running") || error.message?.includes("not reachable")) {
         console.log("[DatastoreBrowser] Instant API unreachable, falling back to job queue");
-        await browseViaJobQueue(vcenterId, datastoreName, folderPath, filePatterns);
+        await browseViaJobQueue(vcenterId, datastoreName, folderPath, filePatterns, startTime);
       } else {
+        // Log failed activity
+        await logActivityDirect(
+          'datastore_browse',
+          'datastore',
+          datastoreName,
+          { vcenter_id: vcenterId, folder_path: folderPath },
+          { success: false, durationMs: Date.now() - startTime, error: error.message }
+        );
+        
         toast({
           title: "Browse failed",
           description: error.message,
@@ -67,14 +89,15 @@ export function useDatastoreBrowser() {
     vcenterId: string,
     datastoreName: string,
     folderPath: string,
-    filePatterns: string[]
+    filePatterns: string[],
+    startTime: number
   ) => {
     try {
       // Get current user
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
-      // Create browse job
+      // Create browse job (this is a background job, still goes to jobs table)
       const { data: job, error: jobError } = await supabase
         .from("jobs")
         .insert({
@@ -117,6 +140,16 @@ export function useDatastoreBrowser() {
           const jobFiles = (details?.files || []) as DatastoreFile[];
           setFiles(jobFiles);
           setBrowsing(false);
+          
+          // Log activity for job queue method too
+          await logActivityDirect(
+            'datastore_browse',
+            'datastore',
+            datastoreName,
+            { vcenter_id: vcenterId, folder_path: folderPath, files_found: jobFiles.length, method: 'job_queue' },
+            { success: true, durationMs: Date.now() - startTime }
+          );
+          
           toast({
             title: "Datastore browsed",
             description: `Found ${jobFiles.length} file(s)`,
@@ -125,7 +158,17 @@ export function useDatastoreBrowser() {
           clearInterval(pollInterval);
           setBrowsing(false);
           const details = updatedJob.details as any;
-          throw new Error(details?.error || "Browse failed");
+          const errorMsg = details?.error || "Browse failed";
+          
+          await logActivityDirect(
+            'datastore_browse',
+            'datastore',
+            datastoreName,
+            { vcenter_id: vcenterId, folder_path: folderPath, method: 'job_queue' },
+            { success: false, durationMs: Date.now() - startTime, error: errorMsg }
+          );
+          
+          throw new Error(errorMsg);
         }
       }, 2000);
 
