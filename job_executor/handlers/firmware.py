@@ -167,6 +167,7 @@ class FirmwareHandler(BaseHandler):
                     # Step 5: Monitor update progress
                     progress = 0
                     start_time = time.time()
+                    last_queue_fetch = 0
                     
                     while progress < 100:
                         # Check for cancellation
@@ -193,6 +194,26 @@ class FirmwareHandler(BaseHandler):
                         
                         new_progress = task_status.get('PercentComplete', progress)
                         task_state = task_status.get('TaskState', 'Unknown')
+                        
+                        # Capture iDRAC job queue every 30 seconds for real-time UI display
+                        current_time = time.time()
+                        if current_time - last_queue_fetch >= 30:
+                            last_queue_fetch = current_time
+                            try:
+                                dell_ops = self.executor._get_dell_operations()
+                                idrac_queue = dell_ops.get_idrac_job_queue(
+                                    ip, username, password,
+                                    server_id=server['id'],
+                                    include_details=True
+                                )
+                                
+                                self.update_job_details_field(job['id'], {
+                                    'idrac_job_queue': idrac_queue.get('jobs', []),
+                                    'idrac_queue_updated_at': datetime.now().isoformat(),
+                                    'current_host_ip': ip
+                                })
+                            except Exception as queue_error:
+                                self.log(f"  Warning: Could not fetch iDRAC job queue: {queue_error}", "WARN")
                         
                         if new_progress > progress:
                             progress = new_progress

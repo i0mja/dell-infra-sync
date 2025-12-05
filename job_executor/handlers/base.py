@@ -183,3 +183,56 @@ class BaseHandler:
             True if job cancelled, False otherwise
         """
         return self.executor.is_job_cancelled(job_id)
+    
+    def update_job_details_field(self, job_id: str, updates: Dict) -> bool:
+        """
+        Update specific fields in job details without overwriting other fields.
+        Useful for adding real-time progress data like iDRAC job queue.
+        
+        Args:
+            job_id: Job UUID
+            updates: Dict of fields to merge into existing details
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        import requests
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        
+        headers = {
+            "apikey": SERVICE_ROLE_KEY,
+            "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            # Fetch current details
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/jobs",
+                params={'id': f"eq.{job_id}", 'select': 'details'},
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            current_data = response.json() if response.ok else []
+            current_details = current_data[0].get('details', {}) if current_data else {}
+            if current_details is None:
+                current_details = {}
+            
+            # Merge updates into existing details
+            merged = {**current_details, **updates}
+            
+            # Update job with merged details
+            patch_response = requests.patch(
+                f"{DSM_URL}/rest/v1/jobs",
+                params={'id': f"eq.{job_id}"},
+                json={'details': merged},
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            return patch_response.ok
+        except Exception as e:
+            self.log(f"Warning: Could not update job details: {e}", "WARN")
+            return False
