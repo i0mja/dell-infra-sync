@@ -807,7 +807,7 @@ class VCenterMixin:
             
             return {'synced': 0, 'error': str(e)}
 
-    def sync_vcenter_vms(self, content, source_vcenter_id: str, job_id: str = None, vcenter_name: str = None) -> Dict:
+    def sync_vcenter_vms(self, content, source_vcenter_id: str, job_id: str = None, vcenter_name: str = None, task_id: str = None) -> Dict:
         """Sync VM inventory from vCenter with batch processing and OS distribution tracking"""
         start_time = time.time()
         try:
@@ -828,32 +828,6 @@ class VCenterMixin:
             
             total_vms = len(container.view)
             self.log(f"Found {total_vms} VMs in vCenter")
-            
-            # Create job task for VM sync if job_id provided
-            task_id = None
-            if job_id:
-                task_response = requests.post(
-                    f"{DSM_URL}/rest/v1/job_tasks",
-                    headers={
-                        'apikey': SERVICE_ROLE_KEY,
-                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
-                        'Content-Type': 'application/json',
-                        'Prefer': 'return=representation'
-                    },
-                json={
-                    'job_id': job_id,
-                    'status': 'running',
-                    'started_at': utc_now_iso(),
-                    'progress': 0,
-                    'log': f'Starting VM sync ({total_vms} VMs)'
-                },
-                verify=VERIFY_SSL
-            )
-            if task_response.status_code in [200, 201]:
-                task_data = _safe_json_parse(task_response)
-                if task_data:
-                    task_id = task_data[0]['id']
-                    self.log(f"✓ Created task {task_id} for VM sync")
             
             # Pre-fetch all hosts for this vCenter to avoid N+1 queries
             self.log("Building host lookup cache...")
@@ -887,6 +861,16 @@ class VCenterMixin:
                 # Update progress more frequently (every 50 VMs)
                 if i % 50 == 0:
                     self.log(f"  Processing VM {i+1}/{total_vms}...")
+                    progress_pct = int((i / total_vms) * 100) if total_vms > 0 else 0
+                    
+                    # Update task progress
+                    if task_id:
+                        self.update_task_status(
+                            task_id,
+                            'running',
+                            progress=progress_pct,
+                            log=f'Syncing VMs ({i+1}/{total_vms})'
+                        )
                     
                     # Update job progress if job_id provided
                     if job_id:
@@ -895,7 +879,7 @@ class VCenterMixin:
                             'running',
                             details={
                                 "current_step": f"Syncing VMs ({i+1}/{total_vms})",
-                                "vms_processed": i + 1,  # Fixed: Use i+1 for accurate count
+                                "vms_processed": i + 1,
                                 "vms_total": total_vms,
                                 "synced": synced
                             }

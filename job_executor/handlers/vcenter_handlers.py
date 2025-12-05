@@ -202,7 +202,8 @@ class VCenterHandlers(BaseHandler):
             if not self.executor.check_vcenter_connection(content):
                 raise Exception("vCenter connection lost before VM sync")
             
-            vms_result = self.executor.sync_vcenter_vms(content, source_vcenter_id, job['id'], vcenter_name=vcenter_name)
+            vms_task_id = phase_tasks.get('vms')
+            vms_result = self.executor.sync_vcenter_vms(content, source_vcenter_id, job['id'], vcenter_name=vcenter_name, task_id=vms_task_id)
             
             # Check if VM sync was cancelled mid-way
             if vms_result.get('cancelled'):
