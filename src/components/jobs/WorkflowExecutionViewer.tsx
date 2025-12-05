@@ -316,9 +316,23 @@ export const WorkflowExecutionViewer = ({
     return 'pending';
   };
 
-  const formatDuration = (start: string | null, end: string | null) => {
+  // Helper to get effective step status - treats running/pending as cancelled if job is cancelled
+  const getEffectiveStepStatus = (stepStatus: string) => {
+    if (effectiveJobStatus === 'cancelled' && ['running', 'pending'].includes(stepStatus)) {
+      return 'cancelled';
+    }
+    return stepStatus;
+  };
+
+  const formatDuration = (start: string | null, end: string | null, stepStatus?: string) => {
     if (!start) return '-';
-    if (!end) return 'Running...';
+    // If step was running when job was cancelled, show "Cancelled" instead of "Running..."
+    if (!end) {
+      if (effectiveJobStatus === 'cancelled' && stepStatus === 'running') {
+        return 'Cancelled';
+      }
+      return 'Running...';
+    }
     const duration = new Date(end).getTime() - new Date(start).getTime();
     const seconds = Math.floor(duration / 1000);
     if (seconds < 60) return `${seconds}s`;
@@ -700,7 +714,7 @@ export const WorkflowExecutionViewer = ({
                   }`}>
                     {/* Status Icon */}
                     <div className="relative z-10 mt-0.5">
-                      {getStatusIcon(step.step_status)}
+                      {getStatusIcon(getEffectiveStepStatus(step.step_status))}
                     </div>
 
                     {/* Step Content */}
@@ -718,7 +732,7 @@ export const WorkflowExecutionViewer = ({
                             </div>
                             <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
                               <span>
-                                Duration: {formatDuration(step.step_started_at, step.step_completed_at)}
+                                Duration: {formatDuration(step.step_started_at, step.step_completed_at, step.step_status)}
                               </span>
                               {step.step_completed_at && (
                                 <span>
@@ -727,7 +741,7 @@ export const WorkflowExecutionViewer = ({
                               )}
                             </div>
                           </div>
-                          {getStatusBadge(step.step_status)}
+                          {getStatusBadge(getEffectiveStepStatus(step.step_status))}
                         </div>
                       </CollapsibleTrigger>
 
