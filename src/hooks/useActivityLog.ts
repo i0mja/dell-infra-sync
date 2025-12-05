@@ -12,7 +12,9 @@ export type ActivityType =
   | 'credential_test'
   | 'idm_login'
   | 'scp_preview'
-  | 'bios_fetch';
+  | 'bios_fetch'
+  | 'network_config_read'
+  | 'network_config_write';
 
 export type TargetType = 'server' | 'vcenter' | 'datastore' | 'idm' | 'cluster';
 

@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { logActivityDirect } from "@/hooks/useActivityLog";
 import type { Server } from "@/hooks/useServers";
 
 interface IdracNetworkDialogProps {
@@ -129,6 +130,10 @@ export function IdracNetworkDialog({
               ntp: details.ntp as NetworkConfig["ntp"],
             });
             toast.success("Network configuration loaded");
+            logActivityDirect('network_config_read', 'server', server.hostname || server.ip_address, {
+              server_id: server.id,
+              ip_address: server.ip_address
+            }, { targetId: server.id, success: true });
             break;
           } else if (jobData?.status === "failed") {
             throw new Error((jobData.details as Record<string, string>)?.error || "Failed to read network config");
@@ -192,6 +197,10 @@ export function IdracNetworkDialog({
 
         if (jobData?.status === "completed") {
           toast.success("Network settings applied successfully");
+          logActivityDirect('network_config_write', 'server', server.hostname || server.ip_address, {
+            server_id: server.id,
+            changes_applied: Object.keys(editedConfig)
+          }, { targetId: server.id, success: true });
           setEditedConfig({});
           setEditMode(false);
           // Refresh the config

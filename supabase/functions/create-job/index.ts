@@ -16,7 +16,8 @@ interface CreateJobRequest {
             'cluster_safety_check' | 'server_group_safety_check' | 'iso_upload' |
             'scan_local_isos' | 'register_iso_url' | 'browse_datastore' | 'catalog_sync' |
             'esxi_then_firmware' | 'esxi_upgrade' | 'firmware_then_esxi' | 'firmware_upload' |
-            'prepare_host_for_update' | 'rolling_cluster_update' | 'verify_host_after_update';
+            'prepare_host_for_update' | 'rolling_cluster_update' | 'verify_host_after_update' |
+            'idrac_network_read' | 'idrac_network_write';
   target_scope: any;
   details?: any;
   schedule_at?: string;
@@ -70,7 +71,9 @@ function validateJobRequest(request: CreateJobRequest): { valid: boolean; error?
     'firmware_upload',
     'prepare_host_for_update',
     'rolling_cluster_update',
-    'verify_host_after_update'
+    'verify_host_after_update',
+    'idrac_network_read',
+    'idrac_network_write'
   ];
   if (!request.job_type || !validTypes.includes(request.job_type)) {
     return { valid: false, error: 'Invalid job_type. Must be one of: ' + validTypes.join(', ') };
