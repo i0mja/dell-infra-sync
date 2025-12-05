@@ -25,6 +25,7 @@ class IdracThrottler:
     def __init__(self, verify_ssl: bool = False, max_concurrent: int = 4, 
                  request_delay_ms: int = 500, circuit_breaker_threshold: int = 3,
                  circuit_breaker_timeout: int = 1800):
+        self.max_concurrent = max_concurrent  # Store for external access
         self.sessions = {}  # Per-IP requests.Session
         self.locks = defaultdict(threading.Lock)  # Per-IP locks
         self.last_request_time = {}  # Per-IP last request timestamp
@@ -217,6 +218,7 @@ class IdracThrottler:
     
     def update_settings(self, max_concurrent: int, request_delay_ms: int):
         """Update throttler settings (from database)"""
+        self.max_concurrent = max_concurrent  # Store for external access
         self.request_delay_ms = request_delay_ms
         # Recreate semaphore with new limit
         self.global_semaphore = threading.Semaphore(max_concurrent)
