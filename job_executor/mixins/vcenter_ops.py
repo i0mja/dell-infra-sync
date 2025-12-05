@@ -2048,26 +2048,90 @@ class VCenterMixin:
             return {'success': False, 'error': str(e)}
     
     def wait_for_vcenter_host_connected(self, host_id: str, timeout: int = 600) -> bool:
-        """Wait for ESXi host to be in CONNECTED state"""
+        """Wait for ESXi host to be in CONNECTED state via live vCenter query"""
         start_time = time.time()
         
-        while time.time() - start_time < timeout:
-            try:
-                response = requests.get(
-                    f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{host_id}&select=*",
-                    headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
-                    verify=VERIFY_SSL
-                )
-                
-                hosts = _safe_json_parse(response)
-                if hosts and hosts[0].get('status') == 'connected':
-                    return True
-                
-                time.sleep(5)
-            except:
-                time.sleep(5)
-        
-        return False
+        try:
+            # Fetch host details from database to get vCenter connection info
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{host_id}&select=*",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL
+            )
+            hosts = _safe_json_parse(response)
+            if not hosts:
+                self.log(f"  Host {host_id} not found in database", "WARN")
+                return False
+            
+            host_data = hosts[0]
+            vcenter_moref = host_data.get('vcenter_id')  # VMware moId
+            host_name = host_data.get('name', host_id)
+            source_vcenter_id = host_data.get('source_vcenter_id')
+            
+            if not vcenter_moref:
+                self.log(f"  Host {host_name} has no vCenter moRef, falling back to database check", "WARN")
+                # Fallback to database polling if no moRef
+                while time.time() - start_time < timeout:
+                    resp = requests.get(
+                        f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{host_id}&select=status",
+                        headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                        verify=VERIFY_SSL
+                    )
+                    h = _safe_json_parse(resp)
+                    if h and h[0].get('status') == 'connected':
+                        return True
+                    time.sleep(5)
+                return False
+            
+            # Get vCenter connection
+            vcenter_settings = None
+            if source_vcenter_id:
+                vcenter_settings = self.get_vcenter_settings(source_vcenter_id)
+            
+            vc = self.ensure_vcenter_connection(settings=vcenter_settings)
+            if not vc:
+                self.log(f"  Could not connect to vCenter for live status check", "WARN")
+                return False
+            
+            # Find host object by moRef
+            content = vc.RetrieveContent()
+            container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.HostSystem], True
+            )
+            
+            host_obj = None
+            for h in container.view:
+                if str(h._moId) == vcenter_moref:
+                    host_obj = h
+                    break
+            container.Destroy()
+            
+            if not host_obj:
+                self.log(f"  Host {host_name} not found in vCenter (moRef: {vcenter_moref})", "WARN")
+                return False
+            
+            # Poll vCenter LIVE for connection state
+            self.log(f"  Waiting for host {host_name} to connect (live vCenter poll)...")
+            while time.time() - start_time < timeout:
+                try:
+                    connection_state = str(host_obj.runtime.connectionState)
+                    if connection_state == 'connected':
+                        elapsed = int(time.time() - start_time)
+                        self.log(f"  ✓ Host {host_name} connected after {elapsed}s")
+                        return True
+                    
+                    self.log(f"    Current state: {connection_state}, waiting...")
+                    time.sleep(5)
+                except Exception as poll_err:
+                    self.log(f"    Poll error: {poll_err}", "WARN")
+                    time.sleep(5)
+            
+            self.log(f"  Timeout waiting for host {host_name} to connect after {timeout}s", "WARN")
+            return False
+            
+        except Exception as e:
+            self.log(f"  Error checking host connection: {e}", "WARN")
+            return False
 
     def auto_link_vcenter(self, server_id: str, service_tag: str):
         """Attempt to auto-link server with vCenter host by serial number (bidirectional)"""
