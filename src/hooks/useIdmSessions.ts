@@ -136,6 +136,45 @@ export function useIdmSessions() {
     }
   };
 
+  const cleanupInactiveSessions = async () => {
+    try {
+      // Get session timeout from settings
+      const { data: settings } = await supabase
+        .from('idm_settings')
+        .select('session_timeout_minutes')
+        .single();
+
+      const timeoutMinutes = settings?.session_timeout_minutes || 480;
+      const threshold = new Date(Date.now() - timeoutMinutes * 60 * 1000).toISOString();
+
+      const { error } = await supabase
+        .from('idm_auth_sessions')
+        .update({
+          is_active: false,
+          invalidated_at: new Date().toISOString(),
+          invalidation_reason: 'Inactive - automatic cleanup',
+        })
+        .eq('is_active', true)
+        .lt('last_activity_at', threshold);
+
+      if (error) throw error;
+
+      toast({
+        title: 'Cleanup Complete',
+        description: `Inactive sessions (no activity in ${timeoutMinutes} min) have been removed`,
+      });
+
+      await loadSessions();
+    } catch (error: any) {
+      console.error('Failed to cleanup inactive sessions:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to cleanup sessions',
+        variant: 'destructive',
+      });
+    }
+  };
+
   useEffect(() => {
     loadSessions();
   }, []);
@@ -147,5 +186,6 @@ export function useIdmSessions() {
     invalidateSession,
     invalidateUserSessions,
     cleanupExpiredSessions,
+    cleanupInactiveSessions,
   };
 }
