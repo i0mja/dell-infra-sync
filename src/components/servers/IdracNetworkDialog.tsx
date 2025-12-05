@@ -37,7 +37,7 @@ import {
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { logActivityDirect } from "@/hooks/useActivityLog";
-import { readNetworkConfig } from "@/lib/job-executor-api";
+import { readNetworkConfig, writeNetworkConfig } from "@/lib/job-executor-api";
 import type { Server } from "@/hooks/useServers";
 
 interface IdracNetworkDialogProps {
@@ -206,6 +206,35 @@ export function IdracNetworkDialog({
 
     setSaving(true);
     try {
+      // Try instant API first (no job queue)
+      console.log(`[Network Config] Trying instant API for write on server ${server.id}`);
+      const result = await writeNetworkConfig(server.id, editedConfig);
+      
+      if (result.success) {
+        console.log(`[Network Config] Instant API write success`);
+        toast.success(result.message || "Network settings applied successfully");
+        logActivityDirect('network_config_write', 'server', server.hostname || server.ip_address, {
+          server_id: server.id,
+          changes_applied: result.applied_changes || Object.keys(editedConfig),
+          ip_changed: result.ip_changed,
+          new_ip: result.new_ip,
+          method: 'instant_api'
+        }, { targetId: server.id, success: true });
+        setEditedConfig({});
+        setEditMode(false);
+        // Refresh the config
+        await fetchNetworkConfig();
+        return;
+      }
+      
+      throw new Error(result.error || "Instant API write failed");
+    } catch (instantError) {
+      // Fall back to job-based approach if instant API fails
+      console.log(`[Network Config] Instant API write failed, falling back to job queue:`, instantError);
+    }
+
+    // Job-based fallback
+    try {
       const { data, error } = await supabase.functions.invoke("create-job", {
         body: {
           job_type: "idrac_network_write",
@@ -224,7 +253,7 @@ export function IdracNetworkDialog({
         throw new Error("Failed to get job ID from response");
       }
       
-      toast.info("Applying network changes...");
+      toast.info("Applying network changes via job queue...");
       const maxAttempts = 30;
       let attempts = 0;
 
@@ -242,7 +271,8 @@ export function IdracNetworkDialog({
           toast.success("Network settings applied successfully");
           logActivityDirect('network_config_write', 'server', server.hostname || server.ip_address, {
             server_id: server.id,
-            changes_applied: Object.keys(editedConfig)
+            changes_applied: Object.keys(editedConfig),
+            method: 'job_queue'
           }, { targetId: server.id, success: true });
           setEditedConfig({});
           setEditMode(false);
