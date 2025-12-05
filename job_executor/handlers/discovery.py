@@ -1,7 +1,7 @@
 """Discovery and testing handlers"""
 
 from typing import Dict, List
-from datetime import datetime
+from datetime import datetime, timezone
 import concurrent.futures
 import ipaddress
 import time

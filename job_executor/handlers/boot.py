@@ -1,7 +1,7 @@
 """Boot and BIOS configuration handlers"""
 
 from typing import Dict
-from datetime import datetime
+from datetime import datetime, timezone
 import requests
 from .base import BaseHandler
 

@@ -1,5 +1,12 @@
 import sys
+from datetime import datetime, timezone
 from typing import Any
+
+
+def utc_now_iso() -> str:
+    """Return current UTC time as ISO format string with timezone info."""
+    return datetime.now(timezone.utc).isoformat()
+
 
 UNICODE_FALLBACKS = {
     "\u2713": "[OK]",   # ✓

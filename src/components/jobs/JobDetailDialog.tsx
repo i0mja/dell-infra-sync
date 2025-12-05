@@ -325,6 +325,7 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
             workflowType={job.job_type}
             jobStatus={job.status}
             jobDetails={job.details}
+            hideHeader={true}
           />
         </DialogContent>
       ) : (

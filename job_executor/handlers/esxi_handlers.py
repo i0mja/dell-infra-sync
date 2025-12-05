@@ -1,7 +1,7 @@
 """ESXi upgrade handlers"""
 
 from typing import Dict
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from .base import BaseHandler
 
