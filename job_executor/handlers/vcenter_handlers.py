@@ -109,6 +109,38 @@ class VCenterHandlers(BaseHandler):
             # Get vCenter content for all syncs
             content = vc.RetrieveContent()
             
+            # Helper to check cancellation between phases
+            def check_cancelled():
+                if self.executor.check_job_cancelled(job['id']):
+                    self.log("Job cancelled by user - stopping sync")
+                    # Cancel remaining tasks
+                    for task_name, task_id in phase_tasks.items():
+                        try:
+                            requests.patch(
+                                f"{DSM_URL}/rest/v1/job_tasks?id=eq.{task_id}",
+                                headers={
+                                    'apikey': SERVICE_ROLE_KEY,
+                                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                    'Content-Type': 'application/json'
+                                },
+                                json={'status': 'cancelled', 'log': 'Cancelled by user'},
+                                verify=VERIFY_SSL
+                            )
+                        except:
+                            pass
+                    self.update_job_status(
+                        job['id'], 
+                        'cancelled',
+                        completed_at=datetime.now().isoformat(),
+                        details={'cancelled_by': 'user', 'vcenter_host': vcenter_host}
+                    )
+                    return True
+                return False
+            
+            # Check before each phase
+            if check_cancelled():
+                return
+            
             # Sync all vCenter entities with progress updates
             self.log("📊 Syncing clusters...")
             if 'clusters' in phase_tasks:
@@ -127,6 +159,10 @@ class VCenterHandlers(BaseHandler):
                     log=f'✓ Synced {clusters_result.get("synced", 0)} clusters',
                     progress=100
                 )
+            
+            # Check before datastores phase
+            if check_cancelled():
+                return
             
             # Sync datastores
             self.log("📦 Syncing datastores...")
@@ -153,6 +189,10 @@ class VCenterHandlers(BaseHandler):
                     progress=100
                 )
             
+            # Check before VMs phase
+            if check_cancelled():
+                return
+            
             # Sync VMs
             self.log("🖥️ Syncing VMs...")
             if 'vms' in phase_tasks:
@@ -162,6 +202,15 @@ class VCenterHandlers(BaseHandler):
                 raise Exception("vCenter connection lost before VM sync")
             
             vms_result = self.executor.sync_vcenter_vms(content, source_vcenter_id, job['id'], vcenter_name=vcenter_name)
+            
+            # Check if VM sync was cancelled mid-way
+            if vms_result.get('cancelled'):
+                self.log("VM sync was cancelled by user")
+                if 'vms' in phase_tasks:
+                    self.update_task_status(phase_tasks['vms'], 'cancelled', log='Cancelled by user', progress=0)
+                check_cancelled()  # This will handle the job status update
+                return
+            
             self.log(f"✓ VMs synced: {vms_result.get('synced', 0)}")
             
             if 'vms' in phase_tasks:
@@ -171,6 +220,10 @@ class VCenterHandlers(BaseHandler):
                     log=f'✓ Synced {vms_result.get("synced", 0)} VMs',
                     progress=100
                 )
+            
+            # Check before alarms phase
+            if check_cancelled():
+                return
             
             # Sync alarms
             self.log("🚨 Syncing alarms...")
@@ -196,6 +249,10 @@ class VCenterHandlers(BaseHandler):
                     log=f'✓ Synced {alarms_result.get("synced", 0)} alarms',
                     progress=100
                 )
+            
+            # Check before hosts phase
+            if check_cancelled():
+                return
             
             # Sync ESXi hosts
             self.log("🖥️ Syncing ESXi hosts...")
