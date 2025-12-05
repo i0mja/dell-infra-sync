@@ -694,6 +694,7 @@ class ClusterHandler(BaseHandler):
             'total_hosts': 0,
             'hosts_updated': 0,
             'hosts_failed': 0,
+            'hosts_skipped': 0,
             'host_results': [],
             'total_time_seconds': 0
         }
@@ -810,7 +811,7 @@ class ClusterHandler(BaseHandler):
             # Calculate expected total workflow steps for accurate UI progress
             # Base steps: pre-flight (0), SCP backups if enabled (1), sequential updates container (2)
             base_steps = 3 if backup_scp else 2
-            steps_per_host = 5  # maintenance, firmware, reboot, verify, exit_maintenance
+            steps_per_host = 6  # check_updates, maintenance, firmware, reboot, verify, exit_maintenance
             expected_total_steps = base_steps + (len(eligible_hosts) * steps_per_host)
             
             # Store progress metadata in job details for UI
@@ -972,7 +973,8 @@ class ClusterHandler(BaseHandler):
                     'server_id': host['server_id'],
                     'status': 'pending',
                     'steps': [],
-                    'backup_completed': backup_results.get(host['server_id'], {}).get('success', False)
+                    'backup_completed': backup_results.get(host['server_id'], {}).get('success', False),
+                    'no_updates_needed': False
                 }
                 
                 # Track current host for logging
@@ -1010,6 +1012,104 @@ class ClusterHandler(BaseHandler):
                         raise Exception("Failed to create iDRAC session")
                     
                     try:
+                        # Initialize Dell operations early for update check
+                        from job_executor.dell_redfish import DellOperations, DellRedfishAdapter
+                        adapter = DellRedfishAdapter(
+                            self.executor.throttler, 
+                            self.executor._get_dell_logger(), 
+                            self.executor._log_dell_redfish_command
+                        )
+                        dell_ops = DellOperations(adapter)
+                        
+                        firmware_source = details.get('firmware_source', 'manual_repository')
+                        
+                        # STEP 0: Check for available updates BEFORE entering maintenance mode
+                        if firmware_source == 'dell_online_catalog':
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=base_step,
+                                step_name=f"Check for updates: {host['name']}",
+                                status='running',
+                                server_id=host['server_id'],
+                                step_started_at=utc_now_iso()
+                            )
+                            
+                            self.log(f"  [0/6] Checking for available updates...")
+                            
+                            dell_catalog_url = details.get('dell_catalog_url', 'https://downloads.dell.com/catalog/Catalog.xml')
+                            
+                            try:
+                                check_result = dell_ops.check_available_catalog_updates(
+                                    ip=server['ip_address'],
+                                    username=username,
+                                    password=password,
+                                    catalog_url=dell_catalog_url,
+                                    server_id=host['server_id'],
+                                    job_id=job['id'],
+                                    user_id=job['created_by']
+                                )
+                                
+                                available_updates = check_result.get('available_updates', [])
+                                
+                                if not available_updates:
+                                    self.log(f"    ✓ Server is already up to date - no updates available")
+                                    self.log(f"    ℹ️ Skipping host (no maintenance mode needed)")
+                                    
+                                    self._log_workflow_step(
+                                        job['id'], 'rolling_cluster_update',
+                                        step_number=base_step,
+                                        step_name=f"Check for updates: {host['name']}",
+                                        status='completed',
+                                        server_id=host['server_id'],
+                                        step_details={'no_updates_needed': True, 'message': 'Server already up to date'},
+                                        step_completed_at=utc_now_iso()
+                                    )
+                                    
+                                    # Mark host as skipped and move to next
+                                    host_result['status'] = 'skipped'
+                                    host_result['no_updates_needed'] = True
+                                    host_result['message'] = 'Server already up to date'
+                                    host_result['steps'].append('check_updates_skipped')
+                                    workflow_results['host_results'].append(host_result)
+                                    workflow_results['hosts_skipped'] = workflow_results.get('hosts_skipped', 0) + 1
+                                    
+                                    # Cleanup session before skipping
+                                    self.executor.delete_idrac_session(
+                                        session, server['ip_address'], host['server_id'], job['id']
+                                    )
+                                    continue  # Move to next host
+                                
+                                self.log(f"    ✓ Found {len(available_updates)} update(s) available")
+                                host_result['available_updates'] = len(available_updates)
+                                
+                                self._log_workflow_step(
+                                    job['id'], 'rolling_cluster_update',
+                                    step_number=base_step,
+                                    step_name=f"Check for updates: {host['name']}",
+                                    status='completed',
+                                    server_id=host['server_id'],
+                                    step_details={'available_updates': len(available_updates), 'updates': available_updates[:5]},
+                                    step_completed_at=utc_now_iso()
+                                )
+                                host_result['steps'].append('check_updates')
+                                
+                            except Exception as check_error:
+                                self.log(f"    ⚠️ Could not pre-check updates: {check_error}", "WARN")
+                                self.log(f"    ℹ️ Continuing with update attempt...")
+                                # Continue with the update - the actual update will also check
+                                self._log_workflow_step(
+                                    job['id'], 'rolling_cluster_update',
+                                    step_number=base_step,
+                                    step_name=f"Check for updates: {host['name']}",
+                                    status='completed',
+                                    server_id=host['server_id'],
+                                    step_details={'warning': str(check_error), 'continuing': True},
+                                    step_completed_at=utc_now_iso()
+                                )
+                        else:
+                            # For non-catalog sources, skip the pre-check
+                            self.log(f"  [0/6] Update pre-check skipped (using {firmware_source})")
+                        
                         # STEP 1: Enter maintenance mode (if vCenter linked)
                         if vcenter_host_id:
                             self._log_workflow_step(
@@ -1022,7 +1122,7 @@ class ClusterHandler(BaseHandler):
                                 step_started_at=utc_now_iso()
                             )
                             
-                            self.log(f"  [1/5] Entering maintenance mode...")
+                            self.log(f"  [1/6] Entering maintenance mode...")
                             maintenance_timeout = details.get('maintenance_timeout', 600)
                             maintenance_result = self.executor.enter_vcenter_maintenance_mode(
                                 vcenter_host_id, 
@@ -1051,7 +1151,7 @@ class ClusterHandler(BaseHandler):
                             )
                             host_result['steps'].append('enter_maintenance')
                         else:
-                            self.log(f"  [1/5] Maintenance mode skipped (no vCenter link)")
+                            self.log(f"  [1/6] Maintenance mode skipped (no vCenter link)")
                         
                         # STEP 2: Apply firmware updates
                         self._log_workflow_step(
@@ -1063,16 +1163,7 @@ class ClusterHandler(BaseHandler):
                             step_started_at=utc_now_iso()
                         )
                         
-                        self.log(f"  [2/5] Applying firmware updates...")
-                        
-                        # Initialize Dell operations
-                        from job_executor.dell_redfish import DellOperations, DellRedfishAdapter
-                        adapter = DellRedfishAdapter(
-                            self.executor.throttler, 
-                            self.executor._get_dell_logger(), 
-                            self.executor._log_dell_redfish_command
-                        )
-                        dell_ops = DellOperations(adapter)
+                        self.log(f"  [2/6] Applying firmware updates...")
                         
                         # Clear stale iDRAC jobs before firmware update to prevent RED014/JCP042 errors
                         clear_stale_jobs = details.get('clear_stale_jobs_before_update', True)
@@ -1106,8 +1197,7 @@ class ClusterHandler(BaseHandler):
                         # Mark firmware as in progress (for cancellation safety)
                         cleanup_state['firmware_in_progress'] = True
                         
-                        # Apply firmware based on source
-                        firmware_source = details.get('firmware_source', 'manual_repository')
+                        # Apply firmware based on source (firmware_source already set in STEP 0)
                         reboot_required = False  # Track if reboot is actually needed
                         
                         if firmware_source == 'dell_online_catalog':
@@ -1401,7 +1491,7 @@ class ClusterHandler(BaseHandler):
                                 step_started_at=utc_now_iso()
                             )
                             
-                            self.log(f"  [3/5] Waiting for system reboot...")
+                            self.log(f"  [3/6] Waiting for system reboot...")
                             self.log(f"    Initial wait: 3 minutes for BIOS POST and reboot...")
                             time.sleep(180)  # Wait 3 minutes for reboot to start (BIOS POST can be slow)
                             
@@ -1535,7 +1625,7 @@ class ClusterHandler(BaseHandler):
                                 self.log(f"    ⚠ Error waiting for jobs: {wait_err}", "WARN")
                         else:
                             # No reboot required - skip reboot wait
-                            self.log(f"  [3/5] Skipping reboot wait - no updates required reboot")
+                            self.log(f"  [3/6] Skipping reboot wait - no updates required reboot")
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
                                 step_number=base_step + 3,
@@ -1569,7 +1659,7 @@ class ClusterHandler(BaseHandler):
                                 step_started_at=utc_now_iso()
                             )
                             
-                            self.log(f"  [4/5] Verifying firmware update...")
+                            self.log(f"  [4/6] Verifying firmware update...")
                             
                             # Create new session for verification
                             verify_session = self.executor.create_idrac_session(
@@ -1607,7 +1697,7 @@ class ClusterHandler(BaseHandler):
                             host_result['steps'].append('verify')
                         else:
                             # Skip verification for no-updates case
-                            self.log(f"  [4/5] Skipping verification - no updates were applied")
+                            self.log(f"  [4/6] Skipping verification - no updates were applied")
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
                                 step_number=base_step + 4,
@@ -1631,7 +1721,7 @@ class ClusterHandler(BaseHandler):
                                 step_started_at=utc_now_iso()
                             )
                             
-                            self.log(f"  [5/5] Waiting for vCenter to see host as connected...")
+                            self.log(f"  [5/6] Waiting for vCenter to see host as connected...")
                             vcenter_ready = self.executor.wait_for_vcenter_host_connected(
                                 vcenter_host_id, 
                                 timeout=300  # 5 minutes
@@ -1641,7 +1731,7 @@ class ClusterHandler(BaseHandler):
                             else:
                                 self.log(f"    ⚠ Warning: Host not showing connected in vCenter yet", "WARN")
                             
-                            self.log(f"  [5/5] Exiting maintenance mode...")
+                            self.log(f"  [5/6] Exiting maintenance mode...")
                             exit_result = self.executor.exit_vcenter_maintenance_mode(vcenter_host_id)
                             
                             if not exit_result.get('success'):
@@ -1665,7 +1755,7 @@ class ClusterHandler(BaseHandler):
                             )
                             host_result['steps'].append('exit_maintenance')
                         else:
-                            self.log(f"  [5/5] Exit maintenance skipped (no vCenter link)")
+                            self.log(f"  [5/6] Exit maintenance skipped (no vCenter link)")
                         
                         # Clear current server and firmware tracking
                         cleanup_state['current_server'] = None
