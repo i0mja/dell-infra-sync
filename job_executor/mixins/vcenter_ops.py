@@ -537,10 +537,44 @@ class VCenterMixin:
             self.log(f"Failed to fetch vCenter settings: {e}", "ERROR")
             return None
 
-    def connect_vcenter(self, settings=None):
-        """Connect to vCenter if not already connected"""
-        if self.vcenter_conn:
-            return self.vcenter_conn
+    def connect_vcenter(self, settings=None, force_reconnect=False):
+        """Connect to vCenter if not already connected, with session validation.
+        
+        Args:
+            settings: Optional vCenter connection settings dict
+            force_reconnect: If True, disconnect existing connection and reconnect
+        
+        Returns:
+            vCenter connection object or None if connection fails
+        """
+        # If we have a cached connection, validate it's still alive
+        if self.vcenter_conn and not force_reconnect:
+            try:
+                # Quick validation - check session is still authenticated
+                content = self.vcenter_conn.RetrieveContent()
+                session = content.sessionManager.currentSession
+                if session is not None:
+                    return self.vcenter_conn  # Session still valid
+                else:
+                    self.log("vCenter session expired (no active session), reconnecting...", "WARN")
+            except vim.fault.NotAuthenticated:
+                self.log("vCenter session not authenticated, reconnecting...", "WARN")
+            except Exception as e:
+                self.log(f"vCenter connection lost ({e}), reconnecting...", "WARN")
+            
+            # Clear stale connection
+            try:
+                Disconnect(self.vcenter_conn)
+            except:
+                pass
+            self.vcenter_conn = None
+        elif force_reconnect and self.vcenter_conn:
+            # Force disconnect existing connection
+            try:
+                Disconnect(self.vcenter_conn)
+            except:
+                pass
+            self.vcenter_conn = None
 
         # Use provided settings or fall back to environment variables
         host = settings.get('host') if settings else VCENTER_HOST
@@ -610,6 +644,36 @@ class VCenterMixin:
                 error=str(e)
             )
             return None
+
+    def ensure_vcenter_connection(self, settings=None):
+        """Ensure vCenter connection is valid, reconnecting if necessary.
+        
+        Use this before operations that may have waited a long time since
+        the last vCenter call (e.g., after firmware updates, reboots).
+        This is critical for long-running workflows to prevent 
+        vim.fault.NotAuthenticated errors.
+        
+        Args:
+            settings: Optional vCenter connection settings dict
+            
+        Returns:
+            vCenter connection object or None if connection fails
+        """
+        if not self.vcenter_conn:
+            return self.connect_vcenter(settings=settings)
+        
+        try:
+            content = self.vcenter_conn.RetrieveContent()
+            session = content.sessionManager.currentSession
+            if session:
+                return self.vcenter_conn
+        except vim.fault.NotAuthenticated:
+            self.log("vCenter session not authenticated, reconnecting...", "WARN")
+        except Exception as e:
+            self.log(f"vCenter connection check failed: {e}, reconnecting...", "WARN")
+        
+        # Session invalid - force reconnect
+        return self.connect_vcenter(settings=settings, force_reconnect=True)
 
     def check_vcenter_connection(self, content) -> bool:
         """Verify vCenter connection is still valid"""
@@ -1608,10 +1672,17 @@ class VCenterMixin:
         
         return blockers
 
-    def enter_vcenter_maintenance_mode(self, host_id: str, timeout: int = 600) -> dict:
-        """Put ESXi host into maintenance mode"""
+    def enter_vcenter_maintenance_mode(self, host_id: str, timeout: int = 600, _retry_count: int = 0) -> dict:
+        """Put ESXi host into maintenance mode.
+        
+        Args:
+            host_id: vCenter host ID from database
+            timeout: Timeout in seconds for maintenance mode entry
+            _retry_count: Internal retry counter for NotAuthenticated handling
+        """
         start_time = time.time()
         host_name = host_id
+        max_retries = 2
 
         try:
             # Fetch host details from database
@@ -1658,8 +1729,8 @@ class VCenterMixin:
                     )
                     return {'success': False, 'error': f'vCenter settings not found for ID {source_vcenter_id}'}
 
-            # Connect to vCenter
-            vc = self.connect_vcenter(settings=vcenter_settings)
+            # Connect to vCenter - use ensure_vcenter_connection for session validation
+            vc = self.ensure_vcenter_connection(settings=vcenter_settings)
             if not vc:
                 self.log_vcenter_activity(
                     operation="enter_maintenance_mode",
@@ -1776,6 +1847,21 @@ class VCenterMixin:
                 'time_taken_seconds': time_taken
             }
 
+        except vim.fault.NotAuthenticated as auth_err:
+            # Handle session expiry with automatic retry
+            if _retry_count < max_retries:
+                self.log(f"  vCenter session not authenticated, reconnecting (retry {_retry_count + 1}/{max_retries})...", "WARN")
+                self.vcenter_conn = None  # Force fresh connection
+                return self.enter_vcenter_maintenance_mode(host_id, timeout, _retry_count=_retry_count + 1)
+            else:
+                self.log_vcenter_activity(
+                    operation="enter_maintenance_mode",
+                    endpoint=host_name,
+                    success=False,
+                    response_time_ms=int((time.time() - start_time) * 1000),
+                    error=f'Session authentication failed after {max_retries} retries: {str(auth_err)}'
+                )
+                return {'success': False, 'error': f'Session authentication failed: {str(auth_err)}'}
         except Exception as e:
             self.log_vcenter_activity(
                 operation="enter_maintenance_mode",
@@ -1786,10 +1872,17 @@ class VCenterMixin:
             )
             return {'success': False, 'error': str(e)}
     
-    def exit_vcenter_maintenance_mode(self, host_id: str, timeout: int = 300) -> dict:
-        """Exit ESXi host from maintenance mode"""
+    def exit_vcenter_maintenance_mode(self, host_id: str, timeout: int = 300, _retry_count: int = 0) -> dict:
+        """Exit ESXi host from maintenance mode.
+        
+        Args:
+            host_id: vCenter host ID from database
+            timeout: Timeout in seconds for maintenance mode exit
+            _retry_count: Internal retry counter for NotAuthenticated handling
+        """
         start_time = time.time()
         host_name = host_id
+        max_retries = 2
 
         try:
             # Fetch host details
@@ -1827,8 +1920,8 @@ class VCenterMixin:
                     )
                     return {'success': False, 'error': f'vCenter settings not found for ID {source_vcenter_id}'}
 
-            # Connect to vCenter
-            vc = self.connect_vcenter(settings=vcenter_settings)
+            # Connect to vCenter - use ensure_vcenter_connection for session validation
+            vc = self.ensure_vcenter_connection(settings=vcenter_settings)
             if not vc:
                 self.log_vcenter_activity(
                     operation="exit_maintenance_mode",
@@ -1929,6 +2022,21 @@ class VCenterMixin:
                 'time_taken_seconds': time_taken
             }
 
+        except vim.fault.NotAuthenticated as auth_err:
+            # Handle session expiry with automatic retry
+            if _retry_count < max_retries:
+                self.log(f"  vCenter session not authenticated, reconnecting (retry {_retry_count + 1}/{max_retries})...", "WARN")
+                self.vcenter_conn = None  # Force fresh connection
+                return self.exit_vcenter_maintenance_mode(host_id, timeout, _retry_count=_retry_count + 1)
+            else:
+                self.log_vcenter_activity(
+                    operation="exit_maintenance_mode",
+                    endpoint=host_name,
+                    success=False,
+                    response_time_ms=int((time.time() - start_time) * 1000),
+                    error=f'Session authentication failed after {max_retries} retries: {str(auth_err)}'
+                )
+                return {'success': False, 'error': f'Session authentication failed: {str(auth_err)}'}
         except Exception as e:
             self.log_vcenter_activity(
                 operation="exit_maintenance_mode",

@@ -1452,6 +1452,20 @@ class ClusterHandler(BaseHandler):
                         host_result['status'] = 'completed'
                         self.log(f"  ✓ Host {host['name']} update completed successfully")
                         
+                        # Refresh vCenter session before processing next host
+                        # This prevents vim.fault.NotAuthenticated errors during long rolling updates
+                        if host_index < len(eligible_hosts):
+                            self.log(f"  Refreshing vCenter session for next host...")
+                            try:
+                                vcenter_id = details.get('source_vcenter_id') or details.get('vcenter_id')
+                                if vcenter_id:
+                                    vcenter_settings = self.executor.get_vcenter_settings(vcenter_id)
+                                    self.executor.ensure_vcenter_connection(settings=vcenter_settings)
+                                else:
+                                    self.executor.ensure_vcenter_connection()
+                            except Exception as refresh_err:
+                                self.log(f"    ⚠ vCenter session refresh warning: {refresh_err}", "WARN")
+                        
                     finally:
                         # Always cleanup iDRAC session
                         if session:
