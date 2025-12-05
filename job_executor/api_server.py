@@ -93,6 +93,18 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._handle_idm_authenticate()
             elif self.path == '/api/network-config-read':
                 self._handle_network_config_read()
+            elif self.path == '/api/health-check':
+                self._handle_health_check()
+            elif self.path == '/api/event-logs':
+                self._handle_event_logs()
+            elif self.path == '/api/boot-config-read':
+                self._handle_boot_config_read()
+            elif self.path == '/api/bios-config-read':
+                self._handle_bios_config_read()
+            elif self.path == '/api/firmware-inventory':
+                self._handle_firmware_inventory()
+            elif self.path == '/api/idrac-jobs':
+                self._handle_idrac_jobs()
             else:
                 self._send_error(f'Unknown endpoint: {self.path}', 404)
         except Exception as e:
@@ -774,6 +786,505 @@ class APIHandler(BaseHTTPRequestHandler):
             
             self._send_error(str(e), 500)
     
+    def _handle_health_check(self):
+        """Get server health status instantly"""
+        start_time = datetime.now()
+        data = self._read_json_body()
+        server_id = data.get('server_id')
+        
+        if not server_id:
+            self._send_error('server_id is required', 400)
+            return
+        
+        self.executor.log(f"API: Health check for server {server_id}")
+        
+        try:
+            server = self.executor.get_server_by_id(server_id)
+            if not server:
+                self._send_error(f'Server {server_id} not found', 404)
+                return
+            
+            username, password = self.executor.get_server_credentials(server_id)
+            if not username or not password:
+                self._send_error('No credentials available for server', 400)
+                return
+            
+            ip_address = server['ip_address']
+            dell_ops = self.executor._get_dell_operations()
+            
+            health_data = dell_ops.get_health_status(
+                ip=ip_address,
+                username=username,
+                password=password,
+                server_id=server_id,
+                job_id=None
+            )
+            
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            response = {
+                'success': True,
+                'server_id': server_id,
+                'ip_address': ip_address,
+                'power_state': health_data.get('power_state'),
+                'overall_health': health_data.get('overall_health'),
+                'health_rollup': health_data.get('health_rollup'),
+                'processor': health_data.get('processor'),
+                'memory': health_data.get('memory'),
+                'chassis_status': health_data.get('chassis_status'),
+                'temperature_celsius': health_data.get('temperature_celsius'),
+                'fan_health': health_data.get('fan_health'),
+                'psu_health': health_data.get('psu_health'),
+                'storage_health': health_data.get('storage_health'),
+                'network_health': health_data.get('network_health'),
+                'sensors': health_data.get('sensors'),
+            }
+            
+            self._log_operation(
+                server_id=server_id,
+                operation_name='health_check',
+                endpoint='/api/health-check',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/health-check',
+                request_body=data,
+                status_code=200,
+                response_time_ms=response_time_ms,
+                response_body={'success': True},
+                success=True,
+                operation_type='idrac_api'
+            )
+            
+            self._send_json(response)
+            
+        except Exception as e:
+            self.executor.log(f"Health check failed: {e}", "ERROR")
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            self._log_operation(
+                server_id=server_id,
+                operation_name='health_check',
+                endpoint='/api/health-check',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/health-check',
+                request_body=data,
+                status_code=500,
+                response_time_ms=response_time_ms,
+                response_body={'error': str(e)},
+                success=False,
+                error_message=str(e),
+                operation_type='idrac_api'
+            )
+            self._send_error(str(e), 500)
+    
+    def _handle_event_logs(self):
+        """Fetch system event logs instantly"""
+        start_time = datetime.now()
+        data = self._read_json_body()
+        server_id = data.get('server_id')
+        limit = data.get('limit', 50)
+        
+        if not server_id:
+            self._send_error('server_id is required', 400)
+            return
+        
+        self.executor.log(f"API: Event logs for server {server_id}")
+        
+        try:
+            server = self.executor.get_server_by_id(server_id)
+            if not server:
+                self._send_error(f'Server {server_id} not found', 404)
+                return
+            
+            username, password = self.executor.get_server_credentials(server_id)
+            if not username or not password:
+                self._send_error('No credentials available for server', 400)
+                return
+            
+            ip_address = server['ip_address']
+            dell_ops = self.executor._get_dell_operations()
+            
+            events = dell_ops.get_sel_logs(
+                ip=ip_address,
+                username=username,
+                password=password,
+                limit=limit,
+                server_id=server_id,
+                job_id=None
+            )
+            
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            response = {
+                'success': True,
+                'server_id': server_id,
+                'events': events or [],
+                'count': len(events) if events else 0,
+            }
+            
+            self._log_operation(
+                server_id=server_id,
+                operation_name='event_logs',
+                endpoint='/api/event-logs',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/event-logs',
+                request_body=data,
+                status_code=200,
+                response_time_ms=response_time_ms,
+                response_body={'success': True, 'count': len(events) if events else 0},
+                success=True,
+                operation_type='idrac_api'
+            )
+            
+            self._send_json(response)
+            
+        except Exception as e:
+            self.executor.log(f"Event logs fetch failed: {e}", "ERROR")
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            self._log_operation(
+                server_id=server_id,
+                operation_name='event_logs',
+                endpoint='/api/event-logs',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/event-logs',
+                request_body=data,
+                status_code=500,
+                response_time_ms=response_time_ms,
+                response_body={'error': str(e)},
+                success=False,
+                error_message=str(e),
+                operation_type='idrac_api'
+            )
+            self._send_error(str(e), 500)
+    
+    def _handle_boot_config_read(self):
+        """Read boot configuration instantly"""
+        start_time = datetime.now()
+        data = self._read_json_body()
+        server_id = data.get('server_id')
+        
+        if not server_id:
+            self._send_error('server_id is required', 400)
+            return
+        
+        self.executor.log(f"API: Boot config read for server {server_id}")
+        
+        try:
+            server = self.executor.get_server_by_id(server_id)
+            if not server:
+                self._send_error(f'Server {server_id} not found', 404)
+                return
+            
+            username, password = self.executor.get_server_credentials(server_id)
+            if not username or not password:
+                self._send_error('No credentials available for server', 400)
+                return
+            
+            ip_address = server['ip_address']
+            dell_ops = self.executor._get_dell_operations()
+            
+            boot_data = dell_ops.get_boot_order(
+                ip=ip_address,
+                username=username,
+                password=password,
+                server_id=server_id,
+                job_id=None
+            )
+            
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            response = {
+                'success': True,
+                'server_id': server_id,
+                'boot_order': boot_data.get('boot_order', []),
+                'boot_mode': boot_data.get('boot_mode'),
+                'boot_source_override_enabled': boot_data.get('boot_source_override_enabled'),
+                'boot_source_override_target': boot_data.get('boot_source_override_target'),
+                'uefi_target': boot_data.get('uefi_target'),
+            }
+            
+            # Update server record with boot config
+            try:
+                self.executor.supabase.table('servers').update({
+                    'boot_order': boot_data.get('boot_order'),
+                    'boot_mode': boot_data.get('boot_mode'),
+                    'boot_source_override_enabled': boot_data.get('boot_source_override_enabled'),
+                    'boot_source_override_target': boot_data.get('boot_source_override_target'),
+                    'last_boot_config_check': datetime.now().isoformat(),
+                }).eq('id', server_id).execute()
+            except Exception as db_error:
+                self.executor.log(f"Failed to update server boot config: {db_error}", "WARNING")
+            
+            self._log_operation(
+                server_id=server_id,
+                operation_name='boot_config_read',
+                endpoint='/api/boot-config-read',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/boot-config-read',
+                request_body=data,
+                status_code=200,
+                response_time_ms=response_time_ms,
+                response_body={'success': True},
+                success=True,
+                operation_type='idrac_api'
+            )
+            
+            self._send_json(response)
+            
+        except Exception as e:
+            self.executor.log(f"Boot config read failed: {e}", "ERROR")
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            self._log_operation(
+                server_id=server_id,
+                operation_name='boot_config_read',
+                endpoint='/api/boot-config-read',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/boot-config-read',
+                request_body=data,
+                status_code=500,
+                response_time_ms=response_time_ms,
+                response_body={'error': str(e)},
+                success=False,
+                error_message=str(e),
+                operation_type='idrac_api'
+            )
+            self._send_error(str(e), 500)
+    
+    def _handle_bios_config_read(self):
+        """Read BIOS configuration instantly"""
+        start_time = datetime.now()
+        data = self._read_json_body()
+        server_id = data.get('server_id')
+        notes = data.get('notes', 'Instant API snapshot')
+        
+        if not server_id:
+            self._send_error('server_id is required', 400)
+            return
+        
+        self.executor.log(f"API: BIOS config read for server {server_id}")
+        
+        try:
+            server = self.executor.get_server_by_id(server_id)
+            if not server:
+                self._send_error(f'Server {server_id} not found', 404)
+                return
+            
+            username, password = self.executor.get_server_credentials(server_id)
+            if not username or not password:
+                self._send_error('No credentials available for server', 400)
+                return
+            
+            ip_address = server['ip_address']
+            dell_ops = self.executor._get_dell_operations()
+            
+            bios_data = dell_ops.get_bios_attributes(
+                ip=ip_address,
+                username=username,
+                password=password,
+                server_id=server_id,
+                job_id=None
+            )
+            
+            # Insert new record to bios_configurations table
+            config_id = None
+            try:
+                result = self.executor.supabase.table('bios_configurations').insert({
+                    'server_id': server_id,
+                    'attributes': bios_data.get('attributes', {}),
+                    'bios_version': bios_data.get('bios_version'),
+                    'snapshot_type': 'current',
+                    'notes': notes,
+                    'captured_at': datetime.now().isoformat(),
+                }).execute()
+                if result.data:
+                    config_id = result.data[0].get('id')
+            except Exception as db_error:
+                self.executor.log(f"Failed to save BIOS config: {db_error}", "WARNING")
+            
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            response = {
+                'success': True,
+                'server_id': server_id,
+                'config_id': config_id,
+                'attributes': bios_data.get('attributes', {}),
+                'bios_version': bios_data.get('bios_version'),
+                'attribute_registry': bios_data.get('attribute_registry'),
+            }
+            
+            self._log_operation(
+                server_id=server_id,
+                operation_name='bios_config_read',
+                endpoint='/api/bios-config-read',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/bios-config-read',
+                request_body=data,
+                status_code=200,
+                response_time_ms=response_time_ms,
+                response_body={'success': True, 'config_id': config_id},
+                success=True,
+                operation_type='idrac_api'
+            )
+            
+            self._send_json(response)
+            
+        except Exception as e:
+            self.executor.log(f"BIOS config read failed: {e}", "ERROR")
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            self._log_operation(
+                server_id=server_id,
+                operation_name='bios_config_read',
+                endpoint='/api/bios-config-read',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/bios-config-read',
+                request_body=data,
+                status_code=500,
+                response_time_ms=response_time_ms,
+                response_body={'error': str(e)},
+                success=False,
+                error_message=str(e),
+                operation_type='idrac_api'
+            )
+            self._send_error(str(e), 500)
+    
+    def _handle_firmware_inventory(self):
+        """Get firmware inventory instantly"""
+        start_time = datetime.now()
+        data = self._read_json_body()
+        server_id = data.get('server_id')
+        
+        if not server_id:
+            self._send_error('server_id is required', 400)
+            return
+        
+        self.executor.log(f"API: Firmware inventory for server {server_id}")
+        
+        try:
+            server = self.executor.get_server_by_id(server_id)
+            if not server:
+                self._send_error(f'Server {server_id} not found', 404)
+                return
+            
+            username, password = self.executor.get_server_credentials(server_id)
+            if not username or not password:
+                self._send_error('No credentials available for server', 400)
+                return
+            
+            ip_address = server['ip_address']
+            dell_ops = self.executor._get_dell_operations()
+            
+            firmware = dell_ops.get_firmware_inventory(
+                ip=ip_address,
+                username=username,
+                password=password,
+                server_id=server_id,
+                job_id=None
+            )
+            
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            response = {
+                'success': True,
+                'server_id': server_id,
+                'firmware': firmware or [],
+                'count': len(firmware) if firmware else 0,
+            }
+            
+            self._log_operation(
+                server_id=server_id,
+                operation_name='firmware_inventory',
+                endpoint='/api/firmware-inventory',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/firmware-inventory',
+                request_body=data,
+                status_code=200,
+                response_time_ms=response_time_ms,
+                response_body={'success': True, 'count': len(firmware) if firmware else 0},
+                success=True,
+                operation_type='idrac_api'
+            )
+            
+            self._send_json(response)
+            
+        except Exception as e:
+            self.executor.log(f"Firmware inventory failed: {e}", "ERROR")
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            self._log_operation(
+                server_id=server_id,
+                operation_name='firmware_inventory',
+                endpoint='/api/firmware-inventory',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/firmware-inventory',
+                request_body=data,
+                status_code=500,
+                response_time_ms=response_time_ms,
+                response_body={'error': str(e)},
+                success=False,
+                error_message=str(e),
+                operation_type='idrac_api'
+            )
+            self._send_error(str(e), 500)
+    
+    def _handle_idrac_jobs(self):
+        """Get iDRAC job queue instantly"""
+        start_time = datetime.now()
+        data = self._read_json_body()
+        server_id = data.get('server_id')
+        include_details = data.get('include_details', True)
+        
+        if not server_id:
+            self._send_error('server_id is required', 400)
+            return
+        
+        self.executor.log(f"API: iDRAC jobs for server {server_id}")
+        
+        try:
+            server = self.executor.get_server_by_id(server_id)
+            if not server:
+                self._send_error(f'Server {server_id} not found', 404)
+                return
+            
+            username, password = self.executor.get_server_credentials(server_id)
+            if not username or not password:
+                self._send_error('No credentials available for server', 400)
+                return
+            
+            ip_address = server['ip_address']
+            dell_ops = self.executor._get_dell_operations()
+            
+            jobs = dell_ops.get_idrac_job_queue(
+                ip=ip_address,
+                username=username,
+                password=password,
+                include_details=include_details,
+                server_id=server_id,
+                job_id=None
+            )
+            
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            response = {
+                'success': True,
+                'server_id': server_id,
+                'jobs': jobs or [],
+                'count': len(jobs) if jobs else 0,
+            }
+            
+            self._log_operation(
+                server_id=server_id,
+                operation_name='idrac_jobs',
+                endpoint='/api/idrac-jobs',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/idrac-jobs',
+                request_body=data,
+                status_code=200,
+                response_time_ms=response_time_ms,
+                response_body={'success': True, 'count': len(jobs) if jobs else 0},
+                success=True,
+                operation_type='idrac_api'
+            )
+            
+            self._send_json(response)
+            
+        except Exception as e:
+            self.executor.log(f"iDRAC jobs fetch failed: {e}", "ERROR")
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            self._log_operation(
+                server_id=server_id,
+                operation_name='idrac_jobs',
+                endpoint='/api/idrac-jobs',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/idrac-jobs',
+                request_body=data,
+                status_code=500,
+                response_time_ms=response_time_ms,
+                response_body={'error': str(e)},
+                success=False,
+                error_message=str(e),
+                operation_type='idrac_api'
+            )
+            self._send_error(str(e), 500)
+    
     def log_message(self, format, *args):
         """Override to suppress default request logging"""
         pass
@@ -831,6 +1342,13 @@ class APIServer:
             self.executor.log(f"  POST /api/connectivity-test")
             self.executor.log(f"  POST /api/browse-datastore")
             self.executor.log(f"  POST /api/idm-authenticate")
+            self.executor.log(f"  POST /api/network-config-read")
+            self.executor.log(f"  POST /api/health-check")
+            self.executor.log(f"  POST /api/event-logs")
+            self.executor.log(f"  POST /api/boot-config-read")
+            self.executor.log(f"  POST /api/bios-config-read")
+            self.executor.log(f"  POST /api/firmware-inventory")
+            self.executor.log(f"  POST /api/idrac-jobs")
             
             if not self.ssl_enabled and config.API_SERVER_SSL_ENABLED:
                 self.executor.log(f"WARNING: SSL was requested but not enabled. Remote HTTPS access may not work.", "WARN")

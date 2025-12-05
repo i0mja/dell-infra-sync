@@ -9,6 +9,7 @@ import { HardDrive, Network, Disc, Power, RefreshCw, GripVertical, Save, X } fro
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { getBootConfig, checkApiHealth } from "@/lib/job-executor-api";
 import { 
   DndContext, 
   closestCenter,
@@ -188,6 +189,30 @@ export function BootConfigDialog({ open, onOpenChange, server }: BootConfigDialo
   const handleFetchConfig = async () => {
     setIsSubmitting(true);
     try {
+      // Try instant API first
+      const apiAvailable = await checkApiHealth();
+      if (apiAvailable) {
+        const result = await getBootConfig(server.id);
+        if (result.success) {
+          // Update local state with fetched config
+          if (result.boot_order) {
+            setEditableBootOrder(result.boot_order);
+          }
+          if (result.boot_mode) {
+            setBootMode(result.boot_mode);
+          }
+          
+          toast.success('Boot configuration refreshed', {
+            description: `Boot mode: ${result.boot_mode || 'Unknown'}`
+          });
+          
+          // Don't close dialog - let user see the results
+          setIsSubmitting(false);
+          return;
+        }
+      }
+      
+      // Fall back to job queue
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 

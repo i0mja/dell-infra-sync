@@ -124,6 +124,93 @@ export interface NetworkConfigResponse {
   error?: string;
 }
 
+export interface HealthCheckResponse {
+  success: boolean;
+  server_id?: string;
+  ip_address?: string;
+  power_state?: string;
+  overall_health?: string;
+  health_rollup?: string;
+  processor?: { health?: string; count?: number };
+  memory?: { health?: string; total_gb?: number };
+  chassis_status?: string;
+  temperature_celsius?: number;
+  fan_health?: string;
+  psu_health?: string;
+  storage_health?: string;
+  network_health?: string;
+  sensors?: Record<string, any>;
+  error?: string;
+}
+
+export interface EventLogsResponse {
+  success: boolean;
+  server_id?: string;
+  events?: Array<{
+    id: string;
+    timestamp: string;
+    severity: string;
+    message: string;
+    sensor_type?: string;
+    event_id?: string;
+    category?: string;
+  }>;
+  count?: number;
+  error?: string;
+}
+
+export interface BootConfigResponse {
+  success: boolean;
+  server_id?: string;
+  boot_order?: string[];
+  boot_mode?: string;
+  boot_source_override_enabled?: string;
+  boot_source_override_target?: string;
+  uefi_target?: string;
+  error?: string;
+}
+
+export interface BiosConfigResponse {
+  success: boolean;
+  server_id?: string;
+  config_id?: string;
+  attributes?: Record<string, any>;
+  bios_version?: string;
+  attribute_registry?: string;
+  error?: string;
+}
+
+export interface FirmwareInventoryResponse {
+  success: boolean;
+  server_id?: string;
+  firmware?: Array<{
+    name: string;
+    version: string;
+    updateable: boolean;
+    status?: any;
+    id: string;
+  }>;
+  count?: number;
+  error?: string;
+}
+
+export interface IdracJobsResponse {
+  success: boolean;
+  server_id?: string;
+  jobs?: Array<{
+    id: string;
+    name: string;
+    job_state: string;
+    percent_complete: number;
+    message?: string;
+    job_type?: string;
+    start_time?: string;
+    end_time?: string;
+  }>;
+  count?: number;
+  error?: string;
+}
+
 /**
  * Launch iDRAC console session
  */
@@ -374,5 +461,191 @@ export async function readNetworkConfig(serverId: string): Promise<NetworkConfig
       throw error;
     }
     throw new Error('Unknown error reading network config');
+  }
+}
+
+/**
+ * Get server health status (instant, no job queue)
+ */
+export async function getServerHealth(serverId: string): Promise<HealthCheckResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/health-check`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ server_id: serverId }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to get health status');
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        throw new Error('Job Executor is not running or not reachable. Please ensure it is started on your local network.');
+      }
+      throw error;
+    }
+    throw new Error('Unknown error getting health status');
+  }
+}
+
+/**
+ * Get system event logs (instant, no job queue)
+ */
+export async function getEventLogs(serverId: string, limit: number = 50): Promise<EventLogsResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/event-logs`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ server_id: serverId, limit }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to get event logs');
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        throw new Error('Job Executor is not running or not reachable. Please ensure it is started on your local network.');
+      }
+      throw error;
+    }
+    throw new Error('Unknown error getting event logs');
+  }
+}
+
+/**
+ * Get boot configuration (instant, no job queue)
+ */
+export async function getBootConfig(serverId: string): Promise<BootConfigResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/boot-config-read`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ server_id: serverId }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to get boot config');
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        throw new Error('Job Executor is not running or not reachable. Please ensure it is started on your local network.');
+      }
+      throw error;
+    }
+    throw new Error('Unknown error getting boot config');
+  }
+}
+
+/**
+ * Get BIOS configuration (instant, no job queue)
+ */
+export async function getBiosConfig(serverId: string, notes?: string): Promise<BiosConfigResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/bios-config-read`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ server_id: serverId, notes }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to get BIOS config');
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        throw new Error('Job Executor is not running or not reachable. Please ensure it is started on your local network.');
+      }
+      throw error;
+    }
+    throw new Error('Unknown error getting BIOS config');
+  }
+}
+
+/**
+ * Get firmware inventory (instant, no job queue)
+ */
+export async function getFirmwareInventory(serverId: string): Promise<FirmwareInventoryResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/firmware-inventory`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ server_id: serverId }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to get firmware inventory');
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        throw new Error('Job Executor is not running or not reachable. Please ensure it is started on your local network.');
+      }
+      throw error;
+    }
+    throw new Error('Unknown error getting firmware inventory');
+  }
+}
+
+/**
+ * Get iDRAC job queue (instant, no job queue)
+ */
+export async function getIdracJobs(serverId: string, includeDetails: boolean = true): Promise<IdracJobsResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/idrac-jobs`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ server_id: serverId, include_details: includeDetails }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to get iDRAC jobs');
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        throw new Error('Job Executor is not running or not reachable. Please ensure it is started on your local network.');
+      }
+      throw error;
+    }
+    throw new Error('Unknown error getting iDRAC jobs');
   }
 }

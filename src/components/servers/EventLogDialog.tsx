@@ -10,6 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { logActivityDirect } from "@/hooks/useActivityLog";
+import { getEventLogs, checkApiHealth } from "@/lib/job-executor-api";
 
 interface EventLogDialogProps {
   open: boolean;
@@ -52,6 +53,32 @@ export function EventLogDialog({ open, onOpenChange, server }: EventLogDialogPro
   const fetchEventLogs = async () => {
     setLoading(true);
     try {
+      // Try instant API first
+      const apiAvailable = await checkApiHealth();
+      if (apiAvailable) {
+        try {
+          const result = await getEventLogs(server.id, 100);
+          if (result.success && result.events) {
+            // Map API events to our format and set state
+            const mappedEvents: EventLog[] = result.events.map((e, idx) => ({
+              id: e.id || `event-${idx}`,
+              event_id: e.event_id,
+              timestamp: e.timestamp,
+              severity: e.severity,
+              message: e.message,
+              category: e.category,
+              sensor_type: e.sensor_type,
+            }));
+            setEvents(mappedEvents);
+            setLoading(false);
+            return;
+          }
+        } catch (apiError) {
+          console.log('Instant API unavailable, falling back to database');
+        }
+      }
+      
+      // Fall back to database
       const { data, error } = await supabase
         .from('server_event_logs')
         .select('*')
@@ -72,6 +99,33 @@ export function EventLogDialog({ open, onOpenChange, server }: EventLogDialogPro
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
+      // Try instant API first
+      const apiAvailable = await checkApiHealth();
+      if (apiAvailable) {
+        const result = await getEventLogs(server.id, 100);
+        if (result.success && result.events) {
+          const mappedEvents: EventLog[] = result.events.map((e, idx) => ({
+            id: e.id || `event-${idx}`,
+            event_id: e.event_id,
+            timestamp: e.timestamp,
+            severity: e.severity,
+            message: e.message,
+            category: e.category,
+            sensor_type: e.sensor_type,
+          }));
+          setEvents(mappedEvents);
+          
+          toast.success('Event logs refreshed', {
+            description: `Fetched ${result.count || mappedEvents.length} events`
+          });
+          
+          logActivityDirect('event_log_fetch', 'server', server.hostname || server.ip_address, {}, { targetId: server.id, success: true });
+          setIsRefreshing(false);
+          return;
+        }
+      }
+      
+      // Fall back to job queue
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
@@ -93,7 +147,6 @@ export function EventLogDialog({ open, onOpenChange, server }: EventLogDialogPro
         description: 'New events will be available shortly'
       });
 
-      // Log activity
       logActivityDirect('event_log_fetch', 'server', server.hostname || server.ip_address, {}, { targetId: server.id, success: true });
     } catch (error: any) {
       console.error('Error initiating event log fetch:', error);
@@ -101,7 +154,6 @@ export function EventLogDialog({ open, onOpenChange, server }: EventLogDialogPro
         description: error.message
       });
 
-      // Log failed activity
       logActivityDirect('event_log_fetch', 'server', server.hostname || server.ip_address, {}, { targetId: server.id, success: false, error: error.message });
     } finally {
       setIsRefreshing(false);
