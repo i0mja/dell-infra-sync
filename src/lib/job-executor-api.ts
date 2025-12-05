@@ -124,6 +124,16 @@ export interface NetworkConfigResponse {
   error?: string;
 }
 
+export interface NetworkConfigWriteResponse {
+  success: boolean;
+  server_id?: string;
+  applied_changes?: string[];
+  ip_changed?: boolean;
+  new_ip?: string;
+  message?: string;
+  error?: string;
+}
+
 export interface HealthCheckResponse {
   success: boolean;
   server_id?: string;
@@ -461,6 +471,40 @@ export async function readNetworkConfig(serverId: string): Promise<NetworkConfig
       throw error;
     }
     throw new Error('Unknown error reading network config');
+  }
+}
+
+/**
+ * Write iDRAC network configuration (instant, no job queue)
+ */
+export async function writeNetworkConfig(
+  serverId: string,
+  changes: Record<string, string>
+): Promise<NetworkConfigWriteResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/network-config-write`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ server_id: serverId, changes }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to write network config');
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        throw new Error('Job Executor is not running or not reachable. Please ensure it is started on your local network.');
+      }
+      throw error;
+    }
+    throw new Error('Unknown error writing network config');
   }
 }
 

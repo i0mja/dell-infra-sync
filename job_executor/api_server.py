@@ -93,6 +93,8 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._handle_idm_authenticate()
             elif self.path == '/api/network-config-read':
                 self._handle_network_config_read()
+            elif self.path == '/api/network-config-write':
+                self._handle_network_config_write()
             elif self.path == '/api/health-check':
                 self._handle_health_check()
             elif self.path == '/api/event-logs':
@@ -776,6 +778,146 @@ class APIHandler(BaseHTTPRequestHandler):
                 endpoint='/api/network-config-read',
                 full_url=f'http://localhost:{self.executor.api_server.port}/api/network-config-read',
                 request_body=data,
+                status_code=500,
+                response_time_ms=response_time_ms,
+                response_body={'error': str(e)},
+                success=False,
+                error_message=str(e),
+                operation_type='idrac_api'
+            )
+            
+            self._send_error(str(e), 500)
+    
+    def _handle_network_config_write(self):
+        """Write iDRAC network configuration instantly"""
+        start_time = datetime.now()
+        data = self._read_json_body()
+        server_id = data.get('server_id')
+        changes = data.get('changes', {})
+        
+        if not server_id:
+            self._send_error('server_id is required', 400)
+            return
+        
+        if not changes:
+            self._send_error('changes dict is required', 400)
+            return
+        
+        self.executor.log(f"API: Network config write for server {server_id}")
+        self.executor.log(f"  Changes to apply: {list(changes.keys())}")
+        
+        try:
+            # Get server and credentials
+            server = self.executor.get_server_by_id(server_id)
+            if not server:
+                self._send_error(f'Server {server_id} not found', 404)
+                return
+            
+            username, password = self.executor.get_server_credentials(server_id)
+            if not username or not password:
+                self._send_error('No credentials available for server', 400)
+                return
+            
+            ip_address = server['ip_address']
+            
+            # Apply network settings using Dell Redfish operations
+            dell_ops = self.executor._get_dell_operations()
+            result = dell_ops.set_idrac_network_settings(
+                ip=ip_address,
+                username=username,
+                password=password,
+                settings=changes,
+                server_id=server_id,
+                job_id=None
+            )
+            
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            
+            if result.get('success'):
+                # Check if IP address was changed
+                ip_changed = 'IPv4.1.Address' in changes
+                new_ip = changes.get('IPv4.1.Address')
+                
+                # Update server record if IP changed
+                if ip_changed and new_ip:
+                    try:
+                        import requests
+                        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+                        
+                        update_resp = requests.patch(
+                            f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}",
+                            json={'ip_address': new_ip},
+                            headers={
+                                'apikey': SERVICE_ROLE_KEY,
+                                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                'Content-Type': 'application/json',
+                                'Prefer': 'return=minimal'
+                            },
+                            verify=VERIFY_SSL,
+                            timeout=10
+                        )
+                        if update_resp.ok:
+                            self.executor.log(f"  Updated server IP to {new_ip}")
+                        else:
+                            self.executor.log(f"  Failed to update server IP: {update_resp.text}", "WARN")
+                    except Exception as update_err:
+                        self.executor.log(f"  Error updating server IP: {update_err}", "WARN")
+                
+                response = {
+                    'success': True,
+                    'server_id': server_id,
+                    'applied_changes': list(changes.keys()),
+                    'ip_changed': ip_changed,
+                    'new_ip': new_ip if ip_changed else None,
+                    'message': result.get('message', 'Network settings applied successfully')
+                }
+                
+                # Log successful operation
+                self._log_operation(
+                    server_id=server_id,
+                    operation_name='network_config_write',
+                    endpoint='/api/network-config-write',
+                    full_url=f'http://localhost:{self.executor.api_server.port}/api/network-config-write',
+                    request_body={'server_id': server_id, 'changes_count': len(changes)},
+                    status_code=200,
+                    response_time_ms=response_time_ms,
+                    response_body={'success': True, 'applied_changes': list(changes.keys())},
+                    success=True,
+                    operation_type='idrac_api'
+                )
+                
+                self._send_json(response)
+            else:
+                error_msg = result.get('error', 'Failed to apply network settings')
+                
+                # Log failed operation
+                self._log_operation(
+                    server_id=server_id,
+                    operation_name='network_config_write',
+                    endpoint='/api/network-config-write',
+                    full_url=f'http://localhost:{self.executor.api_server.port}/api/network-config-write',
+                    request_body={'server_id': server_id, 'changes_count': len(changes)},
+                    status_code=500,
+                    response_time_ms=response_time_ms,
+                    response_body={'error': error_msg},
+                    success=False,
+                    error_message=error_msg,
+                    operation_type='idrac_api'
+                )
+                
+                self._send_error(error_msg, 500)
+                
+        except Exception as e:
+            self.executor.log(f"Network config write failed: {e}", "ERROR")
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            
+            # Log failed operation
+            self._log_operation(
+                server_id=server_id,
+                operation_name='network_config_write',
+                endpoint='/api/network-config-write',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/network-config-write',
+                request_body={'server_id': server_id, 'changes_count': len(changes)},
                 status_code=500,
                 response_time_ms=response_time_ms,
                 response_body={'error': str(e)},
