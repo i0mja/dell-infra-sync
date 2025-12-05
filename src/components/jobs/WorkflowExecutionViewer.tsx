@@ -21,6 +21,7 @@ import { formatDistanceToNow } from "date-fns";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { IdracJobQueuePanel } from "./IdracJobQueuePanel";
+import { WorkflowStepDetails } from "./results/WorkflowStepDetails";
 import { launchConsole } from "@/lib/job-executor-api";
 import { toast } from "sonner";
 
@@ -668,9 +669,11 @@ export const WorkflowExecutionViewer = ({
                             </Alert>
                           )}
                           {step.step_details && (
-                            <div className="bg-muted/50 rounded p-3 text-xs font-mono overflow-x-auto">
-                              <pre>{JSON.stringify(step.step_details, null, 2)}</pre>
-                            </div>
+                            <WorkflowStepDetails 
+                              stepName={step.step_name}
+                              stepNumber={step.step_number}
+                              details={step.step_details}
+                            />
                           )}
                         </CollapsibleContent>
                       )}

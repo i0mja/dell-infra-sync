@@ -10,3 +10,4 @@ export { EsxiPreflightResults } from './EsxiPreflightResults';
 export { JobProgressHeader } from './JobProgressHeader';
 export { JobTasksTimeline } from './JobTasksTimeline';
 export { JobConsoleLog } from './JobConsoleLog';
+export { WorkflowStepDetails } from './WorkflowStepDetails';
