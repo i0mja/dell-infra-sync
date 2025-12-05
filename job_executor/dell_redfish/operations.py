@@ -3064,3 +3064,185 @@ class DellOperations:
             'pending_jobs': active_jobs if 'active_jobs' in dir() else [],
             'message': f'Timeout waiting for jobs to complete after {timeout}s'
         }
+    
+    # ==========================================================================
+    # iDRAC Network Settings Operations
+    # ==========================================================================
+    
+    def get_idrac_network_settings(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        server_id: str = None,
+        job_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Get iDRAC network configuration attributes.
+        
+        Dell endpoint: GET /redfish/v1/Managers/iDRAC.Embedded.1/Attributes
+        Filters to network-related keys: IPv4.*, NIC.*, NTPConfigGroup.*, DNS.*
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            server_id: Optional server ID for logging
+            job_id: Optional job ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict: Network settings organized by category (ipv4, nic, ntp)
+        """
+        response = self.adapter.make_request(
+            method='GET',
+            ip=ip,
+            endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Attributes',
+            username=username,
+            password=password,
+            operation_name='Get iDRAC Network Settings',
+            server_id=server_id,
+            job_id=job_id,
+            user_id=user_id
+        )
+        
+        all_attrs = response.get('Attributes', {})
+        
+        # Filter to network-related attributes
+        network_prefixes = ['IPv4.', 'IPv4Static.', 'NIC.', 'NTPConfigGroup.', 'DNS.', 'Time.']
+        network_attrs = {
+            k: v for k, v in all_attrs.items()
+            if any(k.startswith(prefix) for prefix in network_prefixes)
+        }
+        
+        return {
+            'attributes': network_attrs,
+            'ipv4': {
+                'enabled': all_attrs.get('IPv4.1.Enable', 'Enabled') == 'Enabled',
+                'dhcp_enabled': all_attrs.get('IPv4.1.DHCPEnable', 'Disabled') == 'Enabled',
+                'address': all_attrs.get('IPv4.1.Address'),
+                'gateway': all_attrs.get('IPv4.1.Gateway'),
+                'netmask': all_attrs.get('IPv4.1.Netmask'),
+                'dns1': all_attrs.get('IPv4.1.DNS1'),
+                'dns2': all_attrs.get('IPv4.1.DNS2'),
+                'dns_from_dhcp': all_attrs.get('IPv4.1.DNSFromDHCP', 'Disabled') == 'Enabled',
+            },
+            'nic': {
+                'selection': all_attrs.get('NIC.1.Selection'),
+                'speed': all_attrs.get('NIC.1.Speed'),
+                'duplex': all_attrs.get('NIC.1.Duplex'),
+                'mtu': all_attrs.get('NIC.1.MTU'),
+                'vlan_enabled': all_attrs.get('NIC.1.VLanEnable', 'Disabled') == 'Enabled',
+                'vlan_id': all_attrs.get('NIC.1.VLanID'),
+                'vlan_priority': all_attrs.get('NIC.1.VLanPriority'),
+            },
+            'ntp': {
+                'enabled': all_attrs.get('NTPConfigGroup.1.NTPEnable', 'Disabled') == 'Enabled',
+                'server1': all_attrs.get('NTPConfigGroup.1.NTP1'),
+                'server2': all_attrs.get('NTPConfigGroup.1.NTP2'),
+                'server3': all_attrs.get('NTPConfigGroup.1.NTP3'),
+                'timezone': all_attrs.get('Time.1.Timezone'),
+            }
+        }
+    
+    def set_idrac_network_settings(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        attributes: Dict[str, Any],
+        server_id: str = None,
+        job_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Set iDRAC network configuration attributes.
+        
+        Dell endpoint: PATCH /redfish/v1/Managers/iDRAC.Embedded.1/Attributes
+        
+        IMPORTANT: Changes take effect immediately - no reboot required!
+        WARNING: Changing IP address will disconnect the current session.
+        
+        Common attribute keys:
+        - IPv4.1.Address: Static IP address
+        - IPv4.1.Gateway: Default gateway
+        - IPv4.1.Netmask: Subnet mask
+        - IPv4.1.DNS1: Primary DNS server
+        - IPv4.1.DNS2: Secondary DNS server
+        - IPv4.1.DHCPEnable: "Enabled" or "Disabled"
+        - NIC.1.Selection: "Dedicated", "LOM1", "LOM2", etc.
+        - NIC.1.VLanEnable: "Enabled" or "Disabled"
+        - NIC.1.VLanID: VLAN ID (1-4094)
+        - NTPConfigGroup.1.NTPEnable: "Enabled" or "Disabled"
+        - NTPConfigGroup.1.NTP1: Primary NTP server
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            attributes: Dictionary of attributes to set
+            server_id: Optional server ID for logging
+            job_id: Optional job ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict: Result with success status
+        """
+        response = self.adapter.make_request(
+            method='PATCH',
+            ip=ip,
+            endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Attributes',
+            username=username,
+            password=password,
+            payload={'Attributes': attributes},
+            operation_name='Set iDRAC Network Settings',
+            server_id=server_id,
+            job_id=job_id,
+            user_id=user_id
+        )
+        
+        return {
+            'success': True,
+            'applied_attributes': attributes,
+            'response': response
+        }
+    
+    def check_idrac_dns_configured(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        server_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Check if DNS is configured on an iDRAC.
+        Useful for pre-flight checks before online catalog operations.
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            server_id: Optional server ID for logging
+            
+        Returns:
+            dict: DNS configuration status with warnings if not configured
+        """
+        network = self.get_idrac_network_settings(ip, username, password, server_id)
+        
+        dns1 = network['ipv4'].get('dns1')
+        dns_from_dhcp = network['ipv4'].get('dns_from_dhcp')
+        
+        if dns1 or dns_from_dhcp:
+            return {
+                'configured': True,
+                'dns1': dns1,
+                'dns2': network['ipv4'].get('dns2'),
+                'dns_from_dhcp': dns_from_dhcp
+            }
+        else:
+            return {
+                'configured': False,
+                'warning': 'No DNS servers configured - online catalog updates will fail',
+                'recommendation': 'Configure DNS servers or use Local Repository firmware source'
+            }

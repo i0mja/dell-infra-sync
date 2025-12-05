@@ -12,6 +12,7 @@ from .firmware import FirmwareHandler
 from .cluster import ClusterHandler
 from .esxi_handlers import ESXiHandler
 from .vcenter_handlers import VCenterHandlers
+from .network import NetworkHandler
 
 __all__ = [
     'IDMHandler',
@@ -25,5 +26,6 @@ __all__ = [
     'FirmwareHandler',
     'ClusterHandler',
     'ESXiHandler',
-    'VCenterHandlers'
+    'VCenterHandlers',
+    'NetworkHandler'
 ]

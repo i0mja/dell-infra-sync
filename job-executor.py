@@ -107,7 +107,7 @@ from job_executor.dell_redfish.adapter import DellRedfishAdapter
 from job_executor.handlers import (
     IDMHandler, ConsoleHandler, DatastoreHandler, MediaUploadHandler,
     VirtualMediaHandler, PowerHandler, BootHandler, DiscoveryHandler,
-    FirmwareHandler, ClusterHandler, ESXiHandler, VCenterHandlers
+    FirmwareHandler, ClusterHandler, ESXiHandler, VCenterHandlers, NetworkHandler
 )
 
 # Import IDM/FreeIPA authentication (conditional)
@@ -175,6 +175,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
         self.cluster_handler = ClusterHandler(self)
         self.esxi_handler = ESXiHandler(self)
         self.vcenter_handler = VCenterHandlers(self)
+        self.network_handler = NetworkHandler(self)
 
     def _validate_service_role_key(self):
         """Ensure SERVICE_ROLE_KEY is present before making Supabase requests"""
@@ -843,7 +844,8 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             'virtual_media_unmount', 'scp_export', 'scp_import',
             'bios_config_read', 'bios_config_write',
             'prepare_host_for_update', 'verify_host_after_update', 'rolling_cluster_update',
-            'esxi_upgrade', 'esxi_then_firmware', 'firmware_then_esxi'
+            'esxi_upgrade', 'esxi_then_firmware', 'firmware_then_esxi',
+            'idrac_network_read', 'idrac_network_write'
         ]
         
         if job_type in idrac_job_types and self.check_idrac_pause():
@@ -900,6 +902,8 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             'idm_search_ad_users': self.idm_handler.execute_idm_search_ad_users,
             'idm_test_auth': self.idm_handler.execute_idm_test_auth,
             'idm_network_check': self.idm_handler.execute_idm_network_check,
+            'idrac_network_read': self.network_handler.execute_idrac_network_read,
+            'idrac_network_write': self.network_handler.execute_idrac_network_write,
         }
         
         handler = handler_map.get(job_type)
