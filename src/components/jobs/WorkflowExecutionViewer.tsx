@@ -452,6 +452,37 @@ export const WorkflowExecutionViewer = ({
           </>
         )}
 
+        {/* Skipped Hosts - show when hosts were skipped due to being up-to-date */}
+        {effectiveJobDetails?.workflow_results?.host_results?.some((h: any) => h.status === 'skipped' && h.no_updates_needed) && (
+          <>
+            <Separator />
+            <Card className="border-yellow-500/50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-yellow-600 dark:text-yellow-500 flex items-center gap-2">
+                  <MinusCircle className="h-4 w-4" />
+                  Skipped Hosts (Already Up-to-Date)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {effectiveJobDetails.workflow_results.host_results
+                    .filter((h: any) => h.status === 'skipped' && h.no_updates_needed)
+                    .map((host: any, idx: number) => (
+                      <div key={idx} className="p-2 rounded bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-between">
+                        <div className="font-medium text-sm">{host.host_name}</div>
+                        <Badge variant="secondary" className="text-xs">No updates needed</Badge>
+                      </div>
+                    ))}
+                </div>
+                <p className="text-xs text-muted-foreground mt-3">
+                  These hosts were checked for updates but no applicable firmware updates were found. 
+                  They were skipped without entering maintenance mode.
+                </p>
+              </CardContent>
+            </Card>
+          </>
+        )}
+
         {/* Job-Level Error - only show if NO host-specific errors (avoid duplication) */}
         {overallStatus === 'failed' && effectiveJobDetails?.error && 
          !effectiveJobDetails?.workflow_results?.host_results?.some((h: any) => h.status === 'failed') && (
