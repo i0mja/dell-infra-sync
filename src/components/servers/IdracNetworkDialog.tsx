@@ -104,7 +104,10 @@ export function IdracNetworkDialog({
 
       if (error) throw error;
 
-      const newJobId = data.job_id;
+      const newJobId = data.job?.id;
+      if (!newJobId) {
+        throw new Error("Failed to get job ID from response");
+      }
       setJobId(newJobId);
       toast.info("Reading network configuration...");
 
@@ -205,10 +208,12 @@ export function IdracNetworkDialog({
 
       if (error) throw error;
 
+      const newJobId = data.job?.id;
+      if (!newJobId) {
+        throw new Error("Failed to get job ID from response");
+      }
+      
       toast.info("Applying network changes...");
-
-      // Poll for job completion
-      const newJobId = data.job_id;
       const maxAttempts = 30;
       let attempts = 0;
 
