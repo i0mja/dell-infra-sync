@@ -1174,7 +1174,7 @@ export type Database = {
           completed_at: string | null
           component_order: number | null
           created_at: string
-          created_by: string
+          created_by: string | null
           credential_set_ids: string[] | null
           dell_catalog_url: string | null
           details: Json | null
@@ -1194,7 +1194,7 @@ export type Database = {
           completed_at?: string | null
           component_order?: number | null
           created_at?: string
-          created_by: string
+          created_by?: string | null
           credential_set_ids?: string[] | null
           dell_catalog_url?: string | null
           details?: Json | null
@@ -1214,7 +1214,7 @@ export type Database = {
           completed_at?: string | null
           component_order?: number | null
           created_at?: string
-          created_by?: string
+          created_by?: string | null
           credential_set_ids?: string[] | null
           dell_catalog_url?: string | null
           details?: Json | null
