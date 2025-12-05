@@ -246,16 +246,48 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         return null;
       })();
 
-      // Use details-based progress if available, otherwise task-based, otherwise minimum for running
+      // Fallback: Query workflow_executions for workflow-based jobs
+      let workflowProgress: number | null = null;
+      let workflowCurrentStep: string | null = null;
+      
+      if (calculatedFromDetails === null && totalTasks === 0) {
+        const { data: workflowSteps } = await supabase
+          .from('workflow_executions')
+          .select('step_name, step_status')
+          .eq('job_id', job.id)
+          .order('step_number', { ascending: true });
+        
+        if (workflowSteps && workflowSteps.length > 0) {
+          const completedSteps = workflowSteps.filter(s => 
+            ['completed', 'skipped'].includes(s.step_status)
+          ).length;
+          workflowProgress = Math.round((completedSteps / workflowSteps.length) * 100);
+          
+          // Get current step from running workflow execution
+          const runningStep = workflowSteps.find(s => s.step_status === 'running');
+          if (runningStep) {
+            workflowCurrentStep = runningStep.step_name?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || null;
+          }
+        }
+      }
+
+      // Use details-based progress if available, otherwise workflow/task-based, otherwise minimum for running
       let progressPercent = 0;
       if (calculatedFromDetails !== null) {
         progressPercent = calculatedFromDetails;
+      } else if (workflowProgress !== null) {
+        progressPercent = workflowProgress;
       } else if (totalTasks > 0) {
         const completedProgress = (completedTasks / totalTasks) * 100;
         const runningProgress = runningTask ? ((runningTask.progress || 0) / totalTasks) : 0;
         progressPercent = Math.min(100, Math.round(completedProgress + runningProgress));
       } else if (job.status === 'running') {
         progressPercent = 5; // Minimum indicator for running jobs with no progress data
+      }
+
+      // Use workflow step as current status if available
+      if (workflowCurrentStep) {
+        currentStatus = workflowCurrentStep;
       }
 
       const progress: JobProgress = {
