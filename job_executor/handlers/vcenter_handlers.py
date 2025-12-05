@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import time
 import requests
 from .base import BaseHandler
+from job_executor.utils import utc_now_iso
 
 
 class VCenterHandlers(BaseHandler):
@@ -26,7 +27,7 @@ class VCenterHandlers(BaseHandler):
             self.update_job_status(
                 job['id'], 
                 'running', 
-                started_at=datetime.now().isoformat(),
+                started_at=utc_now_iso(),
                 details={"current_step": "Initializing"}
             )
             
@@ -131,7 +132,7 @@ class VCenterHandlers(BaseHandler):
                     self.update_job_status(
                         job['id'], 
                         'cancelled',
-                        completed_at=datetime.now().isoformat(),
+                        completed_at=utc_now_iso(),
                         details={'cancelled_by': 'user', 'vcenter_host': vcenter_host}
                     )
                     return True
@@ -299,7 +300,7 @@ class VCenterHandlers(BaseHandler):
             self.update_job_status(
                 job['id'], 
                 'completed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details=summary
             )
             
@@ -310,7 +311,7 @@ class VCenterHandlers(BaseHandler):
                     requests.patch(
                         f"{DSM_URL}/rest/v1/vcenters?id=eq.{source_vcenter_id}",
                         json={
-                            'last_sync': datetime.now().isoformat(),
+                            'last_sync': utc_now_iso(),
                             'last_sync_status': final_status,
                             'last_sync_error': '; '.join(sync_errors) if sync_errors else None
                         },
@@ -335,7 +336,7 @@ class VCenterHandlers(BaseHandler):
                     requests.patch(
                         f"{DSM_URL}/rest/v1/vcenters?id=eq.{source_vcenter_id}",
                         json={
-                            'last_sync': datetime.now().isoformat(),
+                            'last_sync': utc_now_iso(),
                             'last_sync_status': 'failed',
                             'last_sync_error': str(e)[:500]  # Truncate long errors
                         },
@@ -353,7 +354,7 @@ class VCenterHandlers(BaseHandler):
             self.update_job_status(
                 job['id'], 
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'error': str(e), 'vcenter_host': vcenter_host}
             )
     
@@ -361,14 +362,14 @@ class VCenterHandlers(BaseHandler):
         """Test vCenter connectivity"""
         try:
             self.log(f"Starting vCenter connectivity test: {job['id']}")
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             # Implementation here - test vCenter connection
             
             self.update_job_status(
                 job['id'],
                 'completed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'message': 'Connectivity test placeholder'}
             )
             
@@ -377,7 +378,7 @@ class VCenterHandlers(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )
     
@@ -388,7 +389,7 @@ class VCenterHandlers(BaseHandler):
         
         try:
             self.log(f"Starting OpenManage sync: {job['id']}")
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             # Fetch OME settings
             response = requests.get(

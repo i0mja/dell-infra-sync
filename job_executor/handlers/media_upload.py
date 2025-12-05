@@ -6,6 +6,7 @@ import os
 import requests
 from pathlib import Path
 from .base import BaseHandler
+from job_executor.utils import utc_now_iso
 
 
 class MediaUploadHandler(BaseHandler):
@@ -17,7 +18,7 @@ class MediaUploadHandler(BaseHandler):
             from job_executor.config import ISO_DIRECTORY, DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL, MEDIA_SERVER_PORT
             
             self.log(f"Starting ISO upload: {job['id']}")
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             details = job.get('details', {})
             iso_image_id = details.get('iso_image_id')
@@ -83,7 +84,7 @@ class MediaUploadHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'completed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={
                     'filename': filename,
                     'size_bytes': file_size,
@@ -115,7 +116,7 @@ class MediaUploadHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )
     
@@ -126,7 +127,7 @@ class MediaUploadHandler(BaseHandler):
             from job_executor.utils import _safe_json_parse
             
             self.log(f"Starting ISO directory scan: {job['id']}")
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             iso_dir = Path(ISO_DIRECTORY)
             if not iso_dir.exists():
@@ -248,7 +249,7 @@ class MediaUploadHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'completed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details=result
             )
             
@@ -257,7 +258,7 @@ class MediaUploadHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )
     
@@ -270,7 +271,7 @@ class MediaUploadHandler(BaseHandler):
             from job_executor.utils import _safe_json_parse
             
             self.log(f"Starting ISO URL registration: {job['id']}")
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             details = job.get('details', {})
             iso_url = details.get('iso_url')

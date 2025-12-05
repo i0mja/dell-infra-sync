@@ -17,7 +17,7 @@ from job_executor.config import (
     VCENTER_USER,
     VCENTER_PASSWORD
 )
-from job_executor.utils import _safe_json_parse
+from job_executor.utils import _safe_json_parse, utc_now_iso
 
 
 class VCenterMixin:
@@ -840,20 +840,36 @@ class VCenterMixin:
                         'Content-Type': 'application/json',
                         'Prefer': 'return=representation'
                     },
-                    json={
-                        'job_id': job_id,
-                        'status': 'running',
-                        'started_at': datetime.now().isoformat(),
-                        'progress': 0,
-                        'log': f'Starting VM sync ({total_vms} VMs)'
-                    },
-                    verify=VERIFY_SSL
-                )
-                if task_response.status_code in [200, 201]:
-                    task_data = _safe_json_parse(task_response)
-                    if task_data:
-                        task_id = task_data[0]['id']
-                        self.log(f"✓ Created task {task_id} for VM sync")
+                json={
+                    'job_id': job_id,
+                    'status': 'running',
+                    'started_at': utc_now_iso(),
+                    'progress': 0,
+                    'log': f'Starting VM sync ({total_vms} VMs)'
+                },
+                verify=VERIFY_SSL
+            )
+            if task_response.status_code in [200, 201]:
+                task_data = _safe_json_parse(task_response)
+                if task_data:
+                    task_id = task_data[0]['id']
+                    self.log(f"✓ Created task {task_id} for VM sync")
+            
+            # Pre-fetch all hosts for this vCenter to avoid N+1 queries
+            self.log("Building host lookup cache...")
+            host_lookup = {}
+            hosts_response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_hosts?source_vcenter_id=eq.{source_vcenter_id}&select=id,name",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL
+            )
+            if hosts_response.status_code == 200:
+                for h in _safe_json_parse(hosts_response) or []:
+                    host_lookup[h['name']] = h['id']
+            self.log(f"Cached {len(host_lookup)} hosts for fast lookup")
             
             synced = 0
             batch = []
@@ -909,21 +925,10 @@ class VCenterMixin:
                     guest_os = config.guestFullName if config and hasattr(config, 'guestFullName') else 'unknown'
                     os_counts[guest_os] = os_counts.get(guest_os, 0) + 1
                     
-                    # Get host_id from vcenter_hosts table
+                    # Get host_id from pre-fetched cache (O(1) lookup instead of N+1 queries)
                     host_id = None
                     if runtime and runtime.host:
-                        host_response = requests.get(
-                            f"{DSM_URL}/rest/v1/vcenter_hosts?select=id&name=eq.{runtime.host.name}",
-                            headers={
-                                'apikey': SERVICE_ROLE_KEY,
-                                'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
-                            },
-                            verify=VERIFY_SSL
-                        )
-                        if host_response.status_code == 200:
-                            hosts = _safe_json_parse(host_response)
-                            if hosts:
-                                host_id = hosts[0]['id']
+                        host_id = host_lookup.get(runtime.host.name)
                     
                     # Get cluster name
                     cluster_name = None
@@ -945,7 +950,7 @@ class VCenterMixin:
                         'tools_status': str(guest.toolsStatus) if guest and hasattr(guest, 'toolsStatus') else None,
                         'tools_version': guest.toolsVersion if guest and hasattr(guest, 'toolsVersion') else None,
                         'overall_status': str(vm.summary.overallStatus) if hasattr(vm.summary, 'overallStatus') else 'unknown',
-                        'last_sync': datetime.now().isoformat()
+                        'last_sync': utc_now_iso()
                     }
                     
                     # Add to batch
@@ -988,14 +993,14 @@ class VCenterMixin:
                             'apikey': SERVICE_ROLE_KEY,
                             'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
                             'Content-Type': 'application/json',
-                            'Prefer': 'return=minimal'
-                        },
-                        json={
-                            'status': 'completed',
-                            'completed_at': datetime.now().isoformat(),
-                            'progress': 100,
-                            'log': f'Completed: {synced}/{total_vms} VMs synced'
-                        },
+                        'Prefer': 'return=minimal'
+                    },
+                    json={
+                        'status': 'completed',
+                        'completed_at': utc_now_iso(),
+                        'progress': 100,
+                        'log': f'Completed: {synced}/{total_vms} VMs synced'
+                    },
                         verify=VERIFY_SSL
                     )
             

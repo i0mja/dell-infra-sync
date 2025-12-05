@@ -3,6 +3,7 @@
 from typing import Dict, Optional
 from datetime import datetime, timezone
 from .base import BaseHandler
+from job_executor.utils import utc_now_iso
 import json
 import requests
 import socket
@@ -79,7 +80,7 @@ class IDMHandler(BaseHandler):
                 json={
                     'job_id': job_id,
                     'status': 'running',
-                    'started_at': datetime.now().isoformat(),
+                    'started_at': utc_now_iso(),
                     'log': f"Starting: {task_name}",
                 },
                 verify=VERIFY_SSL,
@@ -107,7 +108,7 @@ class IDMHandler(BaseHandler):
             if progress is not None:
                 update['progress'] = progress
             if status in ('completed', 'failed'):
-                update['completed_at'] = datetime.now().isoformat()
+                update['completed_at'] = utc_now_iso()
             
             response = requests.patch(
                 f"{DSM_URL}/rest/v1/job_tasks",
@@ -129,7 +130,7 @@ class IDMHandler(BaseHandler):
         """Authenticate user against FreeIPA LDAP."""
         try:
             self.log(f"Starting IDM authentication job: {job['id']}")
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             details = job.get('details') or {}
             username = details.get('username')
@@ -193,7 +194,7 @@ class IDMHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'completed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details=sanitized_details
             )
             
@@ -202,7 +203,7 @@ class IDMHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={
                     'error': str(e),
                     'auth_result': {'success': False, 'error': str(e)}
@@ -350,7 +351,7 @@ class IDMHandler(BaseHandler):
                 self.update_job_status(
                     job_id,
                     'completed',
-                    completed_at=datetime.now().isoformat(),
+                    completed_at=utc_now_iso(),
                     details={
                         'test_result': {
                             **auth_result,

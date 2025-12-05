@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import time
 import requests
 from .base import BaseHandler
+from job_executor.utils import utc_now_iso
 
 
 class FirmwareHandler(BaseHandler):
@@ -50,7 +51,7 @@ class FirmwareHandler(BaseHandler):
         self.update_job_status(
             job['id'],
             'running',
-            started_at=datetime.now().isoformat()
+            started_at=utc_now_iso()
         )
         
         try:
@@ -75,7 +76,7 @@ class FirmwareHandler(BaseHandler):
                     task['id'],
                     'running',
                     log="Connecting to iDRAC...",
-                    started_at=datetime.now().isoformat()
+                    started_at=utc_now_iso()
                 )
                 
                 session_token = None
@@ -154,11 +155,11 @@ class FirmwareHandler(BaseHandler):
                         
                         if not available_updates:
                             self.log(f"  ✓ Server is up to date - no updates available")
-                            self.update_task_status(task['id'], 'completed',
-                                log="✓ Server is up to date\nNo firmware updates required",
-                                completed_at=datetime.now().isoformat(),
-                                progress=100)
-                            continue  # Skip to next server
+                        self.update_task_status(task['id'], 'completed',
+                            log="✓ Server is up to date\nNo firmware updates required",
+                            completed_at=utc_now_iso(),
+                            progress=100)
+                        continue  # Skip to next server
                         
                         self.log(f"  Found {len(available_updates)} update(s) available")
                         self.update_task_status(task['id'], 'running',
@@ -241,7 +242,7 @@ class FirmwareHandler(BaseHandler):
                             self.update_task_status(
                                 task['id'], 'failed',
                                 log="✗ Job cancelled by user",
-                                completed_at=datetime.now().isoformat()
+                                completed_at=utc_now_iso()
                             )
                             raise Exception("Job cancelled by user")
                         
@@ -268,7 +269,7 @@ class FirmwareHandler(BaseHandler):
                                 
                                 self.update_job_details_field(job['id'], {
                                     'idrac_job_queue': idrac_queue.get('jobs', []),
-                                    'idrac_queue_updated_at': datetime.now().isoformat(),
+                                    'idrac_queue_updated_at': utc_now_iso(),
                                     'current_host_ip': ip
                                 })
                             except Exception as queue_error:

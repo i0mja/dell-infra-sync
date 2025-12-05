@@ -4,6 +4,7 @@ from typing import Dict
 from datetime import datetime, timezone
 import time
 from .base import BaseHandler
+from job_executor.utils import utc_now_iso
 
 
 class DatastoreHandler(BaseHandler):
@@ -16,7 +17,7 @@ class DatastoreHandler(BaseHandler):
             from pyVmomi import vim
             
             self.log(f"Starting browse_datastore job: {job['id']}")
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             details = job.get('details', {})
             vcenter_id = details.get('vcenter_id')
@@ -131,7 +132,7 @@ class DatastoreHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'completed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={
                     'datastore_name': datastore_name,
                     'files': files,
@@ -146,6 +147,6 @@ class DatastoreHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )

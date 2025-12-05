@@ -4,6 +4,7 @@ from typing import Dict
 from datetime import datetime, timezone
 import json
 from .base import BaseHandler
+from job_executor.utils import utc_now_iso
 
 
 class ESXiHandler(BaseHandler):
@@ -14,7 +15,7 @@ class ESXiHandler(BaseHandler):
         try:
             from job_executor.esxi.orchestrator import EsxiOrchestrator
             
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             details = job.get('details', {})
             profile_id = details.get('profile_id')
@@ -122,7 +123,7 @@ class ESXiHandler(BaseHandler):
                                 task_id,
                                 'completed',
                                 log=f"Upgraded from {result.get('version_before')} to {result.get('version_after')}",
-                                completed_at=datetime.now().isoformat()
+                                completed_at=utc_now_iso()
                             )
                         
                         # Record history
@@ -145,7 +146,7 @@ class ESXiHandler(BaseHandler):
                                 task_id,
                                 'failed',
                                 log=f"Upgrade failed: {result.get('error')}",
-                                completed_at=datetime.now().isoformat()
+                                completed_at=utc_now_iso()
                             )
                         
                         # Record history
@@ -181,7 +182,7 @@ class ESXiHandler(BaseHandler):
                             task_id,
                             'failed',
                             log=f"Exception: {error_msg}",
-                            completed_at=datetime.now().isoformat()
+                            completed_at=utc_now_iso()
                         )
                     
                     results.append({
@@ -206,7 +207,7 @@ class ESXiHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 final_status,
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details=job_result
             )
             
@@ -221,7 +222,7 @@ class ESXiHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={
                     'error': error_msg,
                     'traceback': stack_trace[:2000]
@@ -231,7 +232,7 @@ class ESXiHandler(BaseHandler):
     def execute_esxi_then_firmware(self, job: Dict):
         """Execute ESXi upgrade first, then Dell firmware update"""
         try:
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             details = job.get('details', {})
             esxi_profile_id = details.get('esxi_profile_id')
@@ -301,7 +302,7 @@ class ESXiHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'completed' if success_count == len(host_ids) else 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details=job_result
             )
             
@@ -310,7 +311,7 @@ class ESXiHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )
     
@@ -323,7 +324,7 @@ class ESXiHandler(BaseHandler):
         """Execute ESXi pre-flight readiness checks using pyvmomi"""
         try:
             self.log(f"Starting ESXi pre-flight check: {job['id']}")
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             details = job.get('details', {})
             host_ids = details.get('host_ids', [])
@@ -389,7 +390,7 @@ class ESXiHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'completed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details=job_result
             )
             
@@ -398,6 +399,6 @@ class ESXiHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )

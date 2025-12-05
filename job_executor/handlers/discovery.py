@@ -7,6 +7,7 @@ import ipaddress
 import time
 import requests
 from .base import BaseHandler
+from job_executor.utils import utc_now_iso
 
 
 class DiscoveryHandler(BaseHandler):
@@ -22,7 +23,7 @@ class DiscoveryHandler(BaseHandler):
         self.update_job_status(
             job['id'],
             'running',
-            started_at=datetime.now().isoformat()
+            started_at=utc_now_iso()
         )
         
         try:
@@ -193,7 +194,7 @@ class DiscoveryHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'completed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={
                     "discovered_count": len(discovered),
                     "auth_failures": len(auth_failures),
@@ -211,7 +212,7 @@ class DiscoveryHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={"error": str(e)}
             )
     
@@ -320,7 +321,7 @@ class DiscoveryHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'completed' if result['success'] else 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details=result
             )
             
@@ -328,14 +329,14 @@ class DiscoveryHandler(BaseHandler):
             self.log(f"  ✗ Connection timeout", "ERROR")
             self.update_job_status(
                 job['id'], 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={"success": False, "message": "Connection timeout - iDRAC not reachable"}
             )
         except Exception as e:
             self.log(f"  ✗ Test failed: {e}", "ERROR")
             self.update_job_status(
                 job['id'], 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={"success": False, "message": f"Error: {str(e)}"}
             )
     
@@ -344,7 +345,7 @@ class DiscoveryHandler(BaseHandler):
         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
         
         try:
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             target_scope = job.get('target_scope', {})
             
@@ -409,7 +410,7 @@ class DiscoveryHandler(BaseHandler):
                         self.update_task_status(
                             task_id, 'failed',
                             log=error_msg,
-                            completed_at=datetime.now().isoformat()
+                            completed_at=utc_now_iso()
                         )
                     continue
                 
@@ -424,7 +425,7 @@ class DiscoveryHandler(BaseHandler):
                                 task_id, 'completed',
                                 log=f"✓ Health check completed for {ip}",
                                 progress=100,
-                                completed_at=datetime.now().isoformat()
+                                completed_at=utc_now_iso()
                             )
                     else:
                         failed_count += 1
@@ -432,7 +433,7 @@ class DiscoveryHandler(BaseHandler):
                             self.update_task_status(
                                 task_id, 'failed',
                                 log=f"✗ Health check failed for {ip}",
-                                completed_at=datetime.now().isoformat()
+                                completed_at=utc_now_iso()
                             )
                         
                 except Exception as e:
@@ -448,7 +449,7 @@ class DiscoveryHandler(BaseHandler):
                         self.update_task_status(
                             task_id, 'failed',
                             log=f"✗ Error: {str(e)}",
-                            completed_at=datetime.now().isoformat()
+                            completed_at=utc_now_iso()
                         )
             
             # Complete job
@@ -462,7 +463,7 @@ class DiscoveryHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'completed' if failed_count == 0 else 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details=result
             )
             
@@ -472,7 +473,7 @@ class DiscoveryHandler(BaseHandler):
             self.log(f"Health check job failed: {e}", "ERROR")
             self.update_job_status(
                 job['id'], 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={"error": str(e)}
             )
     
@@ -488,6 +489,6 @@ class DiscoveryHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )

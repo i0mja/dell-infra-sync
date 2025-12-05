@@ -4,6 +4,7 @@ from typing import Dict
 from datetime import datetime, timezone
 import requests
 from .base import BaseHandler
+from job_executor.utils import utc_now_iso
 
 
 class PowerHandler(BaseHandler):
@@ -15,7 +16,7 @@ class PowerHandler(BaseHandler):
             from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
             from job_executor.utils import _safe_json_parse
             
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             target_scope = job.get('target_scope', {})
             action = job.get('details', {}).get('action', 'On')
@@ -161,7 +162,7 @@ class PowerHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'completed' if failed_count == 0 else 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details=result
             )
             
@@ -171,6 +172,6 @@ class PowerHandler(BaseHandler):
             self.log(f"Power action job failed: {e}", "ERROR")
             self.update_job_status(
                 job['id'], 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={"error": str(e)}
             )

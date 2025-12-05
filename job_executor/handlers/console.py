@@ -3,6 +3,7 @@
 from typing import Dict
 from datetime import datetime, timezone
 from .base import BaseHandler
+from job_executor.utils import utc_now_iso
 
 
 class ConsoleHandler(BaseHandler):
@@ -12,7 +13,7 @@ class ConsoleHandler(BaseHandler):
         """Get authenticated KVM console URL using Dell's official Redfish endpoint"""
         try:
             self.log(f"Starting console_launch job: {job['id']}")
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             details = job.get('details', {})
             target_scope = job.get('target_scope', {})
@@ -65,7 +66,7 @@ class ConsoleHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'completed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={
                     'console_url': console_url,
                     'server_id': server_id,
@@ -81,6 +82,6 @@ class ConsoleHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )
