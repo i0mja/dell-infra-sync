@@ -1729,6 +1729,119 @@ class VCenterMixin:
         
         return blockers
 
+    def _get_active_migration_tasks(self, content, host_obj) -> dict:
+        """Check for active vMotion/DRS migration tasks for VMs on this host.
+        
+        DRS evacuates VMs in batches/chunks. This method detects when migrations
+        are in progress even if the VM count hasn't changed yet, preventing
+        false-positive stall detection.
+        
+        Args:
+            content: vCenter ServiceContent object
+            host_obj: The vim.HostSystem object being evacuated
+            
+        Returns:
+            {
+                'count': int,           # Number of active migrations
+                'migrations': [         # List of in-progress migrations
+                    {
+                        'vm_name': str,
+                        'task_name': str,
+                        'state': str,
+                        'progress': int
+                    }
+                ]
+            }
+        """
+        active_migrations = []
+        
+        try:
+            task_manager = content.taskManager
+            if not task_manager or not task_manager.recentTask:
+                return {'count': 0, 'migrations': []}
+            
+            # Get set of VM moIds on this host for matching
+            host_vm_ids = set()
+            try:
+                for vm in host_obj.vm:
+                    host_vm_ids.add(str(vm._moId))
+            except:
+                pass
+            
+            # Migration-related task patterns
+            migration_patterns = ['relocate', 'migrate', 'drs', 'vmotion']
+            
+            for task in task_manager.recentTask:
+                try:
+                    task_info = task.info
+                    if not task_info:
+                        continue
+                    
+                    # Only check running or queued tasks
+                    task_state = str(task_info.state) if task_info.state else ''
+                    if task_state not in ['running', 'queued']:
+                        continue
+                    
+                    # Get task name/description
+                    task_name = ''
+                    if hasattr(task_info, 'descriptionId') and task_info.descriptionId:
+                        task_name = str(task_info.descriptionId).lower()
+                    elif hasattr(task_info, 'name') and task_info.name:
+                        task_name = str(task_info.name).lower()
+                    
+                    # Check if this is a migration-related task
+                    is_migration_task = any(pattern in task_name for pattern in migration_patterns)
+                    if not is_migration_task:
+                        continue
+                    
+                    # Check if task involves a VM from this host
+                    entity = task_info.entity
+                    if entity and hasattr(entity, '_moId'):
+                        entity_id = str(entity._moId)
+                        
+                        # Check if entity is a VM on our host
+                        if entity_id in host_vm_ids:
+                            vm_name = task_info.entityName or 'Unknown VM'
+                            progress = task_info.progress if task_info.progress else 0
+                            
+                            active_migrations.append({
+                                'vm_name': vm_name,
+                                'task_name': task_name,
+                                'state': task_state,
+                                'progress': progress
+                            })
+                        else:
+                            # Also check if the entity is a VM and its current host matches
+                            # (for cases where moId matching fails)
+                            try:
+                                if isinstance(entity, vim.VirtualMachine):
+                                    if hasattr(entity, 'runtime') and entity.runtime:
+                                        vm_host = entity.runtime.host
+                                        if vm_host and str(vm_host._moId) == str(host_obj._moId):
+                                            vm_name = task_info.entityName or entity.name or 'Unknown VM'
+                                            progress = task_info.progress if task_info.progress else 0
+                                            
+                                            active_migrations.append({
+                                                'vm_name': vm_name,
+                                                'task_name': task_name,
+                                                'state': task_state,
+                                                'progress': progress
+                                            })
+                            except:
+                                pass
+                                
+                except Exception as task_err:
+                    # Skip problematic tasks silently
+                    continue
+                    
+        except Exception as e:
+            self.log(f"    Warning: Could not check migration tasks: {e}", "DEBUG")
+        
+        return {
+            'count': len(active_migrations),
+            'migrations': active_migrations
+        }
+
     def enter_vcenter_maintenance_mode(self, host_id: str, timeout: int = 1800, _retry_count: int = 0) -> dict:
         """Put ESXi host into maintenance mode with progress monitoring.
         
@@ -1877,17 +1990,27 @@ class VCenterMixin:
                         vms_evacuated = vms_before - current_vms
                         progress_pct = int((vms_evacuated / vms_before) * 100) if vms_before > 0 else 100
                         
+                        # Check for active vMotion migrations (DRS evacuates in batches)
+                        migration_info = self._get_active_migration_tasks(content, host_obj)
+                        active_migrations = migration_info['count']
+                        
                         # Check if progress is being made
                         if current_vms < last_vm_count:
-                            # Progress detected - reset stall timer
+                            # VM count decreased - progress made
                             self.log(f"    Evacuating: {last_vm_count} → {current_vms} VMs ({progress_pct}% complete, {int(elapsed)}s elapsed)")
                             last_progress_time = time.time()
                             last_vm_count = current_vms
-                        elif current_vms == last_vm_count:
-                            # No progress - check stall timeout
+                        elif active_migrations > 0:
+                            # VM count same, but migrations in progress - still making progress
+                            migration_names = ', '.join([m['vm_name'] for m in migration_info['migrations'][:3]])
+                            if len(migration_info['migrations']) > 3:
+                                migration_names += f" +{len(migration_info['migrations']) - 3} more"
+                            self.log(f"    Migrating: {active_migrations} vMotions in progress ({current_vms} VMs remaining) - {migration_names}")
+                            last_progress_time = time.time()  # Reset stall timer - migrations are active
+                        elif current_vms == last_vm_count and current_vms > 0:
+                            # No VM count change and no active migrations - potentially stalled
                             stall_duration = int(time.time() - last_progress_time)
-                            if current_vms > 0:
-                                self.log(f"    Waiting: {current_vms} VMs remaining ({stall_duration}s since last migration)")
+                            self.log(f"    Waiting: {current_vms} VMs remaining ({stall_duration}s since last activity)")
                         
                         last_log_time = time.time()
                         
@@ -1895,13 +2018,24 @@ class VCenterMixin:
                         self.log(f"    Warning: Could not check VM count: {vm_count_err}", "WARN")
                         last_log_time = time.time()
                 
-                # Check for stall condition (no progress for 5 minutes)
+                # Check for stall condition (no progress for 5 minutes AND no active migrations)
                 stall_duration = time.time() - last_progress_time
                 if stall_duration > stall_timeout and last_vm_count > 0:
-                    # Stalled - get detailed blockers
+                    # Double-check for active migrations before declaring stalled
+                    try:
+                        migration_info = self._get_active_migration_tasks(content, host_obj)
+                        if migration_info['count'] > 0:
+                            # Migrations still running - not actually stalled
+                            self.log(f"    Still migrating: {migration_info['count']} active vMotions (stall timer reset)")
+                            last_progress_time = time.time()
+                            continue
+                    except:
+                        pass
+                    
+                    # Truly stalled - no migrations in progress
                     evacuation_blockers = self._get_evacuation_blockers(host_obj, host_name)
                     
-                    error_msg = f'VM evacuation stalled: No progress for {int(stall_duration)}s with {last_vm_count} VMs remaining'
+                    error_msg = f'VM evacuation stalled: No progress for {int(stall_duration)}s with {last_vm_count} VMs remaining and no active migrations'
                     self.log(f"  ✗ {error_msg}", "ERROR")
                     
                     self.log_vcenter_activity(
