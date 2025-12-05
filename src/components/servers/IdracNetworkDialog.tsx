@@ -117,14 +117,33 @@ export function IdracNetworkDialog({
           await new Promise((r) => setTimeout(r, 2000));
           attempts++;
 
-          const { data: jobData } = await supabase
+          console.log(`[Network Config] Polling attempt ${attempts}/${maxAttempts} for job ${newJobId}`);
+
+          const { data: jobData, error: pollError } = await supabase
             .from("jobs")
             .select("status, details")
             .eq("id", newJobId)
             .single();
 
+          if (pollError) {
+            console.error(`[Network Config] Poll error:`, pollError);
+            continue;
+          }
+
+          console.log(`[Network Config] Job status: ${jobData?.status}`, jobData?.details);
+
           if (jobData?.status === "completed") {
             const details = jobData.details as Record<string, unknown>;
+            
+            // Validate data structure
+            if (!details?.ipv4 || !details?.nic || !details?.ntp) {
+              console.error(`[Network Config] Invalid/missing details structure:`, details);
+              console.error(`[Network Config] ipv4:`, details?.ipv4, `nic:`, details?.nic, `ntp:`, details?.ntp);
+              throw new Error("Network configuration data is incomplete - check job executor response");
+            }
+
+            console.log(`[Network Config] Setting config with valid data`);
+            
             setConfig({
               ipv4: details.ipv4 as NetworkConfig["ipv4"],
               nic: details.nic as NetworkConfig["nic"],
@@ -135,11 +154,17 @@ export function IdracNetworkDialog({
               server_id: server.id,
               ip_address: server.ip_address
             }, { targetId: server.id, success: true });
-            break;
+            return; // Success - exit function
           } else if (jobData?.status === "failed") {
-            throw new Error((jobData.details as Record<string, string>)?.error || "Failed to read network config");
+            const errorMsg = (jobData.details as Record<string, string>)?.error || "Failed to read network config";
+            console.error(`[Network Config] Job failed:`, errorMsg);
+            throw new Error(errorMsg);
           }
         }
+
+        // If we get here, polling timed out
+        console.error(`[Network Config] Polling timed out after ${maxAttempts} attempts`);
+        throw new Error("Timed out waiting for network configuration. Please try again.");
       };
 
       await pollJob();
