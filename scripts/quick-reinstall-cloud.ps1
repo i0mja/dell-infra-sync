@@ -50,10 +50,10 @@ Write-Host "  Dell Server Manager - Quick Reinstall (Cloud)" -ForegroundColor Cy
 Write-Host "===============================================" -ForegroundColor Cyan
 Write-Host ""
 
-# FASTEST PATH: Quick update (git pull + restart services)
+# FASTEST PATH: Quick update (git pull + rebuild + restart services)
 if ($QuickUpdate) {
     Write-Host "===============================================" -ForegroundColor Yellow
-    Write-Host "  Quick Update Mode (git pull + restart)" -ForegroundColor Yellow
+    Write-Host "  Quick Update Mode (git pull + rebuild + restart)" -ForegroundColor Yellow
     Write-Host "===============================================" -ForegroundColor Yellow
     
     if (-not (Test-Path "$AppDir\.git")) {
@@ -75,6 +75,20 @@ if ($QuickUpdate) {
         Write-Host "  ⚠ Git pull had warnings (continuing anyway)" -ForegroundColor Yellow
     } else {
         Write-Host "  ✓ Git pull complete" -ForegroundColor Green
+    }
+    
+    # Rebuild frontend (unless -SkipBuild is specified)
+    if (-not $SkipBuild) {
+        Write-Host "Rebuilding frontend..." -ForegroundColor Yellow
+        npm run build
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  ✗ Build failed!" -ForegroundColor Red
+            # Still try to start services
+        } else {
+            Write-Host "  ✓ Build complete" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "Skipping build (Python/backend only update)..." -ForegroundColor Gray
     }
     
     # Start services
