@@ -2644,7 +2644,7 @@ class DellOperations:
             endpoint=endpoint,
             username=username,
             password=password,
-            data={},  # Empty payload required
+            payload={},  # Empty payload required
             operation_name='Get Remote Services API Status',
             server_id=server_id,
             job_id=job_id,
