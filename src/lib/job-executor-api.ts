@@ -93,6 +93,37 @@ export interface IdmAuthenticateResponse {
   lockout_remaining_seconds?: number;
 }
 
+export interface NetworkConfigResponse {
+  success: boolean;
+  ipv4?: {
+    enabled: boolean;
+    dhcp_enabled: boolean;
+    address: string;
+    gateway: string;
+    netmask: string;
+    dns1: string;
+    dns2: string;
+    dns_from_dhcp: boolean;
+  };
+  nic?: {
+    selection: string;
+    speed: string;
+    duplex: string;
+    mtu: number;
+    vlan_enabled: boolean;
+    vlan_id: number;
+    vlan_priority: number;
+  };
+  ntp?: {
+    enabled: boolean;
+    server1: string;
+    server2: string;
+    server3: string;
+    timezone: string;
+  };
+  error?: string;
+}
+
 /**
  * Launch iDRAC console session
  */
@@ -312,5 +343,36 @@ export async function testJobExecutorConnection(url: string): Promise<{ success:
       return { success: false, message: error.message };
     }
     return { success: false, message: 'Unknown error' };
+  }
+}
+
+/**
+ * Read iDRAC network configuration (instant, no job queue)
+ */
+export async function readNetworkConfig(serverId: string): Promise<NetworkConfigResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/network-config-read`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ server_id: serverId }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to read network config');
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        throw new Error('Job Executor is not running or not reachable. Please ensure it is started on your local network.');
+      }
+      throw error;
+    }
+    throw new Error('Unknown error reading network config');
   }
 }
