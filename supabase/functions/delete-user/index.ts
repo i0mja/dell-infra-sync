@@ -142,6 +142,9 @@ Deno.serve(async (req) => {
     await adminClient.from('audit_logs').insert({
       action: 'user_deleted',
       user_id: caller.id,
+      auth_source: 'local',
+      auth_method: 'admin_action',
+      ip_address: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || req.headers.get('x-real-ip') || null,
       details: {
         deleted_user_id: user_id,
         deleted_user_email: userProfile?.email,

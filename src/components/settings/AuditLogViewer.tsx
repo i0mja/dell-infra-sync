@@ -33,9 +33,14 @@ export function AuditLogViewer() {
       case 'local':
         return <Badge variant="secondary">Local</Badge>;
       case 'freeipa':
+      case 'FreeIPA':
         return <Badge variant="default">FreeIPA</Badge>;
+      case 'ad_trust':
+        return <Badge className="bg-blue-500 text-white">AD Trust</Badge>;
       case 'break_glass':
         return <Badge variant="destructive">Break-Glass</Badge>;
+      case 'system':
+        return <Badge variant="outline">System</Badge>;
       default:
         return <Badge variant="outline">Unknown</Badge>;
     }
@@ -78,7 +83,9 @@ export function AuditLogViewer() {
                   <SelectItem value="all">All Sources</SelectItem>
                   <SelectItem value="local">Local</SelectItem>
                   <SelectItem value="freeipa">FreeIPA</SelectItem>
+                  <SelectItem value="ad_trust">AD Trust</SelectItem>
                   <SelectItem value="break_glass">Break-Glass</SelectItem>
+                  <SelectItem value="system">System</SelectItem>
                 </SelectContent>
               </Select>
             </div>

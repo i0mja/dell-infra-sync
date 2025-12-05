@@ -293,6 +293,8 @@ serve(async (req) => {
           .insert({
             action: 'maintenance_window_executed',
             user_id: window.created_by,
+            auth_source: 'system',
+            auth_method: 'scheduled_task',
             details: {
               window_id: window.id,
               job_id: job.id,
