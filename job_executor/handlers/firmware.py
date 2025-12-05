@@ -103,14 +103,44 @@ class FirmwareHandler(BaseHandler):
                     current_fw = self.executor.get_firmware_inventory(ip, session_token)
                     version_before = self._find_component_version(current_fw, component)
                     
-                    # Step 3: Put host in maintenance mode (if vCenter linked)
+                    # Step 2.5: Check if updates are available BEFORE entering maintenance mode
                     maintenance_mode_enabled = False
                     maintenance_mode_result = None
+                    
+                    if use_catalog:
+                        self.log(f"  Checking for available catalog updates...")
+                        self.update_task_status(task['id'], 'running',
+                            log="✓ Connected to iDRAC\n→ Checking for available updates...", progress=10)
+                        
+                        dell_ops = self.executor._get_dell_operations()
+                        check_result = dell_ops.check_available_catalog_updates(
+                            ip, username, password,
+                            catalog_url=dell_catalog_url,
+                            server_id=server['id'],
+                            job_id=job['id'],
+                            user_id=job.get('created_by')
+                        )
+                        
+                        available_updates = check_result.get('available_updates', [])
+                        
+                        if not available_updates:
+                            self.log(f"  ✓ Server is up to date - no updates available")
+                            self.update_task_status(task['id'], 'completed',
+                                log="✓ Server is up to date\nNo firmware updates required",
+                                completed_at=datetime.now().isoformat(),
+                                progress=100)
+                            continue  # Skip to next server
+                        
+                        self.log(f"  Found {len(available_updates)} update(s) available")
+                        self.update_task_status(task['id'], 'running',
+                            log=f"✓ Found {len(available_updates)} update(s) available\n→ Preparing to update...", progress=15)
+                    
+                    # Step 3: Put host in maintenance mode (if vCenter linked)
                     if server.get('vcenter_host_id'):
                         self.log(f"  Entering maintenance mode for vCenter host...")
                         self.update_task_status(
                             task['id'], 'running',
-                            log="✓ Connected to iDRAC\n✓ Current firmware checked\n→ Entering maintenance mode..."
+                            log="✓ Connected to iDRAC\n✓ Updates available\n→ Entering maintenance mode...", progress=20
                         )
                         
                         # Get maintenance timeout from job details, default to 600s
@@ -362,11 +392,11 @@ class FirmwareHandler(BaseHandler):
                         except:
                             pass
                     
-                    # Step 9: Exit maintenance mode (if applicable)
+                    # Step 9: Exit maintenance mode (ALWAYS runs if enabled, regardless of reboot)
                     if maintenance_mode_enabled and server.get('vcenter_host_id'):
                         self.log(f"  Exiting maintenance mode...")
                         self.update_task_status(task['id'], 'running',
-                            log="✓ Firmware staged\n✓ System rebooted\n✓ Jobs complete\n→ Exiting maintenance mode...", progress=95)
+                            log="✓ Firmware update complete\n→ Exiting maintenance mode...", progress=95)
                         
                         try:
                             exit_result = self.executor.exit_vcenter_maintenance_mode(
