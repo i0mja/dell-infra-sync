@@ -454,14 +454,17 @@ serve(async (req) => {
 
     console.log(`[IDM Provision] Final role: ${mappedRole} (source: ${roleSource})`);
 
-    // Update user role
+    // Update user role - delete existing roles first to ensure single role per user
     await supabase
       .from('user_roles')
-      .upsert({
+      .delete()
+      .eq('user_id', userId);
+
+    await supabase
+      .from('user_roles')
+      .insert({
         user_id: userId,
         role: mappedRole
-      }, {
-        onConflict: 'user_id,role'
       });
 
     // Create IDM auth session
