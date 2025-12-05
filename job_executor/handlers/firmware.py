@@ -234,8 +234,152 @@ class FirmwareHandler(BaseHandler):
                             self.log(f"  Firmware staging complete")
                             break
                     
-                    # Step 6-9: Reboot, wait, exit maintenance mode (if applicable)
-                    # ... keep existing code ...
+                    # Step 6: Trigger reboot if apply_time requires it
+                    reboot_triggered = False
+                    if apply_time == 'OnReset':
+                        self.log(f"  Checking for pending iDRAC jobs before reboot...")
+                        dell_ops = self.executor._get_dell_operations()
+                        
+                        # Check for pending/scheduled jobs that need a reboot
+                        try:
+                            pending_result = dell_ops.get_pending_idrac_jobs(
+                                ip, username, password,
+                                server_id=server['id'],
+                                job_id=job['id']
+                            )
+                            pending_jobs = pending_result.get('jobs', [])
+                            scheduled_jobs = [j for j in pending_jobs 
+                                            if j.get('status') in ['Scheduled', 'New', 'Downloaded']]
+                            running_jobs = [j for j in pending_jobs 
+                                          if j.get('status') in ['Running', 'Downloading']]
+                            
+                            if scheduled_jobs or running_jobs:
+                                self.log(f"  Found {len(scheduled_jobs)} scheduled, {len(running_jobs)} running iDRAC jobs")
+                                
+                                # Only trigger reboot if there are scheduled jobs (not running)
+                                if scheduled_jobs and not running_jobs:
+                                    self.log(f"  Triggering GracefulRestart to apply staged updates...")
+                                    self.update_task_status(task['id'], 'running',
+                                        log="✓ Firmware staged\n→ Triggering system reboot...", progress=70)
+                                    
+                                    reboot_result = dell_ops.graceful_reboot(
+                                        ip, username, password,
+                                        server_id=server['id'],
+                                        job_id=job['id'],
+                                        user_id=job.get('created_by')
+                                    )
+                                    
+                                    if reboot_result.get('status') == 'success':
+                                        self.log(f"  ✓ GracefulRestart triggered")
+                                        reboot_triggered = True
+                                    else:
+                                        self.log(f"  ⚠ GracefulRestart failed: {reboot_result.get('error')}", "WARN")
+                                        reboot_triggered = True  # Still wait, jobs may execute on next boot
+                                elif running_jobs:
+                                    self.log(f"  Jobs already running - will wait for completion...")
+                                    reboot_triggered = True  # Need to wait for running jobs
+                            else:
+                                self.log(f"  No pending iDRAC jobs - server may already be up to date")
+                        except Exception as pending_err:
+                            self.log(f"  ⚠ Could not check pending jobs: {pending_err}", "WARN")
+                            reboot_triggered = True  # Assume reboot needed as safety
+                    
+                    # Step 7: Wait for system reboot and iDRAC to come back online
+                    if reboot_triggered:
+                        self.log(f"  Waiting for system reboot...")
+                        self.update_task_status(task['id'], 'running',
+                            log="✓ Firmware staged\n✓ Reboot triggered\n→ Waiting for system to come online...", progress=75)
+                        
+                        time.sleep(180)  # Initial 3 min wait for BIOS POST
+                        
+                        # Poll for iDRAC to come back online
+                        max_attempts = 180  # 30 minutes max (180 * 10s)
+                        idrac_online = False
+                        
+                        for attempt in range(max_attempts):
+                            # Check for cancellation during reboot wait
+                            if self.check_cancelled(job['id']):
+                                raise Exception("Job cancelled during reboot wait")
+                            
+                            try:
+                                test_session = self.executor.create_idrac_session(
+                                    ip, username, password,
+                                    log_to_db=False, timeout=10
+                                )
+                                if test_session:
+                                    self.executor.close_idrac_session(ip, test_session)
+                                    idrac_online = True
+                                    self.log(f"  ✓ iDRAC back online (attempt {attempt+1})")
+                                    break
+                            except:
+                                pass
+                            
+                            # Update iDRAC job queue in job details every 30 seconds
+                            if attempt > 0 and attempt % 3 == 0:
+                                elapsed = (attempt + 1) * 10
+                                self.log(f"  [{elapsed}s] Waiting for iDRAC...")
+                            
+                            time.sleep(10)
+                        
+                        if not idrac_online:
+                            raise Exception(f"Timeout waiting for iDRAC after {max_attempts * 10}s")
+                        
+                        # Step 8: Wait for ALL iDRAC jobs to complete
+                        self.log(f"  Waiting for all iDRAC jobs to complete...")
+                        self.update_task_status(task['id'], 'running',
+                            log="✓ Firmware staged\n✓ System rebooted\n→ Waiting for firmware jobs...", progress=85)
+                        
+                        dell_ops = self.executor._get_dell_operations()
+                        jobs_complete_result = dell_ops.wait_for_all_jobs_complete(
+                            ip=ip,
+                            username=username,
+                            password=password,
+                            timeout=1200,  # 20 minutes for iDRAC FW updates
+                            poll_interval=30,
+                            server_id=server['id'],
+                            job_id=job['id'],
+                            user_id=job.get('created_by')
+                        )
+                        
+                        if not jobs_complete_result.get('success'):
+                            pending = jobs_complete_result.get('pending_jobs', [])
+                            self.log(f"  ⚠ {len(pending)} job(s) still pending after timeout", "WARN")
+                        else:
+                            self.log(f"  ✓ All iDRAC jobs completed")
+                        
+                        # Update iDRAC job queue one final time
+                        try:
+                            idrac_queue = dell_ops.get_idrac_job_queue(
+                                ip, username, password,
+                                server_id=server['id'],
+                                include_details=True
+                            )
+                            self.update_job_details_field(job['id'], {
+                                'idrac_job_queue': idrac_queue.get('jobs', []),
+                                'idrac_queue_updated_at': datetime.now().isoformat(),
+                                'current_step': 'Firmware updates complete'
+                            })
+                        except:
+                            pass
+                    
+                    # Step 9: Exit maintenance mode (if applicable)
+                    if maintenance_mode_enabled and server.get('vcenter_host_id'):
+                        self.log(f"  Exiting maintenance mode...")
+                        self.update_task_status(task['id'], 'running',
+                            log="✓ Firmware staged\n✓ System rebooted\n✓ Jobs complete\n→ Exiting maintenance mode...", progress=95)
+                        
+                        try:
+                            exit_result = self.executor.exit_vcenter_maintenance_mode(
+                                server['vcenter_host_id'],
+                                timeout=300
+                            )
+                            
+                            if exit_result.get('success'):
+                                self.log(f"  ✓ Exited maintenance mode")
+                            else:
+                                self.log(f"  ⚠ Failed to exit maintenance mode: {exit_result.get('error')}", "WARN")
+                        except Exception as mm_err:
+                            self.log(f"  ⚠ Error exiting maintenance mode: {mm_err}", "WARN")
                     
                     # Step 10: Get firmware version after update for audit trail
                     version_after = None
@@ -259,7 +403,8 @@ class FirmwareHandler(BaseHandler):
                     self.update_task_status(
                         task['id'], 'completed',
                         log=completion_log,
-                        completed_at=datetime.now().isoformat()
+                        completed_at=datetime.now().isoformat(),
+                        progress=100
                     )
                     
                     # Store version info in job details for reporting
