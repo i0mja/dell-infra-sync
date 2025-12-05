@@ -23,6 +23,27 @@ from job_executor.utils import _safe_json_parse
 class VCenterMixin:
     """Mixin providing vCenter operations for Job Executor"""
     
+    def check_job_cancelled(self, job_id: str) -> bool:
+        """Check if job has been cancelled by querying the database"""
+        if not job_id:
+            return False
+        
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/jobs?id=eq.{job_id}&select=status",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL,
+                timeout=5
+            )
+            if response.status_code == 200:
+                jobs = _safe_json_parse(response)
+                if jobs and jobs[0].get('status') == 'cancelled':
+                    self.log(f"Job {job_id} has been cancelled by user")
+                    return True
+        except Exception as e:
+            self.log(f"Warning: Failed to check job cancellation status: {e}", "WARN")
+        return False
+    
     def analyze_maintenance_blockers(self, host_id: str, source_vcenter_id: str = None) -> Dict:
         """
         Analyze what VMs/conditions will block maintenance mode entry for a host.
@@ -840,6 +861,13 @@ class VCenterMixin:
             os_counts = {}
             
             for i, vm in enumerate(container.view):
+                # Check for cancellation every 25 VMs
+                if i % 25 == 0 and job_id:
+                    if self.check_job_cancelled(job_id):
+                        self.log(f"Job cancelled - stopping VM sync at {i}/{total_vms}")
+                        container.Destroy()
+                        return {'synced': synced, 'total': total_vms, 'cancelled': True, 'reason': 'User cancelled'}
+                
                 # Update progress more frequently (every 50 VMs)
                 if i % 50 == 0:
                     self.log(f"  Processing VM {i+1}/{total_vms}...")
