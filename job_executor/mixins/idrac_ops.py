@@ -26,6 +26,59 @@ def _safe_json_parse(response):
 class IdracMixin:
     """Mixin for iDRAC server information, health, and discovery operations"""
     
+    def test_idrac_connectivity(self, ip: str, port: int = 443, timeout: float = 5.0) -> dict:
+        """
+        Test basic network connectivity to iDRAC (TCP socket test).
+        Does NOT require credentials - just checks if we can reach the port.
+        
+        Args:
+            ip: iDRAC IP address
+            port: Port to test (default 443 for HTTPS)
+            timeout: Connection timeout in seconds
+            
+        Returns:
+            dict with keys:
+                - reachable: bool
+                - response_time_ms: int (if reachable)
+                - message: str
+        """
+        import socket
+        
+        start = time.time()
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            result = sock.connect_ex((ip, port))
+            elapsed_ms = int((time.time() - start) * 1000)
+            sock.close()
+            
+            if result == 0:
+                return {
+                    'reachable': True,
+                    'response_time_ms': elapsed_ms,
+                    'message': f'Port {port} reachable ({elapsed_ms}ms)'
+                }
+            else:
+                return {
+                    'reachable': False,
+                    'response_time_ms': elapsed_ms,
+                    'message': f'Connection refused or timed out (error code: {result})'
+                }
+        except socket.timeout:
+            elapsed_ms = int((time.time() - start) * 1000)
+            return {
+                'reachable': False,
+                'response_time_ms': elapsed_ms,
+                'message': 'Connection timed out'
+            }
+        except Exception as e:
+            elapsed_ms = int((time.time() - start) * 1000)
+            return {
+                'reachable': False,
+                'response_time_ms': elapsed_ms,
+                'message': str(e)
+            }
+    
     def get_comprehensive_server_info(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, max_retries: int = 3, full_onboarding: bool = True) -> Optional[Dict]:
         """Get comprehensive server information from iDRAC Redfish API using throttler with optional full onboarding"""
         system_data = None
