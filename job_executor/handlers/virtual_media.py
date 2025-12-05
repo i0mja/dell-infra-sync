@@ -3,6 +3,7 @@
 from typing import Dict
 from datetime import datetime, timezone
 from .base import BaseHandler
+from job_executor.utils import utc_now_iso
 
 
 class VirtualMediaHandler(BaseHandler):
@@ -23,7 +24,7 @@ class VirtualMediaHandler(BaseHandler):
                 raise ValueError("session_id and image_url are required")
             
             # Update job status to running
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             # Get target servers from job
             target_scope = job.get('target_scope', {})
@@ -68,7 +69,7 @@ class VirtualMediaHandler(BaseHandler):
                         self.executor.supabase.table('virtual_media_sessions').update({
                             'is_mounted': True,
                             'inserted': True,
-                            'mounted_at': datetime.now().isoformat()
+                            'mounted_at': utc_now_iso()
                         }).eq('id', session_id).execute()
                         
                         self.log(f"  [OK] Virtual media mounted successfully on {ip}")
@@ -95,7 +96,7 @@ class VirtualMediaHandler(BaseHandler):
                 self.update_job_status(
                     job['id'],
                     'completed',
-                    completed_at=datetime.now().isoformat(),
+                    completed_at=utc_now_iso(),
                     details={
                         'success_count': success_count,
                         'results': results
@@ -107,7 +108,7 @@ class VirtualMediaHandler(BaseHandler):
                 self.update_job_status(
                     job['id'],
                     status,
-                    completed_at=datetime.now().isoformat(),
+                    completed_at=utc_now_iso(),
                     details={
                         'success_count': success_count,
                         'failed_count': failed_count,
@@ -120,7 +121,7 @@ class VirtualMediaHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )
     
@@ -137,7 +138,7 @@ class VirtualMediaHandler(BaseHandler):
                 raise ValueError("session_id is required")
             
             # Update job status to running
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             # Get target servers
             target_scope = job.get('target_scope', {})
@@ -180,7 +181,7 @@ class VirtualMediaHandler(BaseHandler):
                         self.executor.supabase.table('virtual_media_sessions').update({
                             'is_mounted': False,
                             'inserted': False,
-                            'unmounted_at': datetime.now().isoformat()
+                            'unmounted_at': utc_now_iso()
                         }).eq('id', session_id).execute()
                         
                         self.log(f"  [OK] Virtual media unmounted successfully on {ip}")
@@ -207,7 +208,7 @@ class VirtualMediaHandler(BaseHandler):
                 self.update_job_status(
                     job['id'],
                     'completed',
-                    completed_at=datetime.now().isoformat(),
+                    completed_at=utc_now_iso(),
                     details={
                         'success_count': success_count,
                         'results': results
@@ -219,7 +220,7 @@ class VirtualMediaHandler(BaseHandler):
                 self.update_job_status(
                     job['id'],
                     status,
-                    completed_at=datetime.now().isoformat(),
+                    completed_at=utc_now_iso(),
                     details={
                         'success_count': success_count,
                         'failed_count': failed_count,
@@ -232,6 +233,6 @@ class VirtualMediaHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )

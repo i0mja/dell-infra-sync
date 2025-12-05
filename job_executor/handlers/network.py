@@ -4,6 +4,7 @@ from typing import Dict
 from datetime import datetime, timezone
 import requests
 from .base import BaseHandler
+from job_executor.utils import utc_now_iso
 
 
 class NetworkHandler(BaseHandler):
@@ -15,7 +16,7 @@ class NetworkHandler(BaseHandler):
             from job_executor.config import SUPABASE_URL, SERVICE_ROLE_KEY
             
             self.log(f"Starting iDRAC network read job: {job['id']}")
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             details = job.get('details', {})
             server_id = details.get('server_id')
@@ -81,7 +82,7 @@ class NetworkHandler(BaseHandler):
                 'raw_attributes': network_data.get('attributes', {}),
                 'created_by': job.get('created_by'),
                 'notes': notes,
-                'captured_at': datetime.now().isoformat()
+                'captured_at': utc_now_iso()
             }
             
             headers = {
@@ -106,7 +107,7 @@ class NetworkHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'completed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={
                     'ipv4': network_data['ipv4'],
                     'nic': network_data['nic'],
@@ -121,7 +122,7 @@ class NetworkHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )
     
@@ -129,7 +130,7 @@ class NetworkHandler(BaseHandler):
         """Apply iDRAC network configuration changes"""
         try:
             self.log(f"Starting iDRAC network write job: {job['id']}")
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             details = job.get('details', {})
             server_id = details.get('server_id')
@@ -201,7 +202,7 @@ class NetworkHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'completed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={
                     'applied_changes': changes,
                     'ip_changed': 'IPv4.1.Address' in changes
@@ -214,7 +215,7 @@ class NetworkHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )
     

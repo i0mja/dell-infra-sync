@@ -6,7 +6,7 @@ from typing import Dict
 import requests
 
 from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL, VCENTER_HOST, VCENTER_PASSWORD, VCENTER_USER
-from job_executor.utils import _safe_json_parse
+from job_executor.utils import _safe_json_parse, utc_now_iso
 
 
 class ConnectivityMixin:
@@ -186,7 +186,7 @@ class ConnectivityMixin:
                 'error': error,
                 'details': details,
                 'source': 'job_executor',
-                'timestamp': datetime.now().isoformat()
+                'timestamp': utc_now_iso()
             }
 
             headers = {
@@ -212,7 +212,7 @@ class ConnectivityMixin:
         """Run connectivity tests for vCenter and record the results."""
         try:
             self.log(f"Starting vCenter connectivity test job: {job['id']}")
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
 
             details = job.get('details', {})
             settings = {
@@ -256,7 +256,7 @@ class ConnectivityMixin:
             self.update_job_status(
                 job['id'],
                 status,
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={
                     'results': results,
                     'summary': f"Connectivity tests {'passed' if overall_success else 'failed'}"
@@ -268,6 +268,6 @@ class ConnectivityMixin:
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )

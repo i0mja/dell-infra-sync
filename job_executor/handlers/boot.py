@@ -4,6 +4,7 @@ from typing import Dict
 from datetime import datetime, timezone
 import requests
 from .base import BaseHandler
+from job_executor.utils import utc_now_iso
 
 
 class BootHandler(BaseHandler):
@@ -15,7 +16,7 @@ class BootHandler(BaseHandler):
             from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
             from job_executor.utils import _safe_json_parse
             
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             target_scope = job.get('target_scope', {})
             details = job.get('details', {})
@@ -145,7 +146,7 @@ class BootHandler(BaseHandler):
             self.update_job_status(
                 job['id'], 
                 'completed' if failed_count == 0 else 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={
                     'action': action,
                     'success_count': success_count,
@@ -161,7 +162,7 @@ class BootHandler(BaseHandler):
             self.update_job_status(
                 job['id'], 
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )
     
@@ -173,7 +174,7 @@ class BootHandler(BaseHandler):
             self.log(f"Starting BIOS config read job: {job['id']}")
             
             # Update job status
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             # Get server and credentials
             details = job.get('details', {})
@@ -242,7 +243,7 @@ class BootHandler(BaseHandler):
                 'snapshot_type': snapshot_type,
                 'created_by': job['created_by'],
                 'notes': notes,
-                'captured_at': datetime.now().isoformat()
+                'captured_at': utc_now_iso()
             }
             
             headers = {
@@ -267,7 +268,7 @@ class BootHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'completed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={
                     'attribute_count': len(current_attributes),
                     'pending_count': len(pending_attributes) if pending_attributes else 0,
@@ -282,7 +283,7 @@ class BootHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )
     
@@ -292,7 +293,7 @@ class BootHandler(BaseHandler):
             self.log(f"Starting BIOS config write job: {job['id']}")
             
             # Update job status
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             # Get server and credentials
             details = job.get('details', {})
