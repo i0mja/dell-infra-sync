@@ -2517,86 +2517,160 @@ class DellOperations:
                 user_id=user_id
             )
             
-            # Get task URI for monitoring
-            task_uri = response.get('_location_header') or response.get('@odata.id')
+            # Get task URI for monitoring - Dell returns job ID in Location header
+            location_header = response.get('_location_header', '')
+            job_uri = None
             
-            # Wait for catalog scan to complete
+            # Parse job ID from location header (e.g., "/redfish/v1/Managers/iDRAC.Embedded.1/Jobs/JID_123456789")
+            if '/Jobs/' in location_header:
+                job_uri = location_header
+            elif 'JID_' in str(response):
+                # Try to find job ID in response
+                import re
+                jid_match = re.search(r'JID_\d+', str(response))
+                if jid_match:
+                    job_uri = f"/redfish/v1/Managers/iDRAC.Embedded.1/Jobs/{jid_match.group()}"
+            
+            if not job_uri:
+                # Fallback: Look for the job in the queue
+                time.sleep(5)
+                queue_result = self.get_idrac_job_queue(ip, username, password, server_id=server_id)
+                if queue_result.get('success'):
+                    for qjob in queue_result.get('jobs', []):
+                        if 'repository' in qjob.get('name', '').lower() and qjob.get('status') == 'Running':
+                            job_uri = f"/redfish/v1/Managers/iDRAC.Embedded.1/Jobs/{qjob.get('id')}"
+                            break
+            
+            # Poll the job/task until completion and parse messages
+            available_updates = []
             start_time = time.time()
+            
             while time.time() - start_time < timeout:
                 time.sleep(10)
                 
-                # Check iDRAC job queue for the catalog scan result
                 try:
-                    pending_result = self.get_pending_idrac_jobs(
-                        ip, username, password,
-                        server_id=server_id,
-                        job_id=job_id,
-                        user_id=user_id
-                    )
-                    
-                    pending_jobs = pending_result.get('jobs', [])
-                    
-                    # Look for scheduled firmware jobs (these are the available updates)
-                    available_updates = []
-                    for pj in pending_jobs:
-                        job_name = pj.get('name', '').lower()
-                        job_status = pj.get('status', '')
-                        
-                        # Scheduled or Downloaded jobs indicate available updates
-                        if job_status in ['Scheduled', 'New', 'Downloaded']:
-                            if 'firmware' in job_name or 'update' in job_name or 'bios' in job_name:
-                                available_updates.append({
-                                    'job_id': pj.get('id'),
-                                    'name': pj.get('name'),
-                                    'status': job_status,
-                                    'message': pj.get('message', '')
-                                })
-                    
-                    # If we found pending update jobs, catalog scan is done
-                    if available_updates:
-                        return {
-                            'success': True,
-                            'available_updates': available_updates,
-                            'update_count': len(available_updates)
-                        }
-                    
-                    # Check if there's still a running catalog comparison task
-                    running_catalog_task = False
-                    for pj in pending_jobs:
-                        if pj.get('status') == 'Running' and 'repository' in pj.get('name', '').lower():
-                            running_catalog_task = True
-                            break
-                    
-                    # If no running task and no updates, scan is complete with no updates
-                    if not running_catalog_task:
-                        # Give a bit more time for jobs to appear
-                        time.sleep(5)
-                        final_check = self.get_pending_idrac_jobs(
-                            ip, username, password,
+                    if job_uri:
+                        # Poll the specific job
+                        job_response = self.adapter.make_request(
+                            method='GET',
+                            ip=ip,
+                            endpoint=job_uri,
+                            username=username,
+                            password=password,
+                            operation_name='Poll Catalog Scan Job',
+                            timeout=(10, 30),
                             server_id=server_id
                         )
-                        final_jobs = final_check.get('jobs', [])
-                        final_updates = [
-                            {'job_id': j.get('id'), 'name': j.get('name'), 'status': j.get('status')}
-                            for j in final_jobs 
-                            if j.get('status') in ['Scheduled', 'New', 'Downloaded']
-                        ]
                         
-                        return {
-                            'success': True,
-                            'available_updates': final_updates,
-                            'update_count': len(final_updates)
-                        }
+                        job_state = job_response.get('JobState', job_response.get('TaskState', ''))
+                        job_message = job_response.get('Message', '')
                         
+                        # Check if job completed
+                        if job_state in ['Completed', 'CompletedWithErrors']:
+                            # Parse the message for available updates
+                            # Dell format: "Firmware updates are available : BIOS, iDRAC, CPLD..."
+                            if 'updates are available' in job_message.lower():
+                                # Extract component names from message
+                                parts = job_message.split(':')
+                                if len(parts) > 1:
+                                    components_str = parts[1].strip()
+                                    components = [c.strip() for c in components_str.split(',') if c.strip()]
+                                    for comp in components:
+                                        available_updates.append({
+                                            'name': comp,
+                                            'component': comp,
+                                            'status': 'Available',
+                                            'source': 'catalog_scan'
+                                        })
+                            
+                            # Also check Messages array for additional details
+                            messages = job_response.get('Messages', [])
+                            for msg in messages:
+                                msg_text = msg.get('Message', '') if isinstance(msg, dict) else str(msg)
+                                if 'updates are available' in msg_text.lower():
+                                    parts = msg_text.split(':')
+                                    if len(parts) > 1:
+                                        comp_name = parts[1].strip().rstrip('.')
+                                        # Avoid duplicates
+                                        if not any(u.get('name') == comp_name for u in available_updates):
+                                            available_updates.append({
+                                                'name': comp_name,
+                                                'component': comp_name,
+                                                'status': 'Available',
+                                                'source': 'catalog_scan'
+                                            })
+                            
+                            # If no updates found in messages, check if explicitly stated no updates
+                            if not available_updates:
+                                if 'no applicable updates' in job_message.lower() or 'up to date' in job_message.lower():
+                                    return {
+                                        'success': True,
+                                        'available_updates': [],
+                                        'update_count': 0,
+                                        'message': 'Server firmware is up to date'
+                                    }
+                            
+                            return {
+                                'success': True,
+                                'available_updates': available_updates,
+                                'update_count': len(available_updates),
+                                'job_message': job_message
+                            }
+                        
+                        elif job_state == 'Failed':
+                            return {
+                                'success': False,
+                                'available_updates': [],
+                                'update_count': 0,
+                                'error': f"Catalog scan failed: {job_message}"
+                            }
+                        
+                        # Job still running, continue polling
+                        
+                    else:
+                        # No job URI - fall back to checking job queue for repository task
+                        queue_result = self.get_idrac_job_queue(ip, username, password, server_id=server_id)
+                        if queue_result.get('success'):
+                            repo_job = None
+                            for qjob in queue_result.get('jobs', []):
+                                if 'repository' in qjob.get('name', '').lower():
+                                    repo_job = qjob
+                                    if qjob.get('status') == 'Running':
+                                        job_uri = f"/redfish/v1/Managers/iDRAC.Embedded.1/Jobs/{qjob.get('id')}"
+                                    break
+                            
+                            # If repo job completed, parse its message
+                            if repo_job and repo_job.get('status') in ['Completed', 'CompletedWithErrors']:
+                                job_message = repo_job.get('message', '')
+                                if 'updates are available' in job_message.lower():
+                                    parts = job_message.split(':')
+                                    if len(parts) > 1:
+                                        components_str = parts[1].strip()
+                                        components = [c.strip() for c in components_str.split(',') if c.strip()]
+                                        for comp in components:
+                                            available_updates.append({
+                                                'name': comp,
+                                                'component': comp,
+                                                'status': 'Available',
+                                                'source': 'catalog_scan'
+                                            })
+                                
+                                return {
+                                    'success': True,
+                                    'available_updates': available_updates,
+                                    'update_count': len(available_updates),
+                                    'job_message': job_message
+                                }
+                                
                 except Exception as poll_err:
-                    # Continue polling
+                    # Log but continue polling
                     pass
             
             # Timeout - return what we have
             return {
                 'success': False,
-                'available_updates': [],
-                'update_count': 0,
+                'available_updates': available_updates,
+                'update_count': len(available_updates),
                 'error': 'Catalog scan timed out'
             }
             
