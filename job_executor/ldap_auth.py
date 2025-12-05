@@ -69,6 +69,9 @@ class FreeIPAAuthenticator:
         ad_dc_port: int = 636,
         ad_dc_use_ssl: bool = True,
         ad_domain_fqdn: Optional[str] = None,
+        # AD service account credentials for group SID lookups
+        ad_bind_dn: Optional[str] = None,
+        ad_bind_password: Optional[str] = None,
     ):
         """
         Initialize FreeIPA authenticator.
@@ -89,6 +92,8 @@ class FreeIPAAuthenticator:
             ad_dc_port: AD DC port (default 636 for LDAPS, 389 for LDAP)
             ad_dc_use_ssl: Use LDAPS for AD DC connection (default True)
             ad_domain_fqdn: Explicit AD domain FQDN for when NETBIOS differs from domain name
+            ad_bind_dn: AD service account DN for querying AD group SIDs (e.g., 'CN=svc_ldap,OU=Service Accounts,DC=neopost,DC=ad')
+            ad_bind_password: AD service account password (decrypted)
         """
         if not LDAP3_AVAILABLE:
             raise ImportError("ldap3 library required: pip install ldap3")
@@ -107,6 +112,9 @@ class FreeIPAAuthenticator:
         self.ad_dc_port = ad_dc_port
         self.ad_dc_use_ssl = ad_dc_use_ssl
         self.ad_domain_fqdn = ad_domain_fqdn.lower() if ad_domain_fqdn else None
+        # AD service account for querying AD group SIDs
+        self.ad_bind_dn = ad_bind_dn
+        self.ad_bind_password = ad_bind_password
         
         # Derive IPA realm from base_dn (dc=idm,dc=neopost,dc=grp -> idm.neopost.grp)
         self.ipa_realm = self._base_dn_to_realm(base_dn)
@@ -536,17 +544,26 @@ class FreeIPAAuthenticator:
                 groups: List[str] = []
                 user_sid = ad_result.get('user_info', {}).get('sid')
                 ad_groups = ad_result.get('user_info', {}).get('ad_groups', [])
-                if service_bind_dn and service_bind_password:
+                
+                # Use provided credentials or fall back to instance AD bind credentials
+                bind_dn = service_bind_dn or self.ad_bind_dn
+                bind_pw = service_bind_password or self.ad_bind_password
+                
+                if bind_dn and bind_pw:
                     try:
+                        logger.info(f"Looking up AD trust groups using bind DN: {bind_dn}")
                         groups = self._lookup_ad_trust_groups_via_service_account(
                             username,
-                            service_bind_dn,
-                            service_bind_password,
+                            bind_dn,
+                            bind_pw,
                             user_sid=user_sid,
                             ad_groups=ad_groups,
                         )
+                        logger.info(f"Found {len(groups)} groups for AD trust user")
                     except Exception as e:
                         logger.warning(f"Error looking up AD trust groups via service account: {e}")
+                else:
+                    logger.warning(f"No AD bind credentials available for group lookup - ad_bind_dn: {bool(self.ad_bind_dn)}, ad_bind_password: {bool(self.ad_bind_password)}")
 
                 elapsed_ms = int((datetime.now() - start_time).total_seconds() * 1000)
 
