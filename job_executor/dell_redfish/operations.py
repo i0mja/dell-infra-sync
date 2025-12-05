@@ -2453,6 +2453,161 @@ class DellOperations:
             'reboot_needed': reboot_needed
         }
     
+    def check_available_catalog_updates(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        catalog_url: str,
+        server_id: str = None,
+        job_id: str = None,
+        user_id: str = None,
+        timeout: int = 300
+    ) -> Dict[str, Any]:
+        """
+        Check what updates are available from Dell catalog WITHOUT applying them.
+        
+        Uses InstallFromRepository with ApplyUpdate=False to scan the catalog
+        and determine available updates. This allows checking before entering
+        maintenance mode.
+        
+        Dell OEM endpoint: POST /redfish/v1/Dell/Systems/System.Embedded.1/
+            DellSoftwareInstallationService/Actions/DellSoftwareInstallationService.InstallFromRepository
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            catalog_url: URL to Dell catalog
+            server_id: Optional server ID for logging
+            job_id: Optional job ID for logging
+            user_id: Optional user ID for logging
+            timeout: Max time to wait for catalog scan (default 300s)
+            
+        Returns:
+            dict: Contains 'available_updates' list with update details
+        """
+        import time
+        from urllib.parse import urlparse
+        
+        parsed = urlparse(catalog_url)
+        
+        # Call InstallFromRepository with ApplyUpdate=False (scan only)
+        payload = {
+            'IPAddress': parsed.netloc,
+            'ShareType': parsed.scheme.upper(),
+            'ShareName': parsed.path.rsplit('/', 1)[0] or '/',
+            'CatalogFile': parsed.path.rsplit('/', 1)[-1] or 'Catalog.xml',
+            'ApplyUpdate': 'False',  # Just scan, don't apply
+            'RebootNeeded': False
+        }
+        
+        try:
+            response = self.adapter.make_request(
+                method='POST',
+                ip=ip,
+                endpoint='/redfish/v1/Dell/Systems/System.Embedded.1/DellSoftwareInstallationService/Actions/DellSoftwareInstallationService.InstallFromRepository',
+                username=username,
+                password=password,
+                payload=payload,
+                operation_name='Check Available Catalog Updates',
+                timeout=(10, 300),
+                server_id=server_id,
+                job_id=job_id,
+                user_id=user_id
+            )
+            
+            # Get task URI for monitoring
+            task_uri = response.get('_location_header') or response.get('@odata.id')
+            
+            # Wait for catalog scan to complete
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                time.sleep(10)
+                
+                # Check iDRAC job queue for the catalog scan result
+                try:
+                    pending_result = self.get_pending_idrac_jobs(
+                        ip, username, password,
+                        server_id=server_id,
+                        job_id=job_id,
+                        user_id=user_id
+                    )
+                    
+                    pending_jobs = pending_result.get('jobs', [])
+                    
+                    # Look for scheduled firmware jobs (these are the available updates)
+                    available_updates = []
+                    for pj in pending_jobs:
+                        job_name = pj.get('name', '').lower()
+                        job_status = pj.get('status', '')
+                        
+                        # Scheduled or Downloaded jobs indicate available updates
+                        if job_status in ['Scheduled', 'New', 'Downloaded']:
+                            if 'firmware' in job_name or 'update' in job_name or 'bios' in job_name:
+                                available_updates.append({
+                                    'job_id': pj.get('id'),
+                                    'name': pj.get('name'),
+                                    'status': job_status,
+                                    'message': pj.get('message', '')
+                                })
+                    
+                    # If we found pending update jobs, catalog scan is done
+                    if available_updates:
+                        return {
+                            'success': True,
+                            'available_updates': available_updates,
+                            'update_count': len(available_updates)
+                        }
+                    
+                    # Check if there's still a running catalog comparison task
+                    running_catalog_task = False
+                    for pj in pending_jobs:
+                        if pj.get('status') == 'Running' and 'repository' in pj.get('name', '').lower():
+                            running_catalog_task = True
+                            break
+                    
+                    # If no running task and no updates, scan is complete with no updates
+                    if not running_catalog_task:
+                        # Give a bit more time for jobs to appear
+                        time.sleep(5)
+                        final_check = self.get_pending_idrac_jobs(
+                            ip, username, password,
+                            server_id=server_id
+                        )
+                        final_jobs = final_check.get('jobs', [])
+                        final_updates = [
+                            {'job_id': j.get('id'), 'name': j.get('name'), 'status': j.get('status')}
+                            for j in final_jobs 
+                            if j.get('status') in ['Scheduled', 'New', 'Downloaded']
+                        ]
+                        
+                        return {
+                            'success': True,
+                            'available_updates': final_updates,
+                            'update_count': len(final_updates)
+                        }
+                        
+                except Exception as poll_err:
+                    # Continue polling
+                    pass
+            
+            # Timeout - return what we have
+            return {
+                'success': False,
+                'available_updates': [],
+                'update_count': 0,
+                'error': 'Catalog scan timed out'
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'available_updates': [],
+                'update_count': 0,
+                'error': str(e)
+            }
+    
     # Pre-Flight Check Operations for Updates
     
     def get_lifecycle_controller_status(
