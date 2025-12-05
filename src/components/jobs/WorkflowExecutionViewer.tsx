@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -13,12 +13,16 @@ import {
   MinusCircle,
   ChevronDown,
   ChevronRight,
-  RefreshCw
+  RefreshCw,
+  Monitor,
+  ExternalLink
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { IdracJobQueuePanel } from "./IdracJobQueuePanel";
+import { launchConsole } from "@/lib/job-executor-api";
+import { toast } from "sonner";
 
 interface WorkflowExecutionViewerProps {
   jobId: string;
@@ -64,6 +68,11 @@ export const WorkflowExecutionViewer = ({
   // Internal state to track job status/details independently
   const [internalJobStatus, setInternalJobStatus] = useState<string | null>(null);
   const [internalJobDetails, setInternalJobDetails] = useState<any>(null);
+  
+  // Console launch state
+  const [consoleLaunching, setConsoleLaunching] = useState(false);
+  const [consoleWindowOpen, setConsoleWindowOpen] = useState(false);
+  const consoleWindowRef = useRef<Window | null>(null);
 
   // Use props if provided, otherwise use internal state
   const effectiveJobStatus = jobStatus || internalJobStatus;
@@ -121,6 +130,66 @@ export const WorkflowExecutionViewer = ({
       supabase.removeChannel(jobChannel);
     };
   }, [jobId]);
+
+  // Track console window open state
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (consoleWindowRef.current) {
+        if (consoleWindowRef.current.closed) {
+          setConsoleWindowOpen(false);
+          consoleWindowRef.current = null;
+        }
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Reset console state when current host changes
+  useEffect(() => {
+    setConsoleWindowOpen(false);
+    consoleWindowRef.current = null;
+  }, [currentOperation?.current_host_server_id]);
+
+  const handleLaunchConsole = async () => {
+    const serverId = currentOperation?.current_host_server_id;
+    if (!serverId) return;
+    
+    setConsoleLaunching(true);
+    try {
+      const result = await launchConsole(serverId);
+      
+      if (result.success && result.console_url) {
+        // Open in a new popup window sized for iDRAC console
+        const popup = window.open(
+          result.console_url,
+          `console-${serverId}`,
+          'width=1024,height=768,left=100,top=100,menubar=no,toolbar=no,location=no,status=no'
+        );
+        
+        if (popup) {
+          consoleWindowRef.current = popup;
+          setConsoleWindowOpen(true);
+          toast.success('Console opened', {
+            description: `iDRAC console for ${currentOperation?.current_host || 'server'}`
+          });
+        } else {
+          toast.error('Popup blocked', {
+            description: 'Please allow popups to open the console'
+          });
+        }
+      } else {
+        toast.error('Failed to launch console', {
+          description: result.error || 'Could not get console URL'
+        });
+      }
+    } catch (error: any) {
+      toast.error('Console launch failed', {
+        description: error.message || 'Unknown error'
+      });
+    } finally {
+      setConsoleLaunching(false);
+    }
+  };
 
   const fetchJobData = async () => {
     try {
@@ -313,10 +382,38 @@ export const WorkflowExecutionViewer = ({
           <>
             <Card className="bg-primary/5 border-primary/20">
               <CardHeader className="pb-3">
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                  Current Operation
-                </CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                    Current Operation
+                  </CardTitle>
+                  
+                  {/* Console Launch Button */}
+                  {currentOperation.current_host_server_id && (
+                    <div className="flex items-center gap-2">
+                      {consoleWindowOpen && (
+                        <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/30">
+                          <Monitor className="h-3 w-3 mr-1" />
+                          Console Open
+                        </Badge>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleLaunchConsole}
+                        disabled={consoleLaunching}
+                        className="h-7 text-xs"
+                      >
+                        {consoleLaunching ? (
+                          <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                        ) : (
+                          <ExternalLink className="h-3 w-3 mr-1" />
+                        )}
+                        {consoleLaunching ? 'Opening...' : 'View Console'}
+                      </Button>
+                    </div>
+                  )}
+                </div>
               </CardHeader>
               <CardContent className="space-y-3">
                 {/* Current Step */}
@@ -356,6 +453,9 @@ export const WorkflowExecutionViewer = ({
                   <div className="text-xs">
                     <span className="text-muted-foreground">Current Host: </span>
                     <span className="font-medium">{currentOperation.current_host}</span>
+                    {currentOperation.current_host_ip && (
+                      <span className="text-muted-foreground ml-1">({currentOperation.current_host_ip})</span>
+                    )}
                   </div>
                 )}
               </CardContent>
