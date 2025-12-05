@@ -1587,16 +1587,29 @@ class APIHandler(BaseHTTPRequestHandler):
             try:
                 lc_status = dell_ops.get_lifecycle_controller_status(ip, username, password, server_id=server_id)
                 lc_state = lc_status.get('status', 'Unknown')
-                if lc_state in ['Ready', 'enabled']:
-                    result['checks']['lifecycle_controller'] = {'passed': True, 'status': lc_state}
+                server_state = lc_status.get('server_status', 'Unknown')
+                
+                if lc_state == 'Ready':
+                    result['checks']['lifecycle_controller'] = {
+                        'passed': True, 
+                        'status': lc_state,
+                        'server_status': server_state,
+                        'message': lc_status.get('message', '')
+                    }
                 else:
-                    result['checks']['lifecycle_controller'] = {'passed': False, 'status': lc_state}
+                    result['checks']['lifecycle_controller'] = {
+                        'passed': False, 
+                        'status': lc_state,
+                        'server_status': server_state,
+                        'message': lc_status.get('message', '')
+                    }
                     result['ready'] = False
                     result['blockers'].append({
                         'type': 'lifecycle_controller', 
-                        'message': f'Lifecycle Controller not ready: {lc_state}'
+                        'message': f'Lifecycle Controller not ready: {lc_state} (Server: {server_state})'
                     })
             except Exception as e:
+                # Handle older iDRAC versions that may not support this endpoint
                 result['checks']['lifecycle_controller'] = {'passed': False, 'status': f'Error: {str(e)}'}
                 result['warnings'].append(f'Could not check LC status: {str(e)}')
             

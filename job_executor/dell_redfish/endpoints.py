@@ -51,4 +51,5 @@ CANONICAL_REDFISH_ENDPOINTS = {
     "/redfish/v1/UpdateService/Actions/UpdateService.SimpleUpdate",
     "/redfish/v1/UpdateService/FirmwareInventory",
     "/redfish/v1/Dell/Systems/System.Embedded.1/DellSoftwareInstallationService/Actions/DellSoftwareInstallationService.InstallFromRepository",
+    "/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DellLCService/Actions/DellLCService.GetRemoteServicesAPIStatus",
 }
