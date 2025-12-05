@@ -1223,41 +1223,58 @@ class ClusterHandler(BaseHandler):
                                             )
                                             
                                             scheduled_jobs = pending_check.get('jobs', [])
-                                            # Look for scheduled firmware (JID_) or reboot (RID_) jobs
-                                            scheduled_updates = [
+                                            # Look for ALL active firmware (JID_) or reboot (RID_) jobs
+                                            # FIX: Include Running, Downloading, New - not just Scheduled!
+                                            active_states = ['Scheduled', 'Running', 'Downloading', 'New', 'Starting', 'Waiting']
+                                            active_updates = [
                                                 j for j in scheduled_jobs 
-                                                if j.get('status') == 'Scheduled' and 
+                                                if j.get('status') in active_states and 
                                                    (j.get('id', '').startswith('JID_') or j.get('id', '').startswith('RID_'))
                                             ]
                                             
-                                            if scheduled_updates:
-                                                self.log(f"    Found {len(scheduled_updates)} scheduled update jobs:")
-                                                for sj in scheduled_updates[:5]:  # Show first 5
-                                                    self.log(f"      - {sj.get('id')}: {sj.get('name', 'Unknown')}")
+                                            if active_updates:
+                                                self.log(f"    Found {len(active_updates)} active update job(s):")
+                                                for sj in active_updates[:5]:  # Show first 5
+                                                    self.log(f"      - {sj.get('id')}: {sj.get('name', 'Unknown')} ({sj.get('status')})")
                                                 
-                                                # Explicitly trigger reboot to apply staged updates
-                                                self.log(f"    Triggering GracefulRestart to apply staged updates...")
-                                                reboot_result = dell_ops.graceful_reboot(
-                                                    ip=server['ip_address'],
-                                                    username=username,
-                                                    password=password,
-                                                    server_id=host['server_id'],
-                                                    job_id=job['id'],
-                                                    user_id=job['created_by']
-                                                )
+                                                # Check for iDRAC firmware updates (require iDRAC restart, not just system reboot)
+                                                idrac_fw_updates = [j for j in active_updates if 'idrac' in j.get('name', '').lower()]
+                                                if idrac_fw_updates:
+                                                    self.log(f"    ⚠ iDRAC firmware update detected - will require iDRAC restart")
+                                                    update_result['idrac_fw_update_pending'] = True
                                                 
-                                                if reboot_result.get('success'):
-                                                    self.log(f"    ✓ GracefulRestart triggered successfully")
-                                                    reboot_required = True
-                                                    update_result['reboot_triggered'] = True
-                                                    update_result['scheduled_jobs'] = [j.get('id') for j in scheduled_updates]
+                                                # Track active jobs for later verification
+                                                update_result['active_jobs'] = [{'id': j.get('id'), 'name': j.get('name'), 'status': j.get('status')} for j in active_updates]
+                                                
+                                                # If jobs are already Running/Downloading, don't reboot yet - wait for them
+                                                running_jobs = [j for j in active_updates if j.get('status') in ['Running', 'Downloading']]
+                                                if running_jobs:
+                                                    self.log(f"    Jobs already in progress - will wait for completion...")
+                                                    reboot_required = True  # Will need reboot after jobs complete
+                                                    update_result['jobs_in_progress'] = True
                                                 else:
-                                                    self.log(f"    ⚠ GracefulRestart failed: {reboot_result.get('error')}", "WARN")
-                                                    # Still wait - the jobs are scheduled and may execute on next reboot
-                                                    reboot_required = True
+                                                    # Jobs are Scheduled - trigger reboot to apply staged updates
+                                                    self.log(f"    Triggering GracefulRestart to apply staged updates...")
+                                                    reboot_result = dell_ops.graceful_reboot(
+                                                        ip=server['ip_address'],
+                                                        username=username,
+                                                        password=password,
+                                                        server_id=host['server_id'],
+                                                        job_id=job['id'],
+                                                        user_id=job['created_by']
+                                                    )
+                                                    
+                                                    if reboot_result.get('success'):
+                                                        self.log(f"    ✓ GracefulRestart triggered successfully")
+                                                        reboot_required = True
+                                                        update_result['reboot_triggered'] = True
+                                                    else:
+                                                        self.log(f"    ⚠ GracefulRestart failed: {reboot_result.get('error')}", "WARN")
+                                                        # Still wait - the jobs are scheduled and may execute on next reboot
+                                                        reboot_required = True
                                             else:
-                                                # No scheduled jobs - server may already be up to date
-                                                self.log(f"    ℹ️ No scheduled update jobs found - server may already be up to date")
+                                                # No active jobs - server may already be up to date
+                                                self.log(f"    ℹ️ No active update jobs found - server may already be up to date")
                                                 update_result['no_updates_needed'] = True
                                                 reboot_required = False
                                                 
@@ -1448,6 +1465,36 @@ class ClusterHandler(BaseHandler):
                                     self.log(f"    ✓ No failed firmware jobs detected")
                             except Exception as verify_err:
                                 self.log(f"    ⚠ Could not verify job status: {verify_err}", "WARN")
+                            
+                            # CRITICAL: Wait for ALL pending iDRAC jobs to complete
+                            # This catches iDRAC firmware updates that run independently of system reboot
+                            self.log(f"    Checking for remaining iDRAC jobs...")
+                            try:
+                                jobs_complete_result = dell_ops.wait_for_all_jobs_complete(
+                                    ip=server['ip_address'],
+                                    username=username,
+                                    password=password,
+                                    timeout=1200,  # 20 minutes for iDRAC FW updates
+                                    poll_interval=30,
+                                    server_id=host['server_id'],
+                                    job_id=job['id'],
+                                    user_id=job['created_by']
+                                )
+                                
+                                if not jobs_complete_result.get('success'):
+                                    pending = jobs_complete_result.get('pending_jobs', [])
+                                    self.log(f"    ⚠ Warning: {len(pending)} job(s) still pending after wait:", "WARN")
+                                    for pj in pending[:5]:
+                                        self.log(f"      - {pj.get('id')}: {pj.get('status')} - {pj.get('name', 'Unknown')}", "WARN")
+                                    host_result['jobs_still_pending'] = [j.get('id') for j in pending]
+                                else:
+                                    self.log(f"    ✓ All iDRAC jobs completed successfully")
+                                    host_result['all_jobs_completed'] = True
+                                    
+                                # Track completed jobs for UI display
+                                host_result['firmware_updates_applied'] = jobs_complete_result.get('completed_jobs', [])
+                            except Exception as wait_err:
+                                self.log(f"    ⚠ Error waiting for jobs: {wait_err}", "WARN")
                         else:
                             # No reboot required - skip reboot wait
                             self.log(f"  [3/5] Skipping reboot wait - no updates required reboot")

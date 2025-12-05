@@ -2939,3 +2939,128 @@ class DellOperations:
             result['message'] = f"Failed to clear stale jobs: {str(e)}"
         
         return result
+
+    def wait_for_all_jobs_complete(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        timeout: int = 1800,
+        poll_interval: int = 30,
+        server_id: str = None,
+        job_id: str = None,
+        user_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Wait for ALL iDRAC jobs to complete (no Running, Downloading, Scheduled jobs).
+        
+        Critical for:
+        - iDRAC firmware updates that require iDRAC restart
+        - Multiple firmware updates scheduled together
+        - Ensuring all updates are applied before exiting maintenance
+        
+        Dell pattern: Poll /redfish/v1/Managers/iDRAC.Embedded.1/Jobs until queue is clear
+        
+        Args:
+            ip: iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            timeout: Maximum wait time in seconds (default 30 minutes)
+            poll_interval: Time between polls in seconds
+            server_id: Optional server ID for logging
+            job_id: Optional job ID for logging
+            user_id: Optional user ID for logging
+            
+        Returns:
+            dict with success status, completed_jobs list, failed_jobs list
+        """
+        start_time = time.time()
+        completed_jobs = []
+        failed_jobs = []
+        last_job_count = -1
+        idrac_restart_detected = False
+        
+        self.adapter.logger.info(f"Waiting for all iDRAC jobs to complete (timeout: {timeout}s)...")
+        
+        while (time.time() - start_time) < timeout:
+            try:
+                # Get current pending jobs
+                pending = self.get_pending_idrac_jobs(ip, username, password, server_id, job_id, user_id)
+                
+                active_jobs = pending.get('jobs', [])
+                active_count = len(active_jobs)
+                
+                if active_count == 0:
+                    # All jobs complete
+                    self.adapter.logger.info(f"All iDRAC jobs completed")
+                    return {
+                        'success': True,
+                        'completed_jobs': completed_jobs,
+                        'failed_jobs': failed_jobs,
+                        'message': 'All iDRAC jobs completed'
+                    }
+                
+                # Log progress if job count changed
+                if active_count != last_job_count:
+                    last_job_count = active_count
+                    self.adapter.logger.info(f"  {active_count} job(s) still active:")
+                    for aj in active_jobs[:5]:
+                        status = aj.get('status', 'Unknown')
+                        name = aj.get('name', 'Unknown')
+                        job_id_str = aj.get('id', 'Unknown')
+                        percent = aj.get('percent_complete', 0)
+                        
+                        # Check for iDRAC firmware update (these require iDRAC restart)
+                        if 'idrac' in name.lower() and status in ['Running', 'Downloading']:
+                            if not idrac_restart_detected:
+                                self.adapter.logger.info(f"    ⚠ iDRAC firmware update in progress - iDRAC will restart")
+                                idrac_restart_detected = True
+                        
+                        self.adapter.logger.info(f"    - {job_id_str}: {status} ({percent}%) - {name}")
+                
+                time.sleep(poll_interval)
+                
+            except Exception as e:
+                # Connection failed - might be iDRAC restarting
+                error_str = str(e).lower()
+                if 'connection' in error_str or 'timeout' in error_str or 'refused' in error_str:
+                    if idrac_restart_detected:
+                        self.adapter.logger.info(f"  iDRAC connection lost (likely restarting)...")
+                        # Wait for iDRAC to come back online
+                        time.sleep(60)  # iDRAC restart takes 1-2 minutes
+                        
+                        # Try to reconnect
+                        reconnect_start = time.time()
+                        while (time.time() - reconnect_start) < 300:  # 5 min to reconnect
+                            try:
+                                test = self.adapter.make_request(
+                                    method='GET',
+                                    ip=ip,
+                                    endpoint='/redfish/v1/Managers/iDRAC.Embedded.1',
+                                    username=username,
+                                    password=password,
+                                    operation_name='iDRAC Reconnect Check',
+                                    server_id=server_id,
+                                    timeout=(5, 15)
+                                )
+                                self.adapter.logger.info(f"  ✓ iDRAC back online after restart")
+                                break
+                            except:
+                                time.sleep(15)
+                        continue
+                    else:
+                        self.adapter.logger.warning(f"  Connection error: {e}")
+                        time.sleep(poll_interval)
+                        continue
+                else:
+                    self.adapter.logger.warning(f"  Error checking jobs: {e}")
+                    time.sleep(poll_interval)
+        
+        # Timeout reached
+        return {
+            'success': False,
+            'completed_jobs': completed_jobs,
+            'failed_jobs': failed_jobs,
+            'pending_jobs': active_jobs if 'active_jobs' in dir() else [],
+            'message': f'Timeout waiting for jobs to complete after {timeout}s'
+        }
