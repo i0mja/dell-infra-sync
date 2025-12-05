@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 
@@ -23,15 +23,22 @@ export interface IdmAuthSession {
 export function useIdmSessions() {
   const [sessions, setSessions] = useState<IdmAuthSession[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showInactive, setShowInactive] = useState(false);
   const { toast } = useToast();
 
-  const loadSessions = async () => {
+  const loadSessions = useCallback(async (includeInactive: boolean = false) => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('idm_auth_sessions')
         .select('*')
         .order('session_started_at', { ascending: false });
+
+      if (!includeInactive) {
+        query = query.eq('is_active', true);
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
       setSessions(data || []);
@@ -45,7 +52,7 @@ export function useIdmSessions() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [toast]);
 
   const invalidateSession = async (id: string, reason: string) => {
     try {
@@ -65,7 +72,7 @@ export function useIdmSessions() {
         description: 'User has been logged out',
       });
 
-      await loadSessions();
+      await loadSessions(showInactive);
     } catch (error: any) {
       console.error('Failed to invalidate session:', error);
       toast({
@@ -95,7 +102,7 @@ export function useIdmSessions() {
         description: 'All user sessions have been logged out',
       });
 
-      await loadSessions();
+      await loadSessions(showInactive);
     } catch (error: any) {
       console.error('Failed to invalidate user sessions:', error);
       toast({
@@ -122,10 +129,10 @@ export function useIdmSessions() {
 
       toast({
         title: 'Cleanup Complete',
-        description: 'Expired sessions have been removed',
+        description: 'Expired sessions have been marked inactive',
       });
 
-      await loadSessions();
+      await loadSessions(showInactive);
     } catch (error: any) {
       console.error('Failed to cleanup expired sessions:', error);
       toast({
@@ -142,7 +149,7 @@ export function useIdmSessions() {
       const { data: settings } = await supabase
         .from('idm_settings')
         .select('session_timeout_minutes')
-        .single();
+        .maybeSingle();
 
       const timeoutMinutes = settings?.session_timeout_minutes || 480;
       const threshold = new Date(Date.now() - timeoutMinutes * 60 * 1000).toISOString();
@@ -161,10 +168,10 @@ export function useIdmSessions() {
 
       toast({
         title: 'Cleanup Complete',
-        description: `Inactive sessions (no activity in ${timeoutMinutes} min) have been removed`,
+        description: `Inactive sessions (no activity in ${timeoutMinutes} min) have been marked inactive`,
       });
 
-      await loadSessions();
+      await loadSessions(showInactive);
     } catch (error: any) {
       console.error('Failed to cleanup inactive sessions:', error);
       toast({
@@ -175,17 +182,53 @@ export function useIdmSessions() {
     }
   };
 
+  const purgeOldSessions = async (daysOld: number = 7) => {
+    try {
+      const threshold = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000).toISOString();
+
+      const { error, count } = await supabase
+        .from('idm_auth_sessions')
+        .delete()
+        .eq('is_active', false)
+        .lt('invalidated_at', threshold);
+
+      if (error) throw error;
+
+      toast({
+        title: 'Purge Complete',
+        description: `Old inactive sessions (older than ${daysOld} days) have been permanently deleted`,
+      });
+
+      await loadSessions(showInactive);
+    } catch (error: any) {
+      console.error('Failed to purge old sessions:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to purge sessions',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const toggleShowInactive = (value: boolean) => {
+    setShowInactive(value);
+    loadSessions(value);
+  };
+
   useEffect(() => {
-    loadSessions();
+    loadSessions(showInactive);
   }, []);
 
   return {
     sessions,
     loading,
-    loadSessions,
+    showInactive,
+    loadSessions: () => loadSessions(showInactive),
+    toggleShowInactive,
     invalidateSession,
     invalidateUserSessions,
     cleanupExpiredSessions,
     cleanupInactiveSessions,
+    purgeOldSessions,
   };
 }
