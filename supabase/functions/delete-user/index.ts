@@ -86,13 +86,27 @@ Deno.serve(async (req) => {
       .update({ user_id: null })
       .eq('user_id', user_id);
 
-    // 2. Delete from idm_auth_sessions
+    // 2. Update jobs to SET NULL on created_by (preserve job history)
+    const { error: jobsError } = await adminClient
+      .from('jobs')
+      .update({ created_by: null })
+      .eq('created_by', user_id);
+
+    if (jobsError) {
+      console.error('Error updating jobs:', jobsError);
+      return new Response(
+        JSON.stringify({ error: 'Failed to update job references', details: jobsError.message }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // 3. Delete from idm_auth_sessions
     await adminClient
       .from('idm_auth_sessions')
       .delete()
       .eq('user_id', user_id);
 
-    // 3. Delete from user_roles
+    // 4. Delete from user_roles
     const { error: rolesError } = await adminClient
       .from('user_roles')
       .delete()
@@ -102,7 +116,7 @@ Deno.serve(async (req) => {
       console.error('Error deleting user roles:', rolesError);
     }
 
-    // 4. Delete from profiles
+    // 5. Delete from profiles
     const { error: profileError } = await adminClient
       .from('profiles')
       .delete()
@@ -116,7 +130,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 5. Delete from auth.users using admin API
+    // 6. Delete from auth.users using admin API
     const { error: authDeleteError } = await adminClient.auth.admin.deleteUser(user_id);
 
     if (authDeleteError) {
@@ -124,7 +138,7 @@ Deno.serve(async (req) => {
       // Profile already deleted, log this but don't fail completely
     }
 
-    // 6. Log the deletion
+    // 7. Log the deletion
     await adminClient.from('audit_logs').insert({
       action: 'user_deleted',
       user_id: caller.id,
