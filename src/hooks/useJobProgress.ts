@@ -47,10 +47,6 @@ export function useJobProgress(jobId: string | null, enabled: boolean = true) {
       }
       
       // Calculate progress percentage from details if available
-      const details = job?.details;
-      let progressPercent = 0;
-      
-      // Calculate progress from details if available
       const calculatedProgress = (() => {
         const jobDetails = job?.details;
         if (!jobDetails || typeof jobDetails !== 'object' || Array.isArray(jobDetails)) return null;
@@ -120,9 +116,37 @@ export function useJobProgress(jobId: string | null, enabled: boolean = true) {
         return null;
       })();
       
-      // Use calculated progress or fall back to task-based calculation
+      // Fallback: Query workflow_executions for workflow-based jobs
+      let workflowProgress: number | null = null;
+      let workflowCurrentStep: string | undefined;
+      
+      if (calculatedProgress === null && totalTasks === 0) {
+        const { data: workflowSteps } = await supabase
+          .from('workflow_executions')
+          .select('step_name, step_status')
+          .eq('job_id', jobId)
+          .order('step_number', { ascending: true });
+        
+        if (workflowSteps && workflowSteps.length > 0) {
+          const completedSteps = workflowSteps.filter(s => 
+            ['completed', 'skipped'].includes(s.step_status)
+          ).length;
+          workflowProgress = Math.round((completedSteps / workflowSteps.length) * 100);
+          
+          // Get current step from running workflow execution
+          const runningStep = workflowSteps.find(s => s.step_status === 'running');
+          if (runningStep) {
+            workflowCurrentStep = runningStep.step_name?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+          }
+        }
+      }
+
+      // Use calculated progress or fall back to workflow/task-based calculation
+      let progressPercent = 0;
       if (calculatedProgress !== null) {
         progressPercent = calculatedProgress;
+      } else if (workflowProgress !== null) {
+        progressPercent = workflowProgress;
       } else if (totalTasks > 0) {
         progressPercent = Math.round((completedTasks / totalTasks) * 100);
       }
@@ -131,9 +155,9 @@ export function useJobProgress(jobId: string | null, enabled: boolean = true) {
         totalTasks,
         completedTasks,
         runningTasks,
-        currentStep: typeof job?.details === 'object' && job?.details !== null 
+        currentStep: workflowCurrentStep || (typeof job?.details === 'object' && job?.details !== null 
           ? (job.details as any).current_step 
-          : undefined,
+          : undefined),
         progressPercent,
         elapsedMs
       };
