@@ -1466,18 +1466,49 @@ class VCenterMixin:
                         'last_sync': datetime.now().isoformat()
                     }
                     
-                    # Upsert host
-                    response = requests.post(
-                        f"{DSM_URL}/rest/v1/vcenter_hosts?on_conflict=vcenter_id,source_vcenter_id",
+                    # Check if host exists by name + source_vcenter_id (more reliable than vcenter_id)
+                    from urllib.parse import quote
+                    existing_response = requests.get(
+                        f"{DSM_URL}/rest/v1/vcenter_hosts?name=eq.{quote(host.name)}&source_vcenter_id=eq.{source_vcenter_id}&select=id",
                         headers={
                             'apikey': SERVICE_ROLE_KEY,
-                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
-                            'Content-Type': 'application/json',
-                            'Prefer': 'resolution=merge-duplicates,return=representation'
+                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
                         },
-                        json=host_data,
                         verify=VERIFY_SSL
                     )
+                    
+                    existing_host = None
+                    if existing_response.status_code == 200:
+                        existing_hosts = _safe_json_parse(existing_response)
+                        if existing_hosts:
+                            existing_host = existing_hosts[0]
+                    
+                    if existing_host:
+                        # Update existing host
+                        response = requests.patch(
+                            f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{existing_host['id']}",
+                            headers={
+                                'apikey': SERVICE_ROLE_KEY,
+                                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                'Content-Type': 'application/json',
+                                'Prefer': 'return=representation'
+                            },
+                            json=host_data,
+                            verify=VERIFY_SSL
+                        )
+                    else:
+                        # Insert new host
+                        response = requests.post(
+                            f"{DSM_URL}/rest/v1/vcenter_hosts",
+                            headers={
+                                'apikey': SERVICE_ROLE_KEY,
+                                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                'Content-Type': 'application/json',
+                                'Prefer': 'return=representation'
+                            },
+                            json=host_data,
+                            verify=VERIFY_SSL
+                        )
                     
                     if response.status_code in [200, 201]:
                         synced += 1
