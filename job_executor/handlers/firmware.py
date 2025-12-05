@@ -99,11 +99,40 @@ class FirmwareHandler(BaseHandler):
                         log="✓ Connected to iDRAC\nChecking current firmware..."
                     )
                     
-                    # Step 2: Get current firmware inventory and capture version before update
+                    # Step 2: Clear stale iDRAC jobs before update (prevents RED014/JCP042 errors)
+                    clear_stale_jobs = details.get('clear_stale_jobs_before_update', True)
+                    if clear_stale_jobs:
+                        self.log(f"  Checking for stale iDRAC jobs...")
+                        self.update_task_status(task['id'], 'running',
+                            log="✓ Connected to iDRAC\n→ Checking job queue...", progress=5)
+                        try:
+                            dell_ops = self.executor._get_dell_operations()
+                            clear_result = dell_ops.clear_stale_idrac_jobs(
+                                ip=ip,
+                                username=username,
+                                password=password,
+                                clear_failed=True,
+                                clear_completed_errors=True,
+                                clear_old_scheduled=details.get('clear_old_scheduled_jobs', False),
+                                stale_age_hours=details.get('stale_job_max_age_hours', 24),
+                                server_id=server['id'],
+                                job_id=job['id'],
+                                user_id=job.get('created_by')
+                            )
+                            
+                            cleared_count = clear_result.get('cleared_count', 0)
+                            if cleared_count > 0:
+                                self.log(f"  ✓ Cleared {cleared_count} stale job(s) from iDRAC queue")
+                            else:
+                                self.log(f"  ✓ iDRAC job queue is clean")
+                        except Exception as clear_error:
+                            self.log(f"  ⚠ Error clearing stale jobs (non-fatal): {clear_error}", "WARN")
+                    
+                    # Step 3: Get current firmware inventory and capture version before update
                     current_fw = self.executor.get_firmware_inventory(ip, session_token)
                     version_before = self._find_component_version(current_fw, component)
                     
-                    # Step 2.5: Check if updates are available BEFORE entering maintenance mode
+                    # Step 3.5: Check if updates are available BEFORE entering maintenance mode
                     maintenance_mode_enabled = False
                     maintenance_mode_result = None
                     
