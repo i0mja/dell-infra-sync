@@ -35,7 +35,7 @@ import { FirmwareSourceSelector } from "@/components/common/FirmwareSourceSelect
 import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
 import { RecurrenceConfig, getNextExecutionsFromConfig, getHumanReadableSchedule } from "@/lib/cron-utils";
 import { addHours, addDays, format } from "date-fns";
-import { runPreflightCheck } from "@/lib/job-executor-api";
+import { runPreflightCheckWithProgress, PreflightProgress } from "@/lib/job-executor-api";
 import { PreFlightCheckResults, PreflightCheckResult } from "./PreFlightCheckResults";
 
 interface ClusterUpdateWizardProps {
@@ -113,6 +113,7 @@ export const ClusterUpdateWizard = ({
   const [safetyCheckLoading, setSafetyCheckLoading] = useState(false);
   const [safetyCheckPassed, setSafetyCheckPassed] = useState(false);
   const [preflightResults, setPreflightResults] = useState<PreflightCheckResult | null>(null);
+  const [preflightProgress, setPreflightProgress] = useState<PreflightProgress | null>(null);
   const [clusterConflict, setClusterConflict] = useState<ClusterConflict | null>(null);
   
   // Step 2: Update Type and Selection
@@ -430,6 +431,7 @@ export const ClusterUpdateWizard = ({
 
     setSafetyCheckLoading(true);
     setPreflightResults(null);
+    setPreflightProgress(null);
     
     try {
       // Get server IDs based on target type
@@ -458,9 +460,16 @@ export const ClusterUpdateWizard = ({
         throw new Error("No servers found for the selected target");
       }
       
-      // Run real pre-flight checks via Job Executor
-      const results = await runPreflightCheck(serverIds, firmwareSource);
+      // Run pre-flight checks with streaming progress
+      const results = await runPreflightCheckWithProgress(
+        serverIds, 
+        firmwareSource,
+        (progress) => {
+          setPreflightProgress(progress);
+        }
+      );
       setPreflightResults(results as PreflightCheckResult);
+      setPreflightProgress(null);
       
       if (results.overall_ready) {
         setSafetyCheckPassed(true);
@@ -492,6 +501,7 @@ export const ClusterUpdateWizard = ({
         warnings: [],
         error: error.message
       });
+      setPreflightProgress(null);
     } finally {
       setSafetyCheckLoading(false);
     }
@@ -943,6 +953,7 @@ export const ClusterUpdateWizard = ({
                 loading={safetyCheckLoading}
                 firmwareSource={firmwareSource}
                 onChangeFirmwareSource={handleChangeFirmwareSource}
+                progress={preflightProgress}
               />
             )}
           </div>

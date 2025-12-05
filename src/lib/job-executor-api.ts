@@ -732,6 +732,19 @@ export interface PreflightCheckResponse {
 }
 
 /**
+ * Pre-flight check progress event
+ */
+export interface PreflightProgress {
+  current: number;
+  total: number;
+  percent: number;
+  current_hostname: string;
+  passed: number;
+  failed: number;
+  status?: 'checking' | 'completed' | 'dell_repo_check';
+}
+
+/**
  * Run comprehensive pre-flight checks for cluster/server update
  */
 export async function runPreflightCheck(
@@ -791,4 +804,87 @@ export async function runPreflightCheck(
       error: 'Unknown error running pre-flight check'
     };
   }
+}
+
+/**
+ * Run pre-flight checks with streaming progress updates via SSE
+ */
+export function runPreflightCheckWithProgress(
+  serverIds: string[],
+  firmwareSource: string,
+  onProgress: (progress: PreflightProgress) => void
+): Promise<PreflightCheckResponse> {
+  return new Promise((resolve, reject) => {
+    const params = new URLSearchParams({
+      server_ids: serverIds.join(','),
+      firmware_source: firmwareSource
+    });
+    
+    const eventSource = new EventSource(`${apiBaseUrl}/api/preflight-check-stream?${params.toString()}`);
+    let resolved = false;
+    
+    // Set a timeout in case the connection hangs
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        eventSource.close();
+        reject(new Error('Pre-flight check timed out'));
+      }
+    }, 600000); // 10 minute timeout for large clusters
+    
+    eventSource.addEventListener('progress', (event) => {
+      try {
+        const data = JSON.parse(event.data) as PreflightProgress;
+        onProgress(data);
+      } catch (e) {
+        console.error('Failed to parse progress event:', e);
+      }
+    });
+    
+    eventSource.addEventListener('server_result', (event) => {
+      // Optional: could track individual server results here
+      console.debug('Server result:', event.data);
+    });
+    
+    eventSource.addEventListener('done', (event) => {
+      clearTimeout(timeout);
+      resolved = true;
+      eventSource.close();
+      try {
+        const data = JSON.parse(event.data) as PreflightCheckResponse;
+        resolve(data);
+      } catch (e) {
+        reject(new Error('Failed to parse final results'));
+      }
+    });
+    
+    eventSource.addEventListener('error', (event: Event) => {
+      clearTimeout(timeout);
+      if (!resolved) {
+        resolved = true;
+        eventSource.close();
+        // Check if it's a custom error event with data
+        const messageEvent = event as MessageEvent;
+        if (messageEvent.data) {
+          try {
+            const errorData = JSON.parse(messageEvent.data);
+            reject(new Error(errorData.error || 'Pre-flight check failed'));
+          } catch {
+            reject(new Error('Pre-flight check connection error'));
+          }
+        } else {
+          reject(new Error('Pre-flight check connection error - Job Executor may not be running'));
+        }
+      }
+    });
+    
+    eventSource.onerror = () => {
+      clearTimeout(timeout);
+      if (!resolved) {
+        resolved = true;
+        eventSource.close();
+        reject(new Error('Pre-flight check connection error - Job Executor may not be running'));
+      }
+    };
+  });
 }
