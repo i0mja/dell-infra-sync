@@ -23,6 +23,7 @@ import {
   Clock,
   Link,
   MoreHorizontal,
+  Network,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import type { Server } from "@/hooks/useServers";
@@ -50,6 +51,7 @@ interface ServerQuickViewProps {
   onConsoleLaunch: () => void;
   onLinkVCenter: () => void;
   onAudit: () => void;
+  onNetworkSettings?: () => void;
   refreshing?: boolean;
 }
 
@@ -67,6 +69,7 @@ export function ServerQuickView({
   onConsoleLaunch,
   onLinkVCenter,
   onAudit,
+  onNetworkSettings,
   refreshing = false,
 }: ServerQuickViewProps) {
   const [systemInfoOpen, setSystemInfoOpen] = useState(true);
@@ -282,6 +285,12 @@ export function ServerQuickView({
                 <HardDrive className="mr-2 h-4 w-4" />
                 Virtual Media
               </DropdownMenuItem>
+              {onNetworkSettings && (
+                <DropdownMenuItem onClick={onNetworkSettings}>
+                  <Network className="mr-2 h-4 w-4" />
+                  Network Settings
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={onEventLog}>
                 Event Log

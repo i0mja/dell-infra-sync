@@ -1039,6 +1039,121 @@ export type Database = {
           },
         ]
       }
+      idrac_network_configurations: {
+        Row: {
+          captured_at: string | null
+          created_at: string | null
+          created_by: string | null
+          dhcp_enabled: boolean | null
+          dns_from_dhcp: boolean | null
+          dns1: string | null
+          dns2: string | null
+          gateway: string | null
+          id: string
+          ip_address: string | null
+          ipv4_enabled: boolean | null
+          job_id: string | null
+          netmask: string | null
+          nic_duplex: string | null
+          nic_mtu: number | null
+          nic_selection: string | null
+          nic_speed: string | null
+          notes: string | null
+          ntp_enabled: boolean | null
+          ntp_server1: string | null
+          ntp_server2: string | null
+          ntp_server3: string | null
+          raw_attributes: Json | null
+          server_id: string
+          timezone: string | null
+          vlan_enabled: boolean | null
+          vlan_id: number | null
+          vlan_priority: number | null
+        }
+        Insert: {
+          captured_at?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          dhcp_enabled?: boolean | null
+          dns_from_dhcp?: boolean | null
+          dns1?: string | null
+          dns2?: string | null
+          gateway?: string | null
+          id?: string
+          ip_address?: string | null
+          ipv4_enabled?: boolean | null
+          job_id?: string | null
+          netmask?: string | null
+          nic_duplex?: string | null
+          nic_mtu?: number | null
+          nic_selection?: string | null
+          nic_speed?: string | null
+          notes?: string | null
+          ntp_enabled?: boolean | null
+          ntp_server1?: string | null
+          ntp_server2?: string | null
+          ntp_server3?: string | null
+          raw_attributes?: Json | null
+          server_id: string
+          timezone?: string | null
+          vlan_enabled?: boolean | null
+          vlan_id?: number | null
+          vlan_priority?: number | null
+        }
+        Update: {
+          captured_at?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          dhcp_enabled?: boolean | null
+          dns_from_dhcp?: boolean | null
+          dns1?: string | null
+          dns2?: string | null
+          gateway?: string | null
+          id?: string
+          ip_address?: string | null
+          ipv4_enabled?: boolean | null
+          job_id?: string | null
+          netmask?: string | null
+          nic_duplex?: string | null
+          nic_mtu?: number | null
+          nic_selection?: string | null
+          nic_speed?: string | null
+          notes?: string | null
+          ntp_enabled?: boolean | null
+          ntp_server1?: string | null
+          ntp_server2?: string | null
+          ntp_server3?: string | null
+          raw_attributes?: Json | null
+          server_id?: string
+          timezone?: string | null
+          vlan_enabled?: boolean | null
+          vlan_id?: number | null
+          vlan_priority?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "idrac_network_configurations_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "idrac_network_configurations_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "idrac_network_configurations_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       iso_images: {
         Row: {
           checksum: string | null
@@ -3333,6 +3448,8 @@ export type Database = {
         | "idm_search_ad_groups"
         | "idm_search_ad_users"
         | "idm_test_ad_connection"
+        | "idrac_network_read"
+        | "idrac_network_write"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -3512,6 +3629,8 @@ export const Constants = {
         "idm_search_ad_groups",
         "idm_search_ad_users",
         "idm_test_ad_connection",
+        "idrac_network_read",
+        "idrac_network_write",
       ],
       operation_type: [
         "idrac_api",

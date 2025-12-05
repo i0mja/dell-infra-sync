@@ -28,6 +28,7 @@ import {
   Save,
   AlertTriangle,
   CheckCircle2,
+  Network,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import type { Server } from "@/hooks/useServers";
@@ -64,6 +65,7 @@ interface ServerDetailsSidebarProps {
   onLinkVCenter: (server: Server) => void;
   onAssignCredentials: (server: Server) => void;
   onCreateJob: (server: Server) => void;
+  onNetworkSettings: (server: Server) => void;
 }
 
 export function ServerDetailsSidebar({
@@ -89,6 +91,7 @@ export function ServerDetailsSidebar({
   onLinkVCenter,
   onAssignCredentials,
   onCreateJob,
+  onNetworkSettings,
 }: ServerDetailsSidebarProps) {
   const { launching: launchingConsole, launchConsole } = useConsoleLauncher();
   
@@ -461,6 +464,15 @@ export function ServerDetailsSidebar({
                 >
                   <Save className="mr-2 h-3 w-3" />
                   SCP Backup
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start"
+                  onClick={() => onNetworkSettings(selectedServer)}
+                >
+                  <Network className="mr-2 h-3 w-3" />
+                  Network Settings
                 </Button>
               </AccordionContent>
             </AccordionItem>

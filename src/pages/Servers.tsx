@@ -29,6 +29,7 @@ import { AssignCredentialsDialog } from "@/components/servers/AssignCredentialsD
 import { DiscoveryScanDialog } from "@/components/servers/DiscoveryScanDialog";
 import { WorkflowJobDialog } from "@/components/jobs/WorkflowJobDialog";
 import { ClusterUpdateWizard } from "@/components/jobs/ClusterUpdateWizard";
+import { IdracNetworkDialog } from "@/components/servers/IdracNetworkDialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import type { Server } from "@/hooks/useServers";
 
@@ -66,6 +67,7 @@ export default function Servers() {
   const [discoveryScanOpen, setDiscoveryScanOpen] = useState(false);
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
   const [updateWizardOpen, setUpdateWizardOpen] = useState(false);
+  const [networkSettingsDialogOpen, setNetworkSettingsDialogOpen] = useState(false);
   const [bulkUpdateServerIds, setBulkUpdateServerIds] = useState<string[]>([]);
   const [preSelectedClusterForUpdate, setPreSelectedClusterForUpdate] = useState<string | undefined>();
   const { launching: launchingConsole, launchConsole } = useConsoleLauncher();
@@ -446,6 +448,7 @@ export default function Servers() {
             onConsoleLaunch={() => handleLaunchConsole(selectedServer)}
             onLinkVCenter={() => setLinkDialogOpen(true)}
             onAudit={() => setAuditDialogOpen(true)}
+            onNetworkSettings={() => setNetworkSettingsDialogOpen(true)}
             refreshing={refreshing === selectedServer.id}
           />
         )}
@@ -546,6 +549,12 @@ export default function Servers() {
             onOpenChange={setWorkflowDialogOpen}
             onSuccess={refetch}
             preSelectedServerId={selectedServer.id}
+          />
+
+          <IdracNetworkDialog
+            open={networkSettingsDialogOpen}
+            onOpenChange={setNetworkSettingsDialogOpen}
+            server={selectedServer}
           />
         </>
       )}
