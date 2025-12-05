@@ -57,9 +57,18 @@ export const WorkflowExecutionViewer = ({
   const [loading, setLoading] = useState(true);
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
   const [currentOperation, setCurrentOperation] = useState<any>(null);
+  
+  // Internal state to track job status/details independently
+  const [internalJobStatus, setInternalJobStatus] = useState<string | null>(null);
+  const [internalJobDetails, setInternalJobDetails] = useState<any>(null);
+
+  // Use props if provided, otherwise use internal state
+  const effectiveJobStatus = jobStatus || internalJobStatus;
+  const effectiveJobDetails = jobDetails || internalJobDetails;
 
   useEffect(() => {
     fetchSteps();
+    fetchJobData();
     
     // Subscribe to realtime updates on workflow steps
     const workflowChannel = supabase
@@ -79,7 +88,7 @@ export const WorkflowExecutionViewer = ({
       )
       .subscribe();
     
-    // Subscribe to job details for real-time progress
+    // Subscribe to job details AND status for real-time progress
     const jobChannel = supabase
       .channel(`job-details-${jobId}`)
       .on(
@@ -91,8 +100,14 @@ export const WorkflowExecutionViewer = ({
           filter: `id=eq.${jobId}`
         },
         (payload) => {
-          if (payload.new && payload.new.details) {
-            setCurrentOperation(payload.new.details);
+          if (payload.new) {
+            if (payload.new.details) {
+              setCurrentOperation(payload.new.details);
+              setInternalJobDetails(payload.new.details);
+            }
+            if (payload.new.status) {
+              setInternalJobStatus(payload.new.status as string);
+            }
           }
         }
       )
@@ -103,6 +118,26 @@ export const WorkflowExecutionViewer = ({
       supabase.removeChannel(jobChannel);
     };
   }, [jobId]);
+
+  const fetchJobData = async () => {
+    try {
+      const { data } = await supabase
+        .from('jobs')
+        .select('status, details')
+        .eq('id', jobId)
+        .maybeSingle();
+      
+      if (data) {
+        setInternalJobStatus(data.status);
+        setInternalJobDetails(data.details);
+        if (data.details) {
+          setCurrentOperation(data.details);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching job data:', error);
+    }
+  };
 
   const fetchSteps = async () => {
     try {
@@ -172,11 +207,11 @@ export const WorkflowExecutionViewer = ({
   };
 
   const getOverallStatus = () => {
-    // If parent job has a terminal status, use it (especially important when no steps exist)
-    if (jobStatus && ['failed', 'completed', 'cancelled'].includes(jobStatus)) {
-      return jobStatus;
+    // If job has a terminal status (from props or internal state), use it
+    if (effectiveJobStatus && ['failed', 'completed', 'cancelled'].includes(effectiveJobStatus)) {
+      return effectiveJobStatus;
     }
-    if (steps.length === 0) return jobStatus || 'pending';
+    if (steps.length === 0) return effectiveJobStatus || 'pending';
     if (steps.some(s => s.step_status === 'failed')) return 'failed';
     if (steps.some(s => s.step_status === 'running')) return 'running';
     if (steps.every(s => ['completed', 'skipped'].includes(s.step_status))) return 'completed';
@@ -322,7 +357,7 @@ export const WorkflowExecutionViewer = ({
         </div>
 
         {/* Host-Specific Errors from workflow_results - show these when available */}
-        {overallStatus === 'failed' && jobDetails?.workflow_results?.host_results?.some((h: any) => h.status === 'failed') && (
+        {overallStatus === 'failed' && effectiveJobDetails?.workflow_results?.host_results?.some((h: any) => h.status === 'failed') && (
           <>
             <Separator />
             <Card className="border-destructive/50">
@@ -330,7 +365,7 @@ export const WorkflowExecutionViewer = ({
                 <CardTitle className="text-sm text-destructive">Failed Hosts</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                {jobDetails.workflow_results.host_results
+                {effectiveJobDetails.workflow_results.host_results
                   .filter((h: any) => h.status === 'failed')
                   .map((host: any, idx: number) => (
                     <div key={idx} className="p-3 rounded bg-destructive/10 border border-destructive/20 space-y-2">
@@ -377,8 +412,8 @@ export const WorkflowExecutionViewer = ({
         )}
 
         {/* Job-Level Error - only show if NO host-specific errors (avoid duplication) */}
-        {overallStatus === 'failed' && jobDetails?.error && 
-         !jobDetails?.workflow_results?.host_results?.some((h: any) => h.status === 'failed') && (
+        {overallStatus === 'failed' && effectiveJobDetails?.error && 
+         !effectiveJobDetails?.workflow_results?.host_results?.some((h: any) => h.status === 'failed') && (
           <>
             <Separator />
             <Alert variant="destructive">
@@ -386,7 +421,7 @@ export const WorkflowExecutionViewer = ({
               <AlertDescription className="mt-2">
                 <div className="font-semibold mb-1">Job Failed</div>
                 <div className="font-mono text-xs whitespace-pre-wrap">
-                  {jobDetails.error}
+                  {effectiveJobDetails.error}
                 </div>
               </AlertDescription>
             </Alert>
