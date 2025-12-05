@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CheckCircle, XCircle, PlayCircle, Clock, AlertCircle, FileCode, ListChecks, Activity, Link2, ExternalLink, Calendar } from "lucide-react";
+import { CheckCircle, XCircle, PlayCircle, Clock, AlertCircle, FileCode, ListChecks, Activity, Link2, ExternalLink, Calendar, Minimize2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
+import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
 import { ApiCallStream } from "./ApiCallStream";
 import { 
   DiscoveryScanResults,
@@ -70,6 +71,7 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
   const [idracCommands, setIdracCommands] = useState<IdracCommand[]>([]);
   const [idracLoading, setIdracLoading] = useState(false);
   const [parentWindow, setParentWindow] = useState<ParentWindow | null>(null);
+  const { minimizeJob } = useMinimizedJobs();
 
   // Check if this is a workflow job type (safe even when job is null)
   const workflowJobTypes = ['prepare_host_for_update', 'verify_host_after_update', 'rolling_cluster_update'];
@@ -312,12 +314,29 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
       {isWorkflowJob ? (
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>
-              {job.job_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-            </DialogTitle>
-            <DialogDescription>
-              Workflow execution details for job {job.id}
-            </DialogDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <DialogTitle>
+                  {job.job_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                </DialogTitle>
+                <DialogDescription>
+                  Workflow execution details for job {job.id}
+                </DialogDescription>
+              </div>
+              {(job.status === 'running' || job.status === 'pending') && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => {
+                    minimizeJob(job.id, job.job_type);
+                    onOpenChange(false);
+                  }}
+                  title="Minimize to floating monitor"
+                >
+                  <Minimize2 className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
           </DialogHeader>
           <ParentWindowBanner />
           <WorkflowExecutionViewer 
