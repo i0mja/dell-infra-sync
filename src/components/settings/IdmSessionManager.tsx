@@ -6,17 +6,30 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { useIdmSessions } from '@/hooks/useIdmSessions';
-import { Clock, Loader2, LogOut, RefreshCw, ShieldX, Trash2, User } from 'lucide-react';
+import { Clock, Loader2, LogOut, RefreshCw, ShieldX, Trash2, User, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
 
 export function IdmSessionManager() {
-  const { sessions, loading, loadSessions, invalidateSession, invalidateUserSessions, cleanupExpiredSessions, cleanupInactiveSessions } = useIdmSessions();
+  const { 
+    sessions, 
+    loading, 
+    showInactive,
+    loadSessions, 
+    toggleShowInactive,
+    invalidateSession, 
+    cleanupExpiredSessions, 
+    cleanupInactiveSessions,
+    purgeOldSessions 
+  } = useIdmSessions();
   const [selectedSession, setSelectedSession] = useState<any>(null);
   const [invalidateReason, setInvalidateReason] = useState('');
   const [showInvalidateDialog, setShowInvalidateDialog] = useState(false);
+  const [showPurgeDialog, setShowPurgeDialog] = useState(false);
 
   const activeCount = sessions.filter(s => s.is_active).length;
+  const inactiveCount = sessions.filter(s => !s.is_active).length;
   const expiredCount = sessions.filter(s => !s.is_active && s.session_expires_at && new Date(s.session_expires_at) < new Date()).length;
 
   const handleInvalidate = async () => {
@@ -26,6 +39,11 @@ export function IdmSessionManager() {
       setInvalidateReason('');
       setSelectedSession(null);
     }
+  };
+
+  const handlePurge = async () => {
+    await purgeOldSessions(7);
+    setShowPurgeDialog(false);
   };
 
   const getRoleBadge = (role: string) => {
@@ -43,7 +61,7 @@ export function IdmSessionManager() {
 
   const getStatusBadge = (session: any) => {
     if (!session.is_active) {
-      return <Badge variant="secondary">Inactive</Badge>;
+      return <Badge variant="outline" className="text-muted-foreground">Inactive</Badge>;
     }
     if (session.session_expires_at && new Date(session.session_expires_at) < new Date()) {
       return <Badge variant="destructive">Expired</Badge>;
@@ -60,23 +78,23 @@ export function IdmSessionManager() {
             <CardTitle className="text-sm font-medium">Active Sessions</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{activeCount}</div>
+            <div className="text-2xl font-bold text-green-600">{activeCount}</div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Total Sessions</CardTitle>
+            <CardTitle className="text-sm font-medium">Inactive Sessions</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-muted-foreground">{inactiveCount}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Total Displayed</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{sessions.length}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Expired</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{expiredCount}</div>
           </CardContent>
         </Card>
       </div>
@@ -86,22 +104,57 @@ export function IdmSessionManager() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle>Active IDM Sessions</CardTitle>
+              <CardTitle>IDM Sessions</CardTitle>
               <CardDescription>Manage user sessions and force logouts</CardDescription>
             </div>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={loadSessions} disabled={loading}>
-                <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-                Refresh
-              </Button>
-              <Button variant="outline" size="sm" onClick={cleanupInactiveSessions}>
-                <Clock className="mr-2 h-4 w-4" />
-                Cleanup Inactive
-              </Button>
-              <Button variant="outline" size="sm" onClick={cleanupExpiredSessions}>
-                <Trash2 className="mr-2 h-4 w-4" />
-                Cleanup Expired
-              </Button>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="show-inactive"
+                  checked={showInactive}
+                  onCheckedChange={toggleShowInactive}
+                />
+                <Label htmlFor="show-inactive" className="text-sm">Show inactive</Label>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={loadSessions} disabled={loading}>
+                  <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                  Refresh
+                </Button>
+                <Button variant="outline" size="sm" onClick={cleanupInactiveSessions}>
+                  <Clock className="mr-2 h-4 w-4" />
+                  Cleanup Inactive
+                </Button>
+                <Button variant="outline" size="sm" onClick={cleanupExpiredSessions}>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Cleanup Expired
+                </Button>
+                <Dialog open={showPurgeDialog} onOpenChange={setShowPurgeDialog}>
+                  <DialogTrigger asChild>
+                    <Button variant="destructive" size="sm">
+                      <AlertTriangle className="mr-2 h-4 w-4" />
+                      Purge Old
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Purge Old Sessions</DialogTitle>
+                      <DialogDescription>
+                        This will permanently DELETE all inactive sessions older than 7 days. This action cannot be undone.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setShowPurgeDialog(false)}>
+                        Cancel
+                      </Button>
+                      <Button variant="destructive" onClick={handlePurge}>
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Purge Sessions
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
             </div>
           </div>
         </CardHeader>
@@ -130,12 +183,12 @@ export function IdmSessionManager() {
               ) : sessions.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
-                    No IDM sessions found
+                    {showInactive ? 'No IDM sessions found' : 'No active IDM sessions found'}
                   </TableCell>
                 </TableRow>
               ) : (
                 sessions.map((session) => (
-                  <TableRow key={session.id}>
+                  <TableRow key={session.id} className={!session.is_active ? 'opacity-60' : ''}>
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <User className="h-4 w-4 text-muted-foreground" />
