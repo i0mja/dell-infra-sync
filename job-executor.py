@@ -413,6 +413,11 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
                 with os.fdopen(fd, 'w') as f:
                     f.write(settings['ca_certificate'])
             
+            # Decrypt AD bind password if present (for group SID lookups)
+            ad_bind_password = None
+            if settings.get('ad_bind_password_encrypted'):
+                ad_bind_password = self.decrypt_password(settings['ad_bind_password_encrypted'])
+            
             return FreeIPAAuthenticator(
                 server_host=settings['server_host'],
                 base_dn=settings['base_dn'],
@@ -429,6 +434,9 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
                 ad_dc_port=settings.get('ad_dc_port', 636),
                 ad_dc_use_ssl=settings.get('ad_dc_use_ssl', True),
                 ad_domain_fqdn=settings.get('ad_domain_fqdn'),
+                # Pass AD service account credentials for group SID lookups
+                ad_bind_dn=settings.get('ad_bind_dn'),
+                ad_bind_password=ad_bind_password,
             )
         except Exception as e:
             self.log(f"Failed to create FreeIPA authenticator: {e}", "ERROR")
