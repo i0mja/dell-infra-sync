@@ -2622,8 +2622,8 @@ class DellOperations:
         """
         Check if Lifecycle Controller is ready for updates.
         
-        Dell pattern: GET /redfish/v1/Managers/iDRAC.Embedded.1/Attributes
-        Look for: LifecycleController.1.LCStatus = "Ready"
+        Dell pattern: POST /redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DellLCService/Actions/DellLCService.GetRemoteServicesAPIStatus
+        Returns: LCStatus, RTStatus, ServerStatus, Status
         
         Args:
             ip: iDRAC IP address
@@ -2634,27 +2634,38 @@ class DellOperations:
             user_id: Optional user ID for logging
             
         Returns:
-            dict: LC status information with 'ready' boolean and 'status' string
+            dict: LC status information with 'ready' boolean and detailed status fields
         """
+        endpoint = '/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DellLCService/Actions/DellLCService.GetRemoteServicesAPIStatus'
+        
         response = self.adapter.make_request(
-            method='GET',
+            method='POST',
             ip=ip,
-            endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Attributes',
+            endpoint=endpoint,
             username=username,
             password=password,
-            operation_name='Get Lifecycle Controller Status',
+            data={},  # Empty payload required
+            operation_name='Get Remote Services API Status',
             server_id=server_id,
             job_id=job_id,
             user_id=user_id
         )
         
-        attributes = response.get('Attributes', {})
-        lc_status = attributes.get('LifecycleController.1.LCStatus', 'Unknown')
+        lc_status = response.get('LCStatus', 'Unknown')
+        rt_status = response.get('RTStatus', 'Unknown')
+        server_status = response.get('ServerStatus', 'Unknown')
+        overall_status = response.get('Status', 'Unknown')
+        
+        # LC is ready when LCStatus is "Ready"
+        is_ready = lc_status == 'Ready'
         
         return {
-            'ready': lc_status == 'Ready',
+            'ready': is_ready,
             'status': lc_status,
-            'message': f"Lifecycle Controller is {lc_status}"
+            'rt_status': rt_status,
+            'server_status': server_status,
+            'overall_status': overall_status,
+            'message': f"Lifecycle Controller: {lc_status}, Server: {server_status}"
         }
     
     def get_pending_idrac_jobs(
