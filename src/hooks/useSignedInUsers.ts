@@ -132,18 +132,23 @@ export function useSignedInUsers(filters: SignedInUserFilters = {}) {
   const deleteUser = async (userId: string): Promise<boolean> => {
     try {
       // Call edge function to delete user (handles auth.users deletion)
-      const { error } = await supabase.functions.invoke('delete-user', {
+      const { data, error } = await supabase.functions.invoke('delete-user', {
         body: { user_id: userId },
       });
 
       if (error) throw error;
+      
+      // Check for error in response body as well
+      if (data?.error) {
+        throw new Error(data.error + (data.details ? `: ${data.details}` : ''));
+      }
 
       toast.success('User deleted successfully');
       await loadUsers();
       return true;
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error deleting user:', err);
-      toast.error('Failed to delete user');
+      toast.error(err.message || 'Failed to delete user');
       return false;
     }
   };
