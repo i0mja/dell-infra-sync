@@ -1602,12 +1602,14 @@ class APIHandler(BaseHTTPRequestHandler):
             
             # Check 4: Pending iDRAC Jobs
             try:
-                jobs = dell_ops.get_idrac_job_queue(ip, username, password, include_details=True, server_id=server_id)
-                pending_jobs = [j for j in (jobs or []) if j.get('job_state') in ['Scheduled', 'Running', 'Waiting', 'New']]
+                jobs_result = dell_ops.get_idrac_job_queue(ip, username, password, include_details=True, server_id=server_id)
+                # Fix: Extract jobs list from dict return value
+                all_jobs = jobs_result.get('jobs', []) if isinstance(jobs_result, dict) else (jobs_result or [])
+                pending_jobs = [j for j in all_jobs if j.get('job_state') in ['Scheduled', 'Running', 'Waiting', 'New']]
                 count = len(pending_jobs)
                 
                 if count == 0:
-                    result['checks']['pending_jobs'] = {'passed': True, 'count': 0}
+                    result['checks']['pending_jobs'] = {'passed': True, 'count': 0, 'jobs': []}
                 else:
                     result['checks']['pending_jobs'] = {'passed': False, 'count': count, 'jobs': pending_jobs[:5]}
                     result['ready'] = False
@@ -1616,7 +1618,7 @@ class APIHandler(BaseHTTPRequestHandler):
                         'message': f'{count} pending iDRAC job(s) must be cleared first'
                     })
             except Exception as e:
-                result['checks']['pending_jobs'] = {'passed': False, 'count': None, 'message': str(e)}
+                result['checks']['pending_jobs'] = {'passed': False, 'count': None, 'jobs': [], 'message': str(e)}
                 result['warnings'].append(f'Could not check iDRAC jobs: {str(e)}')
             
             # Check 5: Power State

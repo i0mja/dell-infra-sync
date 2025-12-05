@@ -4,7 +4,19 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Progress } from "@/components/ui/progress";
 import { useState } from "react";
+
+interface IdracJob {
+  id: string;
+  name: string;
+  job_state: string;
+  percent_complete: number;
+  message?: string;
+  job_type?: string;
+  start_time?: string;
+  end_time?: string;
+}
 
 export interface ServerPreflightResult {
   server_id: string;
@@ -15,7 +27,7 @@ export interface ServerPreflightResult {
     connectivity: { passed: boolean; message?: string };
     auth: { passed: boolean; message?: string };
     lifecycle_controller: { passed: boolean; status?: string };
-    pending_jobs: { passed: boolean; count?: number | null; jobs?: any[] };
+    pending_jobs: { passed: boolean; count?: number | null; jobs?: IdracJob[] };
     power_state: { passed: boolean; state?: string };
     system_health: { passed: boolean; overall?: string };
   };
@@ -290,14 +302,44 @@ export function PreFlightCheckResults({
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center gap-2">
-                      <CheckIcon passed={server.checks.pending_jobs.passed} />
-                      <Clock className="h-3 w-3" />
-                      <span>Pending Jobs</span>
-                      {server.checks.pending_jobs.count !== null && server.checks.pending_jobs.count !== undefined && (
-                        <span className="text-xs text-muted-foreground">
-                          ({server.checks.pending_jobs.count})
-                        </span>
+                    <div className="col-span-2 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <CheckIcon passed={server.checks.pending_jobs.passed} />
+                        <Clock className="h-3 w-3" />
+                        <span>Pending Jobs</span>
+                        {server.checks.pending_jobs.count !== null && server.checks.pending_jobs.count !== undefined && (
+                          <span className="text-xs text-muted-foreground">
+                            ({server.checks.pending_jobs.count})
+                          </span>
+                        )}
+                      </div>
+                      {/* Show actual iDRAC jobs if there are any */}
+                      {server.checks.pending_jobs.jobs && server.checks.pending_jobs.jobs.length > 0 && (
+                        <div className="ml-6 space-y-2 border-l-2 border-muted pl-3">
+                          {server.checks.pending_jobs.jobs.map((job) => (
+                            <div key={job.id} className="text-xs space-y-1 p-2 bg-muted/50 rounded">
+                              <div className="flex items-center justify-between">
+                                <code className="font-mono text-primary">{job.id}</code>
+                                <Badge 
+                                  variant={job.job_state === 'Running' ? 'default' : 'secondary'}
+                                  className="text-[10px] h-5"
+                                >
+                                  {job.job_state}
+                                </Badge>
+                              </div>
+                              <div className="text-muted-foreground font-medium">{job.name}</div>
+                              {job.job_state === 'Running' && job.percent_complete !== undefined && (
+                                <div className="flex items-center gap-2">
+                                  <Progress value={job.percent_complete} className="h-1.5 flex-1" />
+                                  <span className="text-[10px]">{job.percent_complete}%</span>
+                                </div>
+                              )}
+                              {job.message && (
+                                <div className="text-[10px] text-muted-foreground truncate">{job.message}</div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
                       )}
                     </div>
                     <div className="flex items-center gap-2">
