@@ -110,16 +110,18 @@ serve(async (req) => {
           console.log(`Cancelled pending tasks for job ${jobId}`);
         }
 
-        // Also cascade status to workflow execution steps
+        // Cascade status to ALL non-terminal workflow execution steps (running AND pending)
         const { error: workflowError } = await supabase
           .from('workflow_executions')
           .update({
             step_status: job.status === 'cancelled' ? 'cancelled' : 'failed',
             step_completed_at: new Date().toISOString(),
-            step_error: `Auto-${job.status}: parent job ${job.status}`
+            step_error: job.status === 'cancelled' 
+              ? 'Cancelled by user' 
+              : `Auto-failed: parent job ${job.status}`
           })
           .eq('job_id', jobId)
-          .eq('step_status', 'running');
+          .in('step_status', ['running', 'pending']);
 
         if (workflowError) {
           console.error('Error cascading status to workflow steps:', workflowError);
