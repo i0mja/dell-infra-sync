@@ -114,7 +114,7 @@ export const ClusterUpdateWizard = ({
   
   // Step 2: Update Type and Selection
   const [updateType, setUpdateType] = useState<'firmware_only' | 'esxi_only' | 'esxi_then_firmware' | 'firmware_then_esxi'>('firmware_only');
-  const [firmwareSource, setFirmwareSource] = useState<'local_repository' | 'dell_online_catalog' | 'skip' | 'manual'>('dell_online_catalog');
+  const [firmwareSource, setFirmwareSource] = useState<'local_repository' | 'dell_online_catalog' | 'skip' | 'manual'>('local_repository');
   const [componentFilter, setComponentFilter] = useState<string[]>(['all']);
   const [autoSelectLatest, setAutoSelectLatest] = useState(true);
   const [firmwareUpdates, setFirmwareUpdates] = useState<FirmwareUpdate[]>([{
