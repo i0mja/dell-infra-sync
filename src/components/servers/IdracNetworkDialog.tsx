@@ -95,6 +95,7 @@ export function IdracNetworkDialog({
       const { data, error } = await supabase.functions.invoke("create-job", {
         body: {
           job_type: "idrac_network_read",
+          target_scope: { server_ids: [server.id] },
           details: {
             server_id: server.id,
           },
@@ -169,6 +170,7 @@ export function IdracNetworkDialog({
       const { data, error } = await supabase.functions.invoke("create-job", {
         body: {
           job_type: "idrac_network_write",
+          target_scope: { server_ids: [server.id] },
           details: {
             server_id: server.id,
             changes: editedConfig,
