@@ -1126,7 +1126,17 @@ class ClusterHandler(BaseHandler):
                             )
                             
                             if not update_result.get('success'):
-                                raise Exception(f"Firmware catalog update failed: {update_result.get('error')}")
+                                error_msg = update_result.get('error', 'Unknown error')
+                                # Detect common air-gapped/network issues
+                                if any(indicator in str(error_msg).lower() for indicator in ['internal error', 'red004', 'unable to complete', 'network', 'connection']):
+                                    self.log(f"    ❌ Catalog download failed - likely network unreachable", "ERROR")
+                                    self.log(f"    💡 Hint: For air-gapped networks, use 'local_repository' instead of 'dell_online_catalog'", "WARN")
+                                    raise Exception(
+                                        f"Catalog download failed - iDRAC cannot reach {dell_catalog_url}. "
+                                        f"For air-gapped networks, use 'Local Repository' firmware source instead. "
+                                        f"Original error: {error_msg}"
+                                    )
+                                raise Exception(f"Firmware catalog update failed: {error_msg}")
                             
                             # Extract job ID and poll for completion
                             repo_job_id = update_result.get('job_id')
@@ -1312,6 +1322,19 @@ class ClusterHandler(BaseHandler):
                                             else:
                                                 self.log(f"    ✓ Firmware update job completed: {job_result.get('Message', 'Success')}")
                                                 reboot_required = True
+                                    elif job_state == 'Failed':
+                                        # Detect catalog download failure in air-gapped environment
+                                        original_message = job_result.get('Message', '')
+                                        if any(indicator in original_message.lower() for indicator in ['internal error', 'red004', 'unable to complete']):
+                                            self.log(f"    ❌ Firmware update job failed with internal error", "ERROR")
+                                            if firmware_source == 'dell_online_catalog':
+                                                self.log(f"    💡 The iDRAC cannot reach downloads.dell.com", "WARN")
+                                                self.log(f"    💡 For air-gapped networks, configure a local firmware repository", "WARN")
+                                                raise Exception(
+                                                    f"Catalog download failed - iDRAC cannot reach Dell servers. "
+                                                    f"For air-gapped networks, use 'Local Repository' firmware source instead."
+                                                )
+                                        raise Exception(f"Firmware update failed: {original_message}")
                                     else:
                                         self.log(f"    ✓ Firmware update job completed with state: {job_state}")
                                         reboot_required = True

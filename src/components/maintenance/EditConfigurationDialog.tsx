@@ -30,7 +30,7 @@ export function EditConfigurationDialog({ open, onOpenChange, window }: EditConf
 
   // Firmware settings
   const [firmwareSource, setFirmwareSource] = useState<'local_repository' | 'dell_online_catalog' | 'skip' | 'manual'>(
-    details.firmware_source || 'dell_online_catalog'
+    details.firmware_source || 'local_repository'
   );
   const [componentFilter, setComponentFilter] = useState<string[]>(
     details.component_filter || ['all']
