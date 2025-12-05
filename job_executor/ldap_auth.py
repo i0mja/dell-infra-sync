@@ -1140,6 +1140,85 @@ class FreeIPAAuthenticator:
         
         return group_sids
     
+    def _get_user_ad_groups_via_service_account(self, username: str) -> List[str]:
+        """
+        Fetch user's AD group memberships (memberOf) using the AD service account.
+        
+        Used when user's own connection couldn't read their memberOf attribute
+        due to restrictive AD permissions.
+        
+        Args:
+            username: Full username with domain (user@domain)
+            
+        Returns:
+            List of AD group DNs the user is a member of
+        """
+        ad_groups = []
+        
+        if not self.ad_dc_host or not self.ad_bind_dn or not self.ad_bind_password:
+            logger.warning("[AD USER GROUPS] Cannot fetch AD groups - missing AD service account configuration")
+            return ad_groups
+        
+        # Extract clean username and determine domain
+        is_ad_user, clean_username, domain = self._is_ad_trust_user(username)
+        user_part = clean_username or username.split('@')[0]
+        
+        # Build AD search base from domain
+        effective_domain = self.ad_domain_fqdn or domain
+        if not effective_domain:
+            logger.warning("[AD USER GROUPS] Cannot determine AD domain for search base")
+            return ad_groups
+        
+        ad_base_dn = ','.join([f"dc={p}" for p in effective_domain.split('.')])
+        
+        logger.info(f"[AD USER GROUPS] Fetching memberOf for '{user_part}' from AD using service account")
+        logger.debug(f"[AD USER GROUPS] AD search base: {ad_base_dn}")
+        
+        try:
+            ad_server = self._get_ad_server()
+            conn = Connection(
+                ad_server,
+                user=self.ad_bind_dn,
+                password=self.ad_bind_password,
+                auto_bind=True,
+            )
+            
+            # Search for the user by sAMAccountName
+            search_filter = f"(sAMAccountName={self._ldap_escape(user_part)})"
+            logger.debug(f"[AD USER GROUPS] Search filter: {search_filter}")
+            
+            conn.search(
+                search_base=ad_base_dn,
+                search_filter=search_filter,
+                search_scope=SUBTREE,
+                attributes=['memberOf', 'objectSid', 'distinguishedName'],
+            )
+            
+            if conn.entries:
+                entry = conn.entries[0]
+                logger.info(f"[AD USER GROUPS] Found user: {entry.entry_dn}")
+                
+                if hasattr(entry, 'memberOf') and entry.memberOf.values:
+                    ad_groups = [str(g) for g in entry.memberOf.values]
+                    logger.info(f"[AD USER GROUPS] Service account retrieved {len(ad_groups)} group(s)")
+                    for i, g in enumerate(ad_groups[:10]):  # Log first 10
+                        logger.debug(f"[AD USER GROUPS]   {i+1}. {g}")
+                    if len(ad_groups) > 10:
+                        logger.debug(f"[AD USER GROUPS]   ... and {len(ad_groups) - 10} more")
+                else:
+                    logger.warning(f"[AD USER GROUPS] User found but no memberOf attribute")
+            else:
+                logger.warning(f"[AD USER GROUPS] User '{user_part}' not found in AD")
+            
+            conn.unbind()
+            
+        except Exception as e:
+            logger.error(f"[AD USER GROUPS] Error querying AD for user groups: {e}")
+            import traceback
+            logger.debug(f"[AD USER GROUPS] Traceback: {traceback.format_exc()}")
+        
+        return ad_groups
+    
     def _lookup_ad_trust_groups_via_service_account(
         self,
         username: str,
@@ -1181,7 +1260,14 @@ class FreeIPAAuthenticator:
         logger.info(f"[GROUP LOOKUP] AD groups from memberOf: {len(ad_groups) if ad_groups else 0}")
         logger.debug(f"[GROUP LOOKUP] Using service account: {service_bind_dn}")
         
-        # Step 0: Get SIDs for the user's AD groups
+        # Step 0a: If ad_groups is empty, fetch them using AD service account
+        # This handles cases where user's own connection couldn't read their memberOf attribute
+        if not ad_groups and self.ad_dc_host and self.ad_bind_dn and self.ad_bind_password:
+            logger.info(f"[GROUP LOOKUP] ad_groups not provided, querying AD for user's memberOf via service account...")
+            ad_groups = self._get_user_ad_groups_via_service_account(username)
+            logger.info(f"[GROUP LOOKUP] Retrieved {len(ad_groups)} AD group(s) via service account")
+        
+        # Step 0b: Get SIDs for the user's AD groups
         # This is CRITICAL - FreeIPA stores AD GROUP SIDs in ipaExternalMember, not user SIDs
         ad_group_sids = []
         if ad_groups and self.ad_dc_host and self.ad_bind_dn and self.ad_bind_password:
