@@ -986,6 +986,15 @@ class ClusterHandler(BaseHandler):
                     
                     base_step = 1000 + (host_index * 10)  # Steps 1010, 1020, 1030...
                     
+                    # Update job details with current host information for UI display
+                    self.update_job_details_field(job['id'], {
+                        'current_step': f'Processing host {host_index}/{len(eligible_hosts)}: {host["name"]}',
+                        'current_host': host['name'],
+                        'current_host_ip': None,  # Will be set after we get server details
+                        'current_host_server_id': host.get('server_id'),
+                        'hosts_processed': host_index - 1
+                    })
+                    
                     # Get credentials from pre-flight phase
                     creds = host_credentials[host['server_id']]
                     server = creds['server']
@@ -1001,6 +1010,11 @@ class ClusterHandler(BaseHandler):
                         'server_id': host['server_id']
                     }
                     cleanup_state['firmware_in_progress'] = False  # Will be set to True during firmware phase
+                    
+                    # Update job details with server IP now that we have it
+                    self.update_job_details_field(job['id'], {
+                        'current_host_ip': server['ip_address']
+                    })
                     
                     # Create iDRAC session for this host
                     session = self.executor.create_idrac_session(
@@ -1035,6 +1049,9 @@ class ClusterHandler(BaseHandler):
                             )
                             
                             self.log(f"  [0/6] Checking for available updates...")
+                            self.update_job_details_field(job['id'], {
+                                'current_step': f'Checking for available updates: {host["name"]}'
+                            })
                             
                             dell_catalog_url = details.get('dell_catalog_url', 'https://downloads.dell.com/catalog/Catalog.xml')
                             
@@ -1123,6 +1140,9 @@ class ClusterHandler(BaseHandler):
                             )
                             
                             self.log(f"  [1/6] Entering maintenance mode...")
+                            self.update_job_details_field(job['id'], {
+                                'current_step': f'Entering maintenance mode: {host["name"]}'
+                            })
                             maintenance_timeout = details.get('maintenance_timeout', 600)
                             maintenance_result = self.executor.enter_vcenter_maintenance_mode(
                                 vcenter_host_id, 
@@ -1164,6 +1184,9 @@ class ClusterHandler(BaseHandler):
                         )
                         
                         self.log(f"  [2/6] Applying firmware updates...")
+                        self.update_job_details_field(job['id'], {
+                            'current_step': f'Applying firmware updates: {host["name"]}'
+                        })
                         
                         # Clear stale iDRAC jobs before firmware update to prevent RED014/JCP042 errors
                         clear_stale_jobs = details.get('clear_stale_jobs_before_update', True)
@@ -1492,6 +1515,9 @@ class ClusterHandler(BaseHandler):
                             )
                             
                             self.log(f"  [3/6] Waiting for system reboot...")
+                            self.update_job_details_field(job['id'], {
+                                'current_step': f'Rebooting server: {host["name"]}'
+                            })
                             self.log(f"    Initial wait: 3 minutes for BIOS POST and reboot...")
                             time.sleep(180)  # Wait 3 minutes for reboot to start (BIOS POST can be slow)
                             
@@ -1532,6 +1558,11 @@ class ClusterHandler(BaseHandler):
                                 
                                 # Phase 2: Wait for ESXi to be accessible (only after iDRAC is up)
                                 if idrac_online and not esxi_online:
+                                    # Update UI with waiting for ESXi status
+                                    if attempt % 6 == 0:  # Every minute
+                                        self.update_job_details_field(job['id'], {
+                                            'current_step': f'Waiting for ESXi to come online: {host["name"]}'
+                                        })
                                     if self._check_esxi_accessible(server['ip_address'], timeout=5):
                                         esxi_online = True
                                         self.log(f"    ✓ ESXi accessible on port 443")
@@ -1660,6 +1691,9 @@ class ClusterHandler(BaseHandler):
                             )
                             
                             self.log(f"  [4/6] Verifying firmware update...")
+                            self.update_job_details_field(job['id'], {
+                                'current_step': f'Verifying firmware update: {host["name"]}'
+                            })
                             
                             # Create new session for verification
                             verify_session = self.executor.create_idrac_session(
@@ -1722,6 +1756,9 @@ class ClusterHandler(BaseHandler):
                             )
                             
                             self.log(f"  [5/6] Waiting for vCenter to see host as connected...")
+                            self.update_job_details_field(job['id'], {
+                                'current_step': f'Waiting for vCenter reconnection: {host["name"]}'
+                            })
                             vcenter_ready = self.executor.wait_for_vcenter_host_connected(
                                 vcenter_host_id, 
                                 timeout=300  # 5 minutes
@@ -1732,6 +1769,9 @@ class ClusterHandler(BaseHandler):
                                 self.log(f"    ⚠ Warning: Host not showing connected in vCenter yet", "WARN")
                             
                             self.log(f"  [5/6] Exiting maintenance mode...")
+                            self.update_job_details_field(job['id'], {
+                                'current_step': f'Exiting maintenance mode: {host["name"]}'
+                            })
                             exit_result = self.executor.exit_vcenter_maintenance_mode(vcenter_host_id)
                             
                             if not exit_result.get('success'):
