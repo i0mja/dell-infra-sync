@@ -9,6 +9,7 @@ import { useJobsWithProgress } from "@/hooks/useJobsWithProgress";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
+import { CancelJobDialog } from "@/components/jobs/CancelJobDialog";
 import { formatDistanceToNow } from "date-fns";
 interface Job {
   id: string;
@@ -35,6 +36,8 @@ export const ActiveJobsBanner = () => {
   const [isDismissed, setIsDismissed] = useState(false);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [jobToCancel, setJobToCancel] = useState<JobWithProgress | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -114,36 +117,10 @@ export const ActiveJobsBanner = () => {
     setLastUpdated(new Date());
   };
 
-  const handleCancelJob = async (jobId: string, e: React.MouseEvent) => {
+  const handleCancelJob = (job: JobWithProgress, e: React.MouseEvent) => {
     e.stopPropagation();
-    
-    try {
-      const { error } = await supabase.functions.invoke('update-job', {
-        body: {
-          job: {
-            id: jobId,
-            status: 'cancelled',
-            completed_at: new Date().toISOString(),
-          }
-        }
-      });
-
-      if (error) throw error;
-      
-      toast({
-        title: "Job cancelled",
-        description: "The job has been cancelled successfully.",
-      });
-      
-      refetch();
-    } catch (error) {
-      console.error("Error cancelling job:", error);
-      toast({
-        title: "Failed to cancel job",
-        description: "An error occurred while cancelling the job.",
-        variant: "destructive",
-      });
-    }
+    setJobToCancel(job);
+    setCancelDialogOpen(true);
   };
 
   const handleJobClick = (job: JobWithProgress) => {
@@ -278,7 +255,7 @@ export const ActiveJobsBanner = () => {
                       variant="ghost"
                       size="icon"
                       className="h-6 w-6"
-                      onClick={(e) => handleCancelJob(job.id, e)}
+                      onClick={(e) => handleCancelJob(job, e)}
                       title="Cancel job"
                     >
                       <XCircle className="h-4 w-4" />
@@ -330,6 +307,20 @@ export const ActiveJobsBanner = () => {
         open={detailDialogOpen}
         onOpenChange={setDetailDialogOpen}
       />
+
+      {jobToCancel && (
+        <CancelJobDialog
+          open={cancelDialogOpen}
+          onOpenChange={setCancelDialogOpen}
+          jobId={jobToCancel.id}
+          jobType={jobToCancel.job_type}
+          jobDetails={jobToCancel.details}
+          onCancelled={() => {
+            refetch();
+            setJobToCancel(null);
+          }}
+        />
+      )}
     </div>
   );
 };

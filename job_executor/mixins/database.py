@@ -374,3 +374,34 @@ class DatabaseMixin:
             return False
         except Exception:
             return False  # Assume not cancelled on error
+    
+    def get_job_status(self, job_id: str) -> dict:
+        """
+        Get the current job status and details from database.
+        Used for checking cancellation flags and graceful cancel options.
+        
+        Args:
+            job_id: Job UUID to check
+            
+        Returns:
+            Dict with 'status' and 'details' keys, or empty dict on error
+        """
+        try:
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/jobs?id=eq.{job_id}&select=status,details",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL,
+                timeout=5
+            )
+            if response.status_code == 200:
+                jobs = _safe_json_parse(response)
+                if jobs:
+                    return {
+                        'status': jobs[0].get('status'),
+                        'details': jobs[0].get('details')
+                    }
+            return {}
+        except Exception:
+            return {}  # Return empty on error

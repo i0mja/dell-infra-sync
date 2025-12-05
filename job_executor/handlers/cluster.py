@@ -47,8 +47,9 @@ class ClusterHandler(BaseHandler):
         critical_blockers_found = False
         
         for idx, host in enumerate(eligible_hosts, 1):
-            # Check for cancellation
-            if self._check_and_handle_cancellation(job, cleanup_state):
+            # Check for cancellation (no graceful cancel during pre-flight)
+            cancel_result = self._check_and_handle_cancellation(job, cleanup_state, check_graceful=False)
+            if cancel_result == 'cancelled':
                 raise Exception("Job cancelled during pre-flight checks")
             
             self.log(f"  [{idx}/{len(eligible_hosts)}] Checking {host['name']}...")
@@ -228,7 +229,9 @@ class ClusterHandler(BaseHandler):
         else:
             # Sequential execution
             for idx, host in enumerate(eligible_hosts, 1):
-                if self._check_and_handle_cancellation(job, cleanup_state):
+                # Check for cancellation (no graceful cancel during backups)
+                cancel_result = self._check_and_handle_cancellation(job, cleanup_state, check_graceful=False)
+                if cancel_result == 'cancelled':
                     raise Exception("Job cancelled during SCP backups")
                 
                 # Update job with current backup progress
@@ -268,7 +271,7 @@ class ClusterHandler(BaseHandler):
         
         return backup_results
     
-    def _check_and_handle_cancellation(self, job: Dict, cleanup_state: Dict) -> bool:
+    def _check_and_handle_cancellation(self, job: Dict, cleanup_state: Dict, check_graceful: bool = True) -> str:
         """
         Check if job was cancelled and perform cleanup if needed.
         
@@ -277,22 +280,109 @@ class ClusterHandler(BaseHandler):
             cleanup_state: Dict tracking state needing cleanup:
                 - hosts_in_maintenance: List of vcenter_host_ids currently in maintenance
                 - current_server: Dict with ip, username, password for current server
+                - firmware_in_progress: Bool indicating if firmware is actively being applied
+                - current_host_name: Name of host currently being processed
+            check_graceful: Whether to check for graceful cancel (finish current host)
                 
         Returns:
-            True if job was cancelled and cleanup performed, False otherwise
+            'none' - No cancellation requested
+            'graceful' - Graceful cancel: finish current host, then stop
+            'cancelled' - Full cancel: cleanup performed
         """
-        if not self.executor.is_job_cancelled(job['id']):
-            return False
+        # Refresh job to get latest status and details
+        job_status = self.executor.get_job_status(job['id'])
+        if not job_status:
+            return 'none'
+        
+        current_status = job_status.get('status', 'running')
+        job_details = job_status.get('details', {}) or {}
+        
+        # Check for graceful cancel flag (finish current host)
+        if check_graceful and job_details.get('graceful_cancel'):
+            if not cleanup_state.get('graceful_cancel_logged'):
+                self.log("⏸️ GRACEFUL CANCEL REQUESTED - Will finish current host then stop", "WARN")
+                cleanup_state['graceful_cancel_logged'] = True
+            return 'graceful'
+        
+        # Check for full cancellation
+        if current_status != 'cancelled':
+            return 'none'
         
         self.log("⚠️ CANCELLATION DETECTED - Starting cleanup...", "WARN")
+        
+        # Log cancellation details
+        cleanup_details = {
+            'cancelled_at': datetime.now().isoformat(),
+            'hosts_in_maintenance': len(cleanup_state.get('hosts_in_maintenance', [])),
+            'firmware_in_progress': cleanup_state.get('firmware_in_progress', False),
+            'current_host': cleanup_state.get('current_host_name'),
+            'cleanup_actions': []
+        }
+        
+        # Check if firmware is in progress - this is risky!
+        if cleanup_state.get('firmware_in_progress'):
+            current_server = cleanup_state.get('current_server')
+            if current_server:
+                self.log("⚠️ WARNING: Firmware update may be in progress!", "WARN")
+                self.log(f"  Server: {current_server.get('ip')}", "WARN")
+                self.log("  Cancelling during firmware update may leave server unstable", "WARN")
+                cleanup_details['cleanup_actions'].append({
+                    'action': 'firmware_warning',
+                    'server': current_server.get('ip'),
+                    'message': 'Firmware may have been in progress during cancel'
+                })
+                
+                # Check iDRAC job state before clearing
+                try:
+                    from job_executor.dell_redfish import DellOperations, DellRedfishAdapter
+                    adapter = DellRedfishAdapter(
+                        self.executor.throttler, 
+                        self.executor._get_dell_logger(), 
+                        self.executor._log_dell_redfish_command
+                    )
+                    dell_ops = DellOperations(adapter)
+                    
+                    # Get current iDRAC jobs to log their state
+                    jobs_result = dell_ops.get_idrac_jobs(
+                        ip=current_server['ip'],
+                        username=current_server['username'],
+                        password=current_server['password'],
+                        server_id=current_server.get('server_id')
+                    )
+                    
+                    if jobs_result.get('success'):
+                        active_jobs = [j for j in jobs_result.get('jobs', []) 
+                                      if j.get('JobState') in ['Running', 'Downloading', 'Scheduling', 'Waiting']]
+                        if active_jobs:
+                            self.log(f"  Found {len(active_jobs)} active iDRAC job(s):", "WARN")
+                            for j in active_jobs[:3]:  # Log up to 3
+                                self.log(f"    - {j.get('Name', 'Unknown')}: {j.get('JobState')}", "WARN")
+                            cleanup_details['cleanup_actions'].append({
+                                'action': 'active_jobs_found',
+                                'count': len(active_jobs),
+                                'jobs': [{'name': j.get('Name'), 'state': j.get('JobState')} for j in active_jobs[:5]]
+                            })
+                except Exception as e:
+                    self.log(f"  Could not check iDRAC job state: {e}", "WARN")
         
         # Exit maintenance mode for any hosts we put in maintenance
         for host_id in cleanup_state.get('hosts_in_maintenance', []):
             try:
                 self.log(f"  Cleaning up: Exiting maintenance mode for host {host_id}")
                 self.executor.exit_vcenter_maintenance_mode(host_id)
+                cleanup_details['cleanup_actions'].append({
+                    'action': 'exit_maintenance',
+                    'host_id': host_id,
+                    'success': True
+                })
             except Exception as e:
                 self.log(f"  Warning: Failed to exit maintenance mode for {host_id}: {e}", "WARN")
+                cleanup_details['cleanup_actions'].append({
+                    'action': 'exit_maintenance',
+                    'host_id': host_id,
+                    'success': False,
+                    'error': str(e)
+                })
         
         # Clear iDRAC job queue for current server if applicable
         current_server = cleanup_state.get('current_server')
@@ -313,11 +403,39 @@ class ClusterHandler(BaseHandler):
                     force=True,
                     server_id=current_server.get('server_id')
                 )
+                cleanup_details['cleanup_actions'].append({
+                    'action': 'clear_job_queue',
+                    'server': current_server.get('ip'),
+                    'success': True
+                })
             except Exception as e:
                 self.log(f"  Warning: Failed to clear iDRAC job queue: {e}", "WARN")
+                cleanup_details['cleanup_actions'].append({
+                    'action': 'clear_job_queue',
+                    'server': current_server.get('ip'),
+                    'success': False,
+                    'error': str(e)
+                })
+        
+        # Update job with cleanup details
+        self.update_job_status(
+            job['id'],
+            'cancelled',
+            completed_at=datetime.now().isoformat(),
+            details={'cleanup_details': cleanup_details}
+        )
         
         self.log("✓ Cleanup completed", "INFO")
-        return True
+        self.log(f"  Actions performed: {len(cleanup_details['cleanup_actions'])}", "INFO")
+        return 'cancelled'
+    
+    def _should_stop_after_current_host(self, job: Dict, cleanup_state: Dict) -> bool:
+        """
+        Check if we should stop processing after the current host completes.
+        Used for graceful cancellation.
+        """
+        result = self._check_and_handle_cancellation(job, cleanup_state)
+        return result == 'graceful'
     
     def _log_workflow_step(self, job_id: str, workflow_type: str, step_number: int, 
                            step_name: str, status: str, server_id: str = None, 
@@ -813,11 +931,22 @@ class ClusterHandler(BaseHandler):
             
             # Update each host sequentially (one at a time)
             for host_index, host in enumerate(eligible_hosts, 1):
-                # Check cancellation before each host
-                if self._check_and_handle_cancellation(job, cleanup_state):
+                # Check cancellation before each host (supports graceful cancel)
+                cancel_result = self._check_and_handle_cancellation(job, cleanup_state)
+                if cancel_result == 'cancelled':
                     self.update_job_status(job['id'], 'cancelled', details={
                         'cancelled_at_host': host_index,
                         'cleanup_performed': True,
+                        'workflow_results': workflow_results
+                    })
+                    return
+                elif cancel_result == 'graceful':
+                    # Graceful cancel - stop before starting this host
+                    self.log(f"⏸️ Graceful cancel: Stopping before host {host_index} ({host['name']})", "WARN")
+                    self.update_job_status(job['id'], 'cancelled', details={
+                        'graceful_cancel': True,
+                        'stopped_before_host': host_index,
+                        'hosts_completed': host_index - 1,
                         'workflow_results': workflow_results
                     })
                     return
@@ -830,6 +959,9 @@ class ClusterHandler(BaseHandler):
                     'steps': [],
                     'backup_completed': backup_results.get(host['server_id'], {}).get('success', False)
                 }
+                
+                # Track current host for logging
+                cleanup_state['current_host_name'] = host['name']
                 
                 try:
                     self.log(f"\n[HOST {host_index}/{len(eligible_hosts)}] {host['name']}")
@@ -851,6 +983,7 @@ class ClusterHandler(BaseHandler):
                         'password': password,
                         'server_id': host['server_id']
                     }
+                    cleanup_state['firmware_in_progress'] = False  # Will be set to True during firmware phase
                     
                     # Create iDRAC session for this host
                     session = self.executor.create_idrac_session(
@@ -954,6 +1087,9 @@ class ClusterHandler(BaseHandler):
                             except Exception as clear_error:
                                 self.log(f"    ⚠ Error clearing stale jobs (non-fatal): {clear_error}", "WARN")
                                 # Continue with firmware update - this is not a fatal error
+                        
+                        # Mark firmware as in progress (for cancellation safety)
+                        cleanup_state['firmware_in_progress'] = True
                         
                         # Apply firmware based on source
                         firmware_source = details.get('firmware_source', 'manual_repository')
@@ -1220,8 +1356,9 @@ class ClusterHandler(BaseHandler):
                             esxi_online = False
                             
                             for attempt in range(max_attempts):
-                                # Check for cancellation during reboot wait
-                                if self._check_and_handle_cancellation(job, cleanup_state):
+                                # Check for cancellation during reboot wait (no graceful cancel during reboot)
+                                cancel_result = self._check_and_handle_cancellation(job, cleanup_state, check_graceful=False)
+                                if cancel_result == 'cancelled':
                                     self.update_job_status(job['id'], 'cancelled', details={
                                         'cancelled_during': 'reboot_wait',
                                         'cleanup_performed': True,
@@ -1445,12 +1582,26 @@ class ClusterHandler(BaseHandler):
                         else:
                             self.log(f"  [5/5] Exit maintenance skipped (no vCenter link)")
                         
-                        # Clear current server tracking
+                        # Clear current server and firmware tracking
                         cleanup_state['current_server'] = None
+                        cleanup_state['firmware_in_progress'] = False
+                        cleanup_state['current_host_name'] = None
                         
                         workflow_results['hosts_updated'] += 1
                         host_result['status'] = 'completed'
                         self.log(f"  ✓ Host {host['name']} update completed successfully")
+                        
+                        # Check for graceful cancel after host completes
+                        if self._should_stop_after_current_host(job, cleanup_state):
+                            self.log(f"⏸️ Graceful cancel: Stopping after host {host_index} ({host['name']})", "WARN")
+                            workflow_results['host_results'].append(host_result)
+                            self.update_job_status(job['id'], 'cancelled', details={
+                                'graceful_cancel': True,
+                                'stopped_after_host': host_index,
+                                'hosts_completed': host_index,
+                                'workflow_results': workflow_results
+                            })
+                            return
                         
                         # Refresh vCenter session before processing next host
                         # This prevents vim.fault.NotAuthenticated errors during long rolling updates
@@ -1493,8 +1644,10 @@ class ClusterHandler(BaseHandler):
                         step_completed_at=datetime.now().isoformat()
                     )
                     
-                    # Clear current server tracking
+                    # Clear current server and firmware tracking
                     cleanup_state['current_server'] = None
+                    cleanup_state['firmware_in_progress'] = False
+                    cleanup_state['current_host_name'] = None
                     
                     if not continue_on_failure:
                         workflow_results['host_results'].append(host_result)
