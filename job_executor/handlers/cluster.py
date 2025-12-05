@@ -1558,14 +1558,18 @@ class ClusterHandler(BaseHandler):
                                 
                                 # Phase 2: Wait for ESXi to be accessible (only after iDRAC is up)
                                 if idrac_online and not esxi_online:
+                                    # Use ESXi hostname from vCenter (host['name']) instead of iDRAC IP
+                                    # ESXi management interface runs on a different IP than iDRAC
+                                    esxi_target = host.get('name') or server['ip_address']
+                                    
                                     # Update UI with waiting for ESXi status
                                     if attempt % 6 == 0:  # Every minute
                                         self.update_job_details_field(job['id'], {
-                                            'current_step': f'Waiting for ESXi to come online: {host["name"]}'
+                                            'current_step': f'Waiting for ESXi to come online: {esxi_target}'
                                         })
-                                    if self._check_esxi_accessible(server['ip_address'], timeout=5):
+                                    if self._check_esxi_accessible(esxi_target, timeout=5):
                                         esxi_online = True
-                                        self.log(f"    ✓ ESXi accessible on port 443")
+                                        self.log(f"    ✓ ESXi accessible on port 443 ({esxi_target})")
                                         break
                                 
                                 # Progress logging every 30 seconds
