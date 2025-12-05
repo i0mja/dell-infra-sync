@@ -252,12 +252,23 @@ export const WorkflowExecutionViewer = ({
         return <XCircle className="h-5 w-5 text-destructive" />;
       case 'skipped':
         return <MinusCircle className="h-5 w-5 text-yellow-500" />;
+      case 'cancelled':
+        return <XCircle className="h-5 w-5 text-orange-500" />;
       default:
         return <Clock className="h-5 w-5" />;
     }
   };
 
   const getStatusBadge = (status: string) => {
+    // Cancelled gets custom orange styling
+    if (status === 'cancelled') {
+      return (
+        <Badge className="bg-orange-500/10 text-orange-600 border-orange-500/30 hover:bg-orange-500/20">
+          cancelled
+        </Badge>
+      );
+    }
+    
     const variants: Record<string, any> = {
       pending: 'secondary',
       running: 'default',
@@ -495,7 +506,10 @@ export const WorkflowExecutionViewer = ({
             </span>
           </div>
           
-          <Progress value={progress} className="h-2" />
+          <Progress 
+            value={progress} 
+            className={`h-2 ${overallStatus === 'cancelled' ? '[&>div]:bg-orange-500' : ''}`} 
+          />
         </div>
 
         {/* Host-Specific Errors from workflow_results - show these when available */}
@@ -596,6 +610,63 @@ export const WorkflowExecutionViewer = ({
                 <div className="font-mono text-xs whitespace-pre-wrap">
                   {effectiveJobDetails.error}
                 </div>
+              </AlertDescription>
+            </Alert>
+          </>
+        )}
+
+        {/* Cancellation Report */}
+        {overallStatus === 'cancelled' && (
+          <>
+            <Separator />
+            <Alert className="border-orange-500/50 bg-orange-500/10">
+              <XCircle className="h-4 w-4 text-orange-500" />
+              <AlertDescription className="mt-2">
+                <div className="font-semibold mb-2 text-orange-600">Job Cancelled</div>
+                
+                {effectiveJobDetails?.cancelled_during && (
+                  <div className="text-sm mb-2">
+                    <span className="text-muted-foreground">Cancelled during: </span>
+                    <span className="font-medium">{effectiveJobDetails.cancelled_during.replace(/_/g, ' ')}</span>
+                  </div>
+                )}
+                
+                {effectiveJobDetails?.cleanup_performed !== undefined && (
+                  <div className="mb-2">
+                    {effectiveJobDetails.cleanup_performed ? (
+                      <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/30">
+                        <CheckCircle className="h-3 w-3 mr-1" />
+                        Cleanup completed
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 border-yellow-500/30">
+                        <Clock className="h-3 w-3 mr-1" />
+                        No cleanup needed
+                      </Badge>
+                    )}
+                  </div>
+                )}
+
+                {/* Show workflow results summary */}
+                {effectiveJobDetails?.workflow_results && (
+                  <div className="mt-3 pt-3 border-t border-orange-500/20 space-y-1 text-sm">
+                    <div className="text-muted-foreground">Summary:</div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>Total hosts: <span className="font-medium">{effectiveJobDetails.workflow_results.total_hosts || 0}</span></div>
+                      <div>Hosts updated: <span className="font-medium text-green-600">{effectiveJobDetails.workflow_results.hosts_updated || 0}</span></div>
+                      <div>Hosts skipped: <span className="font-medium text-yellow-600">{effectiveJobDetails.workflow_results.hosts_skipped || 0}</span></div>
+                      <div>Hosts failed: <span className="font-medium text-destructive">{effectiveJobDetails.workflow_results.hosts_failed || 0}</span></div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Show current host info if available */}
+                {effectiveJobDetails?.current_host && (
+                  <div className="mt-3 pt-3 border-t border-orange-500/20 text-xs">
+                    <span className="text-muted-foreground">Last active host: </span>
+                    <span className="font-medium">{effectiveJobDetails.current_host}</span>
+                  </div>
+                )}
               </AlertDescription>
             </Alert>
           </>
