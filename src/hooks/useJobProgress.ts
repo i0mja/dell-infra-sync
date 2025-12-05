@@ -141,6 +141,38 @@ export function useJobProgress(jobId: string | null, enabled: boolean = true) {
         }
       }
 
+      // Extract iDRAC job queue for firmware updates
+      let idracCurrentStep: string | undefined;
+      const jobDetails = job?.details;
+      if (jobDetails && typeof jobDetails === 'object' && !Array.isArray(jobDetails) && 'idrac_job_queue' in jobDetails) {
+        const idracQueue = (jobDetails as any).idrac_job_queue as Array<{
+          id: string;
+          name: string;
+          job_state: string;
+          percent_complete: number;
+        }>;
+        
+        if (Array.isArray(idracQueue) && idracQueue.length > 0) {
+          // Find running iDRAC jobs
+          const runningIdracJobs = idracQueue.filter(j => 
+            j.job_state?.toLowerCase() === 'running'
+          );
+          
+          if (runningIdracJobs.length > 0) {
+            const firstRunning = runningIdracJobs[0];
+            idracCurrentStep = `${firstRunning.name} (${firstRunning.percent_complete}%)`;
+          } else {
+            // If no running jobs, show scheduled jobs count
+            const scheduledJobs = idracQueue.filter(j => 
+              ['scheduled', 'new', 'downloaded'].includes(j.job_state?.toLowerCase())
+            );
+            if (scheduledJobs.length > 0) {
+              idracCurrentStep = `${scheduledJobs.length} iDRAC jobs queued`;
+            }
+          }
+        }
+      }
+
       // Use calculated progress or fall back to workflow/task-based calculation
       let progressPercent = 0;
       if (calculatedProgress !== null) {
@@ -155,7 +187,7 @@ export function useJobProgress(jobId: string | null, enabled: boolean = true) {
         totalTasks,
         completedTasks,
         runningTasks,
-        currentStep: workflowCurrentStep || (typeof job?.details === 'object' && job?.details !== null 
+        currentStep: idracCurrentStep || workflowCurrentStep || (typeof job?.details === 'object' && job?.details !== null 
           ? (job.details as any).current_step 
           : undefined),
         progressPercent,

@@ -305,6 +305,36 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      // Extract iDRAC job queue for firmware updates
+      let idracCurrentStatus: string | null = null;
+      const details = job.details;
+      if (details && typeof details === 'object' && !Array.isArray(details) && 'idrac_job_queue' in details) {
+        const idracQueue = (details as any).idrac_job_queue as Array<{
+          id: string;
+          name: string;
+          job_state: string;
+          percent_complete: number;
+        }>;
+        
+        if (Array.isArray(idracQueue) && idracQueue.length > 0) {
+          const runningIdracJobs = idracQueue.filter(j => 
+            j.job_state?.toLowerCase() === 'running'
+          );
+          
+          if (runningIdracJobs.length > 0) {
+            const firstRunning = runningIdracJobs[0];
+            idracCurrentStatus = `${firstRunning.name} (${firstRunning.percent_complete}%)`;
+          } else {
+            const scheduledJobs = idracQueue.filter(j => 
+              ['scheduled', 'new', 'downloaded'].includes(j.job_state?.toLowerCase())
+            );
+            if (scheduledJobs.length > 0) {
+              idracCurrentStatus = `${scheduledJobs.length} iDRAC jobs queued`;
+            }
+          }
+        }
+      }
+
       // Use details-based progress if available, otherwise workflow/task-based, otherwise minimum for running
       let progressPercent = 0;
       if (calculatedFromDetails !== null) {
@@ -319,8 +349,10 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         progressPercent = 5; // Minimum indicator for running jobs with no progress data
       }
 
-      // Use workflow step as current status if available
-      if (workflowCurrentStep) {
+      // Priority: iDRAC queue > workflow step > task log
+      if (idracCurrentStatus) {
+        currentStatus = idracCurrentStatus;
+      } else if (workflowCurrentStep) {
         currentStatus = workflowCurrentStep;
       }
 
