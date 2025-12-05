@@ -750,7 +750,7 @@ class VCenterMixin:
                         'drs_enabled': drs_config.enabled if drs_config else False,
                         'drs_automation_level': str(drs_config.defaultVmBehavior) if drs_config and hasattr(drs_config, 'defaultVmBehavior') else None,
                         'overall_status': str(summary.overallStatus) if hasattr(summary, 'overallStatus') else 'unknown',
-                        'last_sync': datetime.now().isoformat()
+                        'last_sync': utc_now_iso()
                     }
                     
                     # Upsert cluster
@@ -1155,7 +1155,7 @@ class VCenterMixin:
                         'maintenance_mode': summary.maintenanceMode if hasattr(summary, 'maintenanceMode') else None,
                         'vm_count': len(ds.vm) if hasattr(ds, 'vm') else 0,
                         'host_count': len(ds.host) if hasattr(ds, 'host') else 0,
-                        'last_sync': datetime.now().isoformat()
+                        'last_sync': utc_now_iso()
                     }
                     
                     # Upsert datastore
@@ -1192,7 +1192,7 @@ class VCenterMixin:
                                                 'accessible': mount_info.mountInfo.accessible if hasattr(mount_info, 'mountInfo') else True,
                                                 'mount_path': mount_info.mountInfo.path if hasattr(mount_info, 'mountInfo') and hasattr(mount_info.mountInfo, 'path') else None,
                                                 'read_only': False,
-                                                'last_sync': datetime.now().isoformat()
+                                                'last_sync': utc_now_iso()
                                             }
                                             
                                             mount_resp = requests.post(
@@ -1324,7 +1324,7 @@ class VCenterMixin:
                                     'alarm_name': alarm_info.name if alarm_info else 'Unknown',
                                     'alarm_status': str(alarm_state.overallStatus),
                                     'acknowledged': alarm_state.acknowledged,
-                                    'triggered_at': alarm_state.time.isoformat() if hasattr(alarm_state, 'time') else datetime.now().isoformat(),
+                                    'triggered_at': alarm_state.time.isoformat() if hasattr(alarm_state, 'time') else utc_now_iso(),
                                     'description': alarm_info.description if alarm_info and hasattr(alarm_info, 'description') else None
                                 }
                                 
@@ -1415,6 +1415,38 @@ class VCenterMixin:
             total_hosts = len(container.view)
             self.log(f"Found {total_hosts} ESXi hosts in vCenter")
             
+            # Pre-fetch all existing vcenter_hosts for this vCenter to eliminate N+1 queries
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            existing_hosts_response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_hosts?source_vcenter_id=eq.{source_vcenter_id}&select=id,name",
+                headers=headers,
+                verify=VERIFY_SSL
+            )
+            existing_host_lookup = {}
+            if existing_hosts_response.status_code == 200:
+                existing_hosts_list = _safe_json_parse(existing_hosts_response)
+                if existing_hosts_list:
+                    existing_host_lookup = {h['name']: h['id'] for h in existing_hosts_list}
+            self.log(f"  Pre-fetched {len(existing_host_lookup)} existing hosts")
+            
+            # Pre-fetch all unlinked servers with service tags for auto-linking
+            servers_response = requests.get(
+                f"{DSM_URL}/rest/v1/servers?select=id,hostname,service_tag&vcenter_host_id=is.null&service_tag=not.is.null",
+                headers=headers,
+                verify=VERIFY_SSL
+            )
+            server_by_service_tag = {}
+            if servers_response.status_code == 200:
+                servers_list = _safe_json_parse(servers_response)
+                if servers_list:
+                    server_by_service_tag = {s['service_tag']: s for s in servers_list if s.get('service_tag')}
+            self.log(f"  Pre-fetched {len(server_by_service_tag)} unlinked servers for auto-linking")
+            
             synced = 0
             auto_linked = 0
             
@@ -1496,30 +1528,16 @@ class VCenterMixin:
                         'esxi_version': esxi_version,
                         'status': status,
                         'maintenance_mode': in_maintenance,
-                        'last_sync': datetime.now().isoformat()
+                        'last_sync': utc_now_iso()
                     }
                     
-                    # Check if host exists by name + source_vcenter_id (more reliable than vcenter_id)
-                    from urllib.parse import quote
-                    existing_response = requests.get(
-                        f"{DSM_URL}/rest/v1/vcenter_hosts?name=eq.{quote(host.name)}&source_vcenter_id=eq.{source_vcenter_id}&select=id",
-                        headers={
-                            'apikey': SERVICE_ROLE_KEY,
-                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
-                        },
-                        verify=VERIFY_SSL
-                    )
+                    # Use pre-fetched lookup instead of individual HTTP request
+                    existing_host_id = existing_host_lookup.get(host.name)
                     
-                    existing_host = None
-                    if existing_response.status_code == 200:
-                        existing_hosts = _safe_json_parse(existing_response)
-                        if existing_hosts:
-                            existing_host = existing_hosts[0]
-                    
-                    if existing_host:
+                    if existing_host_id:
                         # Update existing host
                         response = requests.patch(
-                            f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{existing_host['id']}",
+                            f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{existing_host_id}",
                             headers={
                                 'apikey': SERVICE_ROLE_KEY,
                                 'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
@@ -1547,27 +1565,17 @@ class VCenterMixin:
                         synced += 1
                         host_result = _safe_json_parse(response)
                         
-                        # Auto-link to server if serial number matches
+                        # Auto-link to server if serial number matches using pre-fetched lookup
                         if serial_number and host_result:
                             host_id = host_result[0]['id']
                             
-                            # Find matching server by service_tag (Dell's serial number)
-                            server_response = requests.get(
-                                f"{DSM_URL}/rest/v1/servers?select=id,hostname&service_tag=eq.{serial_number}&vcenter_host_id=is.null",
-                                headers={
-                                    'apikey': SERVICE_ROLE_KEY,
-                                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
-                                },
-                                verify=VERIFY_SSL
-                            )
+                            # Use pre-fetched server lookup instead of individual HTTP request
+                            matching_server = server_by_service_tag.get(serial_number)
                             
-                            if server_response.status_code == 200:
-                                servers = _safe_json_parse(server_response)
-                                if servers:
-                                    server = servers[0]
+                            if matching_server:
                                     # Link server to vCenter host
                                     link_response = requests.patch(
-                                        f"{DSM_URL}/rest/v1/servers?id=eq.{server['id']}",
+                                        f"{DSM_URL}/rest/v1/servers?id=eq.{matching_server['id']}",
                                         headers={
                                             'apikey': SERVICE_ROLE_KEY,
                                             'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
@@ -1577,7 +1585,6 @@ class VCenterMixin:
                                         json={'vcenter_host_id': host_id},
                                         verify=VERIFY_SSL
                                     )
-                                    
                                     if link_response.status_code == 204:
                                         # Also update vcenter_host with server_id
                                         requests.patch(
@@ -1588,11 +1595,13 @@ class VCenterMixin:
                                                 'Content-Type': 'application/json',
                                                 'Prefer': 'return=minimal'
                                             },
-                                            json={'server_id': server['id']},
+                                            json={'server_id': matching_server['id']},
                                             verify=VERIFY_SSL
                                         )
                                         auto_linked += 1
-                                        self.log(f"  Auto-linked {host.name} to server {server['hostname']}")
+                                        # Remove from lookup so we don't try to link again
+                                        del server_by_service_tag[serial_number]
+                                        self.log(f"  Auto-linked {host.name} to server {matching_server['hostname']}")
                         
                         self.log(f"  Synced host: {host.name}")
                         
