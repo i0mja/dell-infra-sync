@@ -138,19 +138,30 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
     
     try {
       // Find any maintenance window that has this job in its job_ids
+      // Use overlaps instead of contains for better UUID array compatibility
       const { data, error } = await supabase
         .from('maintenance_windows')
         .select('id, title, status, maintenance_type, planned_start')
-        .contains('job_ids', [job.id])
-        .single();
+        .overlaps('job_ids', [job.id])
+        .limit(1)
+        .maybeSingle();
       
-      if (error && error.code !== 'PGRST116') { // PGRST116 = no rows returned
-        console.error('Error fetching parent window:', error);
+      if (error) {
+        // 406 errors can occur with array queries - handle gracefully
+        if (error.code === '406' || error.message?.includes('406')) {
+          console.warn('Array query not supported, skipping parent window lookup');
+          setParentWindow(null);
+          return;
+        }
+        if (error.code !== 'PGRST116') { // PGRST116 = no rows returned
+          console.error('Error fetching parent window:', error);
+        }
       }
       
       setParentWindow(data || null);
     } catch (error) {
       console.error('Error fetching parent window:', error);
+      setParentWindow(null);
     }
   };
 
