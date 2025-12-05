@@ -114,9 +114,11 @@ export function ActiveJobCard({ job, progress, onClick }: ActiveJobCardProps) {
             <>
               <div className="space-y-1">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground">
-                    {progress.completedTasks}/{progress.totalTasks} tasks
-                  </span>
+                  {progress.totalTasks > 0 && (
+                    <span className="text-muted-foreground">
+                      {progress.completedTasks}/{progress.totalTasks} {progress.isWorkflow ? 'steps' : 'tasks'}
+                    </span>
+                  )}
                   <span className="font-medium">
                     {Math.round(progress.progressPercent)}%
                   </span>

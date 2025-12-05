@@ -25,6 +25,7 @@ interface JobWithProgress {
   currentLog: string | null;
   averageProgress: number;
   calculatedProgress: number | null;
+  isWorkflow?: boolean;
 }
 
 export function useJobsWithProgress() {
@@ -52,12 +53,31 @@ export function useJobsWithProgress() {
 
       if (tasksError) throw tasksError;
 
+      // Fetch workflow executions for all active jobs (for workflow-based jobs)
+      const { data: allWorkflowSteps, error: workflowError } = await supabase
+        .from("workflow_executions")
+        .select("job_id, step_status")
+        .in("job_id", jobIds);
+
+      if (workflowError) throw workflowError;
+
       // Aggregate task data for each job
       const jobsWithProgress: JobWithProgress[] = jobs.map(job => {
         const tasks = (allTasks || []).filter(t => t.job_id === job.id);
-        const completedTasks = tasks.filter(t => t.status === 'completed').length;
+        const workflowSteps = (allWorkflowSteps || []).filter(w => w.job_id === job.id);
+        
+        const taskCompletedTasks = tasks.filter(t => t.status === 'completed').length;
         const runningTasks = tasks.filter(t => t.status === 'running').length;
         const runningTask = tasks.find(t => t.status === 'running');
+        
+        // Use workflow steps if no tasks exist
+        const isWorkflow = tasks.length === 0 && workflowSteps.length > 0;
+        const workflowCompletedSteps = workflowSteps.filter(s => 
+          ['completed', 'skipped'].includes(s.step_status)
+        ).length;
+        
+        const totalTasks = tasks.length > 0 ? tasks.length : workflowSteps.length;
+        const completedTasks = tasks.length > 0 ? taskCompletedTasks : workflowCompletedSteps;
         
         // Calculate average progress across all tasks
         const tasksWithProgress = tasks.filter(t => t.progress !== null);
@@ -137,12 +157,13 @@ export function useJobsWithProgress() {
 
         return {
           ...job,
-          totalTasks: tasks.length,
+          totalTasks,
           completedTasks,
           runningTasks,
           currentLog: runningTask?.log || null,
           averageProgress,
           calculatedProgress,
+          isWorkflow,
         };
       });
 
