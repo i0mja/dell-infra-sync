@@ -91,6 +91,8 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._handle_browse_datastore()
             elif self.path == '/api/idm-authenticate':
                 self._handle_idm_authenticate()
+            elif self.path == '/api/network-config-read':
+                self._handle_network_config_read()
             else:
                 self._send_error(f'Unknown endpoint: {self.path}', 404)
         except Exception as e:
@@ -681,6 +683,93 @@ class APIHandler(BaseHTTPRequestHandler):
                 success=False,
                 error_message=str(e),
                 operation_type='idm_api'
+            )
+            
+            self._send_error(str(e), 500)
+    
+    def _handle_network_config_read(self):
+        """Read iDRAC network configuration instantly"""
+        start_time = datetime.now()
+        data = self._read_json_body()
+        server_id = data.get('server_id')
+        
+        if not server_id:
+            self._send_error('server_id is required', 400)
+            return
+        
+        self.executor.log(f"API: Network config read for server {server_id}")
+        
+        try:
+            # Get server and credentials
+            server = self.executor.get_server_by_id(server_id)
+            if not server:
+                self._send_error(f'Server {server_id} not found', 404)
+                return
+            
+            username, password = self.executor.get_server_credentials(server_id)
+            if not username or not password:
+                self._send_error('No credentials available for server', 400)
+                return
+            
+            ip_address = server['ip_address']
+            
+            # Get network settings using Dell Redfish operations
+            dell_ops = self.executor._get_dell_operations()
+            network_data = dell_ops.get_idrac_network_settings(
+                ip=ip_address,
+                username=username,
+                password=password,
+                server_id=server_id,
+                job_id=None
+            )
+            
+            if not network_data:
+                self._send_error('Failed to retrieve network settings', 500)
+                return
+            
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            response = {
+                'success': True,
+                'server_id': server_id,
+                'ip_address': ip_address,
+                'ipv4': network_data.get('ipv4', {}),
+                'nic': network_data.get('nic', {}),
+                'ntp': network_data.get('ntp', {}),
+            }
+            
+            # Log operation
+            self._log_operation(
+                server_id=server_id,
+                operation_name='network_config_read',
+                endpoint='/api/network-config-read',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/network-config-read',
+                request_body=data,
+                status_code=200,
+                response_time_ms=response_time_ms,
+                response_body={'success': True},
+                success=True,
+                operation_type='idrac_api'
+            )
+            
+            self._send_json(response)
+            
+        except Exception as e:
+            self.executor.log(f"Network config read failed: {e}", "ERROR")
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            
+            # Log failed operation
+            self._log_operation(
+                server_id=server_id,
+                operation_name='network_config_read',
+                endpoint='/api/network-config-read',
+                full_url=f'http://localhost:{self.executor.api_server.port}/api/network-config-read',
+                request_body=data,
+                status_code=500,
+                response_time_ms=response_time_ms,
+                response_body={'error': str(e)},
+                success=False,
+                error_message=str(e),
+                operation_type='idrac_api'
             )
             
             self._send_error(str(e), 500)

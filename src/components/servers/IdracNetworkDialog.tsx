@@ -37,6 +37,7 @@ import {
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { logActivityDirect } from "@/hooks/useActivityLog";
+import { readNetworkConfig } from "@/lib/job-executor-api";
 import type { Server } from "@/hooks/useServers";
 
 interface IdracNetworkDialogProps {
@@ -86,11 +87,40 @@ export function IdracNetworkDialog({
   const [editedConfig, setEditedConfig] = useState<Partial<Record<string, string>>>({});
   const [jobId, setJobId] = useState<string | null>(null);
 
-  // Fetch current network configuration
+  // Fetch current network configuration using instant API
   const fetchNetworkConfig = async () => {
     if (!server) return;
 
     setLoading(true);
+    try {
+      // Try instant API first (no job queue)
+      console.log(`[Network Config] Trying instant API for server ${server.id}`);
+      const result = await readNetworkConfig(server.id);
+      
+      if (result.success && result.ipv4 && result.nic && result.ntp) {
+        console.log(`[Network Config] Instant API success`);
+        setConfig({
+          ipv4: result.ipv4,
+          nic: result.nic,
+          ntp: result.ntp,
+        });
+        toast.success("Network configuration loaded");
+        logActivityDirect('network_config_read', 'server', server.hostname || server.ip_address, {
+          server_id: server.id,
+          ip_address: server.ip_address,
+          method: 'instant_api'
+        }, { targetId: server.id, success: true });
+        setLoading(false);
+        return;
+      }
+      
+      throw new Error(result.error || "Invalid response from instant API");
+    } catch (instantError) {
+      // Fall back to job-based approach if instant API fails
+      console.log(`[Network Config] Instant API failed, falling back to job queue:`, instantError);
+    }
+    
+    // Job-based fallback
     try {
       const { data, error } = await supabase.functions.invoke("create-job", {
         body: {
@@ -112,65 +142,46 @@ export function IdracNetworkDialog({
       toast.info("Reading network configuration...");
 
       // Poll for job completion
-      const pollJob = async () => {
-        const maxAttempts = 30;
-        let attempts = 0;
+      const maxAttempts = 30;
+      let attempts = 0;
 
-        while (attempts < maxAttempts) {
-          await new Promise((r) => setTimeout(r, 2000));
-          attempts++;
+      while (attempts < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 2000));
+        attempts++;
 
-          console.log(`[Network Config] Polling attempt ${attempts}/${maxAttempts} for job ${newJobId}`);
+        const { data: jobData, error: pollError } = await supabase
+          .from("jobs")
+          .select("status, details")
+          .eq("id", newJobId)
+          .single();
 
-          const { data: jobData, error: pollError } = await supabase
-            .from("jobs")
-            .select("status, details")
-            .eq("id", newJobId)
-            .single();
+        if (pollError) continue;
 
-          if (pollError) {
-            console.error(`[Network Config] Poll error:`, pollError);
-            continue;
+        if (jobData?.status === "completed") {
+          const details = jobData.details as Record<string, unknown>;
+          
+          if (!details?.ipv4 || !details?.nic || !details?.ntp) {
+            throw new Error("Network configuration data is incomplete");
           }
 
-          console.log(`[Network Config] Job status: ${jobData?.status}`, jobData?.details);
-
-          if (jobData?.status === "completed") {
-            const details = jobData.details as Record<string, unknown>;
-            
-            // Validate data structure
-            if (!details?.ipv4 || !details?.nic || !details?.ntp) {
-              console.error(`[Network Config] Invalid/missing details structure:`, details);
-              console.error(`[Network Config] ipv4:`, details?.ipv4, `nic:`, details?.nic, `ntp:`, details?.ntp);
-              throw new Error("Network configuration data is incomplete - check job executor response");
-            }
-
-            console.log(`[Network Config] Setting config with valid data`);
-            
-            setConfig({
-              ipv4: details.ipv4 as NetworkConfig["ipv4"],
-              nic: details.nic as NetworkConfig["nic"],
-              ntp: details.ntp as NetworkConfig["ntp"],
-            });
-            toast.success("Network configuration loaded");
-            logActivityDirect('network_config_read', 'server', server.hostname || server.ip_address, {
-              server_id: server.id,
-              ip_address: server.ip_address
-            }, { targetId: server.id, success: true });
-            return; // Success - exit function
-          } else if (jobData?.status === "failed") {
-            const errorMsg = (jobData.details as Record<string, string>)?.error || "Failed to read network config";
-            console.error(`[Network Config] Job failed:`, errorMsg);
-            throw new Error(errorMsg);
-          }
+          setConfig({
+            ipv4: details.ipv4 as NetworkConfig["ipv4"],
+            nic: details.nic as NetworkConfig["nic"],
+            ntp: details.ntp as NetworkConfig["ntp"],
+          });
+          toast.success("Network configuration loaded");
+          logActivityDirect('network_config_read', 'server', server.hostname || server.ip_address, {
+            server_id: server.id,
+            ip_address: server.ip_address,
+            method: 'job_queue'
+          }, { targetId: server.id, success: true });
+          return;
+        } else if (jobData?.status === "failed") {
+          throw new Error((jobData.details as Record<string, string>)?.error || "Failed to read network config");
         }
+      }
 
-        // If we get here, polling timed out
-        console.error(`[Network Config] Polling timed out after ${maxAttempts} attempts`);
-        throw new Error("Timed out waiting for network configuration. Please try again.");
-      };
-
-      await pollJob();
+      throw new Error("Timed out waiting for network configuration");
     } catch (error) {
       console.error("Error fetching network config:", error);
       toast.error("Failed to fetch network configuration");
