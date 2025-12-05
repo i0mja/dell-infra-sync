@@ -6,6 +6,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
 import { useState } from "react";
+import { PreflightProgress } from "@/lib/job-executor-api";
 
 interface IdracJob {
   id: string;
@@ -58,6 +59,7 @@ interface PreFlightCheckResultsProps {
   firmwareSource: string;
   onChangeFirmwareSource?: (source: string) => void;
   onOpenNetworkSettings?: (serverId: string) => void;
+  progress?: PreflightProgress | null;
 }
 
 const CheckIcon = ({ passed, loading }: { passed: boolean; loading?: boolean }) => {
@@ -72,21 +74,58 @@ export function PreFlightCheckResults({
   loading, 
   firmwareSource,
   onChangeFirmwareSource,
-  onOpenNetworkSettings 
+  onOpenNetworkSettings,
+  progress
 }: PreFlightCheckResultsProps) {
   const [expandedServers, setExpandedServers] = useState<string[]>([]);
 
   if (loading) {
     return (
       <Card className="border-dashed">
-        <CardContent className="py-8">
-          <div className="flex flex-col items-center gap-4">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <div className="text-center">
-              <p className="font-medium">Running Pre-Flight Checks...</p>
-              <p className="text-sm text-muted-foreground">Testing connectivity, credentials, and system readiness</p>
+        <CardContent className="py-6 space-y-4">
+          {/* Progress bar with percentage */}
+          <div className="space-y-2">
+            <div className="flex justify-between text-sm">
+              <span className="font-medium">Running Pre-Flight Checks...</span>
+              <span className="text-muted-foreground">
+                {progress ? `${progress.current}/${progress.total}` : 'Initializing...'}
+              </span>
             </div>
+            <Progress value={progress?.percent || 0} className="h-2" />
           </div>
+          
+          {/* Current server being checked */}
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span>
+              {progress?.status === 'dell_repo_check' 
+                ? 'Checking Dell repository connectivity...'
+                : progress?.current_hostname 
+                  ? `Checking: ${progress.current_hostname}` 
+                  : 'Initializing checks...'}
+            </span>
+          </div>
+          
+          {/* Running tally */}
+          {progress && progress.current > 0 && (
+            <div className="flex items-center gap-4 text-sm">
+              <div className="flex items-center gap-1.5">
+                <CheckCircle className="h-4 w-4 text-green-500" />
+                <span>{progress.passed} passed</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <XCircle className="h-4 w-4 text-destructive" />
+                <span>{progress.failed} failed</span>
+              </div>
+            </div>
+          )}
+          
+          {/* Estimate for large clusters */}
+          {progress && progress.total > 5 && (
+            <p className="text-xs text-muted-foreground">
+              Checking {progress.total} servers (~6 checks per server)
+            </p>
+          )}
         </CardContent>
       </Card>
     );

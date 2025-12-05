@@ -121,6 +121,8 @@ class APIHandler(BaseHTTPRequestHandler):
         try:
             if self.path == '/api/health':
                 self._send_json({'status': 'ok', 'version': '1.0.0'})
+            elif self.path.startswith('/api/preflight-check-stream'):
+                self._handle_preflight_check_stream()
             else:
                 self._send_error(f'Unknown endpoint: {self.path}', 404)
         except Exception as e:
@@ -1659,6 +1661,177 @@ class APIHandler(BaseHTTPRequestHandler):
             result['blockers'].append({'type': 'unknown', 'message': str(e)})
         
         return result
+    
+    def _handle_preflight_check_stream(self):
+        """Stream pre-flight check progress using Server-Sent Events (SSE)"""
+        from urllib.parse import urlparse, parse_qs
+        start_time = datetime.now()
+        
+        # Parse query parameters from URL
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        server_ids = params.get('server_ids', [''])[0].split(',')
+        server_ids = [s.strip() for s in server_ids if s.strip()]
+        firmware_source = params.get('firmware_source', ['local_repository'])[0]
+        
+        if not server_ids:
+            self._send_error('server_ids query parameter is required', 400)
+            return
+        
+        self.executor.log(f"API: Pre-flight check stream for {len(server_ids)} servers, firmware_source={firmware_source}")
+        
+        # Set up SSE headers
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/event-stream')
+        self.send_header('Cache-Control', 'no-cache')
+        self.send_header('Connection', 'keep-alive')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        
+        def send_event(event_type: str, data: dict):
+            """Send an SSE event"""
+            try:
+                event_data = json.dumps(data)
+                self.wfile.write(f"event: {event_type}\n".encode())
+                self.wfile.write(f"data: {event_data}\n\n".encode())
+                self.wfile.flush()
+            except Exception as e:
+                self.executor.log(f"SSE write error: {e}", "ERROR")
+        
+        try:
+            results = {
+                'servers': [],
+                'firmware_source_checks': {},
+                'overall_ready': True,
+                'blockers': [],
+                'warnings': []
+            }
+            
+            dell_ops = self.executor._get_dell_operations()
+            first_server_with_creds = None
+            total_servers = len(server_ids)
+            passed_count = 0
+            failed_count = 0
+            
+            # Send initial progress
+            send_event('progress', {
+                'current': 0,
+                'total': total_servers,
+                'percent': 0,
+                'current_hostname': 'Starting...',
+                'passed': 0,
+                'failed': 0
+            })
+            
+            for i, server_id in enumerate(server_ids):
+                # Get hostname for progress display before running checks
+                server = self.executor.get_server_by_id(server_id)
+                current_hostname = server.get('hostname', server.get('ip_address', 'Unknown')) if server else 'Unknown'
+                
+                # Send progress update - checking this server
+                send_event('progress', {
+                    'current': i,
+                    'total': total_servers,
+                    'percent': int((i / total_servers) * 100),
+                    'current_hostname': current_hostname,
+                    'passed': passed_count,
+                    'failed': failed_count,
+                    'status': 'checking'
+                })
+                
+                # Run actual check for this server
+                server_result = self._run_server_preflight(server_id, dell_ops)
+                results['servers'].append(server_result)
+                
+                # Update counters
+                if server_result['ready']:
+                    passed_count += 1
+                else:
+                    failed_count += 1
+                    results['overall_ready'] = False
+                    for blocker in server_result.get('blockers', []):
+                        results['blockers'].append({
+                            'server_id': server_id,
+                            'hostname': server_result.get('hostname', 'Unknown'),
+                            **blocker
+                        })
+                
+                for warning in server_result.get('warnings', []):
+                    results['warnings'].append({
+                        'server_id': server_id,
+                        'hostname': server_result.get('hostname', 'Unknown'),
+                        'message': warning
+                    })
+                
+                # Track first server with valid credentials for Dell repo check
+                if first_server_with_creds is None and server_result.get('checks', {}).get('auth', {}).get('passed'):
+                    first_server_with_creds = server_result
+                
+                # Send server result event
+                send_event('server_result', {
+                    'server_id': server_id,
+                    'hostname': server_result.get('hostname'),
+                    'ready': server_result['ready'],
+                    'index': i + 1
+                })
+                
+                # Send updated progress
+                send_event('progress', {
+                    'current': i + 1,
+                    'total': total_servers,
+                    'percent': int(((i + 1) / total_servers) * 100),
+                    'current_hostname': current_hostname,
+                    'passed': passed_count,
+                    'failed': failed_count,
+                    'status': 'completed'
+                })
+            
+            # If using Dell online catalog, check DNS and Dell repo reachability
+            if firmware_source == 'dell_online_catalog' and first_server_with_creds:
+                send_event('progress', {
+                    'current': total_servers,
+                    'total': total_servers,
+                    'percent': 95,
+                    'current_hostname': 'Checking Dell repository...',
+                    'passed': passed_count,
+                    'failed': failed_count,
+                    'status': 'dell_repo_check'
+                })
+                
+                results['firmware_source_checks'] = self._check_dell_repo_access(
+                    first_server_with_creds['server_id'],
+                    dell_ops
+                )
+                
+                if not results['firmware_source_checks'].get('dell_reachable'):
+                    results['blockers'].append({
+                        'type': 'dell_repo_unreachable',
+                        'message': 'iDRAC cannot reach Dell repository (downloads.dell.com)',
+                        'suggestion': 'Configure gateway/DNS in iDRAC Network Settings, or switch to Local Repository'
+                    })
+                    results['overall_ready'] = False
+                
+                if not results['firmware_source_checks'].get('dns_configured'):
+                    results['warnings'].append({
+                        'server_id': first_server_with_creds['server_id'],
+                        'hostname': first_server_with_creds.get('hostname', 'Unknown'),
+                        'message': 'DNS may not be configured - online catalog updates may fail'
+                    })
+            
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            
+            # Send final done event with full results
+            send_event('done', {
+                'success': True,
+                'response_time_ms': response_time_ms,
+                **results
+            })
+            
+        except Exception as e:
+            self.executor.log(f"Pre-flight check stream failed: {e}", "ERROR")
+            import traceback
+            self.executor.log(f"Traceback: {traceback.format_exc()}", "ERROR")
+            send_event('error', {'error': str(e)})
     
     def _check_dell_repo_access(self, server_id: str, dell_ops) -> dict:
         """Check if iDRAC can reach Dell repository"""
