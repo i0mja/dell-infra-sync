@@ -2189,12 +2189,15 @@ class DellOperations:
         Returns:
             Dict with success status and deleted job ID
         """
+        # Use Dell's official OEM DeleteJobQueue action with specific JobID
+        # Reference: github.com/dell/iDRAC-Redfish-Scripting
         response = self.adapter.make_request(
-            method='DELETE',
+            method='POST',
             ip=ip,
-            endpoint=f'/redfish/v1/Managers/iDRAC.Embedded.1/Jobs/{idrac_job_id}',
+            endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DellJobService/Actions/DellJobService.DeleteJobQueue',
             username=username,
             password=password,
+            payload={"JobID": idrac_job_id},
             operation_name='Delete iDRAC Job',
             server_id=server_id,
             user_id=user_id
@@ -2213,7 +2216,7 @@ class DellOperations:
         """
         Clear the entire iDRAC job queue.
         
-        Dell Redfish OEM endpoint: POST /redfish/v1/Dell/Managers/iDRAC.Embedded.1/DellJobService/Actions/DellJobService.DeleteJobQueue
+        Dell Redfish OEM endpoint: POST /redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DellJobService/Actions/DellJobService.DeleteJobQueue
         
         Use force=True to clear even running jobs (JID_CLEARALL_FORCE)
         
@@ -2233,7 +2236,7 @@ class DellOperations:
         response = self.adapter.make_request(
             method='POST',
             ip=ip,
-            endpoint='/redfish/v1/Dell/Managers/iDRAC.Embedded.1/DellJobService/Actions/DellJobService.DeleteJobQueue',
+            endpoint='/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DellJobService/Actions/DellJobService.DeleteJobQueue',
             username=username,
             password=password,
             payload={"JobID": job_id},
