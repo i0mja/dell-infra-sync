@@ -38,8 +38,14 @@ export interface NotificationSettings {
   maxRecentItems: number;
 }
 
+interface RecentlyCompletedJob {
+  job: Job;
+  completedAt: number;
+}
+
 interface NotificationContextType {
   activeJobs: Job[];
+  recentlyCompletedJobs: Job[];
   recentCommands: IdracCommand[];
   jobProgress: Map<string, JobProgress>;
   unreadCount: number;
@@ -99,9 +105,12 @@ const showJobStateToast = (job: Job, previousStatus: string) => {
   }
 };
 
+const RECENTLY_COMPLETED_DURATION_MS = 15000; // 15 seconds
+
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth();
   const [activeJobs, setActiveJobs] = useState<Job[]>([]);
+  const [recentlyCompletedJobs, setRecentlyCompletedJobs] = useState<RecentlyCompletedJob[]>([]);
   const [recentCommands, setRecentCommands] = useState<IdracCommand[]>([]);
   const [jobProgress, setJobProgress] = useState<Map<string, JobProgress>>(new Map());
   const [unreadCount, setUnreadCount] = useState(0);
@@ -116,11 +125,36 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
 
   // Use ref to avoid stale closures in subscription callbacks
   const previousJobStatusesRef = useRef<Map<string, string>>(new Map());
+  const recentlyCompletedRef = useRef<RecentlyCompletedJob[]>([]);
 
-  // Keep ref in sync with state
+  // Keep refs in sync with state
   useEffect(() => {
     previousJobStatusesRef.current = previousJobStatuses;
   }, [previousJobStatuses]);
+
+  useEffect(() => {
+    recentlyCompletedRef.current = recentlyCompletedJobs;
+  }, [recentlyCompletedJobs]);
+
+  // Cleanup recently completed jobs after duration
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setRecentlyCompletedJobs(prev => 
+        prev.filter(item => now - item.completedAt < RECENTLY_COMPLETED_DURATION_MS)
+      );
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Add job to recently completed list
+  const addRecentlyCompleted = useCallback((job: Job) => {
+    setRecentlyCompletedJobs(prev => {
+      // Don't add if already in list
+      if (prev.some(item => item.job.id === job.id)) return prev;
+      return [...prev, { job, completedAt: Date.now() }];
+    });
+  }, []);
 
   // Fetch active jobs (excluding internal job types)
   const fetchActiveJobs = useCallback(async () => {
@@ -345,6 +379,11 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
             if (previousStatus !== newJob.status) {
               showJobStateToast(newJob, previousStatus);
               setPreviousJobStatuses(prev => new Map(prev).set(newJob.id, newJob.status));
+              
+              // Track recently completed jobs so they remain visible briefly
+              if (newJob.status === 'completed' || newJob.status === 'failed') {
+                addRecentlyCompleted(newJob);
+              }
             }
           } else if (payload.eventType === 'INSERT' && newJob) {
             // New job created
@@ -368,7 +407,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [settings.enabled, session, fetchActiveJobs]);
+  }, [settings.enabled, session, fetchActiveJobs, addRecentlyCompleted]);
 
   // Subscribe to command changes
   useEffect(() => {
@@ -433,10 +472,14 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // Get recently completed jobs as plain array
+  const recentlyCompletedJobsArray = recentlyCompletedJobs.map(item => item.job);
+
   return (
     <NotificationContext.Provider
       value={{
         activeJobs,
+        recentlyCompletedJobs: recentlyCompletedJobsArray,
         recentCommands,
         jobProgress,
         unreadCount,

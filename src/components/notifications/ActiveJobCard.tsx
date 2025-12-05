@@ -38,6 +38,12 @@ const jobTypeLabels: Record<string, string> = {
   virtual_media_mount: 'Virtual Media',
   bios_config_read: 'BIOS Read',
   bios_config_write: 'BIOS Write',
+  idrac_network_read: 'iDRAC Network Read',
+  idrac_network_write: 'iDRAC Network Write',
+  rolling_cluster_update: 'Rolling Cluster Update',
+  vcenter_sync: 'vCenter Sync',
+  test_credentials: 'Credential Test',
+  refresh_existing_servers: 'Server Refresh',
 };
 
 export function ActiveJobCard({ job, progress, onClick }: ActiveJobCardProps) {
@@ -48,13 +54,40 @@ export function ActiveJobCard({ job, progress, onClick }: ActiveJobCardProps) {
   const serverIds = targetScope?.server_ids || [];
   const serverCount = serverIds.length;
   
-  const statusColor = job.status === 'running' ? 'bg-primary' : 'bg-muted';
+  const isCompleted = job.status === 'completed';
+  const isFailed = job.status === 'failed';
+  const isActive = job.status === 'running' || job.status === 'pending';
+  
+  const statusColor = isActive 
+    ? 'bg-primary' 
+    : isCompleted 
+    ? 'bg-green-600' 
+    : isFailed 
+    ? 'bg-destructive' 
+    : 'bg-muted';
+  
+  const borderColor = isActive 
+    ? 'border-l-primary' 
+    : isCompleted 
+    ? 'border-l-green-600' 
+    : isFailed 
+    ? 'border-l-destructive' 
+    : 'border-l-muted';
+  
+  const badgeVariant = isActive 
+    ? 'default' 
+    : isCompleted 
+    ? 'outline' 
+    : isFailed 
+    ? 'destructive' 
+    : 'secondary';
   
   return (
     <Card
       className={cn(
         "p-3 cursor-pointer transition-all hover:bg-accent/50 border-l-4",
-        job.status === 'running' ? 'border-l-primary' : 'border-l-muted'
+        borderColor,
+        !isActive && "opacity-80"
       )}
       onClick={onClick}
     >
@@ -66,8 +99,8 @@ export function ActiveJobCard({ job, progress, onClick }: ActiveJobCardProps) {
         <div className="flex-1 min-w-0 space-y-2">
           <div className="flex items-center justify-between gap-2">
             <p className="font-medium text-sm truncate">{label}</p>
-            <Badge variant={job.status === 'running' ? 'default' : 'secondary'} className="text-xs">
-              {job.status}
+            <Badge variant={badgeVariant} className={cn("text-xs", isCompleted && "text-green-600 border-green-600")}>
+              {isCompleted ? 'Just completed' : isFailed ? 'Failed' : job.status}
             </Badge>
           </div>
           
@@ -77,7 +110,7 @@ export function ActiveJobCard({ job, progress, onClick }: ActiveJobCardProps) {
             </p>
           )}
           
-          {progress && (
+          {progress && isActive && (
             <>
               <div className="space-y-1">
                 <div className="flex items-center justify-between text-xs">
@@ -99,7 +132,11 @@ export function ActiveJobCard({ job, progress, onClick }: ActiveJobCardProps) {
           
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <Clock className="h-3 w-3" />
-            <span>{progress?.elapsedTime || 'Starting...'}</span>
+            <span>
+              {isCompleted || isFailed 
+                ? `Finished ${progress?.elapsedTime || 'just now'}` 
+                : progress?.elapsedTime || 'Starting...'}
+            </span>
           </div>
         </div>
       </div>

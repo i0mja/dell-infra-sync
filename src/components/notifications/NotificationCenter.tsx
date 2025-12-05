@@ -29,11 +29,17 @@ export function NotificationCenter() {
   
   const {
     activeJobs,
+    recentlyCompletedJobs,
     recentCommands,
     jobProgress,
     unreadCount,
     settings,
   } = useNotification();
+
+  // Combine active and recently completed for display
+  const displayJobs = [...activeJobs, ...recentlyCompletedJobs.filter(
+    job => !activeJobs.some(active => active.id === job.id)
+  )];
 
   if (!settings.enabled) return null;
 
@@ -90,9 +96,9 @@ export function NotificationCenter() {
           <div className="flex items-center justify-between p-4 border-b">
             <h3 className="font-semibold">Notifications</h3>
             <div className="flex items-center gap-2">
-              {activeJobs.length > 0 && (
+              {displayJobs.length > 0 && (
                 <Badge variant="outline" className="text-xs">
-                  {activeJobs.length} active
+                  {activeJobs.length > 0 ? `${activeJobs.length} active` : 'Recent'}
                 </Badge>
               )}
             </div>
@@ -103,9 +109,9 @@ export function NotificationCenter() {
               <TabsTrigger value="active" className="rounded-none">
                 <Clock className="h-4 w-4 mr-2" />
                 Active
-                {activeJobs.length > 0 && (
+                {displayJobs.length > 0 && (
                   <Badge variant="secondary" className="ml-2 text-xs">
-                    {activeJobs.length}
+                    {displayJobs.length}
                   </Badge>
                 )}
               </TabsTrigger>
@@ -118,7 +124,7 @@ export function NotificationCenter() {
             <TabsContent value="active" className="m-0">
               <ScrollArea className="h-96">
                 <div className="p-4 space-y-3">
-                  {activeJobs.length === 0 ? (
+                  {displayJobs.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-8 text-center">
                       <Clock className="h-12 w-12 text-muted-foreground/50 mb-3" />
                       <p className="text-sm text-muted-foreground">
@@ -129,7 +135,7 @@ export function NotificationCenter() {
                       </p>
                     </div>
                   ) : (
-                    activeJobs.map((job) => (
+                    displayJobs.map((job) => (
                       <ActiveJobCard
                         key={job.id}
                         job={job}
@@ -141,7 +147,7 @@ export function NotificationCenter() {
                 </div>
               </ScrollArea>
               
-              {activeJobs.length > 0 && (
+              {displayJobs.length > 0 && (
                 <>
                   <Separator />
                   <div className="p-2">
