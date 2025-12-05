@@ -8,3 +8,4 @@ export { IdmBreakGlass } from './IdmBreakGlass';
 export { IdmUserManager } from './IdmUserManager';
 export { IdmUsersAndAccess } from './IdmUsersAndAccess';
 export { IdmSecurityTab } from './IdmSecurityTab';
+export { SignedInUsersManager } from './SignedInUsersManager';

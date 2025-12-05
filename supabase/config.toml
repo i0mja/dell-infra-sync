@@ -44,3 +44,6 @@ verify_jwt = true  # Requires admin authentication to retrieve service role key
 
 [functions.delete-managed-user]
 verify_jwt = true  # Requires admin authentication for user deletion
+
+[functions.delete-user]
+verify_jwt = true  # Requires admin authentication to delete signed-in users
