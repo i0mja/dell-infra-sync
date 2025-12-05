@@ -728,7 +728,7 @@ class FreeIPAAuthenticator:
                 "response_time_ms": elapsed_ms,
             }
     
-    def _convert_sid_to_string(self, sid_binary: bytes) -> Optional[str]:
+    def _convert_sid_to_string(self, sid_binary) -> Optional[str]:
         """
         Convert Windows binary SID to string format (S-1-5-21-...).
         
@@ -736,12 +736,21 @@ class FreeIPAAuthenticator:
         to their string representation for LDAP searches in FreeIPA.
         
         Args:
-            sid_binary: Binary SID bytes from AD objectSid attribute
+            sid_binary: Binary SID bytes from AD objectSid attribute (or string if auto-decoded)
             
         Returns:
             String SID (e.g., S-1-5-21-123456789-987654321-111222333-12345) or None
         """
         try:
+            # Handle if sid was returned as string (some LDAP libs auto-decode)
+            if isinstance(sid_binary, str):
+                try:
+                    sid_binary = sid_binary.encode('latin-1')
+                    logger.debug(f"[SID] Converted string SID to bytes using latin-1 encoding")
+                except Exception as encode_err:
+                    logger.error(f"[SID] Cannot convert string SID to bytes: {encode_err}")
+                    return None
+            
             if not sid_binary or len(sid_binary) < 8:
                 logger.warning(f"[SID] Invalid SID binary: too short ({len(sid_binary) if sid_binary else 0} bytes)")
                 return None
@@ -1270,6 +1279,14 @@ class FreeIPAAuthenticator:
         # Step 0b: Get SIDs for the user's AD groups
         # This is CRITICAL - FreeIPA stores AD GROUP SIDs in ipaExternalMember, not user SIDs
         ad_group_sids = []
+        
+        # Debug logging to diagnose AD service account configuration
+        logger.debug(f"[GROUP LOOKUP] AD service account check:")
+        logger.debug(f"[GROUP LOOKUP]   ad_groups count: {len(ad_groups) if ad_groups else 0}")
+        logger.debug(f"[GROUP LOOKUP]   ad_dc_host: {self.ad_dc_host}")
+        logger.debug(f"[GROUP LOOKUP]   ad_bind_dn: {self.ad_bind_dn}")
+        logger.debug(f"[GROUP LOOKUP]   ad_bind_password set: {bool(self.ad_bind_password)}")
+        
         if ad_groups and self.ad_dc_host and self.ad_bind_dn and self.ad_bind_password:
             logger.info(f"[GROUP LOOKUP] Resolving SIDs for {len(ad_groups)} AD group(s)...")
             ad_group_sids = self._get_ad_group_sids(
@@ -1280,10 +1297,11 @@ class FreeIPAAuthenticator:
             logger.info(f"[GROUP LOOKUP] Resolved {len(ad_group_sids)} AD group SID(s)")
         elif ad_groups:
             logger.warning("[GROUP LOOKUP] AD groups found but no AD service account configured to retrieve SIDs")
+            logger.warning(f"[GROUP LOOKUP]   Missing: ad_dc_host={bool(self.ad_dc_host)}, ad_bind_dn={bool(self.ad_bind_dn)}, ad_bind_password={bool(self.ad_bind_password)}")
         
         try:
             server = self._get_server()
-            logger.debug(f"[GROUP LOOKUP] Connecting to FreeIPA server: {self.server_host}:{self.server_port}")
+            logger.debug(f"[GROUP LOOKUP] Connecting to FreeIPA server: {self.server_host}:{self.port}")
             
             conn = Connection(
                 server,

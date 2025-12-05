@@ -417,6 +417,10 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             ad_bind_password = None
             if settings.get('ad_bind_password_encrypted'):
                 ad_bind_password = self.decrypt_password(settings['ad_bind_password_encrypted'])
+                if ad_bind_password:
+                    self.log(f"AD bind password decrypted successfully for: {settings.get('ad_bind_dn')}", "DEBUG")
+                else:
+                    self.log(f"AD bind password decryption FAILED for: {settings.get('ad_bind_dn')}", "WARN")
             
             return FreeIPAAuthenticator(
                 server_host=settings['server_host'],
