@@ -138,6 +138,18 @@ except Exception:
 # ============================================================================
 
 class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, ConnectivityMixin, IdracMixin):
+    def get_local_ip(self) -> str:
+        """Get the local IP address of this machine"""
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return "127.0.0.1"
+
     def __init__(self):
         self.vcenter_conn = None
         self.running = True
