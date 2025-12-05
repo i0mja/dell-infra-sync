@@ -1,7 +1,7 @@
 """Media upload handlers for ISOs and firmware"""
 
 from typing import Dict
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 import requests
 from pathlib import Path

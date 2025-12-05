@@ -1,6 +1,6 @@
 import ssl
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict
 
 import requests

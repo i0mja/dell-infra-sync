@@ -27,6 +27,7 @@ interface WorkflowExecutionViewerProps {
   jobDetails?: any;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  hideHeader?: boolean;
 }
 
 interface WorkflowStep {
@@ -52,7 +53,8 @@ export const WorkflowExecutionViewer = ({
   jobStatus,
   jobDetails,
   open,
-  onOpenChange 
+  onOpenChange,
+  hideHeader = false
 }: WorkflowExecutionViewerProps) => {
   const [steps, setSteps] = useState<WorkflowStep[]>([]);
   const [loading, setLoading] = useState(true);
@@ -273,36 +275,38 @@ export const WorkflowExecutionViewer = ({
 
   return (
     <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <CardTitle className="text-lg">
-                {workflowType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-              </CardTitle>
-              {getStatusBadge(overallStatus)}
+      {!hideHeader && (
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-lg">
+                  {workflowType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                </CardTitle>
+                {getStatusBadge(overallStatus)}
+              </div>
+              <CardDescription className="text-xs">
+                Job ID: <span className="font-mono">{jobId.slice(0, 8)}</span>
+              </CardDescription>
             </div>
-            <CardDescription className="text-xs">
-              Job ID: <span className="font-mono">{jobId.slice(0, 8)}</span>
-            </CardDescription>
+            <Button variant="ghost" size="icon" onClick={fetchSteps}>
+              <RefreshCw className="h-4 w-4" />
+            </Button>
           </div>
-          <Button variant="ghost" size="icon" onClick={fetchSteps}>
-            <RefreshCw className="h-4 w-4" />
-          </Button>
-        </div>
-        
-        {/* Job hierarchy explanation */}
-        <div className="mt-3 p-3 rounded-md bg-muted/50 border border-border/50">
-          <p className="text-xs text-muted-foreground">
-            {getWorkflowDescription()}
-          </p>
-          {steps.length > 0 && (
-            <p className="text-xs text-muted-foreground mt-1">
-              <span className="font-medium text-foreground">{steps.length} workflow steps</span> are part of this single job.
+          
+          {/* Job hierarchy explanation */}
+          <div className="mt-3 p-3 rounded-md bg-muted/50 border border-border/50">
+            <p className="text-xs text-muted-foreground">
+              {getWorkflowDescription()}
             </p>
-          )}
-        </div>
-      </CardHeader>
+            {steps.length > 0 && (
+              <p className="text-xs text-muted-foreground mt-1">
+                <span className="font-medium text-foreground">{steps.length} workflow steps</span> are part of this single job.
+              </p>
+            )}
+          </div>
+        </CardHeader>
+      )}
       <CardContent className="space-y-4">
         {/* Current Operation - Real-time Progress */}
         {currentOperation && overallStatus === 'running' && (

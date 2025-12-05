@@ -1,7 +1,7 @@
 """IDM (FreeIPA/LDAP) authentication and sync handlers with verbose logging"""
 
 from typing import Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from .base import BaseHandler
 import json
 import requests

@@ -1,7 +1,7 @@
 """Virtual media mount/unmount handlers"""
 
 from typing import Dict
-from datetime import datetime
+from datetime import datetime, timezone
 from .base import BaseHandler
 
 

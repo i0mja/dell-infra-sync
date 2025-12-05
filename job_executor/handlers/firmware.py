@@ -1,7 +1,7 @@
 """Firmware update handlers"""
 
 from typing import Dict
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 import requests
 from .base import BaseHandler

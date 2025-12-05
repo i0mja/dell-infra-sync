@@ -1,7 +1,7 @@
 """vCenter sync and connectivity handlers"""
 
 from typing import Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 import requests
 from .base import BaseHandler

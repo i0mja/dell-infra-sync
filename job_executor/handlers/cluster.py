@@ -1,11 +1,12 @@
 """Cluster safety and workflow handlers"""
 
 from typing import Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 import requests
 from urllib.parse import quote
 from .base import BaseHandler
+from job_executor.utils import utc_now_iso
 
 
 class ClusterHandler(BaseHandler):
@@ -312,7 +313,7 @@ class ClusterHandler(BaseHandler):
         
         # Log cancellation details
         cleanup_details = {
-            'cancelled_at': datetime.now().isoformat(),
+            'cancelled_at': utc_now_iso(),
             'hosts_in_maintenance': len(cleanup_state.get('hosts_in_maintenance', [])),
             'firmware_in_progress': cleanup_state.get('firmware_in_progress', False),
             'current_host': cleanup_state.get('current_host_name'),
@@ -421,7 +422,7 @@ class ClusterHandler(BaseHandler):
         self.update_job_status(
             job['id'],
             'cancelled',
-            completed_at=datetime.now().isoformat(),
+            completed_at=utc_now_iso(),
             details={'cleanup_details': cleanup_details}
         )
         
@@ -512,7 +513,7 @@ class ClusterHandler(BaseHandler):
         
         try:
             self.log(f"Starting prepare_host_for_update workflow: {job['id']}")
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             details = job.get('details', {})
             server_id = details.get('server_id')
@@ -605,7 +606,7 @@ class ClusterHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'completed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={
                     'workflow_results': workflow_results,
                     'server_id': server_id,
@@ -619,7 +620,7 @@ class ClusterHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'error': str(e), 'workflow_results': workflow_results}
             )
     
@@ -635,7 +636,7 @@ class ClusterHandler(BaseHandler):
         
         try:
             self.log(f"Starting verify_host_after_update workflow: {job['id']}")
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             details = job.get('details', {})
             server_id = details.get('server_id')
@@ -650,7 +651,7 @@ class ClusterHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'completed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'workflow_results': workflow_results}
             )
             
@@ -659,7 +660,7 @@ class ClusterHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'error': str(e), 'workflow_results': workflow_results}
             )
     
@@ -701,7 +702,7 @@ class ClusterHandler(BaseHandler):
         try:
             self.log(f"Starting rolling_cluster_update workflow: {job['id']}")
             self.log("=" * 80)
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             details = job.get('details', {})
             target_scope = job.get('target_scope', {})
@@ -892,8 +893,8 @@ class ClusterHandler(BaseHandler):
                     'vcsa_host': vcsa_info.get('vcsa_host_name'),
                     'host_order_adjusted': workflow_results.get('host_order_adjusted', False)
                 },
-                step_started_at=datetime.now().isoformat(),
-                step_completed_at=datetime.now().isoformat()
+                step_started_at=utc_now_iso(),
+                step_completed_at=utc_now_iso()
             )
             
             # Initialize cleanup state tracking
@@ -1018,7 +1019,7 @@ class ClusterHandler(BaseHandler):
                                 status='running',
                                 server_id=host['server_id'],
                                 host_id=vcenter_host_id,
-                                step_started_at=datetime.now().isoformat()
+                                step_started_at=utc_now_iso()
                             )
                             
                             self.log(f"  [1/5] Entering maintenance mode...")
@@ -1046,7 +1047,7 @@ class ClusterHandler(BaseHandler):
                                 server_id=host['server_id'],
                                 host_id=vcenter_host_id,
                                 step_details=maintenance_result,
-                                step_completed_at=datetime.now().isoformat()
+                                step_completed_at=utc_now_iso()
                             )
                             host_result['steps'].append('enter_maintenance')
                         else:
@@ -1059,7 +1060,7 @@ class ClusterHandler(BaseHandler):
                             step_name=f"Apply firmware updates: {host['name']}",
                             status='running',
                             server_id=host['server_id'],
-                            step_started_at=datetime.now().isoformat()
+                            step_started_at=utc_now_iso()
                         )
                         
                         self.log(f"  [2/5] Applying firmware updates...")
@@ -1385,7 +1386,7 @@ class ClusterHandler(BaseHandler):
                             status='completed',
                             server_id=host['server_id'],
                             step_details=update_result,
-                            step_completed_at=datetime.now().isoformat()
+                            step_completed_at=utc_now_iso()
                         )
                         host_result['steps'].append('firmware_update')
                         
@@ -1397,7 +1398,7 @@ class ClusterHandler(BaseHandler):
                                 step_name=f"Reboot and wait: {host['name']}",
                                 status='running',
                                 server_id=host['server_id'],
-                                step_started_at=datetime.now().isoformat()
+                                step_started_at=utc_now_iso()
                             )
                             
                             self.log(f"  [3/5] Waiting for system reboot...")
@@ -1542,8 +1543,8 @@ class ClusterHandler(BaseHandler):
                                 status='skipped',
                                 server_id=host['server_id'],
                                 step_details={'reason': 'no_updates_needed'},
-                                step_started_at=datetime.now().isoformat(),
-                                step_completed_at=datetime.now().isoformat()
+                                step_started_at=utc_now_iso(),
+                                step_completed_at=utc_now_iso()
                             )
                         
                         if reboot_required:
@@ -1553,7 +1554,7 @@ class ClusterHandler(BaseHandler):
                                 step_name=f"Reboot and wait: {host['name']}",
                                 status='completed',
                                 server_id=host['server_id'],
-                                step_completed_at=datetime.now().isoformat()
+                                step_completed_at=utc_now_iso()
                             )
                             host_result['steps'].append('reboot')
                         
@@ -1565,7 +1566,7 @@ class ClusterHandler(BaseHandler):
                                 step_name=f"Verify update: {host['name']}",
                                 status='running',
                                 server_id=host['server_id'],
-                                step_started_at=datetime.now().isoformat()
+                                step_started_at=utc_now_iso()
                             )
                             
                             self.log(f"  [4/5] Verifying firmware update...")
@@ -1601,7 +1602,7 @@ class ClusterHandler(BaseHandler):
                                 status='completed',
                                 server_id=host['server_id'],
                                 step_details={'verified': True},
-                                step_completed_at=datetime.now().isoformat()
+                                step_completed_at=utc_now_iso()
                             )
                             host_result['steps'].append('verify')
                         else:
@@ -1614,8 +1615,8 @@ class ClusterHandler(BaseHandler):
                                 status='skipped',
                                 server_id=host['server_id'],
                                 step_details={'reason': 'no_updates_applied'},
-                                step_started_at=datetime.now().isoformat(),
-                                step_completed_at=datetime.now().isoformat()
+                                step_started_at=utc_now_iso(),
+                                step_completed_at=utc_now_iso()
                             )
                         
                         # STEP 5: Exit maintenance mode (if applicable)
@@ -1627,7 +1628,7 @@ class ClusterHandler(BaseHandler):
                                 status='running',
                                 server_id=host['server_id'],
                                 host_id=vcenter_host_id,
-                                step_started_at=datetime.now().isoformat()
+                                step_started_at=utc_now_iso()
                             )
                             
                             self.log(f"  [5/5] Waiting for vCenter to see host as connected...")
@@ -1660,7 +1661,7 @@ class ClusterHandler(BaseHandler):
                                 host_id=vcenter_host_id,
                                 step_details=exit_result,
                                 step_error=exit_result.get('error') if not exit_result.get('success') else None,
-                                step_completed_at=datetime.now().isoformat()
+                                step_completed_at=utc_now_iso()
                             )
                             host_result['steps'].append('exit_maintenance')
                         else:
@@ -1731,7 +1732,7 @@ class ClusterHandler(BaseHandler):
                         status='failed',
                         server_id=host['server_id'],
                         step_error=str(e),
-                        step_completed_at=datetime.now().isoformat()
+                        step_completed_at=utc_now_iso()
                     )
                     
                     # Clear current server and firmware tracking
@@ -1762,7 +1763,7 @@ class ClusterHandler(BaseHandler):
                 self.update_job_status(
                     job['id'],
                     'failed',
-                    completed_at=datetime.now().isoformat(),
+                    completed_at=utc_now_iso(),
                     details=final_details
                 )
             else:
@@ -1770,7 +1771,7 @@ class ClusterHandler(BaseHandler):
                 self.update_job_status(
                     job['id'],
                     final_status,
-                    completed_at=datetime.now().isoformat(),
+                    completed_at=utc_now_iso(),
                     details=final_details
                 )
                 
@@ -1785,7 +1786,7 @@ class ClusterHandler(BaseHandler):
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={'error': str(e), 'workflow_results': workflow_results}
             )
     
@@ -1798,7 +1799,7 @@ class ClusterHandler(BaseHandler):
             from pyVmomi import vim
             
             self.log(f"Starting cluster safety check: {job['id']}")
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             details = job.get('details', {})
             cluster_name = details.get('cluster_name')
@@ -1931,11 +1932,11 @@ class ClusterHandler(BaseHandler):
             )
             
             self.log(f"✓ Safety check: {'PASSED' if safe_to_proceed else 'FAILED'}")
-            self.update_job_status(job['id'], 'completed', completed_at=datetime.now().isoformat(), details=result)
+            self.update_job_status(job['id'], 'completed', completed_at=utc_now_iso(), details=result)
             
         except Exception as e:
             self.log(f"Cluster safety check failed: {e}", "ERROR")
-            self.update_job_status(job['id'], 'failed', completed_at=datetime.now().isoformat(), 
+            self.update_job_status(job['id'], 'failed', completed_at=utc_now_iso(), 
                                  details={'error': str(e), 'safe_to_proceed': False})
     
     def _run_idrac_preflight(self, server: Dict, job_id: str) -> Dict:
@@ -2091,7 +2092,7 @@ class ClusterHandler(BaseHandler):
         
         try:
             self.log(f"Starting server group safety check: {job['id']}")
-            self.update_job_status(job['id'], 'running', started_at=datetime.now().isoformat())
+            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
             
             details = job.get('details', {})
             group_id = details.get('server_group_id')
@@ -2152,9 +2153,9 @@ class ClusterHandler(BaseHandler):
             }
             
             self.log(f"✓ Group safety check: {'PASSED' if safe_to_proceed else 'FAILED'}")
-            self.update_job_status(job['id'], 'completed', completed_at=datetime.now().isoformat(), details=result)
+            self.update_job_status(job['id'], 'completed', completed_at=utc_now_iso(), details=result)
             
         except Exception as e:
             self.log(f"Server group safety check failed: {e}", "ERROR")
-            self.update_job_status(job['id'], 'failed', completed_at=datetime.now().isoformat(), 
+            self.update_job_status(job['id'], 'failed', completed_at=utc_now_iso(), 
                                  details={'error': str(e), 'safe_to_proceed': False})

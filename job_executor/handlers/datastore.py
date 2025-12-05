@@ -1,7 +1,7 @@
 """Datastore browser handler"""
 
 from typing import Dict
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 from .base import BaseHandler
 
