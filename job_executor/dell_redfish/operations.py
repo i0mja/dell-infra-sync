@@ -2603,28 +2603,73 @@ class DellOperations:
                                     }
                                 
                                 # Parse the PackageList from successful response
-                                package_list = repo_list_response.get('PackageList', [])
-                                if isinstance(package_list, str):
-                                    # Sometimes Dell returns JSON string
-                                    import json
-                                    try:
-                                        package_list = json.loads(package_list)
-                                    except:
-                                        package_list = []
+                                # Dell returns PackageList as XML, not JSON
+                                package_list = repo_list_response.get('PackageList', '')
                                 
-                                for pkg in package_list:
-                                    if isinstance(pkg, dict):
-                                        available_updates.append({
-                                            'name': pkg.get('PackageName', pkg.get('ComponentType', 'Unknown')),
-                                            'component': pkg.get('ComponentType', pkg.get('PackageName', 'Unknown')),
-                                            'current_version': pkg.get('CurrentVersion', ''),
-                                            'available_version': pkg.get('PackageVersion', pkg.get('AvailableVersion', '')),
-                                            'criticality': pkg.get('Criticality', 'Optional'),
-                                            'reboot_required': pkg.get('RebootRequired', 'Unknown'),
-                                            'package_path': pkg.get('PackagePath', ''),
-                                            'status': 'Available',
-                                            'source': 'catalog_scan'
-                                        })
+                                if isinstance(package_list, str) and package_list.strip():
+                                    # Dell returns XML in PackageList field
+                                    if package_list.strip().startswith('<?xml') or '<CIM' in package_list or '<INSTANCENAME' in package_list:
+                                        # Parse XML response
+                                        import xml.etree.ElementTree as ET
+                                        try:
+                                            root = ET.fromstring(package_list)
+                                            # Find all INSTANCENAME elements with DCIM_RepoUpdateSWID class
+                                            for instance in root.iter('INSTANCENAME'):
+                                                if instance.get('CLASSNAME') == 'DCIM_RepoUpdateSWID':
+                                                    update_info = {}
+                                                    for prop in instance.findall('PROPERTY'):
+                                                        name = prop.get('NAME')
+                                                        value_elem = prop.find('VALUE')
+                                                        if value_elem is not None and value_elem.text:
+                                                            update_info[name] = value_elem.text
+                                                    
+                                                    # Also get installed version from PROPERTY.ARRAY
+                                                    for prop_array in instance.findall('PROPERTY.ARRAY'):
+                                                        name = prop_array.get('NAME')
+                                                        if name == 'ComponentInstalledVersion':
+                                                            values = prop_array.findall('.//VALUE')
+                                                            if values and values[0].text:
+                                                                update_info['CurrentVersion'] = values[0].text
+                                                    
+                                                    if update_info.get('DisplayName') or update_info.get('PackageName'):
+                                                        # Map criticality number to text
+                                                        crit_map = {'1': 'Critical', '2': 'Recommended', '3': 'Optional'}
+                                                        crit_val = update_info.get('Criticality', '3')
+                                                        
+                                                        available_updates.append({
+                                                            'name': update_info.get('DisplayName', update_info.get('PackageName', 'Unknown')),
+                                                            'component': update_info.get('ComponentType', 'Unknown'),
+                                                            'current_version': update_info.get('CurrentVersion', update_info.get('ComponentInstalledVersion', '')),
+                                                            'available_version': update_info.get('PackageVersion', ''),
+                                                            'criticality': crit_map.get(crit_val, crit_val),
+                                                            'reboot_required': update_info.get('RebootType', 'Unknown'),
+                                                            'package_path': update_info.get('PackagePath', ''),
+                                                            'status': 'Available',
+                                                            'source': 'catalog_scan'
+                                                        })
+                                        except ET.ParseError as xml_err:
+                                            # Log XML parse error but continue
+                                            pass
+                                    else:
+                                        # Try JSON parsing as fallback
+                                        import json
+                                        try:
+                                            pkg_list = json.loads(package_list)
+                                            for pkg in pkg_list:
+                                                if isinstance(pkg, dict):
+                                                    available_updates.append({
+                                                        'name': pkg.get('PackageName', pkg.get('ComponentType', 'Unknown')),
+                                                        'component': pkg.get('ComponentType', pkg.get('PackageName', 'Unknown')),
+                                                        'current_version': pkg.get('CurrentVersion', ''),
+                                                        'available_version': pkg.get('PackageVersion', pkg.get('AvailableVersion', '')),
+                                                        'criticality': pkg.get('Criticality', 'Optional'),
+                                                        'reboot_required': pkg.get('RebootRequired', 'Unknown'),
+                                                        'package_path': pkg.get('PackagePath', ''),
+                                                        'status': 'Available',
+                                                        'source': 'catalog_scan'
+                                                    })
+                                        except:
+                                            pass
                                 
                                 # If PackageList was empty but no error, check job message as fallback
                                 if not available_updates and 'updates are available' in job_message.lower():
