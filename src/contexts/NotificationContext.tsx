@@ -28,6 +28,7 @@ export interface JobProgress {
   progressPercent: number;
   elapsedTime: string;
   estimatedRemaining?: string;
+  isWorkflow?: boolean;
 }
 
 export interface NotificationSettings {
@@ -283,6 +284,8 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       // Fallback: Query workflow_executions for workflow-based jobs
       let workflowProgress: number | null = null;
       let workflowCurrentStep: string | null = null;
+      let workflowTotalSteps = 0;
+      let workflowCompletedSteps = 0;
       
       if (calculatedFromDetails === null && totalTasks === 0) {
         const { data: workflowSteps } = await supabase
@@ -292,10 +295,11 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
           .order('step_number', { ascending: true });
         
         if (workflowSteps && workflowSteps.length > 0) {
-          const completedSteps = workflowSteps.filter(s => 
+          workflowTotalSteps = workflowSteps.length;
+          workflowCompletedSteps = workflowSteps.filter(s => 
             ['completed', 'skipped'].includes(s.step_status)
           ).length;
-          workflowProgress = Math.round((completedSteps / workflowSteps.length) * 100);
+          workflowProgress = Math.round((workflowCompletedSteps / workflowTotalSteps) * 100);
           
           // Get current step from running workflow execution
           const runningStep = workflowSteps.find(s => s.step_status === 'running');
@@ -356,13 +360,18 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         currentStatus = workflowCurrentStep;
       }
 
+      // Use workflow step counts if no tasks exist
+      const finalTotalTasks = totalTasks > 0 ? totalTasks : workflowTotalSteps;
+      const finalCompletedTasks = totalTasks > 0 ? completedTasks : workflowCompletedSteps;
+
       const progress: JobProgress = {
         jobId: job.id,
-        totalTasks,
-        completedTasks,
+        totalTasks: finalTotalTasks,
+        completedTasks: finalCompletedTasks,
         currentStatus,
         progressPercent,
         elapsedTime,
+        isWorkflow: workflowTotalSteps > 0,
       };
 
       setJobProgress(prev => new Map(prev).set(job.id, progress));
