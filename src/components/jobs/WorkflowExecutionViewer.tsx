@@ -202,6 +202,20 @@ export const WorkflowExecutionViewer = ({
   };
 
   const calculateProgress = () => {
+    const details = effectiveJobDetails;
+    
+    // For rolling cluster updates, prefer host-based progress
+    if (details?.total_hosts && details?.hosts_processed !== undefined) {
+      return (details.hosts_processed / details.total_hosts) * 100;
+    }
+    
+    // Use expected_total_steps if available for accurate percentage
+    if (details?.expected_total_steps && steps.length > 0) {
+      const completed = steps.filter(s => ['completed', 'skipped'].includes(s.step_status)).length;
+      return (completed / details.expected_total_steps) * 100;
+    }
+    
+    // Fallback to existing step count
     if (steps.length === 0) return 0;
     const completed = steps.filter(s => ['completed', 'skipped'].includes(s.step_status)).length;
     return (completed / steps.length) * 100;
@@ -357,13 +371,25 @@ export const WorkflowExecutionViewer = ({
         )}
 
         {/* Progress Summary */}
-        <div className="space-y-2">
+        <div className="space-y-3">
+          {/* Host-based progress (primary for rolling updates) */}
+          {effectiveJobDetails?.total_hosts && (
+            <div className="flex items-center justify-between text-sm">
+              <span className="font-medium">Host Progress</span>
+              <span className="text-muted-foreground">
+                {effectiveJobDetails.hosts_processed || 0} / {effectiveJobDetails.total_hosts} hosts
+              </span>
+            </div>
+          )}
+          
+          {/* Step-based progress (secondary detail) */}
           <div className="flex items-center justify-between text-sm">
-            <span>Overall Progress</span>
+            <span>Workflow Steps</span>
             <span className="text-muted-foreground">
-              {steps.filter(s => ['completed', 'skipped'].includes(s.step_status)).length} / {steps.length} steps
+              {steps.filter(s => ['completed', 'skipped'].includes(s.step_status)).length} / {effectiveJobDetails?.expected_total_steps || steps.length} steps
             </span>
           </div>
+          
           <Progress value={progress} className="h-2" />
         </div>
 

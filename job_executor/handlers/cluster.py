@@ -806,6 +806,20 @@ class ClusterHandler(BaseHandler):
             
             self.log(f"  [OK] Found {len(eligible_hosts)} eligible hosts/servers")
             
+            # Calculate expected total workflow steps for accurate UI progress
+            # Base steps: pre-flight (0), SCP backups if enabled (1), sequential updates container (2)
+            base_steps = 3 if backup_scp else 2
+            steps_per_host = 5  # maintenance, firmware, reboot, verify, exit_maintenance
+            expected_total_steps = base_steps + (len(eligible_hosts) * steps_per_host)
+            
+            # Store progress metadata in job details for UI
+            self.update_job_details_field(job['id'], {
+                'total_hosts': len(eligible_hosts),
+                'expected_total_steps': expected_total_steps,
+                'hosts_processed': 0,
+                'steps_per_host': steps_per_host
+            })
+            
             # =================================================================
             # VCSA DETECTION AND HOST ORDERING
             # =================================================================
@@ -1637,6 +1651,12 @@ class ClusterHandler(BaseHandler):
                         workflow_results['hosts_updated'] += 1
                         host_result['status'] = 'completed'
                         self.log(f"  ✓ Host {host['name']} update completed successfully")
+                        
+                        # Update host progress for accurate UI display
+                        self.update_job_details_field(job['id'], {
+                            'hosts_processed': host_index,
+                            'current_host': eligible_hosts[host_index]['name'] if host_index < len(eligible_hosts) else None
+                        })
                         
                         # Check for graceful cancel after host completes
                         if self._should_stop_after_current_host(job, cleanup_state):
