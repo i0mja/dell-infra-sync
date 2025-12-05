@@ -693,3 +693,102 @@ export async function getIdracJobs(serverId: string, includeDetails: boolean = t
     throw new Error('Unknown error getting iDRAC jobs');
   }
 }
+
+/**
+ * Pre-flight check response types
+ */
+export interface ServerPreflightResult {
+  server_id: string;
+  hostname: string | null;
+  ip_address: string | null;
+  ready: boolean;
+  checks: {
+    connectivity: { passed: boolean; message?: string };
+    auth: { passed: boolean; message?: string };
+    lifecycle_controller: { passed: boolean; status?: string };
+    pending_jobs: { passed: boolean; count?: number | null; jobs?: any[] };
+    power_state: { passed: boolean; state?: string };
+    system_health: { passed: boolean; overall?: string };
+  };
+  blockers: Array<{ type: string; message: string }>;
+  warnings: string[];
+}
+
+export interface PreflightCheckResponse {
+  success: boolean;
+  response_time_ms?: number;
+  servers: ServerPreflightResult[];
+  firmware_source_checks: {
+    dns_configured?: boolean;
+    dns1?: string | null;
+    dns2?: string | null;
+    dell_reachable?: boolean;
+    dell_error?: string | null;
+  };
+  overall_ready: boolean;
+  blockers: Array<{ server_id?: string; hostname?: string; type: string; message: string; suggestion?: string }>;
+  warnings: Array<{ server_id?: string; hostname?: string; message: string }>;
+  error?: string;
+}
+
+/**
+ * Run comprehensive pre-flight checks for cluster/server update
+ */
+export async function runPreflightCheck(
+  serverIds: string[],
+  firmwareSource: string
+): Promise<PreflightCheckResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/preflight-check`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ server_ids: serverIds, firmware_source: firmwareSource }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to run pre-flight check');
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        return {
+          success: false,
+          servers: [],
+          firmware_source_checks: {},
+          overall_ready: false,
+          blockers: [{
+            type: 'job_executor_unreachable',
+            message: 'Job Executor is not running or not reachable',
+            suggestion: 'Ensure Job Executor is started on your local network'
+          }],
+          warnings: [],
+          error: 'Job Executor is not running or not reachable. Please ensure it is started on your local network.'
+        };
+      }
+      return {
+        success: false,
+        servers: [],
+        firmware_source_checks: {},
+        overall_ready: false,
+        blockers: [],
+        warnings: [],
+        error: error.message
+      };
+    }
+    return {
+      success: false,
+      servers: [],
+      firmware_source_checks: {},
+      overall_ready: false,
+      blockers: [],
+      warnings: [],
+      error: 'Unknown error running pre-flight check'
+    };
+  }
+}
