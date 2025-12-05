@@ -9,6 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { logActivityDirect } from "@/hooks/useActivityLog";
+import { getServerHealth, checkApiHealth } from "@/lib/job-executor-api";
 
 interface ServerHealthDialogProps {
   open: boolean;
@@ -52,6 +53,37 @@ export function ServerHealthDialog({ open, onOpenChange, server }: ServerHealthD
   const fetchHealthHistory = async () => {
     setLoading(true);
     try {
+      // Try instant API first to get fresh data
+      const apiAvailable = await checkApiHealth();
+      if (apiAvailable) {
+        try {
+          const healthResult = await getServerHealth(server.id);
+          if (healthResult.success) {
+            // Insert new health record
+            const newHealthData: HealthData = {
+              power_state: healthResult.power_state,
+              overall_health: healthResult.overall_health,
+              temperature_celsius: healthResult.temperature_celsius,
+              fan_health: healthResult.fan_health,
+              psu_health: healthResult.psu_health,
+              storage_health: healthResult.storage_health,
+              network_health: healthResult.network_health,
+              timestamp: new Date().toISOString(),
+              sensors: healthResult.sensors,
+            };
+            
+            // Insert to database
+            await supabase.from('server_health').insert({
+              server_id: server.id,
+              ...newHealthData,
+            });
+          }
+        } catch (apiError) {
+          console.log('Instant API unavailable, falling back to database');
+        }
+      }
+      
+      // Fetch history from database
       const { data, error } = await supabase
         .from('server_health')
         .select('*')
@@ -73,6 +105,44 @@ export function ServerHealthDialog({ open, onOpenChange, server }: ServerHealthD
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
+      // Try instant API first
+      const apiAvailable = await checkApiHealth();
+      if (apiAvailable) {
+        const healthResult = await getServerHealth(server.id);
+        if (healthResult.success) {
+          // Insert new health record to database
+          const newHealthData: HealthData = {
+            power_state: healthResult.power_state,
+            overall_health: healthResult.overall_health,
+            temperature_celsius: healthResult.temperature_celsius,
+            fan_health: healthResult.fan_health,
+            psu_health: healthResult.psu_health,
+            storage_health: healthResult.storage_health,
+            network_health: healthResult.network_health,
+            timestamp: new Date().toISOString(),
+            sensors: healthResult.sensors,
+          };
+          
+          await supabase.from('server_health').insert({
+            server_id: server.id,
+            ...newHealthData,
+          });
+          
+          // Update local state
+          setHealthHistory(prev => [newHealthData, ...prev.slice(0, 9)]);
+          setSelectedEntry(newHealthData);
+          
+          toast.success('Health check complete', {
+            description: `Status: ${healthResult.overall_health || 'Unknown'}`
+          });
+          
+          logActivityDirect('health_check', 'server', server.hostname || server.ip_address, {}, { targetId: server.id, success: true });
+          setIsRefreshing(false);
+          return;
+        }
+      }
+      
+      // Fall back to job queue
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
@@ -93,7 +163,6 @@ export function ServerHealthDialog({ open, onOpenChange, server }: ServerHealthD
         description: 'Results will be available shortly'
       });
 
-      // Log activity
       logActivityDirect('health_check', 'server', server.hostname || server.ip_address, {}, { targetId: server.id, success: true });
 
       setTimeout(() => {
@@ -105,7 +174,6 @@ export function ServerHealthDialog({ open, onOpenChange, server }: ServerHealthD
         description: error.message
       });
 
-      // Log failed activity
       logActivityDirect('health_check', 'server', server.hostname || server.ip_address, {}, { targetId: server.id, success: false, error: error.message });
     } finally {
       setIsRefreshing(false);

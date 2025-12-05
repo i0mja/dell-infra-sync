@@ -18,6 +18,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { useToast } from "@/hooks/use-toast";
 import { AlertCircle, Save, Loader2, Search, RotateCcw, Eye, Star, Trash2, MoreVertical, Plus, Download } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { getBiosConfig, checkApiHealth } from "@/lib/job-executor-api";
 
 interface BiosConfigDialogProps {
   open: boolean;
@@ -100,6 +101,26 @@ export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialo
   const handleCaptureSnapshot = async (notes?: string) => {
     setCapturingSnapshot(true);
     try {
+      // Try instant API first
+      const apiAvailable = await checkApiHealth();
+      if (apiAvailable) {
+        const result = await getBiosConfig(server.id, notes || 'Manual snapshot');
+        if (result.success) {
+          toast({
+            title: "Snapshot Complete",
+            description: "BIOS configuration captured successfully",
+          });
+          
+          logActivityDirect('bios_fetch', 'server', server.hostname || server.ip_address, { notes: notes || 'Manual snapshot' }, { targetId: server.id, success: true });
+          
+          // Refresh configurations list
+          await fetchConfigurations();
+          setCapturingSnapshot(false);
+          return;
+        }
+      }
+      
+      // Fall back to job queue
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
@@ -126,7 +147,6 @@ export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialo
         description: "Reading settings from server...",
       });
 
-      // Log activity
       logActivityDirect('bios_fetch', 'server', server.hostname || server.ip_address, { notes: notes || 'Manual snapshot' }, { targetId: server.id, success: true });
 
       // Poll for job completion
@@ -170,7 +190,6 @@ export function BiosConfigDialog({ open, onOpenChange, server }: BiosConfigDialo
         variant: "destructive",
       });
 
-      // Log failed activity
       logActivityDirect('bios_fetch', 'server', server.hostname || server.ip_address, {}, { targetId: server.id, success: false, error: error.message });
     }
   };
