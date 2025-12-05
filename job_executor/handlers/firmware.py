@@ -173,8 +173,8 @@ class FirmwareHandler(BaseHandler):
                             log="✓ Connected to iDRAC\n✓ Updates available\n→ Entering maintenance mode...", progress=20
                         )
                         
-                        # Get maintenance timeout from job details, default to 600s
-                        maintenance_timeout = job.get('details', {}).get('maintenance_timeout', 600)
+                        # Get maintenance timeout from job details, default to 1800s (30 min)
+                        maintenance_timeout = job.get('details', {}).get('maintenance_timeout', 1800)
                         
                         # Call actual vCenter maintenance mode function
                         maintenance_mode_result = self.executor.enter_vcenter_maintenance_mode(
