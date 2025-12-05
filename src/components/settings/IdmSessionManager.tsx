@@ -7,11 +7,11 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { useIdmSessions } from '@/hooks/useIdmSessions';
-import { Loader2, LogOut, RefreshCw, ShieldX, Trash2, User } from 'lucide-react';
+import { Clock, Loader2, LogOut, RefreshCw, ShieldX, Trash2, User } from 'lucide-react';
 import { format } from 'date-fns';
 
 export function IdmSessionManager() {
-  const { sessions, loading, loadSessions, invalidateSession, invalidateUserSessions, cleanupExpiredSessions } = useIdmSessions();
+  const { sessions, loading, loadSessions, invalidateSession, invalidateUserSessions, cleanupExpiredSessions, cleanupInactiveSessions } = useIdmSessions();
   const [selectedSession, setSelectedSession] = useState<any>(null);
   const [invalidateReason, setInvalidateReason] = useState('');
   const [showInvalidateDialog, setShowInvalidateDialog] = useState(false);
@@ -93,6 +93,10 @@ export function IdmSessionManager() {
               <Button variant="outline" size="sm" onClick={loadSessions} disabled={loading}>
                 <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
                 Refresh
+              </Button>
+              <Button variant="outline" size="sm" onClick={cleanupInactiveSessions}>
+                <Clock className="mr-2 h-4 w-4" />
+                Cleanup Inactive
               </Button>
               <Button variant="outline" size="sm" onClick={cleanupExpiredSessions}>
                 <Trash2 className="mr-2 h-4 w-4" />
