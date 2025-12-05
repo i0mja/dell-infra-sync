@@ -107,6 +107,8 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._handle_firmware_inventory()
             elif self.path == '/api/idrac-jobs':
                 self._handle_idrac_jobs()
+            elif self.path == '/api/preflight-check':
+                self._handle_preflight_check()
             else:
                 self._send_error(f'Unknown endpoint: {self.path}', 404)
         except Exception as e:
@@ -1427,6 +1429,273 @@ class APIHandler(BaseHTTPRequestHandler):
             )
             self._send_error(str(e), 500)
     
+    def _handle_preflight_check(self):
+        """Run comprehensive pre-flight checks for cluster/server update"""
+        start_time = datetime.now()
+        data = self._read_json_body()
+        server_ids = data.get('server_ids', [])
+        firmware_source = data.get('firmware_source', 'local_repository')
+        
+        if not server_ids:
+            self._send_error('server_ids is required', 400)
+            return
+        
+        self.executor.log(f"API: Pre-flight check for {len(server_ids)} servers, firmware_source={firmware_source}")
+        
+        try:
+            results = {
+                'servers': [],
+                'firmware_source_checks': {},
+                'overall_ready': True,
+                'blockers': [],
+                'warnings': []
+            }
+            
+            dell_ops = self.executor._get_dell_operations()
+            first_server_with_creds = None
+            
+            for server_id in server_ids:
+                server_result = self._run_server_preflight(server_id, dell_ops)
+                results['servers'].append(server_result)
+                
+                if not server_result['ready']:
+                    results['overall_ready'] = False
+                    for blocker in server_result.get('blockers', []):
+                        results['blockers'].append({
+                            'server_id': server_id,
+                            'hostname': server_result.get('hostname', 'Unknown'),
+                            **blocker
+                        })
+                
+                for warning in server_result.get('warnings', []):
+                    results['warnings'].append({
+                        'server_id': server_id,
+                        'hostname': server_result.get('hostname', 'Unknown'),
+                        'message': warning
+                    })
+                
+                # Track first server with valid credentials for Dell repo check
+                if first_server_with_creds is None and server_result.get('checks', {}).get('auth', {}).get('passed'):
+                    first_server_with_creds = server_result
+            
+            # If using Dell online catalog, check DNS and Dell repo reachability
+            if firmware_source == 'dell_online_catalog' and first_server_with_creds:
+                results['firmware_source_checks'] = self._check_dell_repo_access(
+                    first_server_with_creds['server_id'],
+                    dell_ops
+                )
+                
+                if not results['firmware_source_checks'].get('dell_reachable'):
+                    results['blockers'].append({
+                        'type': 'dell_repo_unreachable',
+                        'message': 'iDRAC cannot reach Dell repository (downloads.dell.com)',
+                        'suggestion': 'Configure gateway/DNS in iDRAC Network Settings, or switch to Local Repository'
+                    })
+                    results['overall_ready'] = False
+                
+                if not results['firmware_source_checks'].get('dns_configured'):
+                    results['warnings'].append({
+                        'server_id': first_server_with_creds['server_id'],
+                        'hostname': first_server_with_creds.get('hostname', 'Unknown'),
+                        'message': 'DNS may not be configured - online catalog updates may fail'
+                    })
+            
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            response = {
+                'success': True,
+                'response_time_ms': response_time_ms,
+                **results
+            }
+            
+            self._send_json(response)
+            
+        except Exception as e:
+            self.executor.log(f"Pre-flight check failed: {e}", "ERROR")
+            import traceback
+            self.executor.log(f"Traceback: {traceback.format_exc()}", "ERROR")
+            self._send_error(str(e), 500)
+    
+    def _run_server_preflight(self, server_id: str, dell_ops) -> dict:
+        """Run pre-flight checks for a single server"""
+        result = {
+            'server_id': server_id,
+            'hostname': None,
+            'ip_address': None,
+            'ready': True,
+            'checks': {
+                'connectivity': {'passed': False, 'message': 'Not checked'},
+                'auth': {'passed': False, 'message': 'Not checked'},
+                'lifecycle_controller': {'passed': False, 'status': 'Unknown'},
+                'pending_jobs': {'passed': False, 'count': None},
+                'power_state': {'passed': False, 'state': 'Unknown'},
+                'system_health': {'passed': False, 'overall': 'Unknown'},
+            },
+            'blockers': [],
+            'warnings': []
+        }
+        
+        try:
+            # Get server info
+            server = self.executor.get_server_by_id(server_id)
+            if not server:
+                result['ready'] = False
+                result['blockers'].append({'type': 'server_not_found', 'message': 'Server not found in database'})
+                return result
+            
+            result['hostname'] = server.get('hostname', 'Unknown')
+            result['ip_address'] = server.get('ip_address')
+            ip = result['ip_address']
+            
+            # Check 1: Connectivity
+            try:
+                conn_result = self.executor.test_idrac_connectivity(ip)
+                if conn_result.get('reachable'):
+                    result['checks']['connectivity'] = {
+                        'passed': True, 
+                        'message': f"Reachable ({conn_result.get('response_time_ms', 0)}ms)"
+                    }
+                else:
+                    result['checks']['connectivity'] = {'passed': False, 'message': 'iDRAC not reachable'}
+                    result['ready'] = False
+                    result['blockers'].append({'type': 'connectivity', 'message': 'iDRAC not reachable'})
+                    return result  # Can't proceed without connectivity
+            except Exception as e:
+                result['checks']['connectivity'] = {'passed': False, 'message': str(e)}
+                result['ready'] = False
+                result['blockers'].append({'type': 'connectivity', 'message': str(e)})
+                return result
+            
+            # Check 2: Credentials/Auth
+            try:
+                username, password = self.executor.get_server_credentials(server_id)
+                if not username or not password:
+                    result['checks']['auth'] = {'passed': False, 'message': 'No credentials configured'}
+                    result['ready'] = False
+                    result['blockers'].append({'type': 'auth', 'message': 'No credentials configured for server'})
+                    return result
+                
+                # Test auth by getting system info
+                system_info = dell_ops.get_system_info(ip, username, password, server_id=server_id)
+                result['checks']['auth'] = {'passed': True, 'message': 'Authentication successful'}
+            except Exception as e:
+                result['checks']['auth'] = {'passed': False, 'message': str(e)}
+                result['ready'] = False
+                result['blockers'].append({'type': 'auth', 'message': f'Authentication failed: {str(e)}'})
+                return result
+            
+            # Check 3: Lifecycle Controller Status
+            try:
+                lc_status = dell_ops.get_lifecycle_controller_status(ip, username, password, server_id=server_id)
+                lc_state = lc_status.get('status', 'Unknown')
+                if lc_state in ['Ready', 'enabled']:
+                    result['checks']['lifecycle_controller'] = {'passed': True, 'status': lc_state}
+                else:
+                    result['checks']['lifecycle_controller'] = {'passed': False, 'status': lc_state}
+                    result['ready'] = False
+                    result['blockers'].append({
+                        'type': 'lifecycle_controller', 
+                        'message': f'Lifecycle Controller not ready: {lc_state}'
+                    })
+            except Exception as e:
+                result['checks']['lifecycle_controller'] = {'passed': False, 'status': f'Error: {str(e)}'}
+                result['warnings'].append(f'Could not check LC status: {str(e)}')
+            
+            # Check 4: Pending iDRAC Jobs
+            try:
+                jobs = dell_ops.get_idrac_job_queue(ip, username, password, include_details=True, server_id=server_id)
+                pending_jobs = [j for j in (jobs or []) if j.get('job_state') in ['Scheduled', 'Running', 'Waiting', 'New']]
+                count = len(pending_jobs)
+                
+                if count == 0:
+                    result['checks']['pending_jobs'] = {'passed': True, 'count': 0}
+                else:
+                    result['checks']['pending_jobs'] = {'passed': False, 'count': count, 'jobs': pending_jobs[:5]}
+                    result['ready'] = False
+                    result['blockers'].append({
+                        'type': 'pending_jobs',
+                        'message': f'{count} pending iDRAC job(s) must be cleared first'
+                    })
+            except Exception as e:
+                result['checks']['pending_jobs'] = {'passed': False, 'count': None, 'message': str(e)}
+                result['warnings'].append(f'Could not check iDRAC jobs: {str(e)}')
+            
+            # Check 5: Power State
+            try:
+                power_state = system_info.get('system', {}).get('power_state', 'Unknown')
+                result['checks']['power_state'] = {'passed': True, 'state': power_state}
+                if power_state == 'Off':
+                    result['warnings'].append('Server is powered off - will need to be powered on for updates')
+            except Exception as e:
+                result['checks']['power_state'] = {'passed': False, 'state': 'Unknown'}
+            
+            # Check 6: System Health (warning only, not a blocker)
+            try:
+                health = system_info.get('system', {}).get('health', 'Unknown')
+                result['checks']['system_health'] = {'passed': health in ['OK', 'Warning'], 'overall': health}
+                if health == 'Critical':
+                    result['warnings'].append(f'System health is Critical - review before updating')
+                elif health == 'Warning':
+                    result['warnings'].append(f'System health shows warnings')
+            except Exception as e:
+                result['checks']['system_health'] = {'passed': False, 'overall': 'Unknown'}
+            
+        except Exception as e:
+            result['ready'] = False
+            result['blockers'].append({'type': 'unknown', 'message': str(e)})
+        
+        return result
+    
+    def _check_dell_repo_access(self, server_id: str, dell_ops) -> dict:
+        """Check if iDRAC can reach Dell repository"""
+        result = {
+            'dns_configured': False,
+            'dns1': None,
+            'dns2': None,
+            'dell_reachable': False,
+            'dell_error': None
+        }
+        
+        try:
+            server = self.executor.get_server_by_id(server_id)
+            if not server:
+                result['dell_error'] = 'Server not found'
+                return result
+            
+            ip = server.get('ip_address')
+            username, password = self.executor.get_server_credentials(server_id)
+            
+            if not username or not password:
+                result['dell_error'] = 'No credentials'
+                return result
+            
+            # Get network config to check DNS
+            try:
+                network_config = dell_ops.get_idrac_network_config(ip, username, password, server_id=server_id)
+                ipv4 = network_config.get('ipv4', {})
+                dns1 = ipv4.get('dns1') or ipv4.get('dns_servers', [None, None])[0]
+                dns2 = ipv4.get('dns2') or (ipv4.get('dns_servers', [None, None])[1] if len(ipv4.get('dns_servers', [])) > 1 else None)
+                
+                result['dns1'] = dns1
+                result['dns2'] = dns2
+                result['dns_configured'] = bool(dns1 and dns1 not in ['0.0.0.0', ''])
+            except Exception as e:
+                self.executor.log(f"Could not get DNS config: {e}", "WARN")
+            
+            # Test Dell repo reachability
+            try:
+                reachable = dell_ops.test_dell_repo_reachability(ip, username, password, server_id=server_id)
+                result['dell_reachable'] = reachable.get('reachable', False)
+                if not reachable.get('reachable'):
+                    result['dell_error'] = reachable.get('error', 'Cannot reach Dell repository')
+            except Exception as e:
+                result['dell_reachable'] = False
+                result['dell_error'] = str(e)
+        
+        except Exception as e:
+            result['dell_error'] = str(e)
+        
+        return result
+    
     def log_message(self, format, *args):
         """Override to suppress default request logging"""
         pass
@@ -1491,6 +1760,7 @@ class APIServer:
             self.executor.log(f"  POST /api/bios-config-read")
             self.executor.log(f"  POST /api/firmware-inventory")
             self.executor.log(f"  POST /api/idrac-jobs")
+            self.executor.log(f"  POST /api/preflight-check")
             
             if not self.ssl_enabled and config.API_SERVER_SSL_ENABLED:
                 self.executor.log(f"WARNING: SSL was requested but not enabled. Remote HTTPS access may not work.", "WARN")

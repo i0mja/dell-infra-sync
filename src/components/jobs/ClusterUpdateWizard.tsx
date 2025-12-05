@@ -35,6 +35,8 @@ import { FirmwareSourceSelector } from "@/components/common/FirmwareSourceSelect
 import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
 import { RecurrenceConfig, getNextExecutionsFromConfig, getHumanReadableSchedule } from "@/lib/cron-utils";
 import { addHours, addDays, format } from "date-fns";
+import { runPreflightCheck } from "@/lib/job-executor-api";
+import { PreFlightCheckResults, PreflightCheckResult } from "./PreFlightCheckResults";
 
 interface ClusterUpdateWizardProps {
   open: boolean;
@@ -110,6 +112,7 @@ export const ClusterUpdateWizard = ({
   const [targetInfoLoading, setTargetInfoLoading] = useState(false);
   const [safetyCheckLoading, setSafetyCheckLoading] = useState(false);
   const [safetyCheckPassed, setSafetyCheckPassed] = useState(false);
+  const [preflightResults, setPreflightResults] = useState<PreflightCheckResult | null>(null);
   const [clusterConflict, setClusterConflict] = useState<ClusterConflict | null>(null);
   
   // Step 2: Update Type and Selection
@@ -194,6 +197,7 @@ export const ClusterUpdateWizard = ({
   // Reset safety check and target info when target selection changes
   useEffect(() => {
     setSafetyCheckPassed(false);
+    setPreflightResults(null);
     setTargetInfo(null);
     // Clear cluster conflict when switching to cluster/group mode
     if (targetType !== 'servers') {
@@ -249,6 +253,7 @@ export const ClusterUpdateWizard = ({
     if (!open) {
       setCurrentStep(1);
       setSafetyCheckPassed(false);
+      setPreflightResults(null);
       setTargetInfo(null);
       setConfirmed(false);
       setJobId(null);
@@ -424,28 +429,79 @@ export const ClusterUpdateWizard = ({
     if (!targetInfo) return;
 
     setSafetyCheckLoading(true);
+    setPreflightResults(null);
+    
     try {
-      // Simulate safety check - in real implementation this would call an edge function
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Get server IDs based on target type
+      let serverIds: string[] = [];
       
-      if (targetInfo.connected >= minHealthyHosts) {
+      if (targetType === 'cluster' && selectedCluster) {
+        // Get servers linked to cluster hosts
+        const { data: hosts } = await supabase
+          .from("vcenter_hosts")
+          .select("server_id")
+          .eq("cluster", selectedCluster)
+          .not("server_id", "is", null);
+        serverIds = (hosts || []).map(h => h.server_id).filter(Boolean) as string[];
+      } else if (targetType === 'group' && selectedGroup) {
+        // Get servers in group
+        const { data: members } = await supabase
+          .from("server_group_members")
+          .select("server_id")
+          .eq("server_group_id", selectedGroup);
+        serverIds = (members || []).map(m => m.server_id).filter(Boolean) as string[];
+      } else if (targetType === 'servers') {
+        serverIds = selectedServerIds;
+      }
+      
+      if (serverIds.length === 0) {
+        throw new Error("No servers found for the selected target");
+      }
+      
+      // Run real pre-flight checks via Job Executor
+      const results = await runPreflightCheck(serverIds, firmwareSource);
+      setPreflightResults(results as PreflightCheckResult);
+      
+      if (results.overall_ready) {
         setSafetyCheckPassed(true);
         toast({
-          title: "Safety check passed",
-          description: `Target has ${targetInfo.connected} healthy hosts.`,
+          title: "Pre-flight check passed",
+          description: `All ${results.servers.length} server(s) are ready for update.`,
         });
       } else {
-        throw new Error(`Insufficient healthy hosts. Found ${targetInfo.connected}, need ${minHealthyHosts}`);
+        // Show blockers in toast
+        const blockerCount = results.blockers.length;
+        toast({
+          title: "Pre-flight check failed",
+          description: `${blockerCount} blocker(s) must be resolved. See details below.`,
+          variant: "destructive",
+        });
       }
     } catch (error: any) {
       toast({
-        title: "Safety check failed",
+        title: "Pre-flight check failed",
         description: error.message,
         variant: "destructive",
+      });
+      setPreflightResults({
+        success: false,
+        servers: [],
+        firmware_source_checks: {},
+        overall_ready: false,
+        blockers: [],
+        warnings: [],
+        error: error.message
       });
     } finally {
       setSafetyCheckLoading(false);
     }
+  };
+  
+  const handleChangeFirmwareSource = (newSource: string) => {
+    setFirmwareSource(newSource as typeof firmwareSource);
+    // Reset preflight when firmware source changes
+    setSafetyCheckPassed(false);
+    setPreflightResults(null);
   };
 
   const addFirmwareUpdate = () => {
@@ -862,21 +918,32 @@ export const ClusterUpdateWizard = ({
                   <Separator className="my-3" />
                   <Button 
                     onClick={runSafetyCheck} 
-                    disabled={safetyCheckLoading || safetyCheckPassed || (clusterConflict?.detected && !clusterConflict.acknowledged)}
+                    disabled={safetyCheckLoading || (clusterConflict?.detected && !clusterConflict.acknowledged)}
                     className="w-full"
+                    variant={safetyCheckPassed ? "outline" : "default"}
                   >
                     {safetyCheckLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                     {safetyCheckPassed ? (
                       <>
-                        <CheckCircle className="mr-2 h-4 w-4" />
-                        Safety Check Passed
+                        <CheckCircle className="mr-2 h-4 w-4 text-green-500" />
+                        Re-run Pre-Flight Check
                       </>
                     ) : (
-                      'Run Safety Check'
+                      'Run Pre-Flight Check'
                     )}
                   </Button>
                 </CardContent>
               </Card>
+            )}
+
+            {/* Pre-Flight Check Results */}
+            {targetInfo && (
+              <PreFlightCheckResults
+                results={preflightResults}
+                loading={safetyCheckLoading}
+                firmwareSource={firmwareSource}
+                onChangeFirmwareSource={handleChangeFirmwareSource}
+              />
             )}
           </div>
         );
