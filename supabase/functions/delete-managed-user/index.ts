@@ -44,14 +44,15 @@ serve(async (req) => {
       );
     }
 
-    // Check if caller has admin role
-    const { data: callerRole } = await supabaseAdmin
+    // Check if caller has admin role (handle multiple role rows)
+    const { data: callerRoles } = await supabaseAdmin
       .from('user_roles')
       .select('role')
-      .eq('user_id', caller.id)
-      .single();
+      .eq('user_id', caller.id);
 
-    if (callerRole?.role !== 'admin') {
+    const hasAdminRole = callerRoles?.some(r => r.role === 'admin');
+
+    if (!hasAdminRole) {
       return new Response(
         JSON.stringify({ error: 'Admin role required' }),
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
