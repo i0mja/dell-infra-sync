@@ -24,7 +24,7 @@ CANONICAL_REDFISH_ENDPOINTS = {
     "/redfish/v1/Managers/iDRAC.Embedded.1/Jobs/{job_id}",
     "/redfish/v1/Managers/iDRAC.Embedded.1/Jobs/{job_id_str}",
     "/redfish/v1/Managers/iDRAC.Embedded.1/Jobs/{JobId}",
-    "/redfish/v1/Dell/Managers/iDRAC.Embedded.1/DellJobService/Actions/DellJobService.DeleteJobQueue",
+    "/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DellJobService/Actions/DellJobService.DeleteJobQueue",
     "/redfish/v1/Managers/iDRAC.Embedded.1/LogServices/Lclog/Entries",
     "/redfish/v1/Managers/iDRAC.Embedded.1/Logs/Sel",
     "/redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia",
