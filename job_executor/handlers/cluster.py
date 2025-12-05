@@ -1143,7 +1143,7 @@ class ClusterHandler(BaseHandler):
                             self.update_job_details_field(job['id'], {
                                 'current_step': f'Entering maintenance mode: {host["name"]}'
                             })
-                            maintenance_timeout = details.get('maintenance_timeout', 600)
+                            maintenance_timeout = details.get('maintenance_timeout', 1800)
                             maintenance_result = self.executor.enter_vcenter_maintenance_mode(
                                 vcenter_host_id, 
                                 timeout=maintenance_timeout

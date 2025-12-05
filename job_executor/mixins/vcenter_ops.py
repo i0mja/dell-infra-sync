@@ -1729,17 +1729,28 @@ class VCenterMixin:
         
         return blockers
 
-    def enter_vcenter_maintenance_mode(self, host_id: str, timeout: int = 600, _retry_count: int = 0) -> dict:
-        """Put ESXi host into maintenance mode.
+    def enter_vcenter_maintenance_mode(self, host_id: str, timeout: int = 1800, _retry_count: int = 0) -> dict:
+        """Put ESXi host into maintenance mode with progress monitoring.
         
         Args:
             host_id: vCenter host ID from database
-            timeout: Timeout in seconds for maintenance mode entry
+            timeout: Maximum timeout in seconds (default 1800s/30min). 
+                     The actual timeout extends dynamically if VMs are still migrating.
             _retry_count: Internal retry counter for NotAuthenticated handling
+            
+        Progress Monitoring:
+            - Every 30 seconds, counts remaining VMs on host
+            - Logs evacuation progress: "Evacuating: 36 → 28 → 15..."
+            - Only fails if no progress is made for 5 minutes (stall detection)
+            - Dynamically extends timeout if VMs are still migrating
         """
         start_time = time.time()
         host_name = host_id
         max_retries = 2
+        
+        # Progress monitoring settings
+        progress_check_interval = 30  # Check VM count every 30 seconds
+        stall_timeout = 300  # 5 minutes with no progress = stalled
 
         try:
             # Fetch host details from database
@@ -1839,30 +1850,100 @@ class VCenterMixin:
             
             # Count running VMs before maintenance
             vms_before = len([vm for vm in host_obj.vm if vm.runtime.powerState == 'poweredOn'])
-            self.log(f"  Host has {vms_before} running VMs")
+            self.log(f"  Host has {vms_before} running VMs to evacuate")
             
-            # Enter maintenance mode
-            task = host_obj.EnterMaintenanceMode_Task(timeout=timeout, evacuatePoweredOffVms=False)
+            # Enter maintenance mode - use a very long timeout, we'll manage it ourselves
+            task = host_obj.EnterMaintenanceMode_Task(timeout=0, evacuatePoweredOffVms=False)
 
-            self.log(f"  Entering maintenance mode (timeout: {timeout}s)...")
+            self.log(f"  Entering maintenance mode (max timeout: {timeout}s, stall detection: {stall_timeout}s)...")
+            
+            # Progress monitoring state
+            last_vm_count = vms_before
+            last_progress_time = time.time()
+            last_log_time = time.time()
+            vm_count_history = [vms_before]
+            
             while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
                 time.sleep(2)
-                if time.time() - start_time > timeout:
-                    # Capture which VMs are still on the host (blocking evacuation)
+                elapsed = time.time() - start_time
+                
+                # Check VM count every 30 seconds for progress monitoring
+                if time.time() - last_log_time >= progress_check_interval:
+                    try:
+                        current_vms = len([vm for vm in host_obj.vm if vm.runtime.powerState == 'poweredOn'])
+                        vm_count_history.append(current_vms)
+                        
+                        # Calculate progress
+                        vms_evacuated = vms_before - current_vms
+                        progress_pct = int((vms_evacuated / vms_before) * 100) if vms_before > 0 else 100
+                        
+                        # Check if progress is being made
+                        if current_vms < last_vm_count:
+                            # Progress detected - reset stall timer
+                            self.log(f"    Evacuating: {last_vm_count} → {current_vms} VMs ({progress_pct}% complete, {int(elapsed)}s elapsed)")
+                            last_progress_time = time.time()
+                            last_vm_count = current_vms
+                        elif current_vms == last_vm_count:
+                            # No progress - check stall timeout
+                            stall_duration = int(time.time() - last_progress_time)
+                            if current_vms > 0:
+                                self.log(f"    Waiting: {current_vms} VMs remaining ({stall_duration}s since last migration)")
+                        
+                        last_log_time = time.time()
+                        
+                    except Exception as vm_count_err:
+                        self.log(f"    Warning: Could not check VM count: {vm_count_err}", "WARN")
+                        last_log_time = time.time()
+                
+                # Check for stall condition (no progress for 5 minutes)
+                stall_duration = time.time() - last_progress_time
+                if stall_duration > stall_timeout and last_vm_count > 0:
+                    # Stalled - get detailed blockers
                     evacuation_blockers = self._get_evacuation_blockers(host_obj, host_name)
+                    
+                    error_msg = f'VM evacuation stalled: No progress for {int(stall_duration)}s with {last_vm_count} VMs remaining'
+                    self.log(f"  ✗ {error_msg}", "ERROR")
                     
                     self.log_vcenter_activity(
                         operation="enter_maintenance_mode",
                         endpoint=host_name,
                         success=False,
-                        response_time_ms=int((time.time() - start_time) * 1000),
-                        error=f'Maintenance mode timeout after {timeout}s'
+                        response_time_ms=int(elapsed * 1000),
+                        error=error_msg
                     )
                     return {
                         'success': False, 
-                        'error': f'Maintenance mode timeout after {timeout}s',
-                        'evacuation_blockers': evacuation_blockers
+                        'error': error_msg,
+                        'evacuation_blockers': evacuation_blockers,
+                        'vms_evacuated': vms_before - last_vm_count,
+                        'vms_remaining': last_vm_count,
+                        'stall_duration_seconds': int(stall_duration),
+                        'total_elapsed_seconds': int(elapsed)
                     }
+                
+                # Check absolute timeout (but only if no progress is being made)
+                if elapsed > timeout:
+                    # If we're still making progress, continue
+                    if stall_duration < stall_timeout and last_vm_count > 0:
+                        self.log(f"    Timeout extended: VMs still migrating ({last_vm_count} remaining)")
+                    else:
+                        evacuation_blockers = self._get_evacuation_blockers(host_obj, host_name)
+                        
+                        self.log_vcenter_activity(
+                            operation="enter_maintenance_mode",
+                            endpoint=host_name,
+                            success=False,
+                            response_time_ms=int(elapsed * 1000),
+                            error=f'Maintenance mode timeout after {int(elapsed)}s'
+                        )
+                        return {
+                            'success': False, 
+                            'error': f'Maintenance mode timeout after {int(elapsed)}s',
+                            'evacuation_blockers': evacuation_blockers,
+                            'vms_evacuated': vms_before - last_vm_count,
+                            'vms_remaining': last_vm_count,
+                            'total_elapsed_seconds': int(elapsed)
+                        }
 
             if task.info.state == vim.TaskInfo.State.error:
                 error_msg = str(task.info.error) if task.info.error else 'Unknown error'
