@@ -2567,40 +2567,95 @@ class DellOperations:
                         
                         # Check if job completed
                         if job_state in ['Completed', 'CompletedWithErrors']:
-                            # Parse the message for available updates
-                            # Dell format: "Firmware updates are available : BIOS, iDRAC, CPLD..."
-                            if 'updates are available' in job_message.lower():
-                                # Extract component names from message
-                                parts = job_message.split(':')
-                                if len(parts) > 1:
-                                    components_str = parts[1].strip()
-                                    components = [c.strip() for c in components_str.split(',') if c.strip()]
-                                    for comp in components:
+                            # Job completed - now call GetRepoBasedUpdateList to get actual update list
+                            # Dell's InstallFromRepository with ApplyUpdate=False only scans;
+                            # the actual list of available updates must be retrieved via this API
+                            try:
+                                repo_list_endpoint = '/redfish/v1/Systems/System.Embedded.1/Oem/Dell/DellSoftwareInstallationService/Actions/DellSoftwareInstallationService.GetRepoBasedUpdateList'
+                                
+                                repo_list_response = self.adapter.make_request(
+                                    method='POST',
+                                    ip=ip,
+                                    endpoint=repo_list_endpoint,
+                                    username=username,
+                                    password=password,
+                                    payload={},
+                                    operation_name='Get Repo Based Update List',
+                                    timeout=(30, 120),
+                                    server_id=server_id
+                                )
+                                
+                                # Check for error indicating no updates available
+                                error_info = repo_list_response.get('error', {})
+                                error_msg = ''
+                                if isinstance(error_info, dict):
+                                    ext_info = error_info.get('@Message.ExtendedInfo', [])
+                                    if ext_info and isinstance(ext_info, list):
+                                        error_msg = ext_info[0].get('Message', '') if ext_info else ''
+                                
+                                # Dell returns error message if no updates: "Firmware versions on server match catalog"
+                                if 'match catalog' in error_msg.lower() or 'not present' in error_msg.lower():
+                                    return {
+                                        'success': True,
+                                        'available_updates': [],
+                                        'update_count': 0,
+                                        'message': 'Server firmware is up to date - no updates available in catalog'
+                                    }
+                                
+                                # Parse the PackageList from successful response
+                                package_list = repo_list_response.get('PackageList', [])
+                                if isinstance(package_list, str):
+                                    # Sometimes Dell returns JSON string
+                                    import json
+                                    try:
+                                        package_list = json.loads(package_list)
+                                    except:
+                                        package_list = []
+                                
+                                for pkg in package_list:
+                                    if isinstance(pkg, dict):
                                         available_updates.append({
-                                            'name': comp,
-                                            'component': comp,
+                                            'name': pkg.get('PackageName', pkg.get('ComponentType', 'Unknown')),
+                                            'component': pkg.get('ComponentType', pkg.get('PackageName', 'Unknown')),
+                                            'current_version': pkg.get('CurrentVersion', ''),
+                                            'available_version': pkg.get('PackageVersion', pkg.get('AvailableVersion', '')),
+                                            'criticality': pkg.get('Criticality', 'Optional'),
+                                            'reboot_required': pkg.get('RebootRequired', 'Unknown'),
+                                            'package_path': pkg.get('PackagePath', ''),
                                             'status': 'Available',
                                             'source': 'catalog_scan'
                                         })
-                            
-                            # Also check Messages array for additional details
-                            messages = job_response.get('Messages', [])
-                            for msg in messages:
-                                msg_text = msg.get('Message', '') if isinstance(msg, dict) else str(msg)
-                                if 'updates are available' in msg_text.lower():
-                                    parts = msg_text.split(':')
+                                
+                                # If PackageList was empty but no error, check job message as fallback
+                                if not available_updates and 'updates are available' in job_message.lower():
+                                    parts = job_message.split(':')
                                     if len(parts) > 1:
-                                        comp_name = parts[1].strip().rstrip('.')
-                                        # Avoid duplicates
-                                        if not any(u.get('name') == comp_name for u in available_updates):
+                                        components_str = parts[1].strip()
+                                        components = [c.strip() for c in components_str.split(',') if c.strip()]
+                                        for comp in components:
                                             available_updates.append({
-                                                'name': comp_name,
-                                                'component': comp_name,
+                                                'name': comp,
+                                                'component': comp,
+                                                'status': 'Available',
+                                                'source': 'catalog_scan'
+                                            })
+                                
+                            except Exception as repo_list_err:
+                                # GetRepoBasedUpdateList failed - fall back to parsing job message
+                                if 'updates are available' in job_message.lower():
+                                    parts = job_message.split(':')
+                                    if len(parts) > 1:
+                                        components_str = parts[1].strip()
+                                        components = [c.strip() for c in components_str.split(',') if c.strip()]
+                                        for comp in components:
+                                            available_updates.append({
+                                                'name': comp,
+                                                'component': comp,
                                                 'status': 'Available',
                                                 'source': 'catalog_scan'
                                             })
                             
-                            # If no updates found in messages, check if explicitly stated no updates
+                            # If still no updates found, check if explicitly stated no updates
                             if not available_updates:
                                 if 'no applicable updates' in job_message.lower() or 'up to date' in job_message.lower():
                                     return {
