@@ -1897,7 +1897,15 @@ class ClusterHandler(BaseHandler):
                     details=final_details
                 )
             else:
-                final_status = 'completed' if workflow_results['hosts_updated'] > 0 else 'failed'
+                # Job is successful if:
+                # - At least one host was updated, OR
+                # - No hosts failed (all were skipped because already up to date)
+                final_status = 'completed' if (workflow_results['hosts_updated'] > 0 or workflow_results['hosts_failed'] == 0) else 'failed'
+                
+                # Add descriptive summary when all hosts were already up to date
+                if workflow_results['hosts_updated'] == 0 and workflow_results['hosts_skipped'] > 0:
+                    final_details['summary'] = 'All servers already up to date - no updates needed'
+                
                 self.update_job_status(
                     job['id'],
                     final_status,
@@ -1905,8 +1913,11 @@ class ClusterHandler(BaseHandler):
                     details=final_details
                 )
                 
-                self.log(f"✓ Phased rolling cluster update completed:")
-                self.log(f"  - Hosts updated: {workflow_results['hosts_updated']}/{workflow_results['total_hosts']}")
+                if workflow_results['hosts_updated'] == 0 and workflow_results['hosts_skipped'] > 0:
+                    self.log(f"✓ Phased rolling cluster update completed - all servers already up to date")
+                else:
+                    self.log(f"✓ Phased rolling cluster update completed:")
+                    self.log(f"  - Hosts updated: {workflow_results['hosts_updated']}/{workflow_results['total_hosts']}")
                 if backup_scp:
                     successful_backups = sum(1 for r in backup_results.values() if r.get('success'))
                     self.log(f"  - SCP backups: {successful_backups}/{workflow_results['total_hosts']}")
