@@ -2252,12 +2252,14 @@ class DellOperations:
         username: str,
         password: str,
         server_id: str = None,
-        user_id: str = None
+        user_id: str = None,
+        include_details: bool = False
     ) -> Dict[str, Any]:
         """
-        Get all jobs in the iDRAC job queue.
+        Get all jobs in the iDRAC job queue with optional full details.
         
         Dell Redfish endpoint: GET /redfish/v1/Managers/iDRAC.Embedded.1/Jobs
+        Per-job details: GET /redfish/v1/Managers/iDRAC.Embedded.1/Jobs/{JID_xxx}
         
         Args:
             ip: iDRAC IP address
@@ -2265,6 +2267,7 @@ class DellOperations:
             password: iDRAC password
             server_id: Optional server UUID for logging
             user_id: Optional user UUID for logging
+            include_details: If True, fetch full details for each job (Dell official pattern)
             
         Returns:
             Dict with list of jobs and count
@@ -2281,10 +2284,46 @@ class DellOperations:
         )
         
         members = response.get('Members', [])
+        
+        if not include_details:
+            return {
+                'success': True,
+                'jobs': members,
+                'count': len(members)
+            }
+        
+        # Fetch full details for each job (Dell official pattern from GetIdracJobQueueREDFISH.py)
+        detailed_jobs = []
+        for member in members:
+            job_uri = member.get('@odata.id', '')
+            if job_uri:
+                try:
+                    job_detail = self.adapter.make_request(
+                        method='GET',
+                        ip=ip,
+                        endpoint=job_uri,
+                        username=username,
+                        password=password,
+                        operation_name='Get iDRAC Job Detail'
+                    )
+                    detailed_jobs.append({
+                        'id': job_detail.get('Id'),
+                        'name': job_detail.get('Name') or job_detail.get('Message', 'Unknown Job'),
+                        'job_state': job_detail.get('JobState'),
+                        'percent_complete': job_detail.get('PercentComplete', 0),
+                        'message': job_detail.get('Message'),
+                        'job_type': job_detail.get('JobType'),
+                        'start_time': job_detail.get('StartTime'),
+                        'end_time': job_detail.get('EndTime')
+                    })
+                except Exception:
+                    # Skip jobs we can't read
+                    continue
+        
         return {
             'success': True,
-            'jobs': members,
-            'count': len(members)
+            'jobs': detailed_jobs,
+            'count': len(detailed_jobs)
         }
 
     def set_bios_attributes(

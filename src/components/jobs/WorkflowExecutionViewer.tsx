@@ -18,6 +18,7 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { IdracJobQueuePanel } from "./IdracJobQueuePanel";
 
 interface WorkflowExecutionViewerProps {
   jobId: string;
@@ -341,6 +342,16 @@ export const WorkflowExecutionViewer = ({
                 )}
               </CardContent>
             </Card>
+            
+            {/* iDRAC Job Queue - Real hardware job status */}
+            {currentOperation?.idrac_job_queue && currentOperation.idrac_job_queue.length > 0 && (
+              <IdracJobQueuePanel 
+                jobs={currentOperation.idrac_job_queue}
+                updatedAt={currentOperation.idrac_queue_updated_at}
+                serverIp={currentOperation.current_host_ip}
+              />
+            )}
+            
             <Separator />
           </>
         )}
