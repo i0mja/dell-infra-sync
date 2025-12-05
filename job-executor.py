@@ -405,6 +405,13 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             return None
         
         try:
+            # Log what AD-related settings we received (INFO level for visibility)
+            self.log(f"Creating FreeIPA authenticator with AD settings:", "INFO")
+            self.log(f"  ad_dc_host: {settings.get('ad_dc_host')}", "INFO")
+            self.log(f"  ad_bind_dn: {settings.get('ad_bind_dn')}", "INFO")
+            self.log(f"  ad_bind_password_encrypted present: {bool(settings.get('ad_bind_password_encrypted'))}", "INFO")
+            self.log(f"  All settings keys: {list(settings.keys())}", "INFO")
+            
             # Write CA certificate to temp file if provided
             ca_cert_path = None
             if settings.get('ca_certificate'):
@@ -418,11 +425,13 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             if settings.get('ad_bind_password_encrypted'):
                 ad_bind_password = self.decrypt_password(settings['ad_bind_password_encrypted'])
                 if ad_bind_password:
-                    self.log(f"AD bind password decrypted successfully for: {settings.get('ad_bind_dn')}", "DEBUG")
+                    self.log(f"AD bind password decrypted successfully for: {settings.get('ad_bind_dn')}", "INFO")
                 else:
-                    self.log(f"AD bind password decryption FAILED for: {settings.get('ad_bind_dn')}", "WARN")
+                    self.log(f"AD bind password decryption FAILED for: {settings.get('ad_bind_dn')}", "ERROR")
+            else:
+                self.log(f"No ad_bind_password_encrypted in settings", "WARN")
             
-            return FreeIPAAuthenticator(
+            authenticator = FreeIPAAuthenticator(
                 server_host=settings['server_host'],
                 base_dn=settings['base_dn'],
                 user_search_base=settings.get('user_search_base', 'cn=users,cn=accounts'),
@@ -442,6 +451,12 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
                 ad_bind_dn=settings.get('ad_bind_dn'),
                 ad_bind_password=ad_bind_password,
             )
+            
+            # Verify credentials were set on the authenticator
+            self.log(f"Authenticator created - ad_bind_dn set: {bool(authenticator.ad_bind_dn)}", "INFO")
+            self.log(f"Authenticator created - ad_bind_password set: {bool(authenticator.ad_bind_password)}", "INFO")
+            
+            return authenticator
         except Exception as e:
             self.log(f"Failed to create FreeIPA authenticator: {e}", "ERROR")
             return None
