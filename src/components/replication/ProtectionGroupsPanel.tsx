@@ -15,6 +15,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { 
   Shield, 
   Plus, 
@@ -24,21 +31,38 @@ import {
   Server,
   ChevronRight,
   CheckCircle2,
-  AlertCircle
+  HardDrive
 } from "lucide-react";
 import { useProtectionGroups, useProtectedVMs } from "@/hooks/useReplication";
+import { useVCenters } from "@/hooks/useVCenters";
+import { useAccessibleDatastores } from "@/hooks/useAccessibleDatastores";
 import { formatDistanceToNow } from "date-fns";
 import { ProtectedVMsTable } from "./ProtectedVMsTable";
 
+function formatBytes(bytes: number | null): string {
+  if (!bytes) return "N/A";
+  const gb = bytes / (1024 * 1024 * 1024);
+  if (gb >= 1024) {
+    return `${(gb / 1024).toFixed(1)} TB`;
+  }
+  return `${gb.toFixed(1)} GB`;
+}
+
 export function ProtectionGroupsPanel() {
   const { groups, loading, createGroup, deleteGroup, runReplicationNow, refetch } = useProtectionGroups();
+  const { vcenters } = useVCenters();
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
   const [newGroupDescription, setNewGroupDescription] = useState("");
   const [newGroupDatastore, setNewGroupDatastore] = useState("");
+  const [selectedVCenterId, setSelectedVCenterId] = useState("");
   const [creating, setCreating] = useState(false);
   const [runningReplication, setRunningReplication] = useState<string | null>(null);
+
+  const { data: datastores = [], isLoading: loadingDatastores } = useAccessibleDatastores(
+    selectedVCenterId || undefined
+  );
 
   const { vms, loading: vmsLoading, refetch: refetchVMs, addVM, removeVM } = useProtectedVMs(
     selectedGroupId || undefined
@@ -47,19 +71,21 @@ export function ProtectionGroupsPanel() {
   const selectedGroup = groups.find(g => g.id === selectedGroupId);
 
   const handleCreate = async () => {
-    if (!newGroupName.trim()) return;
+    if (!newGroupName.trim() || !selectedVCenterId || !newGroupDatastore) return;
     
     setCreating(true);
     try {
       await createGroup({
         name: newGroupName,
         description: newGroupDescription,
-        protection_datastore: newGroupDatastore || undefined,
+        protection_datastore: newGroupDatastore,
+        source_vcenter_id: selectedVCenterId,
       });
       setShowCreateDialog(false);
       setNewGroupName("");
       setNewGroupDescription("");
       setNewGroupDatastore("");
+      setSelectedVCenterId("");
     } finally {
       setCreating(false);
     }
@@ -132,13 +158,56 @@ export function ProtectionGroupsPanel() {
                     />
                   </div>
                   <div className="space-y-2">
+                    <Label htmlFor="vcenter">Source vCenter</Label>
+                    <Select 
+                      value={selectedVCenterId} 
+                      onValueChange={(val) => {
+                        setSelectedVCenterId(val);
+                        setNewGroupDatastore("");
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select vCenter" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {vcenters.map((vc) => (
+                          <SelectItem key={vc.id} value={vc.id}>
+                            {vc.name} ({vc.host})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
                     <Label htmlFor="datastore">Protection Datastore</Label>
-                    <Input
-                      id="datastore"
-                      placeholder="e.g., DR-Protected-DS"
+                    <Select
                       value={newGroupDatastore}
-                      onChange={(e) => setNewGroupDatastore(e.target.value)}
-                    />
+                      onValueChange={setNewGroupDatastore}
+                      disabled={!selectedVCenterId || loadingDatastores}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={
+                          !selectedVCenterId 
+                            ? "Select vCenter first" 
+                            : loadingDatastores 
+                              ? "Loading datastores..." 
+                              : "Select datastore"
+                        } />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {datastores.map((ds) => (
+                          <SelectItem key={ds.id} value={ds.name}>
+                            <div className="flex items-center gap-2">
+                              <HardDrive className="h-4 w-4 text-muted-foreground" />
+                              <span>{ds.name}</span>
+                              <span className="text-muted-foreground text-xs">
+                                ({formatBytes(ds.free_bytes)} free)
+                              </span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     <p className="text-xs text-muted-foreground">
                       VMs will be moved here before replication (via Storage vMotion)
                     </p>
@@ -148,7 +217,7 @@ export function ProtectionGroupsPanel() {
                   <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
                     Cancel
                   </Button>
-                  <Button onClick={handleCreate} disabled={creating || !newGroupName.trim()}>
+                  <Button onClick={handleCreate} disabled={creating || !newGroupName.trim() || !selectedVCenterId || !newGroupDatastore}>
                     {creating ? 'Creating...' : 'Create Group'}
                   </Button>
                 </DialogFooter>
