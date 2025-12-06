@@ -13,6 +13,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { 
   Plus, 
   Trash2, 
@@ -21,10 +28,14 @@ import {
   Clock,
   HardDrive,
   Server as ServerIcon,
-  MoveRight
+  MoveRight,
+  MoreVertical,
+  Wand2,
 } from "lucide-react";
 import { ProtectedVM } from "@/hooks/useReplication";
 import { formatDistanceToNow } from "date-fns";
+import { ProtectionDatastoreWizard } from "./ProtectionDatastoreWizard";
+import { DrShellVmWizard } from "./DrShellVmWizard";
 
 interface ProtectedVMsTableProps {
   vms: ProtectedVM[];
@@ -32,6 +43,7 @@ interface ProtectedVMsTableProps {
   onAddVM: (vm: Partial<ProtectedVM>) => Promise<ProtectedVM | undefined>;
   onRemoveVM: (vmId: string) => Promise<void>;
   protectionDatastore?: string;
+  onRefresh?: () => void;
 }
 
 export function ProtectedVMsTable({
@@ -39,12 +51,32 @@ export function ProtectedVMsTable({
   loading,
   onAddVM,
   onRemoveVM,
-  protectionDatastore
+  protectionDatastore,
+  onRefresh,
 }: ProtectedVMsTableProps) {
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [newVMName, setNewVMName] = useState("");
   const [newVMDatastore, setNewVMDatastore] = useState("");
   const [adding, setAdding] = useState(false);
+  
+  // Wizard state
+  const [datastoreWizardOpen, setDatastoreWizardOpen] = useState(false);
+  const [drShellWizardOpen, setDrShellWizardOpen] = useState(false);
+  const [selectedVM, setSelectedVM] = useState<ProtectedVM | null>(null);
+  
+  const openDatastoreWizard = (vm: ProtectedVM) => {
+    setSelectedVM(vm);
+    setDatastoreWizardOpen(true);
+  };
+  
+  const openDrShellWizard = (vm: ProtectedVM) => {
+    setSelectedVM(vm);
+    setDrShellWizardOpen(true);
+  };
+  
+  const handleWizardComplete = () => {
+    onRefresh?.();
+  };
 
   const handleAdd = async () => {
     if (!newVMName.trim()) return;
@@ -215,14 +247,31 @@ export function ProtectedVMsTable({
                       : 'Never'}
                   </TableCell>
                   <TableCell>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-8 w-8 text-destructive"
-                      onClick={() => onRemoveVM(vm.id)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button size="icon" variant="ghost" className="h-8 w-8">
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="bg-popover z-50">
+                        <DropdownMenuItem onClick={() => openDatastoreWizard(vm)}>
+                          <Wand2 className="h-4 w-4 mr-2" />
+                          Protection Datastore Wizard
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => openDrShellWizard(vm)}>
+                          <ServerIcon className="h-4 w-4 mr-2" />
+                          DR Shell VM Wizard
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem 
+                          className="text-destructive"
+                          onClick={() => onRemoveVM(vm.id)}
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Remove from Protection
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </TableCell>
                 </TableRow>
               ))}
@@ -230,6 +279,22 @@ export function ProtectedVMsTable({
           </Table>
         </div>
       )}
+      
+      {/* Wizards */}
+      <ProtectionDatastoreWizard
+        open={datastoreWizardOpen}
+        onOpenChange={setDatastoreWizardOpen}
+        vm={selectedVM}
+        protectionDatastore={protectionDatastore}
+        onComplete={handleWizardComplete}
+      />
+      
+      <DrShellVmWizard
+        open={drShellWizardOpen}
+        onOpenChange={setDrShellWizardOpen}
+        vm={selectedVM}
+        onComplete={handleWizardComplete}
+      />
     </div>
   );
 }

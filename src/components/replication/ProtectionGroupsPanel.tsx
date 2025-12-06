@@ -273,6 +273,7 @@ export function ProtectionGroupsPanel() {
               onAddVM={addVM}
               onRemoveVM={removeVM}
               protectionDatastore={selectedGroup.protection_datastore}
+              onRefresh={refetchVMs}
             />
           )}
         </CardContent>
