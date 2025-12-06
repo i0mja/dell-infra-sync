@@ -16,6 +16,7 @@ import Auth from "./pages/Auth";
 import Servers from "./pages/Servers";
 import Settings from "./pages/Settings";
 import VCenter from "./pages/VCenter";
+import Replication from "./pages/Replication";
 import ActivityMonitor from "./pages/ActivityMonitor";
 import MaintenancePlanner from "./pages/MaintenancePlanner";
 import Reports from "./pages/Reports";
@@ -42,6 +43,7 @@ const App = () => (
                       <Route index element={<Dashboard />} />
               <Route path="servers" element={<Servers />} />
               <Route path="vcenter" element={<VCenter />} />
+              <Route path="replication" element={<Replication />} />
               <Route path="maintenance-planner" element={<MaintenancePlanner />} />
               <Route path="activity" element={<ActivityMonitor />} />
               <Route path="reports" element={<Reports />} />
