@@ -25,6 +25,7 @@ interface ReportTableProps {
   visibleColumns?: string[];
   isLoading?: boolean;
   searchTerm?: string;
+  onRowClick?: (row: any) => void;
 }
 
 export function ReportTable({ 
@@ -32,7 +33,8 @@ export function ReportTable({
   columns, 
   visibleColumns, 
   isLoading = false,
-  searchTerm = "" 
+  searchTerm = "",
+  onRowClick
 }: ReportTableProps) {
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
@@ -129,7 +131,14 @@ export function ReportTable({
           </TableHeader>
           <TableBody>
             {pagination.paginatedItems.map((row, idx) => (
-              <TableRow key={idx} className="hover:bg-muted/50">
+              <TableRow 
+                key={idx} 
+                className={cn(
+                  "hover:bg-muted/50",
+                  onRowClick && "cursor-pointer"
+                )}
+                onClick={() => onRowClick?.(row)}
+              >
                 {displayColumns.map((col) => (
                   <TableCell key={col.key}>
                     {col.format ? col.format(row[col.key], row) : row[col.key] ?? "-"}
