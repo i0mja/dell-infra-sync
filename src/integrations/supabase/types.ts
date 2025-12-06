@@ -1773,6 +1773,299 @@ export type Database = {
         }
         Relationships: []
       }
+      protected_vms: {
+        Row: {
+          created_at: string | null
+          current_datastore: string | null
+          dr_shell_vm_created: boolean | null
+          dr_shell_vm_id: string | null
+          dr_shell_vm_name: string | null
+          id: string
+          last_replication_at: string | null
+          last_snapshot_at: string | null
+          needs_storage_vmotion: boolean | null
+          priority: number | null
+          protection_group_id: string
+          replication_status: string | null
+          status_message: string | null
+          target_datastore: string | null
+          updated_at: string | null
+          vm_id: string | null
+          vm_name: string
+          vm_vcenter_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          current_datastore?: string | null
+          dr_shell_vm_created?: boolean | null
+          dr_shell_vm_id?: string | null
+          dr_shell_vm_name?: string | null
+          id?: string
+          last_replication_at?: string | null
+          last_snapshot_at?: string | null
+          needs_storage_vmotion?: boolean | null
+          priority?: number | null
+          protection_group_id: string
+          replication_status?: string | null
+          status_message?: string | null
+          target_datastore?: string | null
+          updated_at?: string | null
+          vm_id?: string | null
+          vm_name: string
+          vm_vcenter_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          current_datastore?: string | null
+          dr_shell_vm_created?: boolean | null
+          dr_shell_vm_id?: string | null
+          dr_shell_vm_name?: string | null
+          id?: string
+          last_replication_at?: string | null
+          last_snapshot_at?: string | null
+          needs_storage_vmotion?: boolean | null
+          priority?: number | null
+          protection_group_id?: string
+          replication_status?: string | null
+          status_message?: string | null
+          target_datastore?: string | null
+          updated_at?: string | null
+          vm_id?: string | null
+          vm_name?: string
+          vm_vcenter_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "protected_vms_protection_group_id_fkey"
+            columns: ["protection_group_id"]
+            isOneToOne: false
+            referencedRelation: "protection_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "protected_vms_vm_id_fkey"
+            columns: ["vm_id"]
+            isOneToOne: false
+            referencedRelation: "vcenter_vms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      protection_groups: {
+        Row: {
+          created_at: string | null
+          created_by: string | null
+          description: string | null
+          id: string
+          is_enabled: boolean | null
+          last_replication_at: string | null
+          name: string
+          next_replication_at: string | null
+          protection_datastore: string | null
+          replication_schedule: string | null
+          retention_policy: Json | null
+          rpo_minutes: number | null
+          source_vcenter_id: string | null
+          target_id: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_enabled?: boolean | null
+          last_replication_at?: string | null
+          name: string
+          next_replication_at?: string | null
+          protection_datastore?: string | null
+          replication_schedule?: string | null
+          retention_policy?: Json | null
+          rpo_minutes?: number | null
+          source_vcenter_id?: string | null
+          target_id?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_enabled?: boolean | null
+          last_replication_at?: string | null
+          name?: string
+          next_replication_at?: string | null
+          protection_datastore?: string | null
+          replication_schedule?: string | null
+          retention_policy?: Json | null
+          rpo_minutes?: number | null
+          source_vcenter_id?: string | null
+          target_id?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "protection_groups_source_vcenter_id_fkey"
+            columns: ["source_vcenter_id"]
+            isOneToOne: false
+            referencedRelation: "vcenter_settings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "protection_groups_target_id_fkey"
+            columns: ["target_id"]
+            isOneToOne: false
+            referencedRelation: "replication_targets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      replication_jobs: {
+        Row: {
+          bytes_transferred: number | null
+          completed_at: string | null
+          created_at: string | null
+          created_by: string | null
+          details: Json | null
+          error_message: string | null
+          id: string
+          incremental: boolean | null
+          job_type: string
+          log: string | null
+          protected_vm_id: string | null
+          protection_group_id: string | null
+          snapshot_name: string | null
+          source_snapshot: string | null
+          started_at: string | null
+          status: string
+          target_snapshot: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          bytes_transferred?: number | null
+          completed_at?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          details?: Json | null
+          error_message?: string | null
+          id?: string
+          incremental?: boolean | null
+          job_type: string
+          log?: string | null
+          protected_vm_id?: string | null
+          protection_group_id?: string | null
+          snapshot_name?: string | null
+          source_snapshot?: string | null
+          started_at?: string | null
+          status?: string
+          target_snapshot?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          bytes_transferred?: number | null
+          completed_at?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          details?: Json | null
+          error_message?: string | null
+          id?: string
+          incremental?: boolean | null
+          job_type?: string
+          log?: string | null
+          protected_vm_id?: string | null
+          protection_group_id?: string | null
+          snapshot_name?: string | null
+          source_snapshot?: string | null
+          started_at?: string | null
+          status?: string
+          target_snapshot?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "replication_jobs_protected_vm_id_fkey"
+            columns: ["protected_vm_id"]
+            isOneToOne: false
+            referencedRelation: "protected_vms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "replication_jobs_protection_group_id_fkey"
+            columns: ["protection_group_id"]
+            isOneToOne: false
+            referencedRelation: "protection_groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      replication_targets: {
+        Row: {
+          created_at: string | null
+          created_by: string | null
+          description: string | null
+          dr_vcenter_id: string | null
+          health_status: string | null
+          hostname: string
+          id: string
+          is_active: boolean | null
+          last_health_check: string | null
+          name: string
+          port: number | null
+          ssh_key_encrypted: string | null
+          ssh_username: string | null
+          target_type: string
+          updated_at: string | null
+          zfs_dataset_prefix: string | null
+          zfs_pool: string
+        }
+        Insert: {
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          dr_vcenter_id?: string | null
+          health_status?: string | null
+          hostname: string
+          id?: string
+          is_active?: boolean | null
+          last_health_check?: string | null
+          name: string
+          port?: number | null
+          ssh_key_encrypted?: string | null
+          ssh_username?: string | null
+          target_type?: string
+          updated_at?: string | null
+          zfs_dataset_prefix?: string | null
+          zfs_pool: string
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          dr_vcenter_id?: string | null
+          health_status?: string | null
+          hostname?: string
+          id?: string
+          is_active?: boolean | null
+          last_health_check?: string | null
+          name?: string
+          port?: number | null
+          ssh_key_encrypted?: string | null
+          ssh_username?: string | null
+          target_type?: string
+          updated_at?: string | null
+          zfs_dataset_prefix?: string | null
+          zfs_pool?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "replication_targets_dr_vcenter_id_fkey"
+            columns: ["dr_vcenter_id"]
+            isOneToOne: false
+            referencedRelation: "vcenter_settings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       scheduled_safety_checks: {
         Row: {
           check_all_clusters: boolean | null
