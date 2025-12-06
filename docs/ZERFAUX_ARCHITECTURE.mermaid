@@ -1,0 +1,35 @@
+flowchart LR
+    subgraph App["Main Application"]
+      UI["React SPA\n/replication page"]
+      API["/api/replication\nBackend Router"]
+    end
+
+    subgraph DB["Supabase Postgres (Local)"]
+      VC["vcenter_connections"]
+      VMS["vms"]
+      RT["replication_targets"]
+      PG["protection_groups"]
+      PV["protected_vms"]
+      RJ["replication_jobs"]
+    end
+
+    subgraph Orchestration["Zerfaux Orchestration Layer"]
+      VI["vcenter_inventory\n(stub → real pyVmomi/REST)"]
+      ZR["zerfaux_replication\n(stub → real ZFS)"]
+      W1["Protection Datastore Wizard Logic"]
+      W2["DR Shell VM Wizard Logic"]
+    end
+
+    UI --> API
+    API --> Orchestration
+    API --> DB
+    Orchestration --> DB
+
+    subgraph Future["Future External Systems (Not used in stubs)"]
+      VCENTER["vCenter / ESXi"]
+      ZFS["Debian ZFS Replication Boxes"]
+    end
+
+    %% Future wiring (dotted)
+    Orchestration -. "pyVmomi / REST" .-> VCENTER
+    Orchestration -. "ssh/zfs/syncoid" .-> ZFS
