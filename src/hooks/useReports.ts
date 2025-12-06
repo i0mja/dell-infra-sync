@@ -369,25 +369,25 @@ async function fetchUpdateHistory(dateRange: { start: Date; end: Date }): Promis
 
   if (jobsError) throw jobsError;
 
-  // Fetch job tasks to get server-level details
   const jobIds = (jobs || []).map(j => j.id);
-  let tasks: any[] = [];
   
+  // Fetch workflow executions to get rich component update details
+  let workflowExecutions: any[] = [];
   if (jobIds.length > 0) {
-    const { data: taskData, error: tasksError } = await supabase
-      .from("job_tasks")
-      .select(`
-        id,
-        job_id,
-        server_id,
-        status,
-        started_at,
-        completed_at,
-        log
-      `)
+    const { data: wfData } = await supabase
+      .from("workflow_executions")
+      .select("job_id, server_id, cluster_id, step_name, step_details, step_status, step_started_at, step_completed_at")
       .in("job_id", jobIds);
-    
-    if (tasksError) throw tasksError;
+    workflowExecutions = wfData || [];
+  }
+
+  // Fetch job tasks to get server-level details
+  let tasks: any[] = [];
+  if (jobIds.length > 0) {
+    const { data: taskData } = await supabase
+      .from("job_tasks")
+      .select("id, job_id, server_id, status, started_at, completed_at, log")
+      .in("job_id", jobIds);
     tasks = taskData || [];
   }
 
@@ -411,101 +411,264 @@ async function fetchUpdateHistory(dateRange: { start: Date; end: Date }): Promis
     return acc;
   }, {} as Record<string, any>);
 
-  // Fetch ESXi upgrade history for version info
-  const { data: esxiHistory } = await supabase
-    .from("esxi_upgrade_history")
-    .select("job_id, version_before, version_after, status")
-    .in("job_id", jobIds);
+  // Fetch clusters for cluster name lookup
+  const { data: clusters } = await supabase
+    .from("vcenter_clusters")
+    .select("id, cluster_name");
 
-  const esxiHistoryMap = (esxiHistory || []).reduce((acc, h) => {
-    acc[h.job_id] = h;
+  const clusterMap = (clusters || []).reduce((acc, c) => {
+    acc[c.id] = c.cluster_name;
     return acc;
-  }, {} as Record<string, any>);
+  }, {} as Record<string, string>);
 
-  // Build rows with task-level detail
-  const rows = (jobs || []).flatMap(job => {
-    const jobTasks = tasks.filter(t => t.job_id === job.id);
+  // Fetch vcenter hosts for host-to-cluster mapping
+  const { data: vcenterHosts } = await supabase
+    .from("vcenter_hosts")
+    .select("id, server_id, cluster");
+
+  const serverToClusterMap = (vcenterHosts || []).reduce((acc, h) => {
+    if (h.server_id) {
+      acc[h.server_id] = h.cluster || '';
+    }
+    return acc;
+  }, {} as Record<string, string>);
+
+  // Fetch SCP backups to check if server has backup
+  const { data: scpBackups } = await supabase
+    .from("scp_backups")
+    .select("server_id, exported_at")
+    .order("exported_at", { ascending: false });
+
+  const serverBackupMap = (scpBackups || []).reduce((acc, b) => {
+    if (!acc[b.server_id]) {
+      acc[b.server_id] = b.exported_at;
+    }
+    return acc;
+  }, {} as Record<string, string>);
+
+  // Group workflow executions by job_id and server_id for component details
+  const workflowByJobServer = workflowExecutions.reduce((acc, wf) => {
+    const key = `${wf.job_id}-${wf.server_id || 'job'}`;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(wf);
+    return acc;
+  }, {} as Record<string, any[]>);
+
+  // Helper to extract component update info from workflow steps
+  const getComponentInfo = (workflows: any[]) => {
+    // Look for "Check for updates" steps which contain the updates array
+    const updateStep = workflows?.find(w => 
+      w.step_name?.startsWith('Check for updates:') || 
+      w.step_name?.startsWith('Apply firmware:')
+    );
+    
+    const updates = updateStep?.step_details?.updates || updateStep?.step_details?.available_updates_list || [];
+    
+    if (Array.isArray(updates) && updates.length > 0) {
+      // Build component summary: "BIOS 2.23→2.25, QLogic 16.25→17.05"
+      const componentSummary = updates
+        .slice(0, 3) // Show first 3
+        .map((u: any) => {
+          const shortName = u.name?.split(' ')[0] || u.component || 'Unknown';
+          return `${shortName} ${u.current_version || '?'}→${u.available_version || u.target_version || '?'}`;
+        })
+        .join(", ");
+      
+      const suffix = updates.length > 3 ? ` +${updates.length - 3} more` : '';
+      
+      return {
+        componentsUpdated: updates.length,
+        componentSummary: componentSummary + suffix,
+        highestCriticality: updates.some((u: any) => u.criticality === 'Critical') ? 'Critical' 
+          : updates.some((u: any) => u.criticality === 'Recommended') ? 'Recommended' 
+          : 'Optional',
+        rebootRequired: updates.some((u: any) => u.reboot_required === 'HOST' || u.reboot_required === true),
+      };
+    }
+    
+    // Check for available_updates count (used in some workflow types)
+    const availableCount = updateStep?.step_details?.available_updates;
+    if (typeof availableCount === 'number' && availableCount > 0) {
+      return {
+        componentsUpdated: availableCount,
+        componentSummary: `${availableCount} component(s)`,
+        highestCriticality: 'Unknown',
+        rebootRequired: true,
+      };
+    }
+    
+    return null;
+  };
+
+  // Helper to format duration
+  const formatDuration = (ms: number | null): string => {
+    if (!ms) return "-";
+    const seconds = Math.floor(ms / 1000);
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return `${hours}h ${remainingMinutes}m`;
+  };
+
+  // Build rows - one row per server updated
+  const rows: any[] = [];
+  const processedServers = new Set<string>(); // Track job-server combos to avoid duplicates
+
+  for (const job of jobs || []) {
     const details = job.details as any || {};
     const profile = profileMap[job.created_by];
     const initiatedBy = profile?.full_name || profile?.email || 'System';
-    const esxiUpgrade = esxiHistoryMap[job.id];
+    
+    // Get tasks for this job
+    const jobTasks = tasks.filter(t => t.job_id === job.id);
+    
+    // Get workflows for this job
+    const jobWorkflows = workflowExecutions.filter(w => w.job_id === job.id);
+    
+    // Get cluster from job details or workflow
+    const jobClusterId = details.cluster_id || jobWorkflows.find(w => w.cluster_id)?.cluster_id;
+    const jobClusterName = details.cluster_name || (jobClusterId ? clusterMap[jobClusterId] : null);
+    
+    // Duration
+    const durationMs = job.completed_at && job.started_at 
+      ? new Date(job.completed_at).getTime() - new Date(job.started_at).getTime()
+      : null;
 
-    // Extract component and version info
-    const component = details.component || 
-                      details.firmware_component ||
-                      (job.job_type === 'rolling_cluster_update' ? 'Full Stack' : 
-                       job.job_type === 'esxi_upgrade' ? 'ESXi' :
-                       job.job_type === 'bios_config_write' ? 'BIOS Config' : '-');
-
-    // Version info - check ESXi history first, then job details
-    let versionBefore = esxiUpgrade?.version_before || details.version_before || '-';
-    let versionAfter = esxiUpgrade?.version_after || details.version_after || details.target_version || details.version || '-';
-
-    if (jobTasks.length === 0) {
-      // Job without tasks - return job-level row
-      return [{
+    if (jobTasks.length === 0 && jobWorkflows.length === 0) {
+      // Job-level row (no server breakdown)
+      rows.push({
         job_id: job.id,
         job_type: job.job_type,
         job_type_label: JOB_TYPE_LABELS[job.job_type] || job.job_type,
         status: job.status,
         server: details.server_hostname || details.cluster_name || '-',
         server_ip: details.server_ip || '-',
-        component,
-        version_before: versionBefore,
-        version_after: versionAfter,
+        cluster_name: jobClusterName || '-',
+        components_updated: null,
+        component_summary: details.component || JOB_TYPE_LABELS[job.job_type] || '-',
+        highest_criticality: null,
+        reboot_required: false,
+        scp_backup: false,
         initiated_by: initiatedBy,
         started_at: job.started_at,
         completed_at: job.completed_at,
-        duration_ms: job.completed_at && job.started_at 
-          ? new Date(job.completed_at).getTime() - new Date(job.started_at).getTime()
-          : null,
-        priority: job.priority,
-        details: job.details,
-      }];
+        duration_ms: durationMs,
+        duration_formatted: formatDuration(durationMs),
+      });
+      continue;
     }
-    // Job with tasks - return task-level rows
-    return jobTasks.map(task => {
-      const server = serverMap[task.server_id];
-      // If task is pending but job has terminated, show the job outcome
-      const effectiveStatus = (task.status === 'pending' && ['failed', 'cancelled', 'completed'].includes(job.status))
+
+    // Get unique servers from tasks and workflows
+    const serverIds = new Set<string>();
+    jobTasks.forEach(t => t.server_id && serverIds.add(t.server_id));
+    jobWorkflows.forEach(w => w.server_id && serverIds.add(w.server_id));
+
+    if (serverIds.size === 0) {
+      // Job/cluster level - use workflow data if available
+      const componentInfo = getComponentInfo(jobWorkflows);
+      rows.push({
+        job_id: job.id,
+        job_type: job.job_type,
+        job_type_label: JOB_TYPE_LABELS[job.job_type] || job.job_type,
+        status: job.status,
+        server: details.cluster_name || '-',
+        server_ip: '-',
+        cluster_name: jobClusterName || '-',
+        components_updated: componentInfo?.componentsUpdated || null,
+        component_summary: componentInfo?.componentSummary || JOB_TYPE_LABELS[job.job_type] || '-',
+        highest_criticality: componentInfo?.highestCriticality || null,
+        reboot_required: componentInfo?.rebootRequired || false,
+        scp_backup: false,
+        initiated_by: initiatedBy,
+        started_at: job.started_at,
+        completed_at: job.completed_at,
+        duration_ms: durationMs,
+        duration_formatted: formatDuration(durationMs),
+      });
+      continue;
+    }
+
+    // Create a row per server
+    for (const serverId of serverIds) {
+      const key = `${job.id}-${serverId}`;
+      if (processedServers.has(key)) continue;
+      processedServers.add(key);
+
+      const server = serverMap[serverId];
+      const task = jobTasks.find(t => t.server_id === serverId);
+      const serverWorkflows = workflowByJobServer[key] || [];
+      
+      // Get component info from workflows
+      const componentInfo = getComponentInfo(serverWorkflows);
+      
+      // Get cluster name
+      const clusterName = serverToClusterMap[serverId] || jobClusterName || '-';
+      
+      // Check for SCP backup (was there a backup before this job?)
+      const hasScpBackup = !!serverBackupMap[serverId];
+
+      // Determine effective status
+      const effectiveStatus = task?.status === 'pending' && ['failed', 'cancelled', 'completed'].includes(job.status)
         ? (job.status === 'completed' ? 'skipped' : job.status)
-        : task.status;
-      return {
+        : (task?.status || job.status);
+
+      // Calculate server-specific duration from task or workflow
+      const serverDurationMs = task?.completed_at && task?.started_at
+        ? new Date(task.completed_at).getTime() - new Date(task.started_at).getTime()
+        : durationMs;
+
+      rows.push({
         job_id: job.id,
         job_type: job.job_type,
         job_type_label: JOB_TYPE_LABELS[job.job_type] || job.job_type,
         status: effectiveStatus,
         server: server?.hostname || '-',
         server_ip: server?.ip_address || '-',
-        component,
-        version_before: versionBefore,
-        version_after: versionAfter,
+        cluster_name: clusterName,
+        components_updated: componentInfo?.componentsUpdated || null,
+        component_summary: componentInfo?.componentSummary || JOB_TYPE_LABELS[job.job_type] || '-',
+        highest_criticality: componentInfo?.highestCriticality || null,
+        reboot_required: componentInfo?.rebootRequired || false,
+        scp_backup: hasScpBackup,
         initiated_by: initiatedBy,
-        started_at: task.started_at,
-        completed_at: task.completed_at,
-        duration_ms: task.completed_at && task.started_at 
-          ? new Date(task.completed_at).getTime() - new Date(task.started_at).getTime()
-          : null,
-        priority: job.priority,
-        details: job.details,
-      };
-    });
-  });
+        started_at: task?.started_at || job.started_at,
+        completed_at: task?.completed_at || job.completed_at,
+        duration_ms: serverDurationMs,
+        duration_formatted: formatDuration(serverDurationMs),
+      });
+    }
+  }
+
+  // Calculate summary stats
+  const totalComponentsUpdated = rows.reduce((sum, r) => sum + (r.components_updated || 0), 0);
+  const criticalUpdates = rows.filter(r => r.highest_criticality === 'Critical').length;
+  const avgDuration = rows.length > 0 
+    ? Math.round(rows.reduce((sum, r) => sum + (r.duration_ms || 0), 0) / rows.length)
+    : 0;
+  const scpBackupsCount = rows.filter(r => r.scp_backup).length;
 
   const summary = {
-    totalUpdates: rows.length,
+    serversUpdated: rows.length,
+    totalComponents: totalComponentsUpdated,
+    criticalUpdates,
     completed: rows.filter(r => r.status === "completed").length,
     failed: rows.filter(r => r.status === "failed").length,
     successRate: rows.length > 0 
       ? Math.round((rows.filter(r => r.status === "completed").length / rows.length) * 100) + "%"
       : "N/A",
+    avgDuration: formatDuration(avgDuration),
+    scpBackups: scpBackupsCount,
   };
 
   // Chart: updates per day
   const updatesByDay = rows.reduce((acc, r) => {
     const day = r.started_at ? format(new Date(r.started_at), "yyyy-MM-dd") : "unknown";
-    if (!acc[day]) acc[day] = { completed: 0, failed: 0, total: 0 };
+    if (!acc[day]) acc[day] = { completed: 0, failed: 0, total: 0, components: 0 };
     acc[day].total++;
+    acc[day].components += r.components_updated || 0;
     if (r.status === "completed") acc[day].completed++;
     if (r.status === "failed") acc[day].failed++;
     return acc;
@@ -513,7 +676,7 @@ async function fetchUpdateHistory(dateRange: { start: Date; end: Date }): Promis
 
   const chartData = Object.entries(updatesByDay)
     .filter(([date]) => date !== "unknown")
-    .map(([date, stats]) => ({ date, ...stats }))
+    .map(([date, stats]) => ({ date, ...(stats as object) }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
   return { rows, summary, chartData };
