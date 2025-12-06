@@ -155,11 +155,11 @@ class FirmwareHandler(BaseHandler):
                         
                         if not available_updates:
                             self.log(f"  ✓ Server is up to date - no updates available")
-                        self.update_task_status(task['id'], 'completed',
-                            log="✓ Server is up to date\nNo firmware updates required",
-                            completed_at=utc_now_iso(),
-                            progress=100)
-                        continue  # Skip to next server
+                            self.update_task_status(task['id'], 'completed',
+                                log="✓ Server is up to date\nNo firmware updates required",
+                                completed_at=utc_now_iso(),
+                                progress=100)
+                            continue  # Skip to next server
                         
                         self.log(f"  Found {len(available_updates)} update(s) available")
                         self.update_task_status(task['id'], 'running',

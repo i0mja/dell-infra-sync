@@ -1287,7 +1287,25 @@ class ClusterHandler(BaseHandler):
                                 
                                 if not available_updates:
                                     self.log(f"    ✓ Server is already up to date - no updates available")
-                                    self.log(f"    ℹ️ Skipping host (no maintenance mode needed)")
+                                    
+                                    # Check if host was already in maintenance mode (from previous failed job)
+                                    # and exit it before skipping
+                                    if vcenter_host_id:
+                                        try:
+                                            host_status = self.executor._get_vcenter_host_status(vcenter_host_id)
+                                            if host_status and host_status.get('in_maintenance', False):
+                                                self.log(f"    ⚠ Host is in maintenance mode (likely from previous job) - exiting...")
+                                                exit_result = self.executor.exit_vcenter_maintenance_mode(vcenter_host_id)
+                                                if exit_result.get('success'):
+                                                    self.log(f"    ✓ Maintenance mode exited successfully")
+                                                else:
+                                                    self.log(f"    ⚠ Warning: Failed to exit maintenance: {exit_result.get('error')}", "WARN")
+                                            else:
+                                                self.log(f"    ℹ️ Skipping host (no maintenance mode needed)")
+                                        except Exception as mm_check_error:
+                                            self.log(f"    ⚠ Could not check/exit maintenance mode: {mm_check_error}", "WARN")
+                                    else:
+                                        self.log(f"    ℹ️ Skipping host (no vCenter link)")
                                     
                                     self._log_workflow_step(
                                         job['id'], 'rolling_cluster_update',
