@@ -904,6 +904,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             'idm_network_check': self.idm_handler.execute_idm_network_check,
             'idrac_network_read': self.network_handler.execute_idrac_network_read,
             'idrac_network_write': self.network_handler.execute_idrac_network_write,
+            'storage_vmotion': self.execute_storage_vmotion,
         }
         
         handler = handler_map.get(job_type)
@@ -923,6 +924,115 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
     # Connectivity tests implemented in ConnectivityMixin
 
     # Connectivity test job implemented in ConnectivityMixin
+
+    def execute_storage_vmotion(self, job: Dict):
+        """
+        Execute storage vMotion to relocate VM to protection datastore.
+        Uses the Zerfaux API router logic internally.
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        target_scope = job.get('target_scope', {}) or {}
+        
+        protected_vm_id = target_scope.get('protected_vm_id')
+        target_datastore = details.get('target_datastore')
+        
+        if not protected_vm_id:
+            self.update_job_status(
+                job_id, 'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': 'No protected_vm_id specified in target_scope'}
+            )
+            return
+        
+        self.log(f"Starting storage vMotion for protected VM: {protected_vm_id}")
+        self.update_job_status(job_id, 'running', started_at=datetime.now().isoformat())
+        
+        try:
+            # Import Zerfaux router components
+            from job_executor.zerfaux import VCenterInventory
+            
+            # Get protected VM from database
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            }
+            
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/protected_vms",
+                headers=headers,
+                params={'id': f'eq.{protected_vm_id}'},
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+            
+            if response.status_code != 200 or not response.json():
+                raise Exception(f'Protected VM not found: {protected_vm_id}')
+            
+            vm = response.json()[0]
+            
+            # Get protection group
+            group_response = requests.get(
+                f"{DSM_URL}/rest/v1/protection_groups",
+                headers=headers,
+                params={'id': f"eq.{vm['protection_group_id']}"},
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+            
+            group = group_response.json()[0] if group_response.ok and group_response.json() else {}
+            
+            # Determine target datastore
+            final_target = target_datastore or group.get('protection_datastore')
+            if not final_target:
+                raise Exception('No target datastore specified')
+            
+            self.log(f"Relocating VM {vm['vm_name']} to {final_target}")
+            
+            # Use VCenterInventory to perform the relocation
+            vcenter_inventory = VCenterInventory(self)
+            result = vcenter_inventory.relocate_vm(
+                vcenter_id=group.get('source_vcenter_id', ''),
+                vm_moref=vm.get('vm_vcenter_id', ''),
+                target_datastore=final_target
+            )
+            
+            if result.get('success'):
+                # Update protected VM in database
+                update_response = requests.patch(
+                    f"{DSM_URL}/rest/v1/protected_vms",
+                    headers={**headers, 'Content-Type': 'application/json'},
+                    params={'id': f'eq.{protected_vm_id}'},
+                    json={
+                        'current_datastore': final_target,
+                        'needs_storage_vmotion': False,
+                        'replication_status': 'active',
+                        'status_message': f'Relocated to {final_target}'
+                    },
+                    verify=VERIFY_SSL,
+                    timeout=30
+                )
+                
+                self.log(f"VM {vm['vm_name']} successfully relocated to {final_target}")
+                self.update_job_status(
+                    job_id, 'completed',
+                    completed_at=datetime.now().isoformat(),
+                    details={
+                        'message': result.get('message', 'VM relocated successfully'),
+                        'vm_name': vm['vm_name'],
+                        'target_datastore': final_target
+                    }
+                )
+            else:
+                raise Exception(result.get('message', 'Storage vMotion failed'))
+                
+        except Exception as e:
+            self.log(f"Storage vMotion failed: {e}", "ERROR")
+            self.update_job_status(
+                job_id, 'failed',
+                completed_at=datetime.now().isoformat(),
+                details={'error': str(e)}
+            )
 
 
 
