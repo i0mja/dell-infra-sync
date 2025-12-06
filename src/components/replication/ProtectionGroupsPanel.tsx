@@ -342,6 +342,7 @@ export function ProtectionGroupsPanel() {
               onAddVM={addVM}
               onRemoveVM={removeVM}
               protectionDatastore={selectedGroup.protection_datastore}
+              sourceVCenterId={selectedGroup.source_vcenter_id || undefined}
               onRefresh={refetchVMs}
             />
           )}

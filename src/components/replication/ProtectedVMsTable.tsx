@@ -2,17 +2,7 @@ import { useState } from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { 
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,6 +26,7 @@ import { ProtectedVM } from "@/hooks/useReplication";
 import { formatDistanceToNow } from "date-fns";
 import { ProtectionDatastoreWizard } from "./ProtectionDatastoreWizard";
 import { DrShellVmWizard } from "./DrShellVmWizard";
+import { AddVMSelector } from "./AddVMSelector";
 
 interface ProtectedVMsTableProps {
   vms: ProtectedVM[];
@@ -43,6 +34,7 @@ interface ProtectedVMsTableProps {
   onAddVM: (vm: Partial<ProtectedVM>) => Promise<ProtectedVM | undefined>;
   onRemoveVM: (vmId: string) => Promise<void>;
   protectionDatastore?: string;
+  sourceVCenterId?: string;
   onRefresh?: () => void;
 }
 
@@ -52,17 +44,18 @@ export function ProtectedVMsTable({
   onAddVM,
   onRemoveVM,
   protectionDatastore,
+  sourceVCenterId,
   onRefresh,
 }: ProtectedVMsTableProps) {
   const [showAddDialog, setShowAddDialog] = useState(false);
-  const [newVMName, setNewVMName] = useState("");
-  const [newVMDatastore, setNewVMDatastore] = useState("");
-  const [adding, setAdding] = useState(false);
   
   // Wizard state
   const [datastoreWizardOpen, setDatastoreWizardOpen] = useState(false);
   const [drShellWizardOpen, setDrShellWizardOpen] = useState(false);
   const [selectedVM, setSelectedVM] = useState<ProtectedVM | null>(null);
+  
+  // Get existing VM IDs to exclude from selector
+  const existingVMIds = vms.map(vm => vm.vm_id).filter(Boolean) as string[];
   
   const openDatastoreWizard = (vm: ProtectedVM) => {
     setSelectedVM(vm);
@@ -76,23 +69,6 @@ export function ProtectedVMsTable({
   
   const handleWizardComplete = () => {
     onRefresh?.();
-  };
-
-  const handleAdd = async () => {
-    if (!newVMName.trim()) return;
-    
-    setAdding(true);
-    try {
-      await onAddVM({
-        vm_name: newVMName,
-        current_datastore: newVMDatastore || undefined,
-      });
-      setShowAddDialog(false);
-      setNewVMName("");
-      setNewVMDatastore("");
-    } finally {
-      setAdding(false);
-    }
   };
 
   const getStatusBadge = (status: string) => {
@@ -137,55 +113,23 @@ export function ProtectedVMsTable({
     <div className="space-y-4">
       {/* Add VM Button */}
       <div className="flex justify-end">
-        <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
-          <DialogTrigger asChild>
-            <Button size="sm">
-              <Plus className="h-4 w-4 mr-1" />
-              Add VM
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add VM to Protection</DialogTitle>
-              <DialogDescription>
-                Add a VM to this protection group for DR replication
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">VM Name</label>
-                <Input
-                  placeholder="e.g., db-primary"
-                  value={newVMName}
-                  onChange={(e) => setNewVMName(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Current Datastore</label>
-                <Input
-                  placeholder="e.g., Production-DS"
-                  value={newVMDatastore}
-                  onChange={(e) => setNewVMDatastore(e.target.value)}
-                />
-                {protectionDatastore && newVMDatastore && newVMDatastore !== protectionDatastore && (
-                  <div className="flex items-center gap-2 text-xs text-amber-600">
-                    <AlertTriangle className="h-3 w-3" />
-                    Storage vMotion required: {newVMDatastore} → {protectionDatastore}
-                  </div>
-                )}
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setShowAddDialog(false)}>
-                Cancel
-              </Button>
-              <Button onClick={handleAdd} disabled={adding || !newVMName.trim()}>
-                {adding ? 'Adding...' : 'Add VM'}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <Button size="sm" onClick={() => setShowAddDialog(true)} disabled={!sourceVCenterId}>
+          <Plus className="h-4 w-4 mr-1" />
+          Add VM
+        </Button>
       </div>
+
+      {/* Add VM Selector Dialog */}
+      {sourceVCenterId && (
+        <AddVMSelector
+          open={showAddDialog}
+          onOpenChange={setShowAddDialog}
+          sourceVCenterId={sourceVCenterId}
+          protectionDatastore={protectionDatastore}
+          existingVMIds={existingVMIds}
+          onAddVM={onAddVM}
+        />
+      )}
 
       {/* VMs Table */}
       {vms.length === 0 ? (
