@@ -724,7 +724,7 @@ export const WorkflowExecutionViewer = ({
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-medium">
-                                {step.step_number}. {step.step_name}
+                                {step.step_name}
                               </span>
                               {hasDetails && (
                                 isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />
