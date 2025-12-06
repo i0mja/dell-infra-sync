@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { compareValues } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +20,7 @@ import {
   Trash2,
   Flag,
   AlertTriangle,
+  Server,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -321,6 +323,30 @@ export function JobsTable({
   };
 
   const getTarget = (job: Job) => {
+    // Handle cluster update jobs - show cluster name with host count
+    if (job.job_type === 'rolling_cluster_update') {
+      const clusterName = job.target_scope?.cluster_name || job.details?.workflow_results?.cluster_id;
+      const hostCount = job.details?.workflow_results?.total_hosts || job.target_scope?.server_ids?.length;
+      
+      if (clusterName) {
+        return (
+          <div className="flex items-center gap-1.5">
+            <Server className="h-3.5 w-3.5 text-primary" />
+            <Link 
+              to={`/vcenter?cluster=${encodeURIComponent(clusterName)}`}
+              className="font-medium text-primary hover:underline"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {clusterName}
+            </Link>
+            {hostCount && (
+              <span className="text-muted-foreground">({hostCount} hosts)</span>
+            )}
+          </div>
+        );
+      }
+    }
+    
     if (job.job_type === 'vcenter_sync') {
       const vmsTotal = job.details?.vms_total;
       const hostsTotal = job.details?.hosts_total;
@@ -616,21 +642,27 @@ export function JobsTable({
                     {isColumnVisible("progress") && (
                       <TableCell>
                         {job.status === "running" ? (
-                          job.calculatedProgress !== undefined && job.calculatedProgress !== null ? (
-                            <div className="flex items-center gap-2">
-                              <Progress value={job.calculatedProgress} className="w-24 h-2" />
-                              <span className="text-xs text-muted-foreground">{job.calculatedProgress}%</span>
-                            </div>
-                          ) : job.averageProgress !== undefined && job.averageProgress > 0 ? (
-                            <div className="flex items-center gap-2">
-                              <Progress value={job.averageProgress} className="w-24 h-2" />
-                              <span className="text-xs text-muted-foreground">{Math.round(job.averageProgress)}%</span>
-                            </div>
-                          ) : job.details?.current_step ? (
-                            <span className="text-xs text-muted-foreground truncate max-w-[150px]">{job.details.current_step}</span>
-                          ) : (
-                            <span className="text-sm text-muted-foreground">—</span>
-                          )
+                          <div className="space-y-1">
+                            {job.calculatedProgress !== undefined && job.calculatedProgress !== null ? (
+                              <div className="flex items-center gap-2">
+                                <Progress value={job.calculatedProgress} className="w-24 h-2" />
+                                <span className="text-xs text-muted-foreground">{job.calculatedProgress}%</span>
+                              </div>
+                            ) : job.averageProgress !== undefined && job.averageProgress > 0 ? (
+                              <div className="flex items-center gap-2">
+                                <Progress value={job.averageProgress} className="w-24 h-2" />
+                                <span className="text-xs text-muted-foreground">{Math.round(job.averageProgress)}%</span>
+                              </div>
+                            ) : job.details?.current_step ? (
+                              <span className="text-xs text-muted-foreground truncate max-w-[150px] block">{job.details.current_step}</span>
+                            ) : null}
+                            {/* Show current host for cluster updates */}
+                            {job.job_type === 'rolling_cluster_update' && job.details?.current_host && (
+                              <div className="text-xs text-muted-foreground truncate max-w-[200px]">
+                                → {job.details.current_host}
+                              </div>
+                            )}
+                          </div>
                         ) : (
                           <span className="text-sm text-muted-foreground">—</span>
                         )}
