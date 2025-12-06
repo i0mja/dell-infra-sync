@@ -3743,6 +3743,7 @@ export type Database = {
         | "idm_test_ad_connection"
         | "idrac_network_read"
         | "idrac_network_write"
+        | "storage_vmotion"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -3924,6 +3925,7 @@ export const Constants = {
         "idm_test_ad_connection",
         "idrac_network_read",
         "idrac_network_write",
+        "storage_vmotion",
       ],
       operation_type: [
         "idrac_api",

@@ -454,6 +454,14 @@ export function useVCenterVMs(vcenterId?: string) {
   return { vms, loading, error: error?.message || null, refetch };
 }
 
+// Check if running in mixed content scenario (HTTPS page -> HTTP API)
+const checkMixedContent = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  if (window.location.protocol !== 'https:') return false;
+  const url = getJobExecutorUrl();
+  return url?.startsWith('http://') ?? false;
+};
+
 // Wizard hooks - these require Job Executor for actual operations
 export function useProtectionPlan(protectedVmId?: string) {
   const { toast } = useToast();
@@ -474,10 +482,79 @@ export function useProtectionPlan(protectedVmId?: string) {
     enabled: !!protectedVmId
   });
 
-  // This operation requires Job Executor
+  // Move via job queue fallback (for HTTPS/mixed content scenarios)
+  const moveViaJobQueue = async (vmId: string, targetDatastore?: string): Promise<{ success: boolean; message: string }> => {
+    const startTime = Date.now();
+    
+    // Create a storage_vmotion job
+    const { data: job, error } = await supabase
+      .from('jobs')
+      .insert({
+        job_type: 'storage_vmotion',
+        status: 'pending',
+        target_scope: { protected_vm_id: vmId },
+        details: { target_datastore: targetDatastore }
+      })
+      .select()
+      .single();
+    
+    if (error || !job) {
+      throw new Error('Failed to create storage vMotion job');
+    }
+    
+    // Poll for job completion (max 5 minutes)
+    const pollInterval = 2000;
+    const maxWait = 300000;
+    
+    while (Date.now() - startTime < maxWait) {
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+      
+      const { data: updatedJob } = await supabase
+        .from('jobs')
+        .select('status, details')
+        .eq('id', job.id)
+        .single();
+      
+      if (!updatedJob) continue;
+      
+      if (updatedJob.status === 'completed') {
+        return {
+          success: true,
+          message: (updatedJob.details as { message?: string })?.message || 'VM relocated successfully'
+        };
+      }
+      
+      if (updatedJob.status === 'failed' || updatedJob.status === 'cancelled') {
+        const details = updatedJob.details as { error?: string } | null;
+        throw new Error(details?.error || 'Storage vMotion job failed');
+      }
+    }
+    
+    throw new Error('Storage vMotion job timed out');
+  };
+
+  // This operation requires Job Executor - with job queue fallback for HTTPS
   const moveToProtectionDatastore = async (targetDatastore?: string) => {
     if (!protectedVmId) return;
     
+    const isMixedContent = checkMixedContent();
+    
+    // Use job queue directly if mixed content scenario
+    if (isMixedContent) {
+      try {
+        const result = await moveViaJobQueue(protectedVmId, targetDatastore);
+        toast({ title: 'VM relocated', description: result.message });
+        queryClient.invalidateQueries({ queryKey: ['protection-plan', protectedVmId] });
+        queryClient.invalidateQueries({ queryKey: ['protected-vms'] });
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to relocate VM';
+        toast({ title: 'Error', description: message, variant: 'destructive' });
+        throw err;
+      }
+    }
+    
+    // Try direct API first
     try {
       const data = await fetchJobExecutor<{ success: boolean; message: string }>(
         `/api/replication/protected-vms/${protectedVmId}/move-to-protection-datastore`,
@@ -491,6 +568,21 @@ export function useProtectionPlan(protectedVmId?: string) {
       queryClient.invalidateQueries({ queryKey: ['protected-vms'] });
       return data;
     } catch (err) {
+      // Fall back to job queue on network errors
+      if (err instanceof Error && err.message?.includes('Failed to fetch')) {
+        try {
+          const result = await moveViaJobQueue(protectedVmId, targetDatastore);
+          toast({ title: 'VM relocated', description: result.message });
+          queryClient.invalidateQueries({ queryKey: ['protection-plan', protectedVmId] });
+          queryClient.invalidateQueries({ queryKey: ['protected-vms'] });
+          return result;
+        } catch (fallbackErr) {
+          const message = fallbackErr instanceof Error ? fallbackErr.message : 'Failed to relocate VM';
+          toast({ title: 'Error', description: message, variant: 'destructive' });
+          throw fallbackErr;
+        }
+      }
+      
       const message = err instanceof Error ? err.message : 'Failed to relocate VM';
       toast({ title: 'Error', description: message, variant: 'destructive' });
       throw err;
