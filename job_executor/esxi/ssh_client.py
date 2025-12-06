@@ -204,3 +204,118 @@ class EsxiSshClient:
             'success': False,
             'error': f'Host did not reconnect within {timeout}s'
         }
+    
+    def check_coredump_config(self) -> Dict:
+        """
+        Check if coredump target is configured on ESXi host
+        
+        Returns:
+            Dict with success status, configured flag, and details
+        """
+        try:
+            # Check coredump file configuration
+            exit_code, stdout, stderr = self.execute_command('esxcli system coredump file list')
+            
+            # Parse output - look for an active coredump file
+            has_active_coredump = False
+            coredump_path = None
+            coredump_size = None
+            
+            if exit_code == 0:
+                lines = stdout.strip().split('\n')
+                for line in lines:
+                    if 'Active:' in line and 'true' in line.lower():
+                        has_active_coredump = True
+                    if '/vmfs/volumes/' in line:
+                        parts = line.split()
+                        if len(parts) >= 1:
+                            coredump_path = parts[0]
+                    # Also check for configured coredump
+                    if line.strip() and not line.startswith('-') and 'Path' not in line:
+                        # Parse table format: Path  Size  Active  Configured
+                        parts = line.split()
+                        if len(parts) >= 4:
+                            coredump_path = parts[0]
+                            coredump_size = parts[1] if len(parts) > 1 else None
+                            has_active_coredump = 'true' in parts[2].lower() if len(parts) > 2 else False
+            
+            # Also check network coredump as fallback
+            exit_code2, stdout2, stderr2 = self.execute_command('esxcli system coredump network get')
+            network_coredump_enabled = False
+            if exit_code2 == 0 and 'Enabled: true' in stdout2:
+                network_coredump_enabled = True
+            
+            configured = has_active_coredump or network_coredump_enabled
+            
+            return {
+                'success': True,
+                'configured': configured,
+                'file_coredump': {
+                    'active': has_active_coredump,
+                    'path': coredump_path,
+                    'size': coredump_size
+                },
+                'network_coredump': {
+                    'enabled': network_coredump_enabled
+                },
+                'raw_output': stdout,
+                'warning': None if configured else 'No coredump target has been configured. Host core dumps cannot be saved.'
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e), 'configured': False}
+    
+    def configure_coredump(self, force: bool = False) -> Dict:
+        """
+        Configure coredump file on ESXi host
+        Creates and activates a coredump file if none exists
+        
+        Args:
+            force: If True, reconfigure even if already configured
+            
+        Returns:
+            Dict with success status and details
+        """
+        try:
+            # First check current status
+            current = self.check_coredump_config()
+            
+            if current.get('configured') and not force:
+                return {
+                    'success': True,
+                    'message': 'Coredump already configured',
+                    'already_configured': True,
+                    'details': current
+                }
+            
+            # Create coredump file (auto-sizes based on available space)
+            self.execute_command('esxcli system coredump file remove -f', timeout=30)  # Remove any existing unconfigured file
+            
+            exit_code, stdout, stderr = self.execute_command(
+                'esxcli system coredump file add -e true',
+                timeout=60
+            )
+            
+            if exit_code != 0:
+                # Try alternative: set existing file active
+                exit_code2, stdout2, stderr2 = self.execute_command(
+                    'esxcli system coredump file set -s true',
+                    timeout=30
+                )
+                if exit_code2 != 0:
+                    return {
+                        'success': False,
+                        'error': f'Failed to configure coredump: {stderr or stderr2}',
+                        'stdout': stdout or stdout2
+                    }
+            
+            # Verify configuration
+            verify = self.check_coredump_config()
+            
+            return {
+                'success': verify.get('configured', False),
+                'message': 'Coredump configured successfully' if verify.get('configured') else 'Coredump configuration may have failed',
+                'already_configured': False,
+                'details': verify
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
