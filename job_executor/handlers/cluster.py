@@ -1841,7 +1841,7 @@ class ClusterHandler(BaseHandler):
                                     try:
                                         test_session = self.executor.create_idrac_session(
                                             server['ip_address'], username, password,
-                                            log_to_db=False, timeout=10
+                                            log_to_db=False
                                         )
                                         if test_session:
                                             self.executor.delete_idrac_session(
