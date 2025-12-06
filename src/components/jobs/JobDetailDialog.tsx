@@ -276,7 +276,7 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
       case 'esxi_preflight_check':
         return <EsxiPreflightResults details={job.details} />;
       case 'storage_vmotion':
-        return <StorageVMotionResults details={job.details} />;
+        return <StorageVMotionResults details={job.details} status={job.status} />;
       default:
         return <GenericResults details={job.details} />;
     }
