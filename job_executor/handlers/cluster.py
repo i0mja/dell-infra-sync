@@ -12,14 +12,29 @@ from job_executor.utils import utc_now_iso
 class ClusterHandler(BaseHandler):
     """Handles cluster safety checks and update workflows"""
     
-    def _check_esxi_accessible(self, ip: str, timeout: int = 5) -> bool:
-        """Check if ESXi is accessible on HTTPS port 443"""
+    def _check_esxi_accessible(self, hostname: str, timeout: int = 5) -> bool:
+        """Check if ESXi is accessible on HTTPS port 443 with detailed error handling"""
         import socket
+        try:
+            # First resolve DNS
+            ip = socket.gethostbyname(hostname)
+        except socket.gaierror as e:
+            self.log(f"      DNS resolution failed for {hostname}: {e}", "DEBUG")
+            return False
+        
         try:
             sock = socket.create_connection((ip, 443), timeout=timeout)
             sock.close()
             return True
-        except:
+        except socket.timeout:
+            return False  # Normal during reboot - don't log
+        except ConnectionRefusedError:
+            return False  # ESXi not ready - don't log
+        except OSError as e:
+            self.log(f"      Socket error for {hostname} ({ip}): {e}", "DEBUG")
+            return False
+        except Exception as e:
+            self.log(f"      Unexpected error checking {hostname}: {type(e).__name__}: {e}", "DEBUG")
             return False
     
     def _execute_batch_preflight_checks(
@@ -1730,9 +1745,16 @@ class ClusterHandler(BaseHandler):
                             )
                             
                             self.log(f"  [3/6] Waiting for system reboot...")
+                            
+                            # Immediate status update when entering wait loop
+                            reboot_wait_started = utc_now_iso()
+                            esxi_target = host.get('name') or server['ip_address']
                             self.update_job_details_field(job['id'], {
-                                'current_step': f'Rebooting server: {host["name"]}'
+                                'current_step': f'Waiting for server to reboot: {host["name"]}',
+                                'reboot_wait_started': reboot_wait_started,
+                                'reboot_wait_target': esxi_target
                             })
+                            
                             self.log(f"    Initial wait: 3 minutes for BIOS POST and reboot...")
                             time.sleep(180)  # Wait 3 minutes for reboot to start (BIOS POST can be slow)
                             
@@ -1768,24 +1790,34 @@ class ClusterHandler(BaseHandler):
                                             )
                                             idrac_online = True
                                             self.log(f"    ✓ iDRAC back online (attempt {attempt+1}/{max_attempts})")
-                                    except:
-                                        pass
+                                    except Exception as idrac_err:
+                                        # Log iDRAC errors every minute instead of silently swallowing
+                                        if attempt % 6 == 0:
+                                            self.log(f"      iDRAC check failed: {type(idrac_err).__name__}: {idrac_err}", "DEBUG")
                                 
                                 # Phase 2: Wait for ESXi to be accessible (only after iDRAC is up)
                                 if idrac_online and not esxi_online:
-                                    # Use ESXi hostname from vCenter (host['name']) instead of iDRAC IP
-                                    # ESXi management interface runs on a different IP than iDRAC
-                                    esxi_target = host.get('name') or server['ip_address']
-                                    
-                                    # Update UI with waiting for ESXi status
-                                    if attempt % 6 == 0:  # Every minute
-                                        self.update_job_details_field(job['id'], {
-                                            'current_step': f'Waiting for ESXi to come online: {esxi_target}'
-                                        })
                                     if self._check_esxi_accessible(esxi_target, timeout=5):
                                         esxi_online = True
                                         self.log(f"    ✓ ESXi accessible on port 443 ({esxi_target})")
                                         break
+                                
+                                # Heartbeat logging every minute with timestamps
+                                if attempt % 6 == 0:
+                                    elapsed_mins = (attempt * 10) // 60
+                                    self.update_job_details_field(job['id'], {
+                                        'current_step': f'Waiting for {"ESXi" if idrac_online else "iDRAC"}: {esxi_target}',
+                                        'wait_heartbeat': utc_now_iso(),
+                                        'wait_attempt': attempt,
+                                        'wait_elapsed_mins': elapsed_mins,
+                                        'idrac_online': idrac_online,
+                                        'esxi_online': esxi_online
+                                    })
+                                
+                                # Safety valve: detailed logging after 15 minutes
+                                if attempt == 90:
+                                    self.log(f"    ⚠ Extended wait (15 min): iDRAC={idrac_online}, ESXi={esxi_online}", "WARN")
+                                    self.log(f"      Target: {esxi_target}, iDRAC IP: {server['ip_address']}", "WARN")
                                 
                                 # Progress logging every 30 seconds
                                 if attempt > 0 and attempt % 3 == 0:
