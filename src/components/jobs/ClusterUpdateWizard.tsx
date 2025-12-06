@@ -1734,12 +1734,6 @@ export const ClusterUpdateWizard = ({
                 <div>
                   <DialogTitle className="flex items-center gap-2">
                     Update Wizard
-                    {safetyCheckLoading && (
-                      <Badge variant="secondary" className="animate-pulse ml-2">
-                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                        Pre-flight running
-                      </Badge>
-                    )}
                   </DialogTitle>
                   <DialogDescription>
                     Guided workflow for firmware and ESXi updates across clusters, groups, or servers

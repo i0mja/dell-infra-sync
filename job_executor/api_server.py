@@ -1663,8 +1663,14 @@ class APIHandler(BaseHTTPRequestHandler):
         return result
     
     def _handle_preflight_check_stream(self):
-        """Stream pre-flight check progress using Server-Sent Events (SSE)"""
+        """Stream pre-flight check progress using Server-Sent Events (SSE)
+        
+        Optimized with parallel server checking using ThreadPoolExecutor.
+        """
         from urllib.parse import urlparse, parse_qs
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import threading
+        
         start_time = datetime.now()
         
         # Parse query parameters from URL
@@ -1678,7 +1684,7 @@ class APIHandler(BaseHTTPRequestHandler):
             self._send_error('server_ids query parameter is required', 400)
             return
         
-        self.executor.log(f"API: Pre-flight check stream for {len(server_ids)} servers, firmware_source={firmware_source}")
+        self.executor.log(f"API: Pre-flight check stream for {len(server_ids)} servers (parallel), firmware_source={firmware_source}")
         
         # Set up SSE headers
         self.send_response(200)
@@ -1688,8 +1694,17 @@ class APIHandler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
         
+        # Thread-safe counter and lock for progress
+        progress_lock = threading.Lock()
+        progress_state = {
+            'completed': 0,
+            'passed': 0,
+            'failed': 0,
+            'current_hostname': 'Starting...'
+        }
+        
         def send_event(event_type: str, data: dict):
-            """Send an SSE event"""
+            """Send an SSE event (thread-safe)"""
             try:
                 event_data = json.dumps(data)
                 self.wfile.write(f"event: {event_type}\n".encode())
@@ -1697,6 +1712,20 @@ class APIHandler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             except Exception as e:
                 self.executor.log(f"SSE write error: {e}", "ERROR")
+        
+        def check_server(server_id: str, dell_ops, index: int) -> dict:
+            """Check a single server (runs in thread pool)"""
+            server = self.executor.get_server_by_id(server_id)
+            hostname = server.get('hostname', server.get('ip_address', 'Unknown')) if server else 'Unknown'
+            
+            # Update current hostname being checked
+            with progress_lock:
+                progress_state['current_hostname'] = hostname
+            
+            # Run the actual preflight check
+            result = self._run_server_preflight_optimized(server_id, dell_ops)
+            result['_index'] = index
+            return result
         
         try:
             results = {
@@ -1710,8 +1739,6 @@ class APIHandler(BaseHTTPRequestHandler):
             dell_ops = self.executor._get_dell_operations()
             first_server_with_creds = None
             total_servers = len(server_ids)
-            passed_count = 0
-            failed_count = 0
             
             # Send initial progress
             send_event('progress', {
@@ -1723,42 +1750,86 @@ class APIHandler(BaseHTTPRequestHandler):
                 'failed': 0
             })
             
-            for i, server_id in enumerate(server_ids):
-                # Get hostname for progress display before running checks
-                server = self.executor.get_server_by_id(server_id)
-                current_hostname = server.get('hostname', server.get('ip_address', 'Unknown')) if server else 'Unknown'
+            # Use ThreadPoolExecutor for parallel checking (limit to 4 concurrent)
+            max_workers = min(4, total_servers)
+            server_results = []
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all server checks
+                future_to_server = {
+                    executor.submit(check_server, server_id, dell_ops, i): (server_id, i)
+                    for i, server_id in enumerate(server_ids)
+                }
                 
-                # Send progress update - checking this server
-                send_event('progress', {
-                    'current': i,
-                    'total': total_servers,
-                    'percent': int((i / total_servers) * 100),
-                    'current_hostname': current_hostname,
-                    'passed': passed_count,
-                    'failed': failed_count,
-                    'status': 'checking'
-                })
-                
-                # Run actual check for this server
-                server_result = self._run_server_preflight(server_id, dell_ops)
+                # Process results as they complete
+                for future in as_completed(future_to_server):
+                    server_id, original_index = future_to_server[future]
+                    try:
+                        server_result = future.result()
+                        server_results.append(server_result)
+                        
+                        # Update progress counters
+                        with progress_lock:
+                            progress_state['completed'] += 1
+                            if server_result['ready']:
+                                progress_state['passed'] += 1
+                            else:
+                                progress_state['failed'] += 1
+                        
+                        # Send progress update
+                        send_event('progress', {
+                            'current': progress_state['completed'],
+                            'total': total_servers,
+                            'percent': int((progress_state['completed'] / total_servers) * 100),
+                            'current_hostname': server_result.get('hostname', 'Unknown'),
+                            'passed': progress_state['passed'],
+                            'failed': progress_state['failed'],
+                            'status': 'completed'
+                        })
+                        
+                        # Send individual server result
+                        send_event('server_result', {
+                            'server_id': server_id,
+                            'hostname': server_result.get('hostname'),
+                            'ready': server_result['ready'],
+                            'index': progress_state['completed']
+                        })
+                        
+                    except Exception as e:
+                        self.executor.log(f"Preflight check failed for {server_id}: {e}", "ERROR")
+                        # Create a failed result
+                        server_results.append({
+                            'server_id': server_id,
+                            'hostname': 'Unknown',
+                            'ready': False,
+                            'blockers': [{'type': 'error', 'message': str(e)}],
+                            'warnings': [],
+                            'checks': {}
+                        })
+                        with progress_lock:
+                            progress_state['completed'] += 1
+                            progress_state['failed'] += 1
+            
+            # Sort results back to original order and process
+            server_results.sort(key=lambda x: x.get('_index', 0))
+            
+            for server_result in server_results:
+                # Remove internal index
+                server_result.pop('_index', None)
                 results['servers'].append(server_result)
                 
-                # Update counters
-                if server_result['ready']:
-                    passed_count += 1
-                else:
-                    failed_count += 1
+                if not server_result['ready']:
                     results['overall_ready'] = False
                     for blocker in server_result.get('blockers', []):
                         results['blockers'].append({
-                            'server_id': server_id,
+                            'server_id': server_result.get('server_id'),
                             'hostname': server_result.get('hostname', 'Unknown'),
                             **blocker
                         })
                 
                 for warning in server_result.get('warnings', []):
                     results['warnings'].append({
-                        'server_id': server_id,
+                        'server_id': server_result.get('server_id'),
                         'hostname': server_result.get('hostname', 'Unknown'),
                         'message': warning
                     })
@@ -1766,25 +1837,6 @@ class APIHandler(BaseHTTPRequestHandler):
                 # Track first server with valid credentials for Dell repo check
                 if first_server_with_creds is None and server_result.get('checks', {}).get('auth', {}).get('passed'):
                     first_server_with_creds = server_result
-                
-                # Send server result event
-                send_event('server_result', {
-                    'server_id': server_id,
-                    'hostname': server_result.get('hostname'),
-                    'ready': server_result['ready'],
-                    'index': i + 1
-                })
-                
-                # Send updated progress
-                send_event('progress', {
-                    'current': i + 1,
-                    'total': total_servers,
-                    'percent': int(((i + 1) / total_servers) * 100),
-                    'current_hostname': current_hostname,
-                    'passed': passed_count,
-                    'failed': failed_count,
-                    'status': 'completed'
-                })
             
             # If using Dell online catalog, check DNS and Dell repo reachability
             if firmware_source == 'dell_online_catalog' and first_server_with_creds:
@@ -1881,6 +1933,143 @@ class APIHandler(BaseHTTPRequestHandler):
         
         except Exception as e:
             result['dell_error'] = str(e)
+        
+        return result
+    
+    def _run_server_preflight_optimized(self, server_id: str, dell_ops) -> dict:
+        """Optimized pre-flight checks for a single server.
+        
+        Reduces HTTP requests by:
+        1. Using get_system_info as combined connectivity+auth test
+        2. Combining LC status and job queue checks where possible
+        """
+        result = {
+            'server_id': server_id,
+            'hostname': None,
+            'ip_address': None,
+            'ready': True,
+            'checks': {
+                'connectivity': {'passed': False, 'message': 'Not checked'},
+                'auth': {'passed': False, 'message': 'Not checked'},
+                'lifecycle_controller': {'passed': False, 'status': 'Unknown'},
+                'pending_jobs': {'passed': False, 'count': None},
+                'power_state': {'passed': False, 'state': 'Unknown'},
+                'system_health': {'passed': False, 'overall': 'Unknown'},
+            },
+            'blockers': [],
+            'warnings': []
+        }
+        
+        try:
+            # Get server info
+            server = self.executor.get_server_by_id(server_id)
+            if not server:
+                result['ready'] = False
+                result['blockers'].append({'type': 'server_not_found', 'message': 'Server not found in database'})
+                return result
+            
+            result['hostname'] = server.get('hostname', 'Unknown')
+            result['ip_address'] = server.get('ip_address')
+            ip = result['ip_address']
+            
+            # Get credentials first
+            username, password = self.executor.get_server_credentials(server_id)
+            if not username or not password:
+                result['checks']['auth'] = {'passed': False, 'message': 'No credentials configured'}
+                result['ready'] = False
+                result['blockers'].append({'type': 'auth', 'message': 'No credentials configured for server'})
+                return result
+            
+            # OPTIMIZED: Combined connectivity + auth check via get_system_info
+            # This is ONE request that validates both connectivity and auth
+            try:
+                system_info = dell_ops.get_system_info(ip, username, password, server_id=server_id)
+                
+                # If we get here, both connectivity and auth passed
+                result['checks']['connectivity'] = {'passed': True, 'message': 'Reachable'}
+                result['checks']['auth'] = {'passed': True, 'message': 'Authentication successful'}
+                
+                # Extract power state and health from the same response
+                power_state = system_info.get('system', {}).get('power_state', 'Unknown')
+                result['checks']['power_state'] = {'passed': True, 'state': power_state}
+                if power_state == 'Off':
+                    result['warnings'].append('Server is powered off - will need to be powered on for updates')
+                
+                health = system_info.get('system', {}).get('health', 'Unknown')
+                result['checks']['system_health'] = {'passed': health in ['OK', 'Warning'], 'overall': health}
+                if health == 'Critical':
+                    result['warnings'].append('System health is Critical - review before updating')
+                elif health == 'Warning':
+                    result['warnings'].append('System health shows warnings')
+                    
+            except Exception as e:
+                error_str = str(e).lower()
+                if 'timeout' in error_str or 'connection' in error_str or 'refused' in error_str:
+                    result['checks']['connectivity'] = {'passed': False, 'message': 'iDRAC not reachable'}
+                    result['blockers'].append({'type': 'connectivity', 'message': 'iDRAC not reachable'})
+                elif '401' in error_str or 'unauthorized' in error_str or 'authentication' in error_str:
+                    result['checks']['connectivity'] = {'passed': True, 'message': 'Reachable'}
+                    result['checks']['auth'] = {'passed': False, 'message': 'Authentication failed'}
+                    result['blockers'].append({'type': 'auth', 'message': 'Authentication failed'})
+                else:
+                    result['checks']['connectivity'] = {'passed': False, 'message': str(e)}
+                    result['blockers'].append({'type': 'connectivity', 'message': str(e)})
+                
+                result['ready'] = False
+                return result
+            
+            # Check 3: Lifecycle Controller Status (separate request required)
+            try:
+                lc_status = dell_ops.get_lifecycle_controller_status(ip, username, password, server_id=server_id)
+                lc_state = lc_status.get('status', 'Unknown')
+                server_state = lc_status.get('server_status', 'Unknown')
+                
+                if lc_state == 'Ready':
+                    result['checks']['lifecycle_controller'] = {
+                        'passed': True, 
+                        'status': lc_state,
+                        'server_status': server_state,
+                        'message': lc_status.get('message', '')
+                    }
+                else:
+                    result['checks']['lifecycle_controller'] = {
+                        'passed': False, 
+                        'status': lc_state,
+                        'server_status': server_state,
+                        'message': lc_status.get('message', '')
+                    }
+                    result['ready'] = False
+                    result['blockers'].append({
+                        'type': 'lifecycle_controller', 
+                        'message': f'Lifecycle Controller not ready: {lc_state} (Server: {server_state})'
+                    })
+            except Exception as e:
+                result['checks']['lifecycle_controller'] = {'passed': False, 'status': f'Error: {str(e)}'}
+                result['warnings'].append(f'Could not check LC status: {str(e)}')
+            
+            # Check 4: Pending iDRAC Jobs (separate request required)
+            try:
+                jobs_result = dell_ops.get_idrac_job_queue(ip, username, password, include_details=True, server_id=server_id)
+                all_jobs = jobs_result.get('jobs', []) if isinstance(jobs_result, dict) else (jobs_result or [])
+                pending_jobs = [j for j in all_jobs if j.get('job_state') in ['Scheduled', 'Running', 'Waiting', 'New']]
+                count = len(pending_jobs)
+                
+                if count == 0:
+                    result['checks']['pending_jobs'] = {'passed': True, 'count': 0, 'jobs': []}
+                else:
+                    result['checks']['pending_jobs'] = {'passed': False, 'count': count, 'jobs': pending_jobs[:5]}
+                    result['ready'] = False
+                    result['blockers'].append({
+                        'type': 'pending_jobs',
+                        'message': f'{count} pending iDRAC job(s) must be cleared first'
+                    })
+            except Exception as e:
+                result['checks']['pending_jobs'] = {'passed': False, 'count': None, 'jobs': [], 'message': str(e)}
+                result['warnings'].append(f'Could not check iDRAC jobs: {str(e)}')
+            
+        except Exception as e:
+            result['ready'] = False
+            result['blockers'].append({'type': 'unknown', 'message': str(e)})
         
         return result
     

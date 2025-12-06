@@ -86,7 +86,7 @@ export function PreFlightCheckResults({
           {/* Progress bar with percentage */}
           <div className="space-y-2">
             <div className="flex justify-between text-sm">
-              <span className="font-medium">Running Pre-Flight Checks...</span>
+              <span className="font-medium">Checking servers...</span>
               <span className="text-muted-foreground">
                 {progress ? `${progress.current}/${progress.total}` : 'Initializing...'}
               </span>
