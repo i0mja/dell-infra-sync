@@ -3,11 +3,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ReportsFilterToolbar } from "@/components/reports/ReportsFilterToolbar";
 import { ReportSummaryBar } from "@/components/reports/ReportSummaryBar";
 import { ReportTable, ReportColumn } from "@/components/reports/ReportTable";
+import { UpdateDetailDialog } from "@/components/reports/UpdateDetailDialog";
 import { REPORT_CATEGORIES, getReportsByCategory, ReportCategory, ReportType, REPORTS } from "@/config/reports-config";
 import { useReports } from "@/hooks/useReports";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { Badge } from "@/components/ui/badge";
-import { subDays, startOfMonth, endOfMonth, subMonths } from "date-fns";
+import { subDays, startOfMonth, endOfMonth, subMonths, format } from "date-fns";
 
 // Get date range from preset string
 function getDateRangeFromPreset(preset: string): { from: Date; to: Date } {
@@ -166,34 +167,7 @@ function getTableColumns(reportType: ReportType): ReportColumn[] {
     case "update_history":
       return [
         { key: "server", label: "Server" },
-        { key: "server_ip", label: "IP Address" },
         { key: "cluster_name", label: "Cluster" },
-        { key: "job_type_label", label: "Update Type" },
-        { 
-          key: "components_updated", 
-          label: "Components",
-          format: (value: number) => value ? `${value} updated` : "-"
-        },
-        { key: "component_summary", label: "Update Details" },
-        { 
-          key: "highest_criticality", 
-          label: "Criticality",
-          format: (value: string) => value ? (
-            <Badge variant={value === "Critical" ? "destructive" : value === "Recommended" ? "secondary" : "outline"}>
-              {value}
-            </Badge>
-          ) : "-"
-        },
-        { 
-          key: "reboot_required", 
-          label: "Reboot",
-          format: (value: boolean) => value ? "Yes" : "No"
-        },
-        { 
-          key: "scp_backup", 
-          label: "SCP Backup",
-          format: (value: boolean) => value ? "✓" : "✗"
-        },
         { 
           key: "status", 
           label: "Result",
@@ -203,9 +177,16 @@ function getTableColumns(reportType: ReportType): ReportColumn[] {
             </Badge>
           )
         },
-        { key: "initiated_by", label: "Initiated By" },
-        { key: "duration_formatted", label: "Duration" },
-        { key: "started_at", label: "Started", format: (value: string) => value ? new Date(value).toLocaleString() : "-" },
+        { 
+          key: "components_updated", 
+          label: "Components",
+          format: (value: number) => value ? `${value} updated` : "-"
+        },
+        { 
+          key: "started_at", 
+          label: "Date", 
+          format: (value: string) => value ? format(new Date(value), "MMM d, yyyy") : "-" 
+        },
       ];
 
     case "update_failures":
@@ -349,6 +330,7 @@ export default function Reports() {
   const [dateRangePreset, setDateRangePreset] = useState("30d");
   const [searchTerm, setSearchTerm] = useState("");
   const [visibleColumns, setVisibleColumns] = useState<string[]>([]);
+  const [selectedUpdate, setSelectedUpdate] = useState<any | null>(null);
 
   // Get reports for the active category
   const categoryReports = useMemo(() => getReportsByCategory(activeCategory), [activeCategory]);
@@ -492,12 +474,19 @@ export default function Reports() {
                   visibleColumns={currentVisibleColumns}
                   isLoading={isLoading}
                   searchTerm={searchTerm}
+                  onRowClick={currentReportType === "update_history" ? setSelectedUpdate : undefined}
                 />
               )}
             </TabsContent>
           ))}
         </Tabs>
       </div>
+
+      <UpdateDetailDialog
+        open={!!selectedUpdate}
+        onOpenChange={(open) => !open && setSelectedUpdate(null)}
+        update={selectedUpdate}
+      />
     </div>
   );
 }
