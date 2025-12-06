@@ -1,0 +1,10 @@
+flowchart LR
+    UI["React /replication Page"]
+    API["/api/replication Router"]
+    DB["Supabase Postgres"]
+    ORCH["Zerfaux Orchestration Stubs"]
+
+    UI --> API
+    API --> ORCH
+    API --> DB
+    ORCH --> DB
