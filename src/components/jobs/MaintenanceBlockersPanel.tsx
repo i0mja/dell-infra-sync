@@ -21,11 +21,12 @@ import { useState } from "react";
 interface MaintenanceBlocker {
   vm_name: string;
   vm_id: string;
-  reason: 'local_storage' | 'passthrough' | 'affinity' | 'connected_media' | 'vcsa' | 'critical_infra';
+  reason: 'local_storage' | 'passthrough' | 'affinity' | 'connected_media' | 'vcsa' | 'critical_infra' | 'drs_no_destination' | 'drs_resource_constraint' | 'drs_anti_affinity' | 'drs_evc_incompatible';
   severity: 'critical' | 'warning';
   details: string;
   remediation: string;
   auto_fixable: boolean;
+  power_off_eligible?: boolean;
 }
 
 interface HostBlockerAnalysis {
@@ -44,6 +45,8 @@ interface MaintenanceBlockersPanelProps {
   blockers: Record<string, HostBlockerAnalysis>;
   onSkipHost?: (hostId: string) => void;
   onAcknowledge?: (hostId: string, vmName: string) => void;
+  onPowerOffVM?: (hostId: string, vmName: string) => void;
+  onAddToPowerOffList?: (hostId: string, vmName: string) => void;
 }
 
 const getReasonIcon = (reason: string) => {
@@ -58,6 +61,13 @@ const getReasonIcon = (reason: string) => {
     case 'connected_media':
       return <Disc className="h-4 w-4" />;
     case 'affinity':
+      return <Cpu className="h-4 w-4" />;
+    case 'drs_no_destination':
+    case 'drs_resource_constraint':
+      return <Server className="h-4 w-4" />;
+    case 'drs_anti_affinity':
+      return <AlertTriangle className="h-4 w-4" />;
+    case 'drs_evc_incompatible':
       return <Cpu className="h-4 w-4" />;
     default:
       return <Info className="h-4 w-4" />;
@@ -78,6 +88,14 @@ const getReasonLabel = (reason: string) => {
       return 'Connected Media';
     case 'affinity':
       return 'CPU/Memory Affinity';
+    case 'drs_no_destination':
+      return 'No DRS Destination';
+    case 'drs_resource_constraint':
+      return 'Resource Constraint';
+    case 'drs_anti_affinity':
+      return 'Anti-Affinity Rule';
+    case 'drs_evc_incompatible':
+      return 'EVC Incompatible';
     default:
       return 'Unknown';
   }
@@ -85,12 +103,18 @@ const getReasonLabel = (reason: string) => {
 
 const BlockerCard = ({ 
   blocker, 
-  onAcknowledge 
+  onAcknowledge,
+  onPowerOff,
+  onAddToPowerOffList
 }: { 
   blocker: MaintenanceBlocker; 
   onAcknowledge?: () => void;
+  onPowerOff?: () => void;
+  onAddToPowerOffList?: () => void;
 }) => {
   const isCritical = blocker.severity === 'critical';
+  const canPowerOff = blocker.power_off_eligible !== false && 
+    ['drs_no_destination', 'drs_resource_constraint', 'drs_anti_affinity', 'local_storage'].includes(blocker.reason);
   
   return (
     <div className={`p-3 rounded-lg border ${isCritical ? 'border-destructive/50 bg-destructive/5' : 'border-yellow-500/50 bg-yellow-500/5'}`}>
@@ -102,12 +126,17 @@ const BlockerCard = ({
             <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0" />
           )}
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="font-medium text-sm">{blocker.vm_name}</span>
               <Badge variant={isCritical ? "destructive" : "secondary"} className="text-xs">
                 {getReasonIcon(blocker.reason)}
                 <span className="ml-1">{getReasonLabel(blocker.reason)}</span>
               </Badge>
+              {canPowerOff && (
+                <Badge variant="outline" className="text-xs bg-orange-500/10 text-orange-700 dark:text-orange-400">
+                  Power-off eligible
+                </Badge>
+              )}
             </div>
             <p className="text-xs text-muted-foreground mt-1">{blocker.details}</p>
           </div>
@@ -119,17 +148,42 @@ const BlockerCard = ({
           <span className="font-medium">Remediation:</span> {blocker.remediation}
         </div>
         
-        {blocker.auto_fixable && (
-          <Button 
-            variant="outline" 
-            size="sm" 
-            className="mt-2 h-7 text-xs"
-            onClick={onAcknowledge}
-          >
-            <Power className="h-3 w-3 mr-1" />
-            Auto-Fix Available
-          </Button>
-        )}
+        <div className="flex flex-wrap gap-2 mt-2">
+          {blocker.auto_fixable && (
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="h-7 text-xs"
+              onClick={onAcknowledge}
+            >
+              <Power className="h-3 w-3 mr-1" />
+              Auto-Fix Available
+            </Button>
+          )}
+          
+          {canPowerOff && onPowerOff && (
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="h-7 text-xs text-orange-700 dark:text-orange-400 border-orange-500/50 hover:bg-orange-500/10"
+              onClick={onPowerOff}
+            >
+              <Power className="h-3 w-3 mr-1" />
+              Power Off Now
+            </Button>
+          )}
+          
+          {canPowerOff && onAddToPowerOffList && (
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="h-7 text-xs"
+              onClick={onAddToPowerOffList}
+            >
+              Add to Auto Power-Off List
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -138,7 +192,9 @@ const BlockerCard = ({
 export const MaintenanceBlockersPanel = ({ 
   blockers, 
   onSkipHost,
-  onAcknowledge 
+  onAcknowledge,
+  onPowerOffVM,
+  onAddToPowerOffList
 }: MaintenanceBlockersPanelProps) => {
   const [expandedHosts, setExpandedHosts] = useState<Set<string>>(new Set());
   
@@ -258,6 +314,8 @@ export const MaintenanceBlockersPanel = ({
                             key={`${blocker.vm_id}-${idx}`}
                             blocker={blocker}
                             onAcknowledge={onAcknowledge ? () => onAcknowledge(analysis.host_id, blocker.vm_name) : undefined}
+                            onPowerOff={onPowerOffVM ? () => onPowerOffVM(analysis.host_id, blocker.vm_name) : undefined}
+                            onAddToPowerOffList={onAddToPowerOffList ? () => onAddToPowerOffList(analysis.host_id, blocker.vm_name) : undefined}
                           />
                         ))}
                         

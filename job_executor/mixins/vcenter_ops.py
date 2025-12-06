@@ -318,6 +318,19 @@ class VCenterMixin:
                         result['blocked_vms'] += 1
                     else:
                         result['migratable_vms'] += 1
+            
+            # Check 7: DRS compatibility - simulate maintenance mode recommendations
+            drs_blockers = self._check_drs_evacuation_feasibility(target_host, content, result['host_name'])
+            if drs_blockers:
+                for drs_blocker in drs_blockers:
+                    # Avoid duplicates
+                    existing_vms = [b['vm_name'] for b in result['blockers']]
+                    if drs_blocker['vm_name'] not in existing_vms:
+                        result['blockers'].append(drs_blocker)
+                        result['blocked_vms'] += 1
+                        result['migratable_vms'] = max(0, result['migratable_vms'] - 1)
+                        if drs_blocker['severity'] == 'critical':
+                            result['can_enter_maintenance'] = False
                         
                 except Exception as vm_err:
                     self.log(f"  Error analyzing VM: {vm_err}", "DEBUG")
@@ -341,6 +354,296 @@ class VCenterMixin:
             import traceback
             self.log(f"  Traceback: {traceback.format_exc()}", "DEBUG")
             return result
+    
+    def _check_drs_evacuation_feasibility(self, host_obj, content, host_name: str) -> List[Dict]:
+        """
+        Check if DRS can evacuate all VMs from a host by analyzing:
+        - Anti-affinity rules that would be violated
+        - Resource constraints on destination hosts
+        - EVC mode incompatibilities
+        
+        Returns list of blocker dicts for VMs that DRS cannot migrate.
+        """
+        blockers = []
+        
+        try:
+            # Get the cluster this host belongs to
+            cluster = None
+            if hasattr(host_obj, 'parent') and isinstance(host_obj.parent, vim.ClusterComputeResource):
+                cluster = host_obj.parent
+            
+            if not cluster:
+                return blockers
+            
+            # Check if DRS is enabled
+            if not cluster.configuration.drsConfig.enabled:
+                self.log(f"    DRS is disabled on cluster - manual VM migration required", "WARN")
+                return blockers
+            
+            # Get cluster configuration for rules
+            cluster_config = cluster.configuration
+            
+            # Analyze anti-affinity rules
+            vm_to_antiaffinity = {}
+            if hasattr(cluster_config, 'rule'):
+                for rule in cluster_config.rule or []:
+                    if isinstance(rule, vim.cluster.AntiAffinityRuleSpec) and rule.enabled:
+                        for vm in rule.vm or []:
+                            vm_to_antiaffinity[str(vm._moId)] = {
+                                'rule_name': rule.name,
+                                'vms_in_rule': [v.name for v in rule.vm]
+                            }
+            
+            # Get resource availability on other hosts
+            other_hosts_capacity = []
+            for h in cluster.host:
+                if h._moId == host_obj._moId:
+                    continue  # Skip target host
+                if str(h.runtime.connectionState) != 'connected':
+                    continue
+                if h.runtime.inMaintenanceMode:
+                    continue
+                    
+                # Calculate available resources
+                cpu_total = h.hardware.cpuInfo.numCpuCores * h.hardware.cpuInfo.hz
+                cpu_usage = h.summary.quickStats.overallCpuUsage * 1000000  # MHz to Hz
+                cpu_available = cpu_total - cpu_usage
+                
+                mem_total = h.hardware.memorySize
+                mem_usage = h.summary.quickStats.overallMemoryUsage * 1024 * 1024  # MB to bytes
+                mem_available = mem_total - mem_usage
+                
+                other_hosts_capacity.append({
+                    'name': h.name,
+                    'cpu_available': cpu_available,
+                    'mem_available': mem_available,
+                    'evc_mode': cluster.summary.currentEVCModeKey if cluster.summary else None
+                })
+            
+            if not other_hosts_capacity:
+                # No other hosts available
+                for vm in host_obj.vm:
+                    if str(vm.runtime.powerState) == 'poweredOn':
+                        blockers.append({
+                            'vm_name': vm.name,
+                            'vm_id': str(vm._moId),
+                            'reason': 'drs_no_destination',
+                            'severity': 'critical',
+                            'details': 'No other hosts available in cluster to receive VMs',
+                            'remediation': 'Add more hosts to cluster or power off this VM',
+                            'auto_fixable': True,
+                            'power_off_eligible': True
+                        })
+                return blockers
+            
+            # Check each powered-on VM
+            for vm in host_obj.vm:
+                try:
+                    if str(vm.runtime.powerState) != 'poweredOn':
+                        continue
+                    
+                    vm_name = vm.name
+                    vm_id = str(vm._moId)
+                    
+                    # Get VM resource requirements
+                    vm_cpu_reservation = 0
+                    vm_mem_reservation = 0
+                    if vm.resourceConfig:
+                        vm_cpu_reservation = vm.resourceConfig.cpuAllocation.reservation or 0
+                        vm_mem_reservation = (vm.resourceConfig.memoryAllocation.reservation or 0) * 1024 * 1024
+                    
+                    # Check anti-affinity rules
+                    if vm_id in vm_to_antiaffinity:
+                        rule_info = vm_to_antiaffinity[vm_id]
+                        # Check if other VMs in the rule are on the only available host
+                        other_vms_hosts = set()
+                        for other_vm_name in rule_info['vms_in_rule']:
+                            if other_vm_name != vm_name:
+                                # Find where this VM is
+                                for h in cluster.host:
+                                    if h._moId == host_obj._moId:
+                                        continue
+                                    for other_vm in h.vm:
+                                        if other_vm.name == other_vm_name:
+                                            other_vms_hosts.add(h.name)
+                        
+                        if len(other_vms_hosts) == len(other_hosts_capacity):
+                            # All destination hosts have VMs from the anti-affinity rule
+                            blockers.append({
+                                'vm_name': vm_name,
+                                'vm_id': vm_id,
+                                'reason': 'drs_anti_affinity',
+                                'severity': 'critical',
+                                'details': f"Anti-affinity rule '{rule_info['rule_name']}' prevents migration - all destination hosts have conflicting VMs",
+                                'remediation': f"Power off this VM or one of: {', '.join(rule_info['vms_in_rule'])}",
+                                'auto_fixable': True,
+                                'power_off_eligible': True
+                            })
+                            continue
+                    
+                    # Check resource constraints
+                    can_fit_anywhere = False
+                    for host_cap in other_hosts_capacity:
+                        if host_cap['cpu_available'] >= vm_cpu_reservation and \
+                           host_cap['mem_available'] >= vm_mem_reservation:
+                            can_fit_anywhere = True
+                            break
+                    
+                    if not can_fit_anywhere and vm_cpu_reservation + vm_mem_reservation > 0:
+                        blockers.append({
+                            'vm_name': vm_name,
+                            'vm_id': vm_id,
+                            'reason': 'drs_resource_constraint',
+                            'severity': 'critical',
+                            'details': 'Insufficient CPU/memory resources on other hosts',
+                            'remediation': 'Power off this VM or reduce VM reservations',
+                            'auto_fixable': True,
+                            'power_off_eligible': True
+                        })
+                        
+                except Exception as vm_err:
+                    self.log(f"    Error checking VM {vm.name} for DRS: {vm_err}", "DEBUG")
+                    continue
+            
+            if blockers:
+                self.log(f"    DRS feasibility check found {len(blockers)} blocking VM(s)")
+                
+        except Exception as e:
+            self.log(f"    DRS feasibility check error: {e}", "DEBUG")
+        
+        return blockers
+    
+    def power_off_vms_for_maintenance(self, host_id: str, vm_names: List[str], 
+                                       graceful: bool = True, timeout: int = 120,
+                                       source_vcenter_id: str = None) -> Dict:
+        """
+        Power off specified VMs to enable maintenance mode entry.
+        
+        Args:
+            host_id: The vcenter_host database ID
+            vm_names: List of VM names to power off
+            graceful: If True, attempt graceful shutdown first
+            timeout: Timeout for graceful shutdown before forcing power off
+            source_vcenter_id: Optional vCenter ID
+            
+        Returns:
+            {
+                'success': bool,
+                'vms_powered_off': [str],
+                'vms_failed': [{'name': str, 'error': str}],
+                'total_time_seconds': int
+            }
+        """
+        result = {
+            'success': True,
+            'vms_powered_off': [],
+            'vms_failed': [],
+            'total_time_seconds': 0
+        }
+        
+        start_time = time.time()
+        
+        try:
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            from job_executor.utils import _safe_json_parse
+            
+            # Fetch host details
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{host_id}&select=*",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL
+            )
+            
+            if response.status_code != 200:
+                result['success'] = False
+                return result
+            
+            hosts = _safe_json_parse(response) or []
+            if not hosts:
+                result['success'] = False
+                return result
+            
+            host_info = hosts[0]
+            vcenter_id = source_vcenter_id or host_info.get('source_vcenter_id')
+            vcenter_settings = self.get_vcenter_settings(vcenter_id) if vcenter_id else None
+            
+            vc = self.connect_vcenter(settings=vcenter_settings)
+            if not vc:
+                result['success'] = False
+                return result
+            
+            content = vc.RetrieveContent()
+            
+            # Find the host
+            host_container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.HostSystem], True
+            )
+            
+            target_host = None
+            for host_obj in host_container.view:
+                if str(host_obj._moId) == host_info.get('vcenter_id'):
+                    target_host = host_obj
+                    break
+            
+            host_container.Destroy()
+            
+            if not target_host:
+                result['success'] = False
+                return result
+            
+            # Find and power off the specified VMs
+            for vm in target_host.vm:
+                if vm.name not in vm_names:
+                    continue
+                    
+                try:
+                    if str(vm.runtime.powerState) != 'poweredOn':
+                        result['vms_powered_off'].append(vm.name)
+                        continue
+                    
+                    self.log(f"    Powering off VM: {vm.name}")
+                    
+                    if graceful and vm.guest.toolsStatus == 'toolsOk':
+                        # Try graceful shutdown
+                        vm.ShutdownGuest()
+                        
+                        # Wait for shutdown
+                        shutdown_start = time.time()
+                        while time.time() - shutdown_start < timeout:
+                            time.sleep(5)
+                            if str(vm.runtime.powerState) == 'poweredOff':
+                                break
+                        
+                        if str(vm.runtime.powerState) != 'poweredOff':
+                            # Force power off
+                            self.log(f"    Graceful shutdown timed out, forcing power off: {vm.name}")
+                            task = vm.PowerOff()
+                            while task.info.state == vim.TaskInfo.State.running:
+                                time.sleep(1)
+                    else:
+                        # Direct power off
+                        task = vm.PowerOff()
+                        while task.info.state == vim.TaskInfo.State.running:
+                            time.sleep(1)
+                    
+                    if str(vm.runtime.powerState) == 'poweredOff':
+                        result['vms_powered_off'].append(vm.name)
+                        self.log(f"    ✓ VM powered off: {vm.name}")
+                    else:
+                        result['vms_failed'].append({'name': vm.name, 'error': 'Failed to power off'})
+                        result['success'] = False
+                        
+                except Exception as vm_err:
+                    result['vms_failed'].append({'name': vm.name, 'error': str(vm_err)})
+                    result['success'] = False
+            
+            result['total_time_seconds'] = int(time.time() - start_time)
+            
+        except Exception as e:
+            self.log(f"  Power off VMs error: {e}", "WARN")
+            result['success'] = False
+        
+        return result
     
     def detect_vcsa_on_hosts(self, host_ids: List[str], cluster_name: str = None) -> Dict:
         """
