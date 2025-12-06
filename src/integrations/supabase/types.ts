@@ -1908,7 +1908,7 @@ export type Database = {
             foreignKeyName: "protection_groups_source_vcenter_id_fkey"
             columns: ["source_vcenter_id"]
             isOneToOne: false
-            referencedRelation: "vcenter_settings"
+            referencedRelation: "vcenters"
             referencedColumns: ["id"]
           },
           {
