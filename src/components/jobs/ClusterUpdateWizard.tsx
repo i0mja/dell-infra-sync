@@ -1686,9 +1686,27 @@ export const ClusterUpdateWizard = ({
 
   const jobIsMinimized = jobId ? isMinimized(jobId) : false;
 
+  const handleCancelPreflightCheck = () => {
+    setSafetyCheckLoading(false);
+    setPreflightProgress(null);
+    toast({
+      title: "Pre-flight check cancelled",
+      description: "You can restart the check when ready.",
+    });
+  };
+
   return (
     <>
       <Dialog open={open && !jobIsMinimized} onOpenChange={(newOpen) => {
+        // Prevent accidental closure during pre-flight check
+        if (!newOpen && safetyCheckLoading) {
+          toast({
+            title: "Pre-flight check in progress",
+            description: "Please wait for the check to complete, or click Cancel to abort.",
+          });
+          return; // Don't close
+        }
+        
         if (!newOpen && currentStep === 6 && jobId) {
           // Don't close if on step 6 with active job, minimize instead
           minimizeJob(jobId, 'rolling_cluster_update');
@@ -1697,28 +1715,61 @@ export const ClusterUpdateWizard = ({
           onOpenChange(newOpen);
         }
       }}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent 
+          className="max-w-3xl max-h-[90vh] overflow-y-auto"
+          onPointerDownOutside={(e) => {
+            if (safetyCheckLoading) {
+              e.preventDefault(); // Block clicking outside during pre-flight
+            }
+          }}
+          onEscapeKeyDown={(e) => {
+            if (safetyCheckLoading) {
+              e.preventDefault(); // Block Escape key during pre-flight
+            }
+          }}
+        >
           <DialogHeader>
             <div className="flex items-center justify-between">
-              <div>
-                <DialogTitle>Update Wizard</DialogTitle>
-                <DialogDescription>
-                  Guided workflow for firmware and ESXi updates across clusters, groups, or servers
-                </DialogDescription>
+              <div className="flex items-center gap-3">
+                <div>
+                  <DialogTitle className="flex items-center gap-2">
+                    Update Wizard
+                    {safetyCheckLoading && (
+                      <Badge variant="secondary" className="animate-pulse ml-2">
+                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                        Pre-flight running
+                      </Badge>
+                    )}
+                  </DialogTitle>
+                  <DialogDescription>
+                    Guided workflow for firmware and ESXi updates across clusters, groups, or servers
+                  </DialogDescription>
+                </div>
               </div>
-              {currentStep === 6 && jobId && (
-                <Button 
-                  variant="ghost" 
-                  size="icon"
-                  onClick={() => {
-                    minimizeJob(jobId, 'rolling_cluster_update');
-                    onOpenChange(false);
-                  }}
-                  className="ml-2"
-                >
-                  <Minimize2 className="h-4 w-4" />
-                </Button>
-              )}
+              <div className="flex items-center gap-2">
+                {safetyCheckLoading && (
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={handleCancelPreflightCheck}
+                  >
+                    <X className="h-4 w-4 mr-1" />
+                    Cancel Check
+                  </Button>
+                )}
+                {currentStep === 6 && jobId && (
+                  <Button 
+                    variant="ghost" 
+                    size="icon"
+                    onClick={() => {
+                      minimizeJob(jobId, 'rolling_cluster_update');
+                      onOpenChange(false);
+                    }}
+                  >
+                    <Minimize2 className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
             </div>
           </DialogHeader>
 
