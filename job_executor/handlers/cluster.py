@@ -502,6 +502,75 @@ class ClusterHandler(BaseHandler):
         except Exception as e:
             self.log(f"Failed to log workflow step: {e}", "WARN")
     
+    def _get_applicable_firmware_packages(self, server_model: str, component_filter: List[str]) -> List[Dict]:
+        """
+        Query firmware packages from library that are applicable to this server model.
+        
+        Args:
+            server_model: The server model (e.g., 'PowerEdge R750')
+            component_filter: List of component types to include, or ['all'] for all
+            
+        Returns:
+            List of applicable firmware package dicts
+        """
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        
+        try:
+            # Query completed firmware packages from database
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/firmware_packages",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY, 
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                params={
+                    'select': '*',
+                    'upload_status': 'eq.completed',
+                    'order': 'dell_version.desc'
+                },
+                verify=VERIFY_SSL
+            )
+            
+            if response.status_code != 200:
+                self.log(f"    ⚠ Failed to query firmware packages: {response.status_code}", "WARN")
+                return []
+            
+            packages = response.json()
+            applicable = []
+            
+            for pkg in packages:
+                # Check model applicability
+                applicable_models = pkg.get('applicable_models') or []
+                
+                # If applicable_models is specified, check if server matches
+                if applicable_models and server_model:
+                    # Check for partial match (e.g., "R750" matches "PowerEdge R750")
+                    model_matches = False
+                    for model in applicable_models:
+                        if model.lower() in server_model.lower() or server_model.lower() in model.lower():
+                            model_matches = True
+                            break
+                    
+                    if not model_matches:
+                        continue
+                
+                # Check component filter
+                pkg_type = (pkg.get('component_type') or '').upper()
+                
+                if 'all' not in [f.lower() for f in component_filter]:
+                    # Map component types for matching
+                    filter_upper = [f.upper() for f in component_filter]
+                    if pkg_type not in filter_upper:
+                        continue
+                
+                applicable.append(pkg)
+            
+            return applicable
+            
+        except Exception as e:
+            self.log(f"    ⚠ Error querying firmware packages: {e}", "WARN")
+            return []
+    
     def execute_prepare_host_for_update(self, job: Dict):
         """Workflow: Prepare ESXi host for firmware updates"""
         workflow_results = {
@@ -1464,13 +1533,83 @@ class ClusterHandler(BaseHandler):
                                 # Assume updates were applied
                                 reboot_required = True
                             
+                        elif firmware_source == 'local_repository':
+                            # Query firmware packages from library and apply applicable ones
+                            self.log(f"    Using local firmware repository...")
+                            
+                            server_model = server.get('model', '')
+                            component_filter = details.get('component_filter', ['all'])
+                            
+                            # Get applicable firmware packages from library
+                            applicable_packages = self._get_applicable_firmware_packages(
+                                server_model=server_model,
+                                component_filter=component_filter
+                            )
+                            
+                            if not applicable_packages:
+                                raise Exception(
+                                    f"No firmware packages in library for model '{server_model}'. "
+                                    f"Upload DUP files in Settings → Firmware Library, or use 'Dell Online Catalog' source."
+                                )
+                            
+                            self.log(f"    Found {len(applicable_packages)} applicable package(s) for {server_model or 'this server'}")
+                            packages_applied = 0
+                            update_result = {'success': True, 'packages_applied': []}
+                            
+                            for pkg in applicable_packages:
+                                firmware_uri = pkg.get('served_url') or pkg.get('local_path')
+                                if not firmware_uri:
+                                    self.log(f"      ⚠ Package {pkg['filename']} has no URL - skipping", "WARN")
+                                    continue
+                                
+                                self.log(f"      Applying: {pkg.get('component_type', 'Unknown')} v{pkg['dell_version']} ({pkg['filename']})")
+                                
+                                pkg_result = dell_ops.update_firmware_simple(
+                                    ip=server['ip_address'],
+                                    username=username,
+                                    password=password,
+                                    firmware_uri=firmware_uri,
+                                    apply_time='Immediate',
+                                    job_id=job['id'],
+                                    server_id=host['server_id']
+                                )
+                                
+                                if pkg_result.get('success'):
+                                    packages_applied += 1
+                                    update_result['packages_applied'].append({
+                                        'filename': pkg['filename'],
+                                        'component': pkg.get('component_type'),
+                                        'version': pkg['dell_version']
+                                    })
+                                    self.log(f"        ✓ Package applied successfully")
+                                else:
+                                    error_msg = pkg_result.get('error', 'Unknown error')
+                                    # Check if package is not applicable (not an error)
+                                    if 'already' in error_msg.lower() or 'not applicable' in error_msg.lower():
+                                        self.log(f"        ℹ Package not needed: {error_msg}")
+                                    else:
+                                        self.log(f"        ✗ Package failed: {error_msg}", "WARN")
+                            
+                            if packages_applied > 0:
+                                self.log(f"    ✓ Applied {packages_applied} firmware package(s)")
+                                reboot_required = True
+                            else:
+                                self.log(f"    ℹ No firmware packages were applicable - server may be up to date")
+                                update_result['no_updates_needed'] = True
+                            
                         else:
+                            # Manual/legacy mode - requires explicit firmware_uri
                             firmware_uri = details.get('firmware_uri')
                             if not firmware_uri and firmware_updates:
                                 firmware_uri = firmware_updates[0].get('firmware_uri')
                             
                             if not firmware_uri:
-                                raise Exception("No firmware URI specified")
+                                raise Exception(
+                                    "No firmware URI specified. Either:\n"
+                                    "1. Upload DUP files in Settings → Firmware Library and use 'Local Repository'\n"
+                                    "2. Use 'Dell Online Catalog' source (requires internet access)\n"
+                                    "3. Specify firmware_uri manually in job details"
+                                )
                             
                             self.log(f"    Using firmware package: {firmware_uri}")
                             update_result = dell_ops.update_firmware_simple(
