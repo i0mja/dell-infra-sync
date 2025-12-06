@@ -263,7 +263,7 @@ export function ProtectionDatastoreWizard({
         </p>
         <Progress value={66} className="w-64 mx-auto" />
         <p className="text-xs text-muted-foreground mt-2">
-          Storage vMotion in progress (stub mode - instant completion)
+          Storage vMotion in progress via pyVmomi...
         </p>
       </div>
     </div>
