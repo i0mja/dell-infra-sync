@@ -939,12 +939,88 @@ class ClusterHandler(BaseHandler):
             else:
                 self.log(f"  ✓ No VCSA detected - using default host order")
             
+            # =================================================================
+            # MAINTENANCE MODE PRIORITIZATION
+            # =================================================================
+            self.log("")
+            self.log("=" * 80)
+            self.log("CHECKING CURRENT MAINTENANCE STATUS")
+            self.log("=" * 80)
+            
+            hosts_in_maintenance = []
+            hosts_not_in_maintenance = []
+            vcsa_host_entry = None  # Track VCSA host separately to ensure it stays last
+            
+            for host in eligible_hosts:
+                server = self.get_server_by_id(host['server_id'])
+                vcenter_host_id = server.get('vcenter_host_id') if server else None
+                is_vcsa_host = server and server.get('vcenter_host_id') == vcsa_info.get('vcsa_host_id')
+                
+                # Check if this is the VCSA host - always goes last
+                if is_vcsa_host:
+                    vcsa_host_entry = host
+                    self.log(f"  ⚠️ {host['name']}: VCSA host (will be updated last)")
+                    continue
+                
+                if vcenter_host_id:
+                    # Query maintenance_mode from vcenter_hosts table
+                    try:
+                        response = requests.get(
+                            f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{vcenter_host_id}&select=maintenance_mode",
+                            headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                            verify=VERIFY_SSL,
+                            timeout=5
+                        )
+                        if response.status_code == 200:
+                            vc_hosts = _safe_json_parse(response)
+                            if vc_hosts and vc_hosts[0].get('maintenance_mode'):
+                                hosts_in_maintenance.append(host)
+                                self.log(f"  ✓ {host['name']}: Already in maintenance mode")
+                            else:
+                                hosts_not_in_maintenance.append(host)
+                                self.log(f"  - {host['name']}: Not in maintenance mode")
+                        else:
+                            hosts_not_in_maintenance.append(host)
+                            self.log(f"  - {host['name']}: Could not check status")
+                    except Exception as e:
+                        hosts_not_in_maintenance.append(host)
+                        self.log(f"  - {host['name']}: Status check failed ({e})")
+                else:
+                    # No vCenter link - treat as not in maintenance
+                    hosts_not_in_maintenance.append(host)
+                    self.log(f"  - {host['name']}: No vCenter link")
+            
+            # Reorder: maintenance mode hosts first, then non-maintenance, then VCSA last
+            if hosts_in_maintenance:
+                self.log(f"")
+                self.log(f"  ✓ Prioritizing {len(hosts_in_maintenance)} host(s) already in maintenance mode")
+                eligible_hosts = hosts_in_maintenance + hosts_not_in_maintenance
+                workflow_results['maintenance_prioritization'] = {
+                    'hosts_in_maintenance': len(hosts_in_maintenance),
+                    'hosts_not_in_maintenance': len(hosts_not_in_maintenance)
+                }
+            else:
+                eligible_hosts = hosts_not_in_maintenance
+            
+            # Always append VCSA host last if detected
+            if vcsa_host_entry:
+                eligible_hosts.append(vcsa_host_entry)
+                self.log(f"  ✓ VCSA host '{vcsa_host_entry['name']}' positioned last in update order")
+            
             # Log final host order
+            self.log(f"")
             self.log(f"  Final update order:")
             for idx, host in enumerate(eligible_hosts, 1):
-                is_vcsa = host.get('server_id') and vcsa_info.get('vcsa_host_id')
                 server = self.get_server_by_id(host['server_id']) if host.get('server_id') else None
-                marker = " ⚠️ [VCSA HOST]" if server and server.get('vcenter_host_id') == vcsa_info.get('vcsa_host_id') else ""
+                is_vcsa = server and server.get('vcenter_host_id') == vcsa_info.get('vcsa_host_id')
+                is_in_maint = host in hosts_in_maintenance
+                
+                markers = []
+                if is_in_maint:
+                    markers.append("in maintenance")
+                if is_vcsa:
+                    markers.append("VCSA HOST")
+                marker = f" ⚠️ [{', '.join(markers)}]" if markers else ""
                 self.log(f"    {idx}. {host['name']}{marker}")
             
             # Log workflow initialization step
