@@ -76,7 +76,12 @@ class EsxiOrchestrator:
             'version_before': None,
             'version_after': None,
             'dry_run': dry_run,
-            'ssh_output': []
+            'ssh_output': [],
+            'coredump_status': {
+                'before': None,
+                'after': None,
+                'auto_fixed': False
+            }
         }
         
         ssh_client = None
@@ -103,6 +108,23 @@ class EsxiOrchestrator:
             result['version_before'] = version_info.get('full_string')
             result['steps_completed'].append('get_version')
             self.log(f"[ESXi Orchestrator] Current version: {result['version_before']}")
+            
+            # Step 1b: Pre-flight coredump check
+            self.log(f"[ESXi Orchestrator] Checking coredump configuration...")
+            coredump_check = ssh_client.check_coredump_config()
+            result['coredump_status']['before'] = coredump_check
+            
+            if coredump_check.get('success'):
+                if coredump_check.get('configured'):
+                    self.log(f"[ESXi Orchestrator] ✓ Coredump is configured")
+                    result['steps_completed'].append('coredump_check_passed')
+                else:
+                    self.log(f"[ESXi Orchestrator] ⚠ Warning: {coredump_check.get('warning')}")
+                    # Don't fail - just warn and continue
+                    result['warnings'] = result.get('warnings', [])
+                    result['warnings'].append(coredump_check.get('warning'))
+            else:
+                self.log(f"[ESXi Orchestrator] ⚠ Could not check coredump status: {coredump_check.get('error')}")
             
             # DRY RUN: Stop here if dry run mode
             if dry_run:
@@ -187,6 +209,30 @@ class EsxiOrchestrator:
             self.log(f"[ESXi Orchestrator] Host reconnected after {result['reconnect_time']}s")
             self.log(f"[ESXi Orchestrator] New version: {result['version_after']}")
             
+            # Step 5b: Post-upgrade coredump verification and auto-recovery
+            self.log(f"[ESXi Orchestrator] Verifying coredump configuration after upgrade...")
+            post_coredump = ssh_client.check_coredump_config()
+            result['coredump_status']['after'] = post_coredump
+            
+            if post_coredump.get('success') and not post_coredump.get('configured'):
+                self.log(f"[ESXi Orchestrator] ⚠ Coredump not configured after upgrade - attempting auto-recovery...")
+                
+                # Attempt to auto-configure coredump
+                fix_result = ssh_client.configure_coredump()
+                
+                if fix_result.get('success'):
+                    result['coredump_status']['auto_fixed'] = True
+                    result['coredump_status']['after'] = fix_result.get('details')
+                    result['steps_completed'].append('coredump_auto_fixed')
+                    self.log(f"[ESXi Orchestrator] ✓ Coredump auto-configured successfully")
+                else:
+                    self.log(f"[ESXi Orchestrator] ⚠ Failed to auto-configure coredump: {fix_result.get('error')}")
+                    result['warnings'] = result.get('warnings', [])
+                    result['warnings'].append(f"Coredump auto-recovery failed: {fix_result.get('error')}. Manual configuration required.")
+            elif post_coredump.get('configured'):
+                self.log(f"[ESXi Orchestrator] ✓ Coredump configuration preserved after upgrade")
+                result['steps_completed'].append('coredump_verified')
+            
             # Step 6: Exit maintenance mode
             if maintenance_entered and self.exit_maintenance_fn:
                 self.log(f"[ESXi Orchestrator] Exiting vCenter maintenance mode...")
@@ -209,6 +255,8 @@ class EsxiOrchestrator:
             self.log(f"[ESXi Orchestrator] ✓ Upgrade complete for {host_name}")
             self.log(f"[ESXi Orchestrator]   Before: {result['version_before']}")
             self.log(f"[ESXi Orchestrator]   After:  {result['version_after']}")
+            if result['coredump_status'].get('auto_fixed'):
+                self.log(f"[ESXi Orchestrator]   Coredump: Auto-recovered")
             
             return result
             

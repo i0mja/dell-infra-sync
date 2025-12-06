@@ -4,6 +4,19 @@ import { CheckCircle2, XCircle, AlertTriangle, Server, HardDrive, Network, Shiel
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 
+interface CoredumpStatus {
+  configured: boolean;
+  file_coredump?: {
+    active: boolean;
+    path?: string;
+    size?: string;
+  };
+  network_coredump?: {
+    enabled: boolean;
+  };
+  warning?: string;
+}
+
 interface PreflightCheck {
   success: boolean;
   ready: boolean;
@@ -26,6 +39,7 @@ interface PreflightCheck {
     min_datastore_free_gb: number;
     pending_reboot: boolean;
     in_maintenance_mode: boolean;
+    coredump_status?: CoredumpStatus;
   };
   warnings: string[];
   blockers: string[];
@@ -223,6 +237,49 @@ export function EsxiPreflightResults({ details }: EsxiPreflightResultsProps) {
             )}
 
             <Separator />
+
+            {/* Coredump Status */}
+            {result.checks.coredump_status && (
+              <>
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-medium mb-2">
+                    <HardDrive className="w-4 h-4" />
+                    Coredump Configuration
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 text-sm">
+                    <div className="flex justify-between p-2 rounded bg-muted/50">
+                      <span className="text-muted-foreground">Status:</span>
+                      <Badge 
+                        variant={result.checks.coredump_status.configured ? 'default' : 'destructive'} 
+                        className="h-5 text-xs"
+                      >
+                        {result.checks.coredump_status.configured ? 'Configured' : 'Not Configured'}
+                      </Badge>
+                    </div>
+                    {result.checks.coredump_status.file_coredump?.path && (
+                      <div className="flex justify-between p-2 rounded bg-muted/50">
+                        <span className="text-muted-foreground">Coredump Path:</span>
+                        <span className="font-mono text-xs truncate max-w-[200px]">
+                          {result.checks.coredump_status.file_coredump.path}
+                        </span>
+                      </div>
+                    )}
+                    {result.checks.coredump_status.warning && (
+                      <Alert className="border-yellow-500/50 bg-yellow-500/10">
+                        <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+                        <AlertDescription className="text-sm">
+                          {result.checks.coredump_status.warning}
+                          <div className="mt-2 text-xs text-muted-foreground">
+                            Auto-recovery will be attempted after upgrade.
+                          </div>
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  </div>
+                </div>
+                <Separator />
+              </>
+            )}
 
             {/* VMs and Storage */}
             <div>

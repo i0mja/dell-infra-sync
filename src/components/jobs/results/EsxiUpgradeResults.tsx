@@ -1,9 +1,10 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Server, CheckCircle2, XCircle, Clock, Terminal, AlertTriangle } from "lucide-react";
+import { Server, CheckCircle2, XCircle, Clock, Terminal, AlertTriangle, HardDrive, Wrench } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 interface EsxiUpgradeResultsProps {
   details: any;
@@ -237,6 +238,63 @@ export const EsxiUpgradeResults = ({ details, jobType }: EsxiUpgradeResultsProps
                           <pre className="text-xs whitespace-pre-wrap font-mono">
                             {host.ssh_output}
                           </pre>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Coredump Status */}
+                    {host.coredump_status && (
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-medium flex items-center gap-2">
+                          <HardDrive className="h-4 w-4" />
+                          Coredump Configuration
+                        </h4>
+                        <div className="bg-muted p-3 rounded-lg space-y-2">
+                          {host.coredump_status.auto_fixed ? (
+                            <Alert className="border-warning bg-warning/10">
+                              <Wrench className="h-4 w-4" />
+                              <AlertTitle>Auto-Recovered</AlertTitle>
+                              <AlertDescription>
+                                Coredump was not configured after upgrade and was automatically fixed.
+                              </AlertDescription>
+                            </Alert>
+                          ) : host.coredump_status.after?.configured ? (
+                            <div className="flex items-center gap-2 text-sm text-success">
+                              <CheckCircle2 className="h-4 w-4" />
+                              <span>Coredump properly configured</span>
+                            </div>
+                          ) : (
+                            <Alert variant="destructive">
+                              <AlertTriangle className="h-4 w-4" />
+                              <AlertTitle>Coredump Not Configured</AlertTitle>
+                              <AlertDescription>
+                                No coredump target has been configured. Host core dumps cannot be saved.
+                                Run: <code className="bg-muted px-1 rounded">esxcli system coredump file add -e true</code>
+                              </AlertDescription>
+                            </Alert>
+                          )}
+                          {host.coredump_status.after?.file_coredump?.path && (
+                            <div className="text-xs text-muted-foreground">
+                              Path: {host.coredump_status.after.file_coredump.path}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Warnings */}
+                    {host.warnings && host.warnings.length > 0 && (
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-medium flex items-center gap-2 text-warning">
+                          <AlertTriangle className="h-4 w-4" />
+                          Warnings
+                        </h4>
+                        <div className="space-y-1">
+                          {host.warnings.map((warning: string, idx: number) => (
+                            <Alert key={idx} className="border-warning bg-warning/10">
+                              <AlertDescription className="text-sm">{warning}</AlertDescription>
+                            </Alert>
+                          ))}
                         </div>
                       </div>
                     )}
