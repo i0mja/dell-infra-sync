@@ -25,6 +25,9 @@ import { useSavedViews } from "@/hooks/useSavedViews";
 import { Button } from "@/components/ui/button";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
+import { ProtectionGroupsPanel } from "@/components/replication/ProtectionGroupsPanel";
+import { ReplicationTargetsPanel } from "@/components/replication/ReplicationTargetsPanel";
+import { ReplicationJobsPanel } from "@/components/replication/ReplicationJobsPanel";
 
 interface VCenterHost {
   id: string;
@@ -207,7 +210,7 @@ export default function VCenter() {
     const clusterParam = searchParams.get('cluster');
     
     // Set active tab from URL param
-    if (tabParam && ['hosts', 'vms', 'clusters', 'datastores', 'esxi-profiles'].includes(tabParam)) {
+    if (tabParam && ['hosts', 'vms', 'clusters', 'datastores', 'esxi-profiles', 'replication'].includes(tabParam)) {
       setActiveTab(tabParam);
     }
     
@@ -611,6 +614,12 @@ export default function VCenter() {
               >
                 ESXi Profiles
               </TabsTrigger>
+              <TabsTrigger 
+                value="replication"
+                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
+              >
+                DR / Replication
+              </TabsTrigger>
             </TabsList>
             
             <div className="flex-1" />
@@ -825,6 +834,14 @@ export default function VCenter() {
 
           <TabsContent value="esxi-profiles" className="flex-1 mt-0 p-6 overflow-auto">
             <EsxiProfilesTab />
+          </TabsContent>
+
+          <TabsContent value="replication" className="flex-1 mt-0 p-6 overflow-auto">
+            <div className="space-y-6">
+              <ProtectionGroupsPanel />
+              <ReplicationTargetsPanel />
+              <ReplicationJobsPanel />
+            </div>
           </TabsContent>
         </Tabs>
         </div>
