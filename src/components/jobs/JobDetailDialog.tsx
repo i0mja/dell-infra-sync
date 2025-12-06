@@ -23,7 +23,8 @@ import {
   EsxiPreflightResults,
   JobProgressHeader,
   JobTasksTimeline,
-  JobConsoleLog
+  JobConsoleLog,
+  StorageVMotionResults
 } from "./results";
 
 interface Job {
@@ -274,6 +275,8 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
         return <EsxiUpgradeResults details={job.details} jobType={job.job_type} />;
       case 'esxi_preflight_check':
         return <EsxiPreflightResults details={job.details} />;
+      case 'storage_vmotion':
+        return <StorageVMotionResults details={job.details} />;
       default:
         return <GenericResults details={job.details} />;
     }
