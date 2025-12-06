@@ -165,11 +165,35 @@ function getTableColumns(reportType: ReportType): ReportColumn[] {
 
     case "update_history":
       return [
-        { key: "server", label: "Server/Host" },
+        { key: "server", label: "Server" },
+        { key: "server_ip", label: "IP Address" },
+        { key: "cluster_name", label: "Cluster" },
         { key: "job_type_label", label: "Update Type" },
-        { key: "component", label: "Component" },
-        { key: "version_before", label: "Previous Version" },
-        { key: "version_after", label: "New Version" },
+        { 
+          key: "components_updated", 
+          label: "Components",
+          format: (value: number) => value ? `${value} updated` : "-"
+        },
+        { key: "component_summary", label: "Update Details" },
+        { 
+          key: "highest_criticality", 
+          label: "Criticality",
+          format: (value: string) => value ? (
+            <Badge variant={value === "Critical" ? "destructive" : value === "Recommended" ? "secondary" : "outline"}>
+              {value}
+            </Badge>
+          ) : "-"
+        },
+        { 
+          key: "reboot_required", 
+          label: "Reboot",
+          format: (value: boolean) => value ? "Yes" : "No"
+        },
+        { 
+          key: "scp_backup", 
+          label: "SCP Backup",
+          format: (value: boolean) => value ? "✓" : "✗"
+        },
         { 
           key: "status", 
           label: "Result",
@@ -180,8 +204,8 @@ function getTableColumns(reportType: ReportType): ReportColumn[] {
           )
         },
         { key: "initiated_by", label: "Initiated By" },
+        { key: "duration_formatted", label: "Duration" },
         { key: "started_at", label: "Started", format: (value: string) => value ? new Date(value).toLocaleString() : "-" },
-        { key: "duration_ms", label: "Duration", format: (value: number) => value ? `${Math.round(value / 1000)}s` : "-" },
       ];
 
     case "update_failures":
