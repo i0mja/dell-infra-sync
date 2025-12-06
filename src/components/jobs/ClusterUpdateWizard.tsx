@@ -146,6 +146,20 @@ export const ClusterUpdateWizard = ({
       return data;
     },
   });
+
+  // Fetch available firmware packages for local_repository validation
+  const { data: firmwarePackages } = useQuery({
+    queryKey: ['firmware_packages', 'completed'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('firmware_packages')
+        .select('id, filename, component_type, dell_version, applicable_models')
+        .eq('upload_status', 'completed');
+      
+      if (error) throw error;
+      return data;
+    },
+  });
   
   // Step 3: Configuration
   const [backupScp, setBackupScp] = useState(true);
@@ -598,6 +612,18 @@ export const ClusterUpdateWizard = ({
     if (targetType === 'cluster' && !selectedCluster) return;
     if (targetType === 'group' && !selectedGroup) return;
     if (targetType === 'servers' && selectedServerIds.length === 0) return;
+
+    // Validate local_repository has packages before proceeding
+    if (updateType !== 'esxi_only' && firmwareSource === 'local_repository') {
+      if (!firmwarePackages || firmwarePackages.length === 0) {
+        toast({
+          variant: "destructive",
+          title: "No firmware packages available",
+          description: "Upload DUP files in Settings → Firmware Library, or use Dell Online Catalog instead.",
+        });
+        return;
+      }
+    }
 
     setLoading(true);
     try {
@@ -1099,6 +1125,29 @@ export const ClusterUpdateWizard = ({
                     showManualOption={true}
                     showSkipOption={false}
                   />
+
+                  {/* Warning when local_repository selected but no packages */}
+                  {firmwareSource === 'local_repository' && (!firmwarePackages || firmwarePackages.length === 0) && (
+                    <Alert variant="destructive">
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertTitle>No firmware packages in library</AlertTitle>
+                      <AlertDescription>
+                        Upload DUP files in Settings → Firmware Library before using Local Repository, 
+                        or switch to Dell Online Catalog for internet-connected environments.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {/* Show available packages count when local_repository is selected */}
+                  {firmwareSource === 'local_repository' && firmwarePackages && firmwarePackages.length > 0 && (
+                    <Alert>
+                      <CheckCircle className="h-4 w-4" />
+                      <AlertDescription>
+                        {firmwarePackages.length} firmware package{firmwarePackages.length !== 1 ? 's' : ''} available in library. 
+                        Applicable packages will be automatically selected based on server model.
+                      </AlertDescription>
+                    </Alert>
+                  )}
 
                   {/* Manual firmware entry - only show when manual mode selected */}
                   {firmwareSource === 'manual' && (
