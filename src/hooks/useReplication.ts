@@ -1,21 +1,23 @@
 /**
  * Zerfaux Replication Hooks
  * 
- * React hooks for fetching and managing replication data from the Job Executor API.
+ * React hooks for fetching and managing replication data from Supabase.
+ * Job Executor API is only used for operational actions (run replication, vMotion, DR shell).
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 
-// Get Job Executor URL from activity settings or environment
+// Get Job Executor URL for operations only
 const getJobExecutorUrl = (): string => {
   return localStorage.getItem('job_executor_url') || 
          import.meta.env.VITE_JOB_EXECUTOR_URL || 
          'http://localhost:8081';
 };
 
-// Generic fetch helper
-async function fetchApi<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+// Generic fetch helper for Job Executor operations only
+async function fetchJobExecutor<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const baseUrl = getJobExecutorUrl();
   const response = await fetch(`${baseUrl}${endpoint}`, {
     ...options,
@@ -128,126 +130,163 @@ export interface VCenterVM {
 }
 
 // ==========================================
-// Hooks
+// Hooks using Supabase directly
 // ==========================================
 
 export function useReplicationTargets() {
-  const [targets, setTargets] = useState<ReplicationTarget[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
-  const refetch = useCallback(async () => {
-    try {
-      setLoading(true);
-      const data = await fetchApi<{ targets: ReplicationTarget[] }>('/api/replication/targets');
-      setTargets(data.targets || []);
-      setError(null);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to fetch targets';
-      setError(message);
-      console.error('Failed to fetch replication targets:', err);
-    } finally {
-      setLoading(false);
+  const { data: targets = [], isLoading: loading, error, refetch } = useQuery({
+    queryKey: ['replication-targets'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('replication_targets')
+        .select('*')
+        .order('name');
+      if (error) throw error;
+      return data as ReplicationTarget[];
     }
-  }, []);
+  });
 
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
-
-  const createTarget = async (target: Partial<ReplicationTarget>) => {
-    try {
-      const data = await fetchApi<{ target: ReplicationTarget }>('/api/replication/targets', {
-        method: 'POST',
-        body: JSON.stringify(target),
-      });
+  const createTargetMutation = useMutation({
+    mutationFn: async (target: Partial<ReplicationTarget>) => {
+      const { data, error } = await supabase
+        .from('replication_targets')
+        .insert({
+          name: target.name,
+          description: target.description,
+          target_type: target.target_type || 'zfs',
+          hostname: target.hostname,
+          port: target.port || 22,
+          zfs_pool: target.zfs_pool,
+          zfs_dataset_prefix: target.zfs_dataset_prefix,
+          ssh_username: target.ssh_username,
+          dr_vcenter_id: target.dr_vcenter_id,
+          is_active: target.is_active ?? true,
+          health_status: 'unknown'
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      return data as ReplicationTarget;
+    },
+    onSuccess: () => {
       toast({ title: 'Target created successfully' });
-      await refetch();
-      return data.target;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to create target';
-      toast({ title: 'Error', description: message, variant: 'destructive' });
-      throw err;
+      queryClient.invalidateQueries({ queryKey: ['replication-targets'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
-  };
+  });
 
-  const deleteTarget = async (id: string) => {
-    try {
-      await fetchApi(`/api/replication/targets/${id}`, { method: 'DELETE' });
+  const deleteTargetMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from('replication_targets')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
       toast({ title: 'Target deleted' });
-      await refetch();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to delete target';
-      toast({ title: 'Error', description: message, variant: 'destructive' });
-      throw err;
+      queryClient.invalidateQueries({ queryKey: ['replication-targets'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
-  };
+  });
 
-  return { targets, loading, error, refetch, createTarget, deleteTarget };
+  return { 
+    targets, 
+    loading, 
+    error: error?.message || null, 
+    refetch, 
+    createTarget: createTargetMutation.mutateAsync, 
+    deleteTarget: deleteTargetMutation.mutateAsync 
+  };
 }
 
 export function useProtectionGroups() {
-  const [groups, setGroups] = useState<ProtectionGroup[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
-  const refetch = useCallback(async () => {
-    try {
-      setLoading(true);
-      const data = await fetchApi<{ protection_groups: ProtectionGroup[] }>('/api/replication/protection-groups');
-      setGroups(data.protection_groups || []);
-      setError(null);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to fetch groups';
-      setError(message);
-      console.error('Failed to fetch protection groups:', err);
-    } finally {
-      setLoading(false);
+  const { data: groups = [], isLoading: loading, error, refetch } = useQuery({
+    queryKey: ['protection-groups'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('protection_groups')
+        .select('*')
+        .order('name');
+      if (error) throw error;
+      // Map database fields to interface, handling JSON retention_policy
+      return (data || []).map(row => ({
+        ...row,
+        retention_policy: (row.retention_policy as { daily: number; weekly: number; monthly: number }) || { daily: 7, weekly: 4, monthly: 12 }
+      })) as ProtectionGroup[];
     }
-  }, []);
+  });
 
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
-
-  const createGroup = async (group: Partial<ProtectionGroup>) => {
-    try {
-      const data = await fetchApi<{ protection_group: ProtectionGroup }>('/api/replication/protection-groups', {
-        method: 'POST',
-        body: JSON.stringify(group),
-      });
+  const createGroupMutation = useMutation({
+    mutationFn: async (group: Partial<ProtectionGroup>) => {
+      const { data, error } = await supabase
+        .from('protection_groups')
+        .insert({
+          name: group.name,
+          description: group.description,
+          source_vcenter_id: group.source_vcenter_id,
+          target_id: group.target_id,
+          protection_datastore: group.protection_datastore,
+          replication_schedule: group.replication_schedule,
+          retention_policy: group.retention_policy || { daily: 7, weekly: 4, monthly: 12 },
+          rpo_minutes: group.rpo_minutes || 60,
+          is_enabled: group.is_enabled ?? true
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      // Cast the returned data properly
+      return {
+        ...data,
+        retention_policy: (data.retention_policy as { daily: number; weekly: number; monthly: number }) || { daily: 7, weekly: 4, monthly: 12 }
+      } as ProtectionGroup;
+    },
+    onSuccess: () => {
       toast({ title: 'Protection group created' });
-      await refetch();
-      return data.protection_group;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to create group';
-      toast({ title: 'Error', description: message, variant: 'destructive' });
-      throw err;
+      queryClient.invalidateQueries({ queryKey: ['protection-groups'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
-  };
+  });
 
-  const deleteGroup = async (id: string) => {
-    try {
-      await fetchApi(`/api/replication/protection-groups/${id}`, { method: 'DELETE' });
+  const deleteGroupMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from('protection_groups')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
       toast({ title: 'Protection group deleted' });
-      await refetch();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to delete group';
-      toast({ title: 'Error', description: message, variant: 'destructive' });
-      throw err;
+      queryClient.invalidateQueries({ queryKey: ['protection-groups'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
-  };
+  });
 
+  // This operation requires Job Executor
   const runReplicationNow = async (groupId: string) => {
     try {
-      const data = await fetchApi<{ message: string; jobs: ReplicationJob[] }>(
+      const data = await fetchJobExecutor<{ message: string; jobs: ReplicationJob[] }>(
         `/api/replication/protection-groups/${groupId}/run-now`,
         { method: 'POST' }
       );
       toast({ title: 'Replication started', description: data.message });
-      await refetch();
+      queryClient.invalidateQueries({ queryKey: ['protection-groups'] });
+      queryClient.invalidateQueries({ queryKey: ['replication-jobs'] });
       return data;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to start replication';
@@ -256,136 +295,135 @@ export function useProtectionGroups() {
     }
   };
 
-  return { groups, loading, error, refetch, createGroup, deleteGroup, runReplicationNow };
+  return { 
+    groups, 
+    loading, 
+    error: error?.message || null, 
+    refetch, 
+    createGroup: createGroupMutation.mutateAsync, 
+    deleteGroup: deleteGroupMutation.mutateAsync, 
+    runReplicationNow 
+  };
 }
 
 export function useProtectedVMs(groupId?: string) {
-  const [vms, setVms] = useState<ProtectedVM[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
-  const refetch = useCallback(async () => {
-    if (!groupId) {
-      setVms([]);
-      setLoading(false);
-      return;
-    }
-    
-    try {
-      setLoading(true);
-      const data = await fetchApi<{ protected_vms: ProtectedVM[] }>(
-        `/api/replication/protection-groups/${groupId}/protected-vms`
-      );
-      setVms(data.protected_vms || []);
-      setError(null);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to fetch VMs';
-      setError(message);
-      console.error('Failed to fetch protected VMs:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [groupId]);
+  const { data: vms = [], isLoading: loading, error, refetch } = useQuery({
+    queryKey: ['protected-vms', groupId],
+    queryFn: async () => {
+      if (!groupId) return [];
+      const { data, error } = await supabase
+        .from('protected_vms')
+        .select('*')
+        .eq('protection_group_id', groupId)
+        .order('priority');
+      if (error) throw error;
+      return data as ProtectedVM[];
+    },
+    enabled: !!groupId
+  });
 
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
-
-  const addVM = async (vm: Partial<ProtectedVM>) => {
-    if (!groupId) return;
-    try {
-      const data = await fetchApi<{ protected_vm: ProtectedVM }>(
-        `/api/replication/protection-groups/${groupId}/protected-vms`,
-        {
-          method: 'POST',
-          body: JSON.stringify(vm),
-        }
-      );
+  const addVMMutation = useMutation({
+    mutationFn: async (vm: Partial<ProtectedVM>) => {
+      if (!groupId) throw new Error('No group selected');
+      const { data, error } = await supabase
+        .from('protected_vms')
+        .insert({
+          protection_group_id: groupId,
+          vm_id: vm.vm_id,
+          vm_name: vm.vm_name,
+          vm_vcenter_id: vm.vm_vcenter_id,
+          current_datastore: vm.current_datastore,
+          target_datastore: vm.target_datastore,
+          needs_storage_vmotion: vm.needs_storage_vmotion ?? false,
+          replication_status: 'pending',
+          priority: vm.priority || 100
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      return data as ProtectedVM;
+    },
+    onSuccess: () => {
       toast({ title: 'VM added to protection group' });
-      await refetch();
-      return data.protected_vm;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to add VM';
-      toast({ title: 'Error', description: message, variant: 'destructive' });
-      throw err;
+      queryClient.invalidateQueries({ queryKey: ['protected-vms', groupId] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
-  };
+  });
 
-  const removeVM = async (vmId: string) => {
-    try {
-      await fetchApi(`/api/replication/protected-vms/${vmId}`, { method: 'DELETE' });
+  const removeVMMutation = useMutation({
+    mutationFn: async (vmId: string) => {
+      const { error } = await supabase
+        .from('protected_vms')
+        .delete()
+        .eq('id', vmId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
       toast({ title: 'VM removed from protection' });
-      await refetch();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to remove VM';
-      toast({ title: 'Error', description: message, variant: 'destructive' });
-      throw err;
+      queryClient.invalidateQueries({ queryKey: ['protected-vms', groupId] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
-  };
+  });
 
-  return { vms, loading, error, refetch, addVM, removeVM };
+  return { 
+    vms, 
+    loading, 
+    error: error?.message || null, 
+    refetch, 
+    addVM: addVMMutation.mutateAsync, 
+    removeVM: removeVMMutation.mutateAsync 
+  };
 }
 
 export function useReplicationJobs() {
-  const [jobs, setJobs] = useState<ReplicationJob[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const refetch = useCallback(async () => {
-    try {
-      setLoading(true);
-      const data = await fetchApi<{ jobs: ReplicationJob[] }>('/api/replication/jobs');
-      setJobs(data.jobs || []);
-      setError(null);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to fetch jobs';
-      setError(message);
-      console.error('Failed to fetch replication jobs:', err);
-    } finally {
-      setLoading(false);
+  const { data: jobs = [], isLoading: loading, error, refetch } = useQuery({
+    queryKey: ['replication-jobs'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('replication_jobs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
+      if (error) throw error;
+      return data as ReplicationJob[];
     }
-  }, []);
+  });
 
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
-
-  return { jobs, loading, error, refetch };
+  return { jobs, loading, error: error?.message || null, refetch };
 }
 
 export function useReplicationVCenters() {
-  const [vcenters, setVCenters] = useState<VCenterConnection[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
-  const refetch = useCallback(async () => {
-    try {
-      setLoading(true);
-      const data = await fetchApi<{ vcenters: VCenterConnection[] }>('/api/replication/vcenters');
-      setVCenters(data.vcenters || []);
-      setError(null);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to fetch vCenters';
-      setError(message);
-      console.error('Failed to fetch vCenters:', err);
-    } finally {
-      setLoading(false);
+  const { data: vcenters = [], isLoading: loading, error, refetch } = useQuery({
+    queryKey: ['replication-vcenters'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('vcenter_settings')
+        .select('*')
+        .order('host');
+      if (error) throw error;
+      return data as VCenterConnection[];
     }
-  }, []);
+  });
 
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
-
+  // This operation requires Job Executor
   const syncVCenter = async (id: string) => {
     try {
-      const data = await fetchApi<{ vms_found: number; message: string }>(
+      const data = await fetchJobExecutor<{ vms_found: number; message: string }>(
         `/api/replication/vcenters/${id}/sync`,
         { method: 'POST' }
       );
       toast({ title: 'vCenter synced', description: data.message });
+      queryClient.invalidateQueries({ queryKey: ['replication-vcenters'] });
       return data;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to sync vCenter';
@@ -394,67 +432,54 @@ export function useReplicationVCenters() {
     }
   };
 
-  return { vcenters, loading, error, refetch, syncVCenter };
+  return { vcenters, loading, error: error?.message || null, refetch, syncVCenter };
 }
 
 export function useVCenterVMs(vcenterId?: string) {
-  const [vms, setVMs] = useState<VCenterVM[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: vms = [], isLoading: loading, error, refetch } = useQuery({
+    queryKey: ['vcenter-vms', vcenterId],
+    queryFn: async () => {
+      if (!vcenterId) return [];
+      const { data, error } = await supabase
+        .from('vcenter_vms')
+        .select('*')
+        .eq('source_vcenter_id', vcenterId)
+        .order('name');
+      if (error) throw error;
+      return data as VCenterVM[];
+    },
+    enabled: !!vcenterId
+  });
 
-  const refetch = useCallback(async () => {
-    if (!vcenterId) {
-      setVMs([]);
-      setLoading(false);
-      return;
-    }
-    
-    try {
-      setLoading(true);
-      const data = await fetchApi<{ vms: VCenterVM[] }>(`/api/replication/vcenters/${vcenterId}/vms`);
-      setVMs(data.vms || []);
-      setError(null);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to fetch VMs';
-      setError(message);
-    } finally {
-      setLoading(false);
-    }
-  }, [vcenterId]);
-
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
-
-  return { vms, loading, error, refetch };
+  return { vms, loading, error: error?.message || null, refetch };
 }
 
-// Wizard hooks
+// Wizard hooks - these require Job Executor for actual operations
 export function useProtectionPlan(protectedVmId?: string) {
-  const [plan, setPlan] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
-  const fetchPlan = useCallback(async () => {
-    if (!protectedVmId) return;
-    
-    try {
-      setLoading(true);
-      const data = await fetchApi<{ plan: any }>(`/api/replication/protected-vms/${protectedVmId}/protection-plan`);
-      setPlan(data.plan);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to fetch plan';
-      toast({ title: 'Error', description: message, variant: 'destructive' });
-    } finally {
-      setLoading(false);
-    }
-  }, [protectedVmId, toast]);
+  const { data: plan, isLoading: loading, refetch: fetchPlan } = useQuery({
+    queryKey: ['protection-plan', protectedVmId],
+    queryFn: async () => {
+      if (!protectedVmId) return null;
+      const { data, error } = await supabase
+        .from('protected_vms')
+        .select('*')
+        .eq('id', protectedVmId)
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!protectedVmId
+  });
 
+  // This operation requires Job Executor
   const moveToProtectionDatastore = async (targetDatastore?: string) => {
     if (!protectedVmId) return;
     
     try {
-      const data = await fetchApi<{ success: boolean; message: string }>(
+      const data = await fetchJobExecutor<{ success: boolean; message: string }>(
         `/api/replication/protected-vms/${protectedVmId}/move-to-protection-datastore`,
         {
           method: 'POST',
@@ -462,6 +487,8 @@ export function useProtectionPlan(protectedVmId?: string) {
         }
       );
       toast({ title: 'VM relocated', description: data.message });
+      queryClient.invalidateQueries({ queryKey: ['protection-plan', protectedVmId] });
+      queryClient.invalidateQueries({ queryKey: ['protected-vms'] });
       return data;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to relocate VM';
@@ -474,37 +501,39 @@ export function useProtectionPlan(protectedVmId?: string) {
 }
 
 export function useDRShellPlan(protectedVmId?: string) {
-  const [plan, setPlan] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
-  const fetchPlan = useCallback(async () => {
-    if (!protectedVmId) return;
-    
-    try {
-      setLoading(true);
-      const data = await fetchApi<{ plan: any }>(`/api/replication/protected-vms/${protectedVmId}/dr-shell-plan`);
-      setPlan(data.plan);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to fetch plan';
-      toast({ title: 'Error', description: message, variant: 'destructive' });
-    } finally {
-      setLoading(false);
-    }
-  }, [protectedVmId, toast]);
+  const { data: plan, isLoading: loading, refetch: fetchPlan } = useQuery({
+    queryKey: ['dr-shell-plan', protectedVmId],
+    queryFn: async () => {
+      if (!protectedVmId) return null;
+      const { data, error } = await supabase
+        .from('protected_vms')
+        .select('*')
+        .eq('id', protectedVmId)
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!protectedVmId
+  });
 
+  // This operation requires Job Executor
   const createDRShell = async (config: { shell_vm_name?: string; cpu_count?: number; memory_mb?: number }) => {
     if (!protectedVmId) return;
     
     try {
-      const data = await fetchApi<{ success: boolean; shell_vm_name: string; message: string }>(
+      const data = await fetchJobExecutor<{ success: boolean; shell_vm_name: string; message: string }>(
         `/api/replication/protected-vms/${protectedVmId}/create-dr-shell`,
         {
           method: 'POST',
           body: JSON.stringify(config),
         }
       );
-      toast({ title: 'DR Shell VM created', description: data.message });
+      toast({ title: 'DR Shell created', description: data.message });
+      queryClient.invalidateQueries({ queryKey: ['dr-shell-plan', protectedVmId] });
+      queryClient.invalidateQueries({ queryKey: ['protected-vms'] });
       return data;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to create DR shell';
