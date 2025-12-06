@@ -47,7 +47,17 @@ It upgrades from the stub-mode architecture in PLAN_ZERFAUX.md and uses:
   - Set `dr_shell_vm_id`, `dr_shell_vm_created = true`
 
 ## 5. Configuration Flag
-- Define: `USE_ZERFAUX_STUBS = True`
-- Set in `api_router.py`
-- If False:
-  - Use VCenterInventoryReal and ZFSReplicationReal
+- Environment variable: `ZERFAUX_USE_STUBS=true|false`
+- Default: `true` (stub mode for offline testing)
+- Set in: `job_executor/zerfaux/__init__.py`
+- If `false`:
+  - Uses `VCenterInventoryReal` and `ZFSReplicationReal`
+  - Requires real vCenter and ZFS infrastructure
+
+## 6. Implementation Status: COMPLETE
+- [x] Configuration toggle in `__init__.py`
+- [x] `VCenterInventoryReal` in `vcenter_inventory_real.py`
+- [x] `ZFSReplicationReal` in `zfs_replication_real.py`
+- [x] `api_router.py` updated to use toggle
+- [x] Storage vMotion via `RelocateVM_Task`
+- [x] DR Shell VM creation via `CreateVM_Task`
