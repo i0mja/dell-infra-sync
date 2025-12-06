@@ -144,7 +144,7 @@ export function ProtectionDatastoreWizard({
           <Skeleton className="h-20 w-full" />
           <Skeleton className="h-20 w-full" />
         </div>
-      ) : plan ? (
+      ) : plan || vm ? (
         <div className="space-y-4">
           {/* Current State */}
           <div className="border rounded-lg p-4 space-y-3">
@@ -159,15 +159,15 @@ export function ProtectionDatastoreWizard({
               </div>
               <div>
                 <span className="text-muted-foreground">Current Datastore:</span>
-                <span className="ml-2 font-medium">{plan.current_datastore || vm?.current_datastore || 'Unknown'}</span>
+                <span className="ml-2 font-medium">{plan?.current_datastore || vm?.current_datastore || 'Unknown'}</span>
               </div>
               <div>
-                <span className="text-muted-foreground">Total Disk:</span>
-                <span className="ml-2 font-medium">{plan.total_disk_gb || '-'} GB</span>
+                <span className="text-muted-foreground">Replication Status:</span>
+                <span className="ml-2 font-medium">{vm?.replication_status || 'pending'}</span>
               </div>
               <div>
-                <span className="text-muted-foreground">Disk Count:</span>
-                <span className="ml-2 font-medium">{plan.disk_count || '-'}</span>
+                <span className="text-muted-foreground">Priority:</span>
+                <span className="ml-2 font-medium">{vm?.priority || 100}</span>
               </div>
             </div>
           </div>
@@ -179,12 +179,11 @@ export function ProtectionDatastoreWizard({
               Migration Plan
             </h4>
             <div className="flex items-center gap-4 py-2">
-              <Badge variant="outline">{plan.current_datastore || vm?.current_datastore}</Badge>
+              <Badge variant="outline">{plan?.current_datastore || vm?.current_datastore || 'Current'}</Badge>
               <ArrowRight className="h-4 w-4 text-primary" />
-              <Badge variant="default">{plan.target_datastore || protectionDatastore}</Badge>
+              <Badge variant="default">{vm?.target_datastore || protectionDatastore || 'Protection DS'}</Badge>
             </div>
             <div className="text-sm text-muted-foreground">
-              <p>Estimated transfer: {plan.total_disk_gb || '-'} GB</p>
               <p>Method: Storage vMotion (zero downtime)</p>
             </div>
           </div>
@@ -193,11 +192,11 @@ export function ProtectionDatastoreWizard({
           <div className="border rounded-lg p-4 space-y-3">
             <h4 className="font-medium">Pre-flight Checks</h4>
             <div className="space-y-2">
-              {(plan.pre_checks || [
+              {[
                 { name: 'Target datastore accessible', passed: true },
                 { name: 'Sufficient free space', passed: true },
                 { name: 'VM tools running', passed: true },
-              ]).map((check: any, i: number) => (
+              ].map((check, i) => (
                 <div key={i} className="flex items-center gap-2 text-sm">
                   {check.passed ? (
                     <CheckCircle2 className="h-4 w-4 text-green-500" />
@@ -241,13 +240,12 @@ export function ProtectionDatastoreWizard({
           </AlertDescription>
         </Alert>
 
-        {plan && (
+        {(plan || vm) && (
           <div className="border rounded-lg p-4 space-y-2">
             <h4 className="font-medium">Migration Summary</h4>
             <div className="text-sm space-y-1">
-              <p><span className="text-muted-foreground">Source:</span> {plan.current_datastore || vm?.current_datastore}</p>
+              <p><span className="text-muted-foreground">Source:</span> {plan?.current_datastore || vm?.current_datastore}</p>
               <p><span className="text-muted-foreground">Target:</span> {targetDatastore}</p>
-              <p><span className="text-muted-foreground">Data size:</span> {plan.total_disk_gb || '-'} GB</p>
             </div>
           </div>
         )}

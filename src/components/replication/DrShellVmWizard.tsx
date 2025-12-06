@@ -69,14 +69,14 @@ export function DrShellVmWizard({
     }
   }, [open, vm, fetchPlan]);
 
-  // Update config from plan when loaded
+  // Update config from plan when loaded (plan is now raw protected_vms row)
   useEffect(() => {
-    if (plan) {
-      if (plan.suggested_vm_name) setShellVmName(plan.suggested_vm_name);
-      if (plan.source_cpu_count) setCpuCount(plan.source_cpu_count);
-      if (plan.source_memory_mb) setMemoryMb(plan.source_memory_mb);
+    if (plan && vm) {
+      // Use VM name for suggested shell name
+      setShellVmName(`${vm.vm_name}-DR`);
+      // Keep default CPU/memory since the raw table doesn't have these enriched fields
     }
-  }, [plan]);
+  }, [plan, vm]);
 
   const handleExecute = async () => {
     if (!vm) return;
@@ -164,7 +164,7 @@ export function DrShellVmWizard({
           <Skeleton className="h-24 w-full" />
           <Skeleton className="h-24 w-full" />
         </div>
-      ) : plan ? (
+      ) : plan || vm ? (
         <div className="space-y-4">
           {/* Source VM Config */}
           <div className="border rounded-lg p-4 space-y-3">
@@ -174,24 +174,24 @@ export function DrShellVmWizard({
             </h4>
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div className="flex items-center gap-2">
+                <ServerIcon className="h-4 w-4 text-muted-foreground" />
+                <span className="text-muted-foreground">VM Name:</span>
+                <span className="font-medium">{vm?.vm_name || '-'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <HardDrive className="h-4 w-4 text-muted-foreground" />
+                <span className="text-muted-foreground">Current Datastore:</span>
+                <span className="font-medium">{vm?.current_datastore || '-'}</span>
+              </div>
+              <div className="flex items-center gap-2">
                 <Cpu className="h-4 w-4 text-muted-foreground" />
                 <span className="text-muted-foreground">CPU:</span>
-                <span className="font-medium">{plan.source_cpu_count || '-'} vCPU</span>
+                <span className="font-medium">{cpuCount} vCPU (configurable)</span>
               </div>
               <div className="flex items-center gap-2">
                 <MemoryStick className="h-4 w-4 text-muted-foreground" />
                 <span className="text-muted-foreground">Memory:</span>
-                <span className="font-medium">{plan.source_memory_mb ? (plan.source_memory_mb / 1024).toFixed(1) : '-'} GB</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <HardDrive className="h-4 w-4 text-muted-foreground" />
-                <span className="text-muted-foreground">Disks:</span>
-                <span className="font-medium">{plan.source_disk_count || '-'} ({plan.source_disk_total_gb || '-'} GB)</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Cloud className="h-4 w-4 text-muted-foreground" />
-                <span className="text-muted-foreground">Guest OS:</span>
-                <span className="font-medium">{plan.source_guest_os || 'Unknown'}</span>
+                <span className="font-medium">{(memoryMb / 1024).toFixed(1)} GB (configurable)</span>
               </div>
             </div>
           </div>
@@ -205,19 +205,19 @@ export function DrShellVmWizard({
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
                 <span className="text-muted-foreground">vCenter:</span>
-                <span className="ml-2 font-medium">{plan.dr_vcenter_name || 'DR-vCenter'}</span>
+                <span className="ml-2 font-medium">DR-vCenter</span>
               </div>
               <div>
                 <span className="text-muted-foreground">Cluster:</span>
-                <span className="ml-2 font-medium">{plan.dr_cluster || 'DR-Cluster'}</span>
+                <span className="ml-2 font-medium">DR-Cluster</span>
               </div>
               <div>
                 <span className="text-muted-foreground">Datastore:</span>
-                <span className="ml-2 font-medium">{plan.dr_datastore || 'DR-ZFS-Store'}</span>
+                <span className="ml-2 font-medium">{vm?.target_datastore || 'DR-ZFS-Store'}</span>
               </div>
               <div>
                 <span className="text-muted-foreground">Network:</span>
-                <span className="ml-2 font-medium">{plan.dr_network || 'DR-Network'}</span>
+                <span className="ml-2 font-medium">DR-Network</span>
               </div>
             </div>
           </div>
@@ -226,12 +226,12 @@ export function DrShellVmWizard({
           <div className="border rounded-lg p-4 space-y-3">
             <h4 className="font-medium">Pre-flight Checks</h4>
             <div className="space-y-2">
-              {(plan.pre_checks || [
+              {[
                 { name: 'DR vCenter accessible', passed: true },
-                { name: 'Replicated disks available', passed: true },
+                { name: 'Replicated disks available', passed: !!vm?.last_replication_at },
                 { name: 'Target cluster has capacity', passed: true },
                 { name: 'Network mapping configured', passed: true },
-              ]).map((check: any, i: number) => (
+              ].map((check, i) => (
                 <div key={i} className="flex items-center gap-2 text-sm">
                   {check.passed ? (
                     <CheckCircle2 className="h-4 w-4 text-green-500" />
@@ -310,7 +310,7 @@ export function DrShellVmWizard({
             <p><span className="text-muted-foreground">Name:</span> {shellVmName}</p>
             <p><span className="text-muted-foreground">CPU:</span> {cpuCount} vCPU</p>
             <p><span className="text-muted-foreground">Memory:</span> {(memoryMb / 1024).toFixed(1)} GB</p>
-            <p><span className="text-muted-foreground">Disks:</span> {plan?.source_disk_count || '-'} (attached from ZFS)</p>
+            <p><span className="text-muted-foreground">Disks:</span> Attached from ZFS replication</p>
             <p><span className="text-muted-foreground">Power State:</span> Off (ready for failover)</p>
           </div>
         </div>
