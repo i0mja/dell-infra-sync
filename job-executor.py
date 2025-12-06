@@ -948,6 +948,11 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
         self.log(f"Starting storage vMotion for protected VM: {protected_vm_id}")
         self.update_job_status(job_id, 'running', started_at=datetime.now().isoformat())
         
+        start_time = time.time()
+        source_datastore = None
+        vm_name = None
+        group_name = None
+        
         try:
             # Import Zerfaux router components
             from job_executor.zerfaux import VCenterInventory
@@ -970,6 +975,8 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
                 raise Exception(f'Protected VM not found: {protected_vm_id}')
             
             vm = response.json()[0]
+            vm_name = vm.get('vm_name', 'Unknown')
+            source_datastore = vm.get('current_datastore')
             
             # Get protection group
             group_response = requests.get(
@@ -981,13 +988,14 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             )
             
             group = group_response.json()[0] if group_response.ok and group_response.json() else {}
+            group_name = group.get('name')
             
             # Determine target datastore
             final_target = target_datastore or group.get('protection_datastore')
             if not final_target:
                 raise Exception('No target datastore specified')
             
-            self.log(f"Relocating VM {vm['vm_name']} to {final_target}")
+            self.log(f"Relocating VM {vm_name} from {source_datastore} to {final_target}")
             
             # Use VCenterInventory to perform the relocation
             vcenter_inventory = VCenterInventory(self)
@@ -996,6 +1004,8 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
                 vm_moref=vm.get('vm_vcenter_id', ''),
                 target_datastore=final_target
             )
+            
+            duration_seconds = int(time.time() - start_time)
             
             if result.get('success'):
                 # Update protected VM in database
@@ -1013,25 +1023,38 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
                     timeout=30
                 )
                 
-                self.log(f"VM {vm['vm_name']} successfully relocated to {final_target}")
+                self.log(f"VM {vm_name} successfully relocated to {final_target} in {duration_seconds}s")
                 self.update_job_status(
                     job_id, 'completed',
                     completed_at=datetime.now().isoformat(),
                     details={
                         'message': result.get('message', 'VM relocated successfully'),
-                        'vm_name': vm['vm_name'],
-                        'target_datastore': final_target
+                        'vm_name': vm_name,
+                        'source_datastore': source_datastore,
+                        'target_datastore': final_target,
+                        'protection_group_name': group_name,
+                        'duration_seconds': duration_seconds,
+                        'success': True
                     }
                 )
             else:
                 raise Exception(result.get('message', 'Storage vMotion failed'))
                 
         except Exception as e:
+            duration_seconds = int(time.time() - start_time)
             self.log(f"Storage vMotion failed: {e}", "ERROR")
             self.update_job_status(
                 job_id, 'failed',
                 completed_at=datetime.now().isoformat(),
-                details={'error': str(e)}
+                details={
+                    'error': str(e),
+                    'vm_name': vm_name,
+                    'source_datastore': source_datastore,
+                    'target_datastore': target_datastore,
+                    'protection_group_name': group_name,
+                    'duration_seconds': duration_seconds,
+                    'success': False
+                }
             )
 
 
