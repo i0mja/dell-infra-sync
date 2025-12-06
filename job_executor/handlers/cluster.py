@@ -12,30 +12,87 @@ from job_executor.utils import utc_now_iso
 class ClusterHandler(BaseHandler):
     """Handles cluster safety checks and update workflows"""
     
-    def _check_esxi_accessible(self, hostname: str, timeout: int = 5) -> bool:
-        """Check if ESXi is accessible on HTTPS port 443 with detailed error handling"""
+    def _check_esxi_accessible(self, hostname: str, timeout: int = 5, job_id: str = None) -> tuple:
+        """
+        Check if ESXi is accessible on HTTPS port 443 with detailed error handling.
+        
+        Returns:
+            Tuple of (accessible: bool, connect_time: float, error_msg: str or None)
+        """
         import socket
+        import time
+        
+        start_time = time.time()
+        error_msg = None
+        
         try:
             # First resolve DNS
             ip = socket.gethostbyname(hostname)
         except socket.gaierror as e:
-            self.log(f"      DNS resolution failed for {hostname}: {e}", "DEBUG")
-            return False
+            error_msg = f"DNS resolution failed for {hostname}: {e}"
+            self.log(f"      {error_msg}", "DEBUG")
+            if job_id:
+                self._append_console_log(job_id, error_msg, "WARN")
+            return False, 0, error_msg
         
         try:
             sock = socket.create_connection((ip, 443), timeout=timeout)
             sock.close()
-            return True
+            connect_time = time.time() - start_time
+            return True, connect_time, None
         except socket.timeout:
-            return False  # Normal during reboot - don't log
+            return False, 0, None  # Normal during reboot - don't log
         except ConnectionRefusedError:
-            return False  # ESXi not ready - don't log
+            return False, 0, None  # ESXi not ready - don't log
         except OSError as e:
-            self.log(f"      Socket error for {hostname} ({ip}): {e}", "DEBUG")
-            return False
+            error_msg = f"Socket error for {hostname} ({ip}): {e}"
+            self.log(f"      {error_msg}", "DEBUG")
+            return False, 0, error_msg
         except Exception as e:
-            self.log(f"      Unexpected error checking {hostname}: {type(e).__name__}: {e}", "DEBUG")
-            return False
+            error_msg = f"Unexpected error checking {hostname}: {type(e).__name__}: {e}"
+            self.log(f"      {error_msg}", "DEBUG")
+            return False, 0, error_msg
+    
+    def _check_vcenter_host_status(self, host: Dict, job_id: str = None) -> Optional[str]:
+        """
+        Check host connection status via vCenter as a fallback.
+        
+        Args:
+            host: Host dict with vcenter info
+            job_id: Optional job ID for logging
+            
+        Returns:
+            Connection state string (e.g. 'connected', 'disconnected') or None if unavailable
+        """
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        import requests
+        
+        vcenter_host_id = host.get('id')
+        if not vcenter_host_id:
+            return None
+        
+        headers = {
+            "apikey": SERVICE_ROLE_KEY,
+            "Authorization": f"Bearer {SERVICE_ROLE_KEY}"
+        }
+        
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_hosts",
+                params={'id': f"eq.{vcenter_host_id}", 'select': 'connection_state'},
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.ok:
+                data = response.json()
+                if data and len(data) > 0:
+                    return data[0].get('connection_state')
+        except Exception as e:
+            self.log(f"      Could not check vCenter status: {e}", "DEBUG")
+        
+        return None
     
     def _execute_batch_preflight_checks(
         self, 
@@ -1756,12 +1813,17 @@ class ClusterHandler(BaseHandler):
                             })
                             
                             self.log(f"    Initial wait: 3 minutes for BIOS POST and reboot...")
+                            self._append_console_log(job['id'], f"Starting reboot wait for {host['name']}", "INFO")
                             time.sleep(180)  # Wait 3 minutes for reboot to start (BIOS POST can be slow)
                             
                             # Wait for system to come back online - phase 1: iDRAC, phase 2: ESXi
                             max_attempts = 180  # 30 minutes (180 * 10s) - enough for BIOS updates
                             idrac_online = False
                             esxi_online = False
+                            esxi_timeout = 5  # Dynamic timeout adjustment
+                            fallback_ip = host.get('management_ip')  # IP fallback option
+                            esxi_access_method = 'hostname'  # Track what worked
+                            vcenter_fallback_used = False
                             
                             for attempt in range(max_attempts):
                                 # Check for cancellation during reboot wait (no graceful cancel during reboot)
@@ -1790,34 +1852,93 @@ class ClusterHandler(BaseHandler):
                                             )
                                             idrac_online = True
                                             self.log(f"    ✓ iDRAC back online (attempt {attempt+1}/{max_attempts})")
+                                            self._append_console_log(job['id'], f"iDRAC online after {attempt * 10}s", "INFO")
                                     except Exception as idrac_err:
-                                        # Log iDRAC errors every minute instead of silently swallowing
+                                        # Log iDRAC errors every minute to console_log
                                         if attempt % 6 == 0:
-                                            self.log(f"      iDRAC check failed: {type(idrac_err).__name__}: {idrac_err}", "DEBUG")
+                                            error_msg = f"iDRAC check failed: {type(idrac_err).__name__}: {idrac_err}"
+                                            self.log(f"      {error_msg}", "DEBUG")
+                                            self._append_console_log(job['id'], error_msg, "DEBUG")
                                 
                                 # Phase 2: Wait for ESXi to be accessible (only after iDRAC is up)
                                 if idrac_online and not esxi_online:
-                                    if self._check_esxi_accessible(esxi_target, timeout=5):
+                                    # Try primary target first
+                                    accessible, connect_time, error_msg = self._check_esxi_accessible(
+                                        esxi_target, timeout=esxi_timeout, job_id=job['id']
+                                    )
+                                    
+                                    if accessible:
                                         esxi_online = True
                                         self.log(f"    ✓ ESXi accessible on port 443 ({esxi_target})")
+                                        self._append_console_log(job['id'], f"ESXi accessible via {esxi_access_method}", "INFO")
+                                        
+                                        # Dynamic timeout adjustment: if connection was slow, increase timeout
+                                        if connect_time > 3:
+                                            self._append_console_log(job['id'], f"Slow connection detected ({connect_time:.1f}s)", "WARN")
+                                        
+                                        # Store what worked
+                                        self.update_job_details_field(job['id'], {
+                                            'esxi_access_method': esxi_access_method,
+                                            'esxi_access_target': esxi_target,
+                                            'esxi_connect_time_s': round(connect_time, 2)
+                                        })
                                         break
+                                    
+                                    # Fallback: Try management IP if hostname failed and IP is available
+                                    if error_msg and fallback_ip and fallback_ip != esxi_target:
+                                        accessible_ip, connect_time_ip, _ = self._check_esxi_accessible(
+                                            fallback_ip, timeout=esxi_timeout, job_id=job['id']
+                                        )
+                                        if accessible_ip:
+                                            esxi_online = True
+                                            esxi_access_method = 'management_ip'
+                                            self.log(f"    ✓ ESXi accessible via fallback IP ({fallback_ip})")
+                                            self._append_console_log(job['id'], f"ESXi accessible via fallback IP {fallback_ip}", "INFO")
+                                            self.update_job_details_field(job['id'], {
+                                                'esxi_access_method': 'management_ip',
+                                                'esxi_access_target': fallback_ip,
+                                                'esxi_access_fallback_used': True,
+                                                'esxi_connect_time_s': round(connect_time_ip, 2)
+                                            })
+                                            break
+                                    
+                                    # VCenter fallback: After 10 minutes, check vCenter status
+                                    if attempt >= 60 and attempt % 30 == 0:  # Every 5 mins after 10 min
+                                        vcenter_status = self._check_vcenter_host_status(host, job['id'])
+                                        if vcenter_status == 'connected':
+                                            self.log(f"    ⚠ Port check failing but vCenter shows 'connected' - proceeding", "WARN")
+                                            self._append_console_log(job['id'], f"vCenter reports connected, proceeding despite port check failure", "WARN")
+                                            esxi_online = True
+                                            vcenter_fallback_used = True
+                                            self.update_job_details_field(job['id'], {
+                                                'esxi_access_method': 'vcenter_fallback',
+                                                'esxi_access_warning': 'Port 443 check failed but vCenter reported connected',
+                                                'vcenter_fallback_used': True
+                                            })
+                                            break
+                                        elif vcenter_status:
+                                            self._append_console_log(job['id'], f"vCenter status: {vcenter_status}", "DEBUG")
                                 
                                 # Heartbeat logging every minute with timestamps
                                 if attempt % 6 == 0:
                                     elapsed_mins = (attempt * 10) // 60
+                                    status_msg = f"Waiting for {'ESXi' if idrac_online else 'iDRAC'}: {elapsed_mins}m elapsed"
+                                    self._append_console_log(job['id'], status_msg, "INFO")
                                     self.update_job_details_field(job['id'], {
                                         'current_step': f'Waiting for {"ESXi" if idrac_online else "iDRAC"}: {esxi_target}',
                                         'wait_heartbeat': utc_now_iso(),
                                         'wait_attempt': attempt,
                                         'wait_elapsed_mins': elapsed_mins,
                                         'idrac_online': idrac_online,
-                                        'esxi_online': esxi_online
+                                        'esxi_online': esxi_online,
+                                        'esxi_timeout': esxi_timeout
                                     })
                                 
                                 # Safety valve: detailed logging after 15 minutes
                                 if attempt == 90:
-                                    self.log(f"    ⚠ Extended wait (15 min): iDRAC={idrac_online}, ESXi={esxi_online}", "WARN")
-                                    self.log(f"      Target: {esxi_target}, iDRAC IP: {server['ip_address']}", "WARN")
+                                    warn_msg = f"Extended wait (15 min): iDRAC={idrac_online}, ESXi={esxi_online}, target={esxi_target}"
+                                    self.log(f"    ⚠ {warn_msg}", "WARN")
+                                    self._append_console_log(job['id'], warn_msg, "WARN")
                                 
                                 # Progress logging every 30 seconds
                                 if attempt > 0 and attempt % 3 == 0:
@@ -1828,7 +1949,9 @@ class ClusterHandler(BaseHandler):
                                 time.sleep(10)
                             
                             if not esxi_online:
-                                raise Exception(f"Timeout waiting for host to come online after {max_attempts * 10}s")
+                                timeout_msg = f"Timeout waiting for host after {max_attempts * 10}s"
+                                self._append_console_log(job['id'], timeout_msg, "ERROR")
+                                raise Exception(timeout_msg)
                             
                             # Post-reboot job verification: Check for failed firmware jobs
                             self.log(f"    Checking for failed firmware jobs...")

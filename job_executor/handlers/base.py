@@ -236,3 +236,104 @@ class BaseHandler:
         except Exception as e:
             self.log(f"Warning: Could not update job details: {e}", "WARN")
             return False
+    
+    def _append_console_log(self, job_id: str, message: str, level: str = "INFO") -> bool:
+        """
+        Append a log line to the job's console_log array in details.
+        This makes diagnostic messages visible in the UI.
+        
+        Args:
+            job_id: Job UUID
+            message: Log message to append
+            level: Log level (INFO, WARN, ERROR, DEBUG)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        import requests
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        
+        timestamp = datetime.utcnow().strftime('%H:%M:%S')
+        log_entry = f"[{timestamp}] [{level}] {message}"
+        
+        headers = {
+            "apikey": SERVICE_ROLE_KEY,
+            "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            # Fetch current console_log
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/jobs",
+                params={'id': f"eq.{job_id}", 'select': 'details'},
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            current_data = response.json() if response.ok else []
+            current_details = current_data[0].get('details', {}) if current_data else {}
+            if current_details is None:
+                current_details = {}
+            
+            console_log = current_details.get('console_log', [])
+            if not isinstance(console_log, list):
+                console_log = []
+            
+            console_log.append(log_entry)
+            
+            # Keep last 100 entries to avoid bloat
+            if len(console_log) > 100:
+                console_log = console_log[-100:]
+            
+            # Update job with new console_log
+            merged = {**current_details, 'console_log': console_log}
+            
+            patch_response = requests.patch(
+                f"{DSM_URL}/rest/v1/jobs",
+                params={'id': f"eq.{job_id}"},
+                json={'details': merged},
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            return patch_response.ok
+        except Exception as e:
+            # Don't log failures to avoid recursive issues
+            return False
+    
+    def _get_job_details(self, job_id: str) -> Optional[Dict]:
+        """
+        Fetch current job details from database.
+        
+        Args:
+            job_id: Job UUID
+            
+        Returns:
+            Dict of job details or None
+        """
+        import requests
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        
+        headers = {
+            "apikey": SERVICE_ROLE_KEY,
+            "Authorization": f"Bearer {SERVICE_ROLE_KEY}"
+        }
+        
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/jobs",
+                params={'id': f"eq.{job_id}", 'select': 'details'},
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.ok:
+                data = response.json()
+                if data and len(data) > 0:
+                    return data[0].get('details', {})
+            return None
+        except Exception:
+            return None
