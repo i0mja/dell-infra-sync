@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Loader2, AlertTriangle, CheckCircle, Info, Calendar } from "lucide-react";
+import { Loader2, AlertTriangle, CheckCircle, Info, Calendar, Power } from "lucide-react";
 import { format, addHours } from "date-fns";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -71,7 +71,11 @@ export function CreateMaintenanceWindowDialog({
     component: "BIOS",
     recurrence_enabled: false,
     recurrence_type: "monthly" as "monthly" | "quarterly" | "semi_annually" | "yearly" | "custom",
-    recurrence_pattern: "0 2 1 * *" // Default: 1st of month at 2 AM
+    recurrence_pattern: "0 2 1 * *", // Default: 1st of month at 2 AM
+    // Auto power-off options
+    auto_power_off_enabled: false,
+    power_off_strategy: "non_migratable" as "specified_only" | "non_migratable" | "all_blocking",
+    power_off_vm_list: [] as string[]
   });
 
   const hasClusterSelection = formData.cluster_ids.length > 0;
@@ -224,6 +228,15 @@ export function CreateMaintenanceWindowDialog({
       if (formData.maintenance_type === 'firmware_update' && formData.firmware_uri) {
         details.firmware_uri = formData.firmware_uri;
         details.component = formData.component;
+      }
+      
+      // Add auto power-off configuration if enabled
+      if (formData.auto_power_off_enabled) {
+        details.auto_power_off_enabled = true;
+        details.power_off_strategy = formData.power_off_strategy;
+        if (formData.power_off_vm_list.length > 0) {
+          details.power_off_vm_list = formData.power_off_vm_list;
+        }
       }
 
       const { error } = await supabase
@@ -428,6 +441,78 @@ export function CreateMaintenanceWindowDialog({
                     <Badge variant="outline" className="bg-green-500/10 text-green-700">Automatic</Badge>
                   </div>
                 </div>
+              </div>
+              
+              {/* Auto Power-Off Options */}
+              <div className="space-y-3 p-4 border rounded-md bg-muted/30">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-2">
+                      <Power className="h-4 w-4 text-orange-500" />
+                      <Label htmlFor="auto_power_off">Auto Power-Off Blocking VMs</Label>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Automatically power off VMs that prevent maintenance mode entry
+                    </p>
+                  </div>
+                  <Switch
+                    id="auto_power_off"
+                    checked={formData.auto_power_off_enabled}
+                    onCheckedChange={(checked) => 
+                      setFormData({ ...formData, auto_power_off_enabled: checked })
+                    }
+                  />
+                </div>
+                
+                {formData.auto_power_off_enabled && (
+                  <div className="space-y-3 pt-2 border-t">
+                    <div className="space-y-2">
+                      <Label htmlFor="power_off_strategy">Power-Off Strategy</Label>
+                      <Select
+                        value={formData.power_off_strategy}
+                        onValueChange={(value: any) => setFormData({ ...formData, power_off_strategy: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="non_migratable">
+                            <div className="space-y-1">
+                              <div className="font-medium">Non-Migratable VMs Only</div>
+                              <div className="text-xs text-muted-foreground">
+                                Power off VMs that DRS cannot migrate (recommended)
+                              </div>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="all_blocking">
+                            <div className="space-y-1">
+                              <div className="font-medium">All Blocking VMs</div>
+                              <div className="text-xs text-muted-foreground">
+                                Power off any VM that blocks maintenance mode
+                              </div>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="specified_only">
+                            <div className="space-y-1">
+                              <div className="font-medium">Specified VMs Only</div>
+                              <div className="text-xs text-muted-foreground">
+                                Only power off specific VMs you define
+                              </div>
+                            </div>
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    
+                    <Alert className="border-orange-500/50 bg-orange-500/5">
+                      <AlertTriangle className="h-4 w-4 text-orange-500" />
+                      <AlertDescription className="text-xs">
+                        VMs will be gracefully shut down before host enters maintenance mode.
+                        Ensure workloads can tolerate temporary shutdown.
+                      </AlertDescription>
+                    </Alert>
+                  </div>
+                )}
               </div>
             </>
           ) : (

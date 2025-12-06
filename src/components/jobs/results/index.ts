@@ -11,3 +11,4 @@ export { JobProgressHeader } from './JobProgressHeader';
 export { JobTasksTimeline } from './JobTasksTimeline';
 export { JobConsoleLog } from './JobConsoleLog';
 export { WorkflowStepDetails } from './WorkflowStepDetails';
+export { MaintenanceFailureDetails } from './MaintenanceFailureDetails';
