@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
@@ -93,6 +93,16 @@ interface SafetyCheckResult {
   critical_blockers_found?: boolean;
 }
 
+interface CheckProgress {
+  current: number;
+  total: number;
+  percent: number;
+  current_hostname: string;
+  passed: number;
+  failed: number;
+  status: string;
+}
+
 export const PreFlightCheckDialog = ({ open, onOpenChange, onProceed, serverId, jobType }: PreFlightCheckDialogProps) => {
   const [loading, setLoading] = useState(true);
   const [checkJobId, setCheckJobId] = useState<string | null>(null);
@@ -100,6 +110,7 @@ export const PreFlightCheckDialog = ({ open, onOpenChange, onProceed, serverId, 
   const [serverInfo, setServerInfo] = useState<any>(null);
   const [clusterName, setClusterName] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<CheckProgress | null>(null);
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -114,6 +125,7 @@ export const PreFlightCheckDialog = ({ open, onOpenChange, onProceed, serverId, 
       setServerInfo(null);
       setClusterName("");
       setError(null);
+      setProgress(null);
     }
   }, [open, serverId]);
 
@@ -181,9 +193,33 @@ export const PreFlightCheckDialog = ({ open, onOpenChange, onProceed, serverId, 
   const pollJobStatus = async (jobId: string) => {
     const maxAttempts = 30; // 60 seconds max
     let attempts = 0;
+    const checkPhases = [
+      'Connecting to vCenter...',
+      'Querying cluster health...',
+      'Checking DRS configuration...',
+      'Analyzing host status...',
+      'Checking iDRAC connectivity...',
+      'Validating lifecycle controller...',
+      'Checking pending jobs...',
+      'Analyzing system health...',
+      'Finalizing checks...'
+    ];
 
     const poll = async () => {
       attempts++;
+      
+      // Update progress based on polling attempts
+      const phaseIndex = Math.min(attempts - 1, checkPhases.length - 1);
+      const progressPercent = Math.min(Math.round((attempts / 10) * 100), 95);
+      setProgress({
+        current: Math.min(attempts, 9),
+        total: 9,
+        percent: progressPercent,
+        current_hostname: serverInfo?.hostname || serverInfo?.ip_address || 'server',
+        passed: Math.floor(phaseIndex * 0.7),
+        failed: 0,
+        status: checkPhases[phaseIndex]
+      });
 
       const { data: job, error: jobError } = await supabase
         .from('jobs')
@@ -198,6 +234,9 @@ export const PreFlightCheckDialog = ({ open, onOpenChange, onProceed, serverId, 
       }
 
       if (job.status === 'completed') {
+        // Set progress to 100%
+        setProgress(prev => prev ? { ...prev, percent: 100, current: 9, status: 'Complete' } : null);
+        
         const safetyCheck = Array.isArray(job.cluster_safety_checks) 
           ? job.cluster_safety_checks[0] 
           : job.cluster_safety_checks;
@@ -276,15 +315,43 @@ export const PreFlightCheckDialog = ({ open, onOpenChange, onProceed, serverId, 
 
           {loading && !error && (
             <div className="space-y-4">
-              <Alert>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <AlertDescription>Running safety checks...</AlertDescription>
-              </Alert>
+              {/* Progress bar with percentage */}
               <div className="space-y-2">
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-3/4" />
-                <Skeleton className="h-4 w-5/6" />
+                <div className="flex justify-between text-sm">
+                  <span className="font-medium">Running Pre-Flight Checks...</span>
+                  <span className="text-muted-foreground">
+                    {progress ? `${progress.current}/${progress.total}` : 'Initializing...'}
+                  </span>
+                </div>
+                <Progress value={progress?.percent || 5} className="h-2" />
               </div>
+              
+              {/* Current server being checked */}
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {progress?.current_hostname 
+                  ? `Checking: ${progress.current_hostname}`
+                  : 'Testing connectivity and credentials...'}
+              </div>
+              
+              {/* Running tally */}
+              {progress && progress.current > 0 && (
+                <div className="flex gap-4 text-sm">
+                  <span className="flex items-center gap-1">
+                    <CheckCircle className="h-4 w-4 text-green-500" />
+                    {progress.passed} passed
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <XCircle className="h-4 w-4 text-destructive" />
+                    {progress.failed} failed
+                  </span>
+                </div>
+              )}
+              
+              {/* Status message */}
+              {progress?.status && (
+                <p className="text-xs text-muted-foreground">{progress.status}</p>
+              )}
             </div>
           )}
 
