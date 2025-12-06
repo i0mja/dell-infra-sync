@@ -42,17 +42,37 @@ interface ConsoleEntry {
   };
 }
 
+interface ExecutorLogEntry {
+  timestamp: string;
+  level: string;
+  message: string;
+}
+
 interface JobConsoleLogProps {
   jobId: string;
 }
 
-type FilterType = 'all' | 'tasks' | 'activity' | 'errors';
+type FilterType = 'all' | 'tasks' | 'activity' | 'errors' | 'executor';
 
 export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
   const [entries, setEntries] = useState<ConsoleEntry[]>([]);
+  const [executorLogs, setExecutorLogs] = useState<ExecutorLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterType>('all');
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const parseExecutorLog = (logLine: string): ExecutorLogEntry | null => {
+    // Parse format: [HH:MM:SS] [LEVEL] message
+    const match = logLine.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*\[(\w+)\]\s*(.+)$/);
+    if (match) {
+      return {
+        timestamp: match[1],
+        level: match[2],
+        message: match[3]
+      };
+    }
+    return null;
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -74,6 +94,23 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
         .order('timestamp', { ascending: true });
 
       if (commandsError) throw commandsError;
+
+      // Fetch job details for console_log
+      const { data: jobData, error: jobError } = await supabase
+        .from('jobs')
+        .select('details')
+        .eq('id', jobId)
+        .single();
+
+      if (!jobError && jobData?.details) {
+        const details = jobData.details as Record<string, unknown>;
+        if (details.console_log && Array.isArray(details.console_log)) {
+          const parsed = (details.console_log as string[])
+            .map(parseExecutorLog)
+            .filter((e): e is ExecutorLogEntry => e !== null);
+          setExecutorLogs(parsed);
+        }
+      }
 
       // Merge and sort by timestamp
       const taskEntries: ConsoleEntry[] = (tasks || []).map((t: JobTask) => ({
@@ -180,9 +217,33 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
       )
       .subscribe();
 
+    // Subscribe to job details updates for executor logs
+    const jobChannel = supabase
+      .channel(`console-job-${jobId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'jobs',
+          filter: `id=eq.${jobId}`
+        },
+        (payload) => {
+          const job = payload.new as { details?: Record<string, unknown> };
+          if (job.details?.console_log && Array.isArray(job.details.console_log)) {
+            const parsed = (job.details.console_log as string[])
+              .map(parseExecutorLog)
+              .filter((e): e is ExecutorLogEntry => e !== null);
+            setExecutorLogs(parsed);
+          }
+        }
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(tasksChannel);
       supabase.removeChannel(activityChannel);
+      supabase.removeChannel(jobChannel);
     };
   }, [jobId]);
 
@@ -247,10 +308,22 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
         return entry.type === 'activity';
       case 'errors':
         return entry.status === 'failed' || entry.details?.error_message;
+      case 'executor':
+        return false; // Executor logs handled separately
       default:
         return true;
     }
   });
+
+  const getExecutorLogColor = (level: string): string => {
+    switch (level.toUpperCase()) {
+      case 'ERROR': return 'text-red-400';
+      case 'WARN': return 'text-yellow-400';
+      case 'INFO': return 'text-blue-400';
+      case 'DEBUG': return 'text-muted-foreground/60';
+      default: return 'text-muted-foreground';
+    }
+  };
 
   return (
     <Card>
@@ -284,6 +357,14 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
                 API Calls
               </Button>
               <Button
+                variant={filter === 'executor' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setFilter('executor')}
+                disabled={executorLogs.length === 0}
+              >
+                Executor {executorLogs.length > 0 && `(${executorLogs.length})`}
+              </Button>
+              <Button
                 variant={filter === 'errors' ? 'default' : 'outline'}
                 size="sm"
                 onClick={() => setFilter('errors')}
@@ -304,6 +385,27 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
         >
           {loading ? (
             <div className="text-muted-foreground/60 italic">Loading console...</div>
+          ) : filter === 'executor' ? (
+            // Show executor logs
+            executorLogs.length === 0 ? (
+              <div className="text-muted-foreground/60 italic">No executor logs available</div>
+            ) : (
+              <div className="space-y-0.5">
+                {executorLogs.map((log, idx) => (
+                  <div key={idx} className="leading-relaxed text-xs">
+                    <span className="text-muted-foreground/60">[{log.timestamp}]</span>
+                    {' '}
+                    <span className={cn(getExecutorLogColor(log.level), 'font-medium')}>
+                      [{log.level}]
+                    </span>
+                    {' '}
+                    <span className={getExecutorLogColor(log.level)}>
+                      {log.message}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )
           ) : filteredEntries.length === 0 ? (
             <div className="text-muted-foreground/60 italic">
               {filter === 'all' ? 'No console output yet...' : `No ${filter} to display`}
