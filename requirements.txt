@@ -6,3 +6,7 @@ ldap3>=2.9.1
 
 # Dell iDRAC Redfish Library (vendored in job_executor/dell_redfish/lib/)
 # No additional dependencies required - Dell scripts use standard library + requests
+
+# Zerfaux Module Dependencies:
+# - pyVmomi: vCenter operations (already included above)
+# - paramiko: SSH for ZFS replication (already included above)

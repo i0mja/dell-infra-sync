@@ -26,6 +26,10 @@ Wizard Endpoints:
 - POST /api/replication/protected-vms/{id}/move-to-protection-datastore
 - GET /api/replication/protected-vms/{id}/dr-shell-plan
 - POST /api/replication/protected-vms/{id}/create-dr-shell
+
+Configuration:
+- Set ZERFAUX_USE_STUBS=false to enable real vCenter/ZFS operations
+- Default is stub mode for offline testing
 """
 
 import json
@@ -35,10 +39,11 @@ from datetime import datetime
 from typing import Dict, Optional, Tuple
 import logging
 
-from .vcenter_inventory import VCenterInventoryStub
-from .zfs_replication import ZFSReplicationStub
+# Import based on configuration toggle
+from . import USE_ZERFAUX_STUBS, VCenterInventory, ZFSReplication
 
 logger = logging.getLogger(__name__)
+logger.info(f"Zerfaux API Router initialized with USE_ZERFAUX_STUBS={USE_ZERFAUX_STUBS}")
 
 
 class ZerfauxAPIRouter:
@@ -56,8 +61,10 @@ class ZerfauxAPIRouter:
             executor: JobExecutor instance for database access
         """
         self.executor = executor
-        self.vcenter_inventory = VCenterInventoryStub(executor)
-        self.zfs_replication = ZFSReplicationStub(executor)
+        # Use configured implementation (stub or real based on USE_ZERFAUX_STUBS)
+        self.vcenter_inventory = VCenterInventory(executor)
+        self.zfs_replication = ZFSReplication(executor)
+        logger.info(f"Zerfaux router using {'stub' if USE_ZERFAUX_STUBS else 'real'} implementations")
     
     def can_handle(self, path: str) -> bool:
         """Check if this router can handle the given path"""
