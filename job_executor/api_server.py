@@ -8,6 +8,17 @@ from typing import Dict
 from datetime import datetime, timezone
 import ssl
 
+# Zerfaux router for /api/replication/* endpoints
+_zerfaux_router = None
+
+def get_zerfaux_router(executor):
+    """Get or create Zerfaux router instance"""
+    global _zerfaux_router
+    if _zerfaux_router is None:
+        from job_executor.zerfaux import ZerfauxAPIRouter
+        _zerfaux_router = ZerfauxAPIRouter(executor)
+    return _zerfaux_router
+
 
 class APIHandler(BaseHTTPRequestHandler):
     """HTTP request handler for instant operations"""
@@ -81,6 +92,12 @@ class APIHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         """Handle POST requests"""
         try:
+            # Check Zerfaux router first
+            if self.path.startswith('/api/replication'):
+                router = get_zerfaux_router(self.executor)
+                if router.route_post(self.path, self):
+                    return
+            
             if self.path == '/api/console-launch':
                 self._handle_console_launch()
             elif self.path == '/api/power-control':
@@ -119,12 +136,42 @@ class APIHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         """Handle GET requests"""
         try:
+            # Check Zerfaux router first
+            if self.path.startswith('/api/replication'):
+                router = get_zerfaux_router(self.executor)
+                if router.route_get(self.path, self):
+                    return
+            
             if self.path == '/api/health':
                 self._send_json({'status': 'ok', 'version': '1.0.0'})
             elif self.path.startswith('/api/preflight-check-stream'):
                 self._handle_preflight_check_stream()
             else:
                 self._send_error(f'Unknown endpoint: {self.path}', 404)
+        except Exception as e:
+            self.executor.log(f"API error: {e}", "ERROR")
+            self._send_error(str(e), 500)
+    
+    def do_PUT(self):
+        """Handle PUT requests"""
+        try:
+            if self.path.startswith('/api/replication'):
+                router = get_zerfaux_router(self.executor)
+                if router.route_put(self.path, self):
+                    return
+            self._send_error(f'Unknown endpoint: {self.path}', 404)
+        except Exception as e:
+            self.executor.log(f"API error: {e}", "ERROR")
+            self._send_error(str(e), 500)
+    
+    def do_DELETE(self):
+        """Handle DELETE requests"""
+        try:
+            if self.path.startswith('/api/replication'):
+                router = get_zerfaux_router(self.executor)
+                if router.route_delete(self.path, self):
+                    return
+            self._send_error(f'Unknown endpoint: {self.path}', 404)
         except Exception as e:
             self.executor.log(f"API error: {e}", "ERROR")
             self._send_error(str(e), 500)
