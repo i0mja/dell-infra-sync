@@ -457,6 +457,44 @@ class ClusterHandler(BaseHandler):
                     'error': str(e)
                 })
         
+        # Restore HA on cluster if it was disabled
+        if cleanup_state.get('ha_disabled'):
+            try:
+                cluster_name = cleanup_state.get('ha_cluster_name')
+                source_vcenter_id = cleanup_state.get('ha_source_vcenter_id')
+                original_state = cleanup_state.get('ha_original_state', {})
+                
+                self.log(f"  Cleaning up: Re-enabling HA on cluster {cluster_name}")
+                ha_result = self.executor.enable_cluster_ha(
+                    cluster_name, 
+                    source_vcenter_id,
+                    host_monitoring=original_state.get('host_monitoring_was', 'enabled'),
+                    admission_control=original_state.get('admission_control_was', True)
+                )
+                
+                if ha_result.get('success'):
+                    self.log(f"  ✓ HA re-enabled on cluster {cluster_name}")
+                    cleanup_details['cleanup_actions'].append({
+                        'action': 'enable_cluster_ha',
+                        'cluster': cluster_name,
+                        'success': True
+                    })
+                else:
+                    self.log(f"  ⚠ Failed to re-enable HA: {ha_result.get('error')}", "WARN")
+                    cleanup_details['cleanup_actions'].append({
+                        'action': 'enable_cluster_ha',
+                        'cluster': cluster_name,
+                        'success': False,
+                        'error': ha_result.get('error')
+                    })
+            except Exception as e:
+                self.log(f"  Warning: Failed to re-enable HA: {e}", "WARN")
+                cleanup_details['cleanup_actions'].append({
+                    'action': 'enable_cluster_ha',
+                    'success': False,
+                    'error': str(e)
+                })
+        
         # Clear iDRAC job queue for current server if applicable
         current_server = cleanup_state.get('current_server')
         if current_server:
@@ -1118,8 +1156,127 @@ class ClusterHandler(BaseHandler):
             # Initialize cleanup state tracking
             cleanup_state = {
                 'hosts_in_maintenance': [],
-                'current_server': None
+                'current_server': None,
+                'ha_disabled': False,
+                'ha_cluster_name': None,
+                'ha_source_vcenter_id': None,
+                'ha_original_state': None
             }
+            
+            # =================================================================
+            # HA MANAGEMENT: DISABLE BEFORE MAINTENANCE OPERATIONS
+            # =================================================================
+            # Get cluster name from first eligible host
+            cluster_name = None
+            source_vcenter_id = None
+            
+            for host in eligible_hosts:
+                server = self.get_server_by_id(host['server_id'])
+                if server and server.get('vcenter_host_id'):
+                    # Fetch host details to get cluster name
+                    try:
+                        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+                        response = requests.get(
+                            f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{server['vcenter_host_id']}&select=cluster,source_vcenter_id",
+                            headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                            verify=VERIFY_SSL,
+                            timeout=5
+                        )
+                        if response.status_code == 200:
+                            hosts_data = _safe_json_parse(response)
+                            if hosts_data and hosts_data[0].get('cluster'):
+                                cluster_name = hosts_data[0]['cluster']
+                                source_vcenter_id = hosts_data[0].get('source_vcenter_id')
+                                break
+                    except Exception as e:
+                        self.log(f"  Warning: Could not determine cluster name: {e}", "WARN")
+            
+            # Disable HA on cluster if we found a cluster name
+            if cluster_name and source_vcenter_id:
+                self.log("")
+                self.log("=" * 80)
+                self.log("HA MANAGEMENT: DISABLING HA BEFORE MAINTENANCE")
+                self.log("=" * 80)
+                
+                self._log_workflow_step(
+                    job['id'], 'rolling_cluster_update',
+                    step_number=-1,
+                    step_name=f"Disable HA on cluster: {cluster_name}",
+                    status='running',
+                    cluster_id=workflow_results.get('cluster_id'),
+                    step_started_at=utc_now_iso()
+                )
+                
+                ha_status = self.executor.get_cluster_ha_status(cluster_name, source_vcenter_id)
+                if ha_status.get('success') and ha_status.get('ha_enabled'):
+                    self.log(f"  Cluster HA status: enabled (host_monitoring={ha_status.get('host_monitoring')})")
+                    
+                    ha_disable_result = self.executor.disable_cluster_ha(cluster_name, source_vcenter_id)
+                    
+                    if ha_disable_result.get('success'):
+                        cleanup_state['ha_disabled'] = True
+                        cleanup_state['ha_cluster_name'] = cluster_name
+                        cleanup_state['ha_source_vcenter_id'] = source_vcenter_id
+                        cleanup_state['ha_original_state'] = {
+                            'was_enabled': ha_disable_result.get('was_enabled', True),
+                            'host_monitoring_was': ha_disable_result.get('host_monitoring_was', 'enabled'),
+                            'admission_control_was': ha_disable_result.get('admission_control_was', True)
+                        }
+                        
+                        # Store HA state in job details for recovery
+                        self.update_job_details_field(job['id'], {
+                            'ha_state_before': cleanup_state['ha_original_state'],
+                            'ha_cluster_name': cluster_name,
+                            'ha_source_vcenter_id': source_vcenter_id,
+                            'ha_disabled_at': utc_now_iso()
+                        })
+                        
+                        self.log(f"  ✓ HA disabled on cluster {cluster_name}")
+                        
+                        self._log_workflow_step(
+                            job['id'], 'rolling_cluster_update',
+                            step_number=-1,
+                            step_name=f"Disable HA on cluster: {cluster_name}",
+                            status='completed',
+                            cluster_id=workflow_results.get('cluster_id'),
+                            step_details={'ha_was_enabled': True, 'disabled_successfully': True},
+                            step_completed_at=utc_now_iso()
+                        )
+                    else:
+                        # HA disable failed - log warning but continue
+                        error_msg = ha_disable_result.get('error', 'Unknown error')
+                        self.log(f"  ⚠ Warning: Could not disable HA: {error_msg}", "WARN")
+                        
+                        # Check if it's an FT VM issue
+                        if ha_disable_result.get('ft_vm'):
+                            self.log(f"    FT VM blocking: {ha_disable_result['ft_vm']}", "WARN")
+                            self.log(f"    Continuing with HA enabled - expect failover alerts", "WARN")
+                        
+                        self._log_workflow_step(
+                            job['id'], 'rolling_cluster_update',
+                            step_number=-1,
+                            step_name=f"Disable HA on cluster: {cluster_name}",
+                            status='completed',
+                            cluster_id=workflow_results.get('cluster_id'),
+                            step_details={'warning': error_msg, 'ha_still_enabled': True},
+                            step_completed_at=utc_now_iso()
+                        )
+                elif ha_status.get('success'):
+                    self.log(f"  ✓ HA is not enabled on cluster {cluster_name} - no action needed")
+                    self._log_workflow_step(
+                        job['id'], 'rolling_cluster_update',
+                        step_number=-1,
+                        step_name=f"Disable HA on cluster: {cluster_name}",
+                        status='completed',
+                        cluster_id=workflow_results.get('cluster_id'),
+                        step_details={'ha_was_enabled': False},
+                        step_completed_at=utc_now_iso()
+                    )
+                else:
+                    self.log(f"  ⚠ Could not check HA status: {ha_status.get('error')}", "WARN")
+            else:
+                self.log("")
+                self.log("  ℹ No cluster identified for HA management (standalone hosts or no vCenter link)")
             
             # =================================================================
             # PHASE 0: PRE-FLIGHT CHECKS (ALL HOSTS)
@@ -2272,6 +2429,73 @@ class ClusterHandler(BaseHandler):
             self._log_workflow_step(job['id'], 'rolling_cluster_update', 2,
                 f"Sequential updates ({len(eligible_hosts)} hosts)", 'completed')
             
+            # =================================================================
+            # HA MANAGEMENT: RE-ENABLE HA AFTER ALL HOSTS PROCESSED
+            # =================================================================
+            if cleanup_state.get('ha_disabled'):
+                self.log("")
+                self.log("=" * 80)
+                self.log("HA MANAGEMENT: RE-ENABLING HA AFTER MAINTENANCE")
+                self.log("=" * 80)
+                
+                self._log_workflow_step(
+                    job['id'], 'rolling_cluster_update',
+                    step_number=9999,  # Final step
+                    step_name=f"Re-enable HA on cluster: {cleanup_state['ha_cluster_name']}",
+                    status='running',
+                    cluster_id=workflow_results.get('cluster_id'),
+                    step_started_at=utc_now_iso()
+                )
+                
+                try:
+                    original_state = cleanup_state.get('ha_original_state', {})
+                    ha_enable_result = self.executor.enable_cluster_ha(
+                        cleanup_state['ha_cluster_name'],
+                        cleanup_state['ha_source_vcenter_id'],
+                        host_monitoring=original_state.get('host_monitoring_was', 'enabled'),
+                        admission_control=original_state.get('admission_control_was', True)
+                    )
+                    
+                    if ha_enable_result.get('success'):
+                        self.log(f"  ✓ HA re-enabled on cluster {cleanup_state['ha_cluster_name']}")
+                        cleanup_state['ha_disabled'] = False  # Mark as restored
+                        
+                        # Update job details
+                        self.update_job_details_field(job['id'], {
+                            'ha_reenabled_at': utc_now_iso()
+                        })
+                        
+                        self._log_workflow_step(
+                            job['id'], 'rolling_cluster_update',
+                            step_number=9999,
+                            step_name=f"Re-enable HA on cluster: {cleanup_state['ha_cluster_name']}",
+                            status='completed',
+                            cluster_id=workflow_results.get('cluster_id'),
+                            step_details={'ha_enabled': True},
+                            step_completed_at=utc_now_iso()
+                        )
+                    else:
+                        error_msg = ha_enable_result.get('error', 'Unknown error')
+                        self.log(f"  ⚠ Failed to re-enable HA: {error_msg}", "WARN")
+                        
+                        self._log_workflow_step(
+                            job['id'], 'rolling_cluster_update',
+                            step_number=9999,
+                            step_name=f"Re-enable HA on cluster: {cleanup_state['ha_cluster_name']}",
+                            status='failed',
+                            cluster_id=workflow_results.get('cluster_id'),
+                            step_error=error_msg,
+                            step_completed_at=utc_now_iso()
+                        )
+                        
+                        workflow_results['ha_restore_failed'] = True
+                        workflow_results['ha_restore_error'] = error_msg
+                        
+                except Exception as ha_err:
+                    self.log(f"  ⚠ Error re-enabling HA: {ha_err}", "WARN")
+                    workflow_results['ha_restore_failed'] = True
+                    workflow_results['ha_restore_error'] = str(ha_err)
+            
             workflow_results['total_time_seconds'] = int(time.time() - workflow_start)
             
             final_details = {
@@ -2316,6 +2540,22 @@ class ClusterHandler(BaseHandler):
             
         except Exception as e:
             self.log(f"Phased rolling cluster update workflow failed: {e}", "ERROR")
+            
+            # Ensure HA is re-enabled even on failure
+            if cleanup_state.get('ha_disabled'):
+                try:
+                    self.log(f"  Restoring HA on cluster {cleanup_state['ha_cluster_name']} after failure...")
+                    original_state = cleanup_state.get('ha_original_state', {})
+                    self.executor.enable_cluster_ha(
+                        cleanup_state['ha_cluster_name'],
+                        cleanup_state['ha_source_vcenter_id'],
+                        host_monitoring=original_state.get('host_monitoring_was', 'enabled'),
+                        admission_control=original_state.get('admission_control_was', True)
+                    )
+                    self.log(f"  ✓ HA restored after failure")
+                except Exception as ha_err:
+                    self.log(f"  ⚠ Failed to restore HA after failure: {ha_err}", "WARN")
+            
             self.update_job_status(
                 job['id'],
                 'failed',

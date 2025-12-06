@@ -2490,3 +2490,436 @@ class VCenterMixin:
         except Exception as e:
             self.log(f"Error fetching vCenter settings: {e}", "ERROR")
             return None
+
+    # =========================================================================
+    # HA (High Availability) Management
+    # =========================================================================
+
+    def get_cluster_ha_status(self, cluster_name: str, source_vcenter_id: str) -> dict:
+        """
+        Get HA status for a cluster.
+        
+        Returns:
+            {
+                'success': bool,
+                'ha_enabled': bool,
+                'host_monitoring': str,  # 'enabled' or 'disabled'
+                'admission_control': bool,
+                'error': str or None
+            }
+        """
+        start_time = time.time()
+        try:
+            vcenter_settings = self.get_vcenter_settings(source_vcenter_id) if source_vcenter_id else None
+            vc = self.ensure_vcenter_connection(settings=vcenter_settings)
+            
+            if not vc:
+                return {'success': False, 'error': 'Failed to connect to vCenter'}
+            
+            content = vc.RetrieveContent()
+            container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.ClusterComputeResource], True
+            )
+            
+            target_cluster = None
+            for cluster in container.view:
+                if cluster.name == cluster_name:
+                    target_cluster = cluster
+                    break
+            
+            container.Destroy()
+            
+            if not target_cluster:
+                return {'success': False, 'error': f'Cluster {cluster_name} not found'}
+            
+            das_config = target_cluster.configuration.dasConfig
+            
+            result = {
+                'success': True,
+                'ha_enabled': das_config.enabled if das_config else False,
+                'host_monitoring': das_config.hostMonitoring if das_config else 'disabled',
+                'admission_control': das_config.admissionControlEnabled if das_config else False,
+                'cluster_name': cluster_name
+            }
+            
+            response_time = int((time.time() - start_time) * 1000)
+            self.log_vcenter_activity(
+                operation="get_cluster_ha_status",
+                endpoint=f"Cluster/{cluster_name}/HA",
+                success=True,
+                response_time_ms=response_time,
+                details=result
+            )
+            
+            return result
+            
+        except Exception as e:
+            self.log(f"Failed to get cluster HA status: {e}", "ERROR")
+            return {'success': False, 'error': str(e)}
+
+    def disable_cluster_ha(self, cluster_name: str, source_vcenter_id: str) -> dict:
+        """
+        Disable vSphere HA on a cluster before rolling updates.
+        
+        This prevents "HA failover operation in progress" alerts during maintenance.
+        
+        Returns:
+            {
+                'success': bool,
+                'was_enabled': bool,
+                'host_monitoring_was': str,
+                'admission_control_was': bool,
+                'error': str or None
+            }
+        """
+        start_time = time.time()
+        try:
+            vcenter_settings = self.get_vcenter_settings(source_vcenter_id) if source_vcenter_id else None
+            vc = self.ensure_vcenter_connection(settings=vcenter_settings)
+            
+            if not vc:
+                return {'success': False, 'error': 'Failed to connect to vCenter'}
+            
+            content = vc.RetrieveContent()
+            container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.ClusterComputeResource], True
+            )
+            
+            target_cluster = None
+            for cluster in container.view:
+                if cluster.name == cluster_name:
+                    target_cluster = cluster
+                    break
+            
+            container.Destroy()
+            
+            if not target_cluster:
+                return {'success': False, 'error': f'Cluster {cluster_name} not found'}
+            
+            das_config = target_cluster.configuration.dasConfig
+            
+            # Store original state for restoration
+            original_state = {
+                'was_enabled': das_config.enabled if das_config else False,
+                'host_monitoring_was': das_config.hostMonitoring if das_config else 'disabled',
+                'admission_control_was': das_config.admissionControlEnabled if das_config else False
+            }
+            
+            # If HA is not enabled, nothing to do
+            if not original_state['was_enabled']:
+                self.log(f"  HA is not enabled on cluster {cluster_name} - skipping disable")
+                return {
+                    'success': True,
+                    'already_disabled': True,
+                    **original_state
+                }
+            
+            # Check for Fault Tolerance VMs (HA cannot be disabled with FT VMs)
+            try:
+                for host in target_cluster.host:
+                    for vm in host.vm:
+                        if vm.runtime and vm.runtime.faultToleranceState:
+                            ft_state = str(vm.runtime.faultToleranceState)
+                            if ft_state not in ['notConfigured', 'disabled']:
+                                return {
+                                    'success': False,
+                                    'error': f'Cannot disable HA: VM "{vm.name}" has Fault Tolerance enabled ({ft_state})',
+                                    'ft_vm': vm.name,
+                                    **original_state
+                                }
+            except Exception as ft_check_error:
+                self.log(f"  Warning: Could not check for FT VMs: {ft_check_error}", "WARN")
+            
+            # Disable HA
+            self.log(f"  Disabling HA on cluster {cluster_name}...")
+            
+            cluster_spec = vim.cluster.ConfigSpecEx()
+            cluster_spec.dasConfig = vim.cluster.DasConfigInfo()
+            cluster_spec.dasConfig.enabled = False
+            
+            task = target_cluster.ReconfigureComputeResource_Task(cluster_spec, modify=True)
+            
+            # Wait for task to complete
+            while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+                time.sleep(1)
+            
+            if task.info.state == vim.TaskInfo.State.error:
+                error_msg = str(task.info.error.msg) if task.info.error else 'Unknown error'
+                return {
+                    'success': False,
+                    'error': f'Failed to disable HA: {error_msg}',
+                    **original_state
+                }
+            
+            response_time = int((time.time() - start_time) * 1000)
+            self.log_vcenter_activity(
+                operation="disable_cluster_ha",
+                endpoint=f"Cluster/{cluster_name}/HA",
+                success=True,
+                response_time_ms=response_time,
+                details={'cluster': cluster_name, **original_state}
+            )
+            
+            self.log(f"  ✓ HA disabled on cluster {cluster_name}")
+            return {
+                'success': True,
+                **original_state
+            }
+            
+        except Exception as e:
+            self.log(f"Failed to disable cluster HA: {e}", "ERROR")
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}", "DEBUG")
+            return {'success': False, 'error': str(e)}
+
+    def enable_cluster_ha(self, cluster_name: str, source_vcenter_id: str, 
+                          host_monitoring: str = 'enabled', 
+                          admission_control: bool = True) -> dict:
+        """
+        Re-enable vSphere HA on a cluster after rolling updates.
+        
+        Args:
+            cluster_name: Name of the cluster
+            source_vcenter_id: vCenter ID for connection
+            host_monitoring: 'enabled' or 'disabled' (default: enabled)
+            admission_control: Whether to enable admission control (default: True)
+            
+        Returns:
+            {
+                'success': bool,
+                'now_enabled': bool,
+                'error': str or None
+            }
+        """
+        start_time = time.time()
+        try:
+            vcenter_settings = self.get_vcenter_settings(source_vcenter_id) if source_vcenter_id else None
+            vc = self.ensure_vcenter_connection(settings=vcenter_settings)
+            
+            if not vc:
+                return {'success': False, 'error': 'Failed to connect to vCenter'}
+            
+            content = vc.RetrieveContent()
+            container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.ClusterComputeResource], True
+            )
+            
+            target_cluster = None
+            for cluster in container.view:
+                if cluster.name == cluster_name:
+                    target_cluster = cluster
+                    break
+            
+            container.Destroy()
+            
+            if not target_cluster:
+                return {'success': False, 'error': f'Cluster {cluster_name} not found'}
+            
+            # Check if HA is already enabled
+            das_config = target_cluster.configuration.dasConfig
+            if das_config and das_config.enabled:
+                self.log(f"  HA is already enabled on cluster {cluster_name}")
+                return {
+                    'success': True,
+                    'already_enabled': True,
+                    'now_enabled': True
+                }
+            
+            # Enable HA
+            self.log(f"  Enabling HA on cluster {cluster_name}...")
+            
+            cluster_spec = vim.cluster.ConfigSpecEx()
+            cluster_spec.dasConfig = vim.cluster.DasConfigInfo()
+            cluster_spec.dasConfig.enabled = True
+            cluster_spec.dasConfig.hostMonitoring = host_monitoring
+            cluster_spec.dasConfig.admissionControlEnabled = admission_control
+            
+            task = target_cluster.ReconfigureComputeResource_Task(cluster_spec, modify=True)
+            
+            # Wait for task to complete
+            while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+                time.sleep(1)
+            
+            if task.info.state == vim.TaskInfo.State.error:
+                error_msg = str(task.info.error.msg) if task.info.error else 'Unknown error'
+                return {
+                    'success': False,
+                    'error': f'Failed to enable HA: {error_msg}',
+                    'now_enabled': False
+                }
+            
+            response_time = int((time.time() - start_time) * 1000)
+            self.log_vcenter_activity(
+                operation="enable_cluster_ha",
+                endpoint=f"Cluster/{cluster_name}/HA",
+                success=True,
+                response_time_ms=response_time,
+                details={'cluster': cluster_name, 'host_monitoring': host_monitoring, 'admission_control': admission_control}
+            )
+            
+            self.log(f"  ✓ HA enabled on cluster {cluster_name}")
+            return {
+                'success': True,
+                'now_enabled': True
+            }
+            
+        except Exception as e:
+            self.log(f"Failed to enable cluster HA: {e}", "ERROR")
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}", "DEBUG")
+            return {'success': False, 'error': str(e), 'now_enabled': False}
+
+    def disable_host_monitoring(self, cluster_name: str, source_vcenter_id: str) -> dict:
+        """
+        Disable Host Monitoring only (less disruptive than full HA disable).
+        
+        Host Monitoring controls whether HA restarts VMs when a host fails.
+        Disabling it prevents HA alerts during controlled maintenance.
+        
+        Returns:
+            {
+                'success': bool,
+                'was_monitoring': str,  # 'enabled' or 'disabled'
+                'error': str or None
+            }
+        """
+        start_time = time.time()
+        try:
+            vcenter_settings = self.get_vcenter_settings(source_vcenter_id) if source_vcenter_id else None
+            vc = self.ensure_vcenter_connection(settings=vcenter_settings)
+            
+            if not vc:
+                return {'success': False, 'error': 'Failed to connect to vCenter'}
+            
+            content = vc.RetrieveContent()
+            container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.ClusterComputeResource], True
+            )
+            
+            target_cluster = None
+            for cluster in container.view:
+                if cluster.name == cluster_name:
+                    target_cluster = cluster
+                    break
+            
+            container.Destroy()
+            
+            if not target_cluster:
+                return {'success': False, 'error': f'Cluster {cluster_name} not found'}
+            
+            das_config = target_cluster.configuration.dasConfig
+            
+            # Store original state
+            original_monitoring = das_config.hostMonitoring if das_config else 'disabled'
+            
+            # If HA is not enabled or monitoring already disabled, nothing to do
+            if not das_config or not das_config.enabled:
+                return {'success': True, 'was_monitoring': original_monitoring, 'ha_not_enabled': True}
+            
+            if original_monitoring == 'disabled':
+                return {'success': True, 'was_monitoring': original_monitoring, 'already_disabled': True}
+            
+            # Disable host monitoring
+            self.log(f"  Disabling Host Monitoring on cluster {cluster_name}...")
+            
+            cluster_spec = vim.cluster.ConfigSpecEx()
+            cluster_spec.dasConfig = vim.cluster.DasConfigInfo()
+            cluster_spec.dasConfig.hostMonitoring = 'disabled'
+            
+            task = target_cluster.ReconfigureComputeResource_Task(cluster_spec, modify=True)
+            
+            while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+                time.sleep(1)
+            
+            if task.info.state == vim.TaskInfo.State.error:
+                error_msg = str(task.info.error.msg) if task.info.error else 'Unknown error'
+                return {'success': False, 'error': f'Failed to disable host monitoring: {error_msg}', 'was_monitoring': original_monitoring}
+            
+            response_time = int((time.time() - start_time) * 1000)
+            self.log_vcenter_activity(
+                operation="disable_host_monitoring",
+                endpoint=f"Cluster/{cluster_name}/HA/HostMonitoring",
+                success=True,
+                response_time_ms=response_time,
+                details={'cluster': cluster_name, 'was_monitoring': original_monitoring}
+            )
+            
+            self.log(f"  ✓ Host Monitoring disabled on cluster {cluster_name}")
+            return {'success': True, 'was_monitoring': original_monitoring}
+            
+        except Exception as e:
+            self.log(f"Failed to disable host monitoring: {e}", "ERROR")
+            return {'success': False, 'error': str(e)}
+
+    def enable_host_monitoring(self, cluster_name: str, source_vcenter_id: str) -> dict:
+        """
+        Re-enable Host Monitoring after maintenance.
+        
+        Returns:
+            {
+                'success': bool,
+                'now_monitoring': str,
+                'error': str or None
+            }
+        """
+        start_time = time.time()
+        try:
+            vcenter_settings = self.get_vcenter_settings(source_vcenter_id) if source_vcenter_id else None
+            vc = self.ensure_vcenter_connection(settings=vcenter_settings)
+            
+            if not vc:
+                return {'success': False, 'error': 'Failed to connect to vCenter'}
+            
+            content = vc.RetrieveContent()
+            container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.ClusterComputeResource], True
+            )
+            
+            target_cluster = None
+            for cluster in container.view:
+                if cluster.name == cluster_name:
+                    target_cluster = cluster
+                    break
+            
+            container.Destroy()
+            
+            if not target_cluster:
+                return {'success': False, 'error': f'Cluster {cluster_name} not found'}
+            
+            das_config = target_cluster.configuration.dasConfig
+            
+            # If HA is not enabled, we can't enable host monitoring
+            if not das_config or not das_config.enabled:
+                return {'success': False, 'error': 'HA is not enabled on cluster', 'now_monitoring': 'disabled'}
+            
+            # Enable host monitoring
+            self.log(f"  Enabling Host Monitoring on cluster {cluster_name}...")
+            
+            cluster_spec = vim.cluster.ConfigSpecEx()
+            cluster_spec.dasConfig = vim.cluster.DasConfigInfo()
+            cluster_spec.dasConfig.hostMonitoring = 'enabled'
+            
+            task = target_cluster.ReconfigureComputeResource_Task(cluster_spec, modify=True)
+            
+            while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+                time.sleep(1)
+            
+            if task.info.state == vim.TaskInfo.State.error:
+                error_msg = str(task.info.error.msg) if task.info.error else 'Unknown error'
+                return {'success': False, 'error': f'Failed to enable host monitoring: {error_msg}', 'now_monitoring': 'disabled'}
+            
+            response_time = int((time.time() - start_time) * 1000)
+            self.log_vcenter_activity(
+                operation="enable_host_monitoring",
+                endpoint=f"Cluster/{cluster_name}/HA/HostMonitoring",
+                success=True,
+                response_time_ms=response_time,
+                details={'cluster': cluster_name}
+            )
+            
+            self.log(f"  ✓ Host Monitoring enabled on cluster {cluster_name}")
+            return {'success': True, 'now_monitoring': 'enabled'}
+            
+        except Exception as e:
+            self.log(f"Failed to enable host monitoring: {e}", "ERROR")
+            return {'success': False, 'error': str(e), 'now_monitoring': 'unknown'}
