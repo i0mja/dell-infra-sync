@@ -60,7 +60,7 @@ class VCenterInventoryReal:
             from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
             
             response = requests.get(
-                f"{DSM_URL}/rest/v1/vcenter_settings",
+                f"{DSM_URL}/rest/v1/vcenters",
                 params={'id': f'eq.{vcenter_id}'},
                 headers={
                     'apikey': SERVICE_ROLE_KEY,
@@ -326,7 +326,7 @@ class VCenterInventoryReal:
         if not settings:
             return None
         
-        password = self._decrypt_password(settings.get('password'))
+        password = self._decrypt_password(settings.get('password_encrypted'))
         si = self._connect_vcenter(
             settings['host'],
             settings['username'],
@@ -383,7 +383,7 @@ class VCenterInventoryReal:
         if not settings:
             return []
         
-        password = self._decrypt_password(settings.get('password'))
+        password = self._decrypt_password(settings.get('password_encrypted'))
         si = self._connect_vcenter(
             settings['host'],
             settings['username'],
@@ -463,7 +463,7 @@ class VCenterInventoryReal:
                 'message': f'vCenter {vcenter_id} not found in settings'
             }
         
-        password = self._decrypt_password(settings.get('password'))
+        password = self._decrypt_password(settings.get('password_encrypted'))
         si = self._connect_vcenter(
             settings['host'],
             settings['username'],
