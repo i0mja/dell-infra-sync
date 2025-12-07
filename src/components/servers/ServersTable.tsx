@@ -415,31 +415,32 @@ export function ServersTable({
   return (
     <div className="flex flex-col h-full border rounded-lg shadow-sm bg-card overflow-hidden">
       {/* Unified Toolbar */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b flex-wrap bg-card">
+      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b flex-wrap bg-card">
         {/* Left: Selection */}
         <Checkbox
           checked={selectedServers.size === allServers.length && allServers.length > 0}
           onCheckedChange={toggleAllServers}
+          className="h-3.5 w-3.5"
         />
         <span className="text-xs text-muted-foreground">
-          {selectedServers.size > 0 ? `${selectedServers.size} selected` : "Select all"}
+          {selectedServers.size > 0 ? `${selectedServers.size}` : "All"}
         </span>
 
         {/* Search - compact */}
-        <div className="relative w-64">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+        <div className="relative w-44">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
           <Input
             placeholder="Search..."
             value={searchTerm}
             onChange={(e) => onSearchChange(e.target.value)}
-            className="pl-8 h-8 text-sm"
+            className="pl-7 h-7 text-xs"
           />
         </div>
 
         {/* Filters - compact selects */}
         <Select value={groupFilter} onValueChange={onGroupFilterChange}>
-          <SelectTrigger className="w-[140px] h-8 text-sm">
-            <SelectValue placeholder="All Groups" />
+          <SelectTrigger className="w-[110px] h-7 text-xs">
+            <SelectValue placeholder="Groups" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Groups</SelectItem>
@@ -458,7 +459,7 @@ export function ServersTable({
         </Select>
 
         <Select value={statusFilter} onValueChange={onStatusFilterChange}>
-          <SelectTrigger className="w-[120px] h-8 text-sm">
+          <SelectTrigger className="w-[100px] h-7 text-xs">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
           <SelectContent>
@@ -475,21 +476,21 @@ export function ServersTable({
         {/* Right: Actions */}
         {selectedServers.size > 0 && (
           <>
-            <Button variant="ghost" size="sm" className="h-8" onClick={handleRefreshSelected}>
-              <RefreshCw className="h-3.5 w-3.5 mr-1" />
+            <Button variant="ghost" size="sm" className="h-7 text-xs px-2" onClick={handleRefreshSelected}>
+              <RefreshCw className="h-3 w-3 mr-1" />
               Refresh
             </Button>
             {onBulkUpdate && (
-              <Button variant="ghost" size="sm" className="h-8" onClick={() => onBulkUpdate(Array.from(selectedServers))}>
-                <ShieldCheck className="h-3.5 w-3.5 mr-1" />
-                Update ({selectedServers.size})
+              <Button variant="ghost" size="sm" className="h-7 text-xs px-2" onClick={() => onBulkUpdate(Array.from(selectedServers))}>
+                <ShieldCheck className="h-3 w-3 mr-1" />
+                Update
               </Button>
             )}
             {onBulkDelete && (
-              <Button variant="ghost" size="sm" className="h-8 text-destructive hover:text-destructive" 
+              <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-destructive hover:text-destructive" 
                 onClick={() => onBulkDelete(Array.from(selectedServers))}>
-                <Trash2 className="h-3.5 w-3.5 mr-1" />
-                Delete ({selectedServers.size})
+                <Trash2 className="h-3 w-3 mr-1" />
+                Delete
               </Button>
             )}
           </>
@@ -497,69 +498,76 @@ export function ServersTable({
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-8">
-              <Columns3 className="h-3.5 w-3.5" />
+            <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+              <Columns3 className="h-3 w-3" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-56 bg-background" align="end">
-            <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
+          <DropdownMenuContent className="w-48 bg-background" align="end">
+            <DropdownMenuLabel className="text-xs">Columns</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuCheckboxItem
               checked={isColumnVisible("hostname")}
               onCheckedChange={() => toggleColumn("hostname")}
+              className="text-xs"
             >
               Hostname
             </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem checked={isColumnVisible("ip")} onCheckedChange={() => toggleColumn("ip")}>
+            <DropdownMenuCheckboxItem checked={isColumnVisible("ip")} onCheckedChange={() => toggleColumn("ip")} className="text-xs">
               IP Address
             </DropdownMenuCheckboxItem>
             <DropdownMenuCheckboxItem
               checked={isColumnVisible("status")}
               onCheckedChange={() => toggleColumn("status")}
+              className="text-xs"
             >
               Status
             </DropdownMenuCheckboxItem>
             <DropdownMenuCheckboxItem
               checked={isColumnVisible("model")}
               onCheckedChange={() => toggleColumn("model")}
+              className="text-xs"
             >
               Model
             </DropdownMenuCheckboxItem>
             <DropdownMenuCheckboxItem
               checked={isColumnVisible("service_tag")}
               onCheckedChange={() => toggleColumn("service_tag")}
+              className="text-xs"
             >
               Service Tag
             </DropdownMenuCheckboxItem>
             <DropdownMenuCheckboxItem
               checked={isColumnVisible("idrac_firmware")}
               onCheckedChange={() => toggleColumn("idrac_firmware")}
+              className="text-xs"
             >
-              iDRAC Firmware
+              iDRAC FW
             </DropdownMenuCheckboxItem>
             <DropdownMenuCheckboxItem
               checked={isColumnVisible("vcenter")}
               onCheckedChange={() => toggleColumn("vcenter")}
+              className="text-xs"
             >
               vCenter
             </DropdownMenuCheckboxItem>
             <DropdownMenuCheckboxItem
               checked={isColumnVisible("groups")}
               onCheckedChange={() => toggleColumn("groups")}
+              className="text-xs"
             >
               Groups
             </DropdownMenuCheckboxItem>
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <Button variant="ghost" size="sm" className="h-8" onClick={handleExportCSV}>
-          <Download className="h-3.5 w-3.5" />
+        <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={handleExportCSV}>
+          <Download className="h-3 w-3" />
         </Button>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-8">
-              <Save className="h-3.5 w-3.5" />
+            <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+              <Save className="h-3 w-3" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-56" align="end">
@@ -599,51 +607,51 @@ export function ServersTable({
         <Table>
           <TableHeader className="sticky top-0 bg-background z-10">
             <TableRow>
-              <TableHead className="w-12"></TableHead>
+              <TableHead className="w-10 px-2"></TableHead>
               {isColumnVisible("hostname") && (
-                <TableHead className="w-[200px] cursor-pointer" onClick={() => handleSort("hostname")}>
+                <TableHead className="w-[160px] cursor-pointer text-xs px-2" onClick={() => handleSort("hostname")}>
                   <div className="flex items-center">
                     Hostname {getSortIcon("hostname")}
                   </div>
                 </TableHead>
               )}
               {isColumnVisible("ip") && (
-                <TableHead className="w-[140px] cursor-pointer" onClick={() => handleSort("ip_address")}>
+                <TableHead className="w-[120px] cursor-pointer text-xs px-2" onClick={() => handleSort("ip_address")}>
                   <div className="flex items-center">
-                    IP Address {getSortIcon("ip_address")}
+                    IP {getSortIcon("ip_address")}
                   </div>
                 </TableHead>
               )}
               {isColumnVisible("status") && (
-                <TableHead className="w-[100px] cursor-pointer" onClick={() => handleSort("connection_status")}>
+                <TableHead className="w-[80px] cursor-pointer text-xs px-2" onClick={() => handleSort("connection_status")}>
                   <div className="flex items-center">
                     Status {getSortIcon("connection_status")}
                   </div>
                 </TableHead>
               )}
               {isColumnVisible("model") && (
-                <TableHead className="w-[180px] cursor-pointer" onClick={() => handleSort("model")}>
+                <TableHead className="w-[150px] cursor-pointer text-xs px-2" onClick={() => handleSort("model")}>
                   <div className="flex items-center">
                     Model {getSortIcon("model")}
                   </div>
                 </TableHead>
               )}
               {isColumnVisible("service_tag") && (
-                <TableHead className="w-[120px] cursor-pointer" onClick={() => handleSort("service_tag")}>
+                <TableHead className="w-[100px] cursor-pointer text-xs px-2" onClick={() => handleSort("service_tag")}>
                   <div className="flex items-center">
-                    Service Tag {getSortIcon("service_tag")}
+                    Tag {getSortIcon("service_tag")}
                   </div>
                 </TableHead>
               )}
               {isColumnVisible("idrac_firmware") && (
-                <TableHead className="w-[140px] cursor-pointer" onClick={() => handleSort("idrac_firmware")}>
+                <TableHead className="w-[110px] cursor-pointer text-xs px-2" onClick={() => handleSort("idrac_firmware")}>
                   <div className="flex items-center">
-                    iDRAC Firmware {getSortIcon("idrac_firmware")}
+                    iDRAC {getSortIcon("idrac_firmware")}
                   </div>
                 </TableHead>
               )}
-              {isColumnVisible("vcenter") && <TableHead className="w-[100px]">vCenter</TableHead>}
-              {isColumnVisible("groups") && <TableHead className="w-[140px]">Groups</TableHead>}
+              {isColumnVisible("vcenter") && <TableHead className="w-[70px] text-xs px-2">vCenter</TableHead>}
+              {isColumnVisible("groups") && <TableHead className="w-[100px] text-xs px-2">Groups</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -656,16 +664,17 @@ export function ServersTable({
                         className={`cursor-pointer hover:bg-accent ${selectedServerId === server.id ? "bg-accent" : ""}`}
                         onClick={() => onServerClick(server)}
                       >
-                        <TableCell onClick={(e) => e.stopPropagation()} className="py-2 px-3">
+                        <TableCell onClick={(e) => e.stopPropagation()} className="py-1.5 px-2">
                           <Checkbox
                             checked={selectedServers.has(server.id)}
                             onCheckedChange={() => toggleServerSelection(server.id)}
+                            className="h-3.5 w-3.5"
                           />
                         </TableCell>
                         {isColumnVisible("hostname") && (
-                          <TableCell className="font-medium py-2 px-3">
-                            <div className="flex items-center gap-2">
-                              <span>{server.hostname || "—"}</span>
+                          <TableCell className="font-medium py-1.5 px-2 text-xs">
+                            <div className="flex items-center gap-1.5">
+                              <span className="truncate">{server.hostname || "—"}</span>
                               <ServerOperationIndicator 
                                 serverId={server.id}
                                 refreshing={refreshing === server.id}
@@ -675,31 +684,29 @@ export function ServersTable({
                           </TableCell>
                         )}
                         {isColumnVisible("ip") && (
-                          <TableCell className="font-mono text-sm py-2 px-3">{server.ip_address}</TableCell>
+                          <TableCell className="font-mono text-xs py-1.5 px-2">{server.ip_address}</TableCell>
                         )}
-                        {isColumnVisible("status") && <TableCell className="py-2 px-3">{getStatusBadge(server)}</TableCell>}
-                        {isColumnVisible("model") && <TableCell className="text-sm py-2 px-3">{server.model || "—"}</TableCell>}
+                        {isColumnVisible("status") && <TableCell className="py-1.5 px-2">{getStatusBadge(server)}</TableCell>}
+                        {isColumnVisible("model") && <TableCell className="text-xs py-1.5 px-2 truncate max-w-[150px]">{server.model || "—"}</TableCell>}
                         {isColumnVisible("service_tag") && (
-                          <TableCell className="font-mono text-xs py-2 px-3">{server.service_tag || "—"}</TableCell>
+                          <TableCell className="font-mono text-xs py-1.5 px-2">{server.service_tag || "—"}</TableCell>
                         )}
                         {isColumnVisible("idrac_firmware") && (
-                          <TableCell className="text-sm py-2 px-3">{server.idrac_firmware || "—"}</TableCell>
+                          <TableCell className="text-xs py-1.5 px-2">{server.idrac_firmware || "—"}</TableCell>
                         )}
                         {isColumnVisible("vcenter") && (
-                          <TableCell className="py-2 px-3">
+                          <TableCell className="py-1.5 px-2">
                             {server.vcenter_host_id ? (
-                              <Badge variant="default" className="text-xs">
-                                Linked
+                              <Badge variant="default" className="text-xs px-1.5 py-0">
+                                ✓
                               </Badge>
                             ) : (
-                              <Badge variant="secondary" className="text-xs">
-                                —
-                              </Badge>
+                              <span className="text-xs text-muted-foreground">—</span>
                             )}
                           </TableCell>
                         )}
                         {isColumnVisible("groups") && (
-                          <TableCell className="text-sm text-muted-foreground py-2 px-3">
+                          <TableCell className="text-xs text-muted-foreground py-1.5 px-2">
                             {getServerGroups(server.id)
                               .slice(0, 2)
                               .map((g: any) => g.name)
@@ -805,13 +812,13 @@ export function ServersTable({
                               onGroupClick(group.id);
                             }}
                           >
-                            <TableCell colSpan={10} className="py-2 px-3">
-                              <div className="flex items-center gap-2">
-                                {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                                <span className="font-semibold">{group.name}</span>
+                            <TableCell colSpan={10} className="py-1.5 px-2">
+                              <div className="flex items-center gap-1.5">
+                                {isCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                                <span className="font-semibold text-xs">{group.name}</span>
                                 <span className="text-xs text-muted-foreground">
-                                  ({group.servers.length} servers, {group.onlineCount} online
-                                  {group.linkedCount !== undefined && `, ${group.linkedCount} linked`})
+                                  ({group.servers.length}, {group.onlineCount}↑
+                                  {group.linkedCount !== undefined && `, ${group.linkedCount}⚡`})
                                 </span>
                               </div>
                             </TableCell>
@@ -930,43 +937,42 @@ export function ServersTable({
                                 className={`cursor-pointer hover:bg-accent ${selectedServerId === server.id ? "bg-accent" : ""}`}
                                 onClick={() => onServerClick(server)}
                               >
-                                <TableCell onClick={(e) => e.stopPropagation()} className="py-2 px-3">
+                                <TableCell onClick={(e) => e.stopPropagation()} className="py-1.5 px-2">
                                   <Checkbox
                                     checked={selectedServers.has(server.id)}
                                     onCheckedChange={() => toggleServerSelection(server.id)}
+                                    className="h-3.5 w-3.5"
                                   />
                                 </TableCell>
                                 {isColumnVisible("hostname") && (
-                                  <TableCell className="font-medium py-2 px-3">{server.hostname || "—"}</TableCell>
+                                  <TableCell className="font-medium py-1.5 px-2 text-xs truncate">{server.hostname || "—"}</TableCell>
                                 )}
                                 {isColumnVisible("ip") && (
-                                  <TableCell className="font-mono text-sm py-2 px-3">{server.ip_address}</TableCell>
+                                  <TableCell className="font-mono text-xs py-1.5 px-2">{server.ip_address}</TableCell>
                                 )}
-                                {isColumnVisible("status") && <TableCell className="py-2 px-3">{getStatusBadge(server)}</TableCell>}
+                                {isColumnVisible("status") && <TableCell className="py-1.5 px-2">{getStatusBadge(server)}</TableCell>}
                                 {isColumnVisible("model") && (
-                                  <TableCell className="text-sm py-2 px-3">{server.model || "—"}</TableCell>
+                                  <TableCell className="text-xs py-1.5 px-2 truncate max-w-[150px]">{server.model || "—"}</TableCell>
                                 )}
                                 {isColumnVisible("service_tag") && (
-                                  <TableCell className="font-mono text-xs py-2 px-3">{server.service_tag || "—"}</TableCell>
+                                  <TableCell className="font-mono text-xs py-1.5 px-2">{server.service_tag || "—"}</TableCell>
                                 )}
                                 {isColumnVisible("idrac_firmware") && (
-                                  <TableCell className="text-sm py-2 px-3">{server.idrac_firmware || "—"}</TableCell>
+                                  <TableCell className="text-xs py-1.5 px-2">{server.idrac_firmware || "—"}</TableCell>
                                 )}
                                 {isColumnVisible("vcenter") && (
-                                  <TableCell className="py-2 px-3">
+                                  <TableCell className="py-1.5 px-2">
                                     {server.vcenter_host_id ? (
-                                      <Badge variant="default" className="text-xs">
-                                        Linked
+                                      <Badge variant="default" className="text-xs px-1.5 py-0">
+                                        ✓
                                       </Badge>
                                     ) : (
-                                      <Badge variant="secondary" className="text-xs">
-                                        —
-                                      </Badge>
+                                      <span className="text-xs text-muted-foreground">—</span>
                                     )}
                                   </TableCell>
                                 )}
                                 {isColumnVisible("groups") && (
-                                  <TableCell className="text-sm text-muted-foreground py-2 px-3">{group.name}</TableCell>
+                                  <TableCell className="text-xs text-muted-foreground py-1.5 px-2">{group.name}</TableCell>
                                 )}
                               </TableRow>
                             </ContextMenuTrigger>
