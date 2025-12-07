@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Shield, Zap, RefreshCw, Search } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
 interface QuickActionsPanelProps {
@@ -10,8 +10,6 @@ interface QuickActionsPanelProps {
 }
 
 export function QuickActionsPanel({ clusters, onUpdateWizard }: QuickActionsPanelProps) {
-  const { toast } = useToast();
-
   const runSafetyCheck = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -26,9 +24,9 @@ export function QuickActionsPanel({ clusters, onUpdateWizard }: QuickActionsPane
       });
 
       if (error) throw error;
-      toast({ title: "Safety check started", description: "Checking all clusters..." });
+      // Job created - NotificationContext will show toast
     } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      toast.error("Error", { description: error.message });
     }
   };
 
@@ -46,15 +44,14 @@ export function QuickActionsPanel({ clusters, onUpdateWizard }: QuickActionsPane
       });
 
       if (error) throw error;
-      toast({ title: "vCenter sync started" });
+      // Job created - NotificationContext will show toast
     } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      toast.error("Error", { description: error.message });
     }
   };
 
   const runDiscovery = async () => {
-    toast({ 
-      title: "Discovery scan", 
+    toast.info("Discovery scan", { 
       description: "Please configure discovery settings in the Servers page" 
     });
   };
