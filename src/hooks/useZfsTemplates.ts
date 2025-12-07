@@ -37,7 +37,8 @@ export interface ZfsTargetTemplate {
   
   // SSH access
   default_ssh_username: string;
-  ssh_key_encrypted?: string;
+  ssh_key_id?: string;           // Reference to centralized ssh_keys table (preferred)
+  ssh_key_encrypted?: string;    // Legacy: direct encrypted key storage
   
   // Metadata
   is_active: boolean;
@@ -64,7 +65,8 @@ export interface ZfsTemplateFormData {
   default_memory_gb?: number;
   default_zfs_disk_gb?: number;
   default_ssh_username?: string;
-  ssh_private_key?: string; // For encryption
+  ssh_key_id?: string;           // Reference to centralized SSH key
+  ssh_private_key?: string;      // Legacy: for direct encryption
 }
 
 export function useZfsTemplates() {
@@ -109,6 +111,7 @@ export function useZfsTemplates() {
           default_memory_gb: template.default_memory_gb || 8,
           default_zfs_disk_gb: template.default_zfs_disk_gb || 500,
           default_ssh_username: template.default_ssh_username || 'zfsadmin',
+          ssh_key_id: template.ssh_key_id || null,
           is_active: true,
           created_by: user?.user?.id
         })
@@ -160,8 +163,8 @@ export function useZfsTemplates() {
       
       if (error) throw error;
 
-      // If SSH key provided, encrypt it
-      if (template.ssh_private_key) {
+      // Legacy: If SSH key provided directly, encrypt it (backward compat)
+      if (template.ssh_private_key && !template.ssh_key_id) {
         const { error: encryptError } = await supabase.functions.invoke('encrypt-credentials', {
           body: {
             type: 'zfs_template',

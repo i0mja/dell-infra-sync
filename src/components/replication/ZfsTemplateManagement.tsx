@@ -18,12 +18,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Trash2, Edit, Server, HardDrive, Cpu, MemoryStick, Network, Key, CheckCircle2, XCircle, Search, KeyRound, Copy, Loader2, ChevronDown, Terminal, AlertCircle, Info, ArrowRightLeft, MoreHorizontal } from 'lucide-react';
+import { Plus, Trash2, Edit, Server, HardDrive, Cpu, MemoryStick, Network, Key, CheckCircle2, XCircle, Search, KeyRound, Copy, Loader2, ChevronDown, Terminal, AlertCircle, Info, ArrowRightLeft, MoreHorizontal, Link2 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { CopyTemplateDialog } from './CopyTemplateDialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useToast } from '@/hooks/use-toast';
 import { useZfsTemplates, ZfsTemplateFormData } from '@/hooks/useZfsTemplates';
+import { useSshKeys } from '@/hooks/useSshKeys';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { formatDistanceToNow } from 'date-fns';
@@ -47,11 +49,13 @@ const initialFormData: ZfsTemplateFormData = {
   default_memory_gb: 8,
   default_zfs_disk_gb: 500,
   default_ssh_username: 'zfsadmin',
+  ssh_key_id: '',
   ssh_private_key: ''
 };
 
 export function ZfsTemplateManagement() {
   const { templates, loading, createTemplate, updateTemplate, deleteTemplate, toggleActive, isCreating } = useZfsTemplates();
+  const { sshKeys, generateKey, isLoading: sshKeysLoading } = useSshKeys();
   const [showDialog, setShowDialog] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState<ZfsTemplateFormData>(initialFormData);
@@ -62,7 +66,19 @@ export function ZfsTemplateManagement() {
   const [showCopyDialog, setShowCopyDialog] = useState(false);
   const [templateToCopy, setTemplateToCopy] = useState<typeof templates[0] | null>(null);
   const [hasStoredSshKey, setHasStoredSshKey] = useState(false);
+  const [sshKeyMode, setSshKeyMode] = useState<'select' | 'generate'>('select');
   const { toast } = useToast();
+
+  // Filter active SSH keys for selection
+  const activeSshKeys = useMemo(() => {
+    return (sshKeys || []).filter(k => k.status === 'active');
+  }, [sshKeys]);
+
+  // Get the selected SSH key details
+  const selectedSshKey = useMemo(() => {
+    if (!formData.ssh_key_id) return null;
+    return activeSshKeys.find(k => k.id === formData.ssh_key_id) || null;
+  }, [formData.ssh_key_id, activeSshKeys]);
 
   // Fetch vCenters for dropdown (use vcenters table, not vcenter_settings)
   const { data: vcenters = [] } = useQuery({
@@ -180,7 +196,8 @@ export function ZfsTemplateManagement() {
   const handleOpenDialog = (template?: typeof templates[0]) => {
     if (template) {
       setEditingId(template.id);
-      setHasStoredSshKey(!!template.ssh_key_encrypted);
+      setHasStoredSshKey(!!template.ssh_key_encrypted || !!template.ssh_key_id);
+      setSshKeyMode(template.ssh_key_id ? 'select' : 'generate');
       setFormData({
         name: template.name,
         description: template.description || '',
@@ -199,11 +216,20 @@ export function ZfsTemplateManagement() {
         default_memory_gb: template.default_memory_gb,
         default_zfs_disk_gb: template.default_zfs_disk_gb,
         default_ssh_username: template.default_ssh_username,
+        ssh_key_id: template.ssh_key_id || '',
         ssh_private_key: ''
       });
+      // If template has linked key, show its public key
+      if (template.ssh_key_id) {
+        const linkedKey = activeSshKeys.find(k => k.id === template.ssh_key_id);
+        if (linkedKey) {
+          setGeneratedPublicKey(linkedKey.public_key);
+        }
+      }
     } else {
       setEditingId(null);
       setHasStoredSshKey(false);
+      setSshKeyMode('select');
       setFormData(initialFormData);
     }
     setActiveTab('basic');
@@ -216,33 +242,55 @@ export function ZfsTemplateManagement() {
     setFormData(initialFormData);
     setGeneratedPublicKey('');
     setHasStoredSshKey(false);
+    setSshKeyMode('select');
   };
 
+  // Handle generating a NEW key via centralized SSH key management
   const handleGenerateKeyPair = async () => {
+    if (!formData.name) {
+      toast({
+        title: 'Template name required',
+        description: 'Please enter a template name first (Basic tab)',
+        variant: 'destructive'
+      });
+      return;
+    }
+    
     setIsGeneratingKey(true);
     try {
-      const comment = `zfsadmin@${formData.name || 'zfs-target'}`;
-      const { data, error } = await supabase.functions.invoke('generate-ssh-keypair', {
-        body: { comment }
+      const keyName = `ZFS: ${formData.name}`;
+      const result = await generateKey({ 
+        name: keyName, 
+        description: `Auto-generated for ZFS template: ${formData.name}`
       });
       
-      if (error) throw error;
-      
-      setGeneratedPublicKey(data.publicKey);
-      setFormData({ ...formData, ssh_private_key: data.privateKey });
-      toast({
-        title: 'SSH key pair generated',
-        description: 'Copy the public key to your template VM\'s authorized_keys file'
-      });
+      if (result?.sshKey) {
+        setFormData({ ...formData, ssh_key_id: result.sshKey.id, ssh_private_key: '' });
+        setGeneratedPublicKey(result.publicKey);
+        setSshKeyMode('select');
+        toast({
+          title: 'SSH key created',
+          description: `Key "${keyName}" created and linked to this template`
+        });
+      }
     } catch (err) {
-      console.error('Failed to generate SSH key pair:', err);
+      console.error('Failed to generate SSH key:', err);
       toast({
-        title: 'Error generating key pair',
+        title: 'Error generating key',
         description: err instanceof Error ? err.message : 'Unknown error',
         variant: 'destructive'
       });
     } finally {
       setIsGeneratingKey(false);
+    }
+  };
+
+  // Handle selecting an existing key
+  const handleSelectSshKey = (keyId: string) => {
+    const key = activeSshKeys.find(k => k.id === keyId);
+    if (key) {
+      setFormData({ ...formData, ssh_key_id: keyId, ssh_private_key: '' });
+      setGeneratedPublicKey(key.public_key);
     }
   };
 
@@ -578,39 +626,20 @@ export function ZfsTemplateManagement() {
                 <div className="grid gap-4">
                   {/* SSH Key Already Stored Indicator */}
                   {editingId && hasStoredSshKey && (
-                    <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-4">
+                    <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-3">
                       <div className="flex items-center gap-2">
-                        <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-500" />
+                        <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-500" />
                         <div>
-                          <p className="font-medium text-sm text-green-700 dark:text-green-400">SSH Key Already Configured</p>
-                          <p className="text-xs text-green-600 dark:text-green-500">
-                            An encrypted SSH key is stored for this template. You can skip this section unless you need to replace the key.
+                          <p className="font-medium text-sm text-green-700 dark:text-green-400">
+                            SSH Key Configured
+                            {selectedSshKey && (
+                              <span className="font-normal ml-1">({selectedSshKey.name})</span>
+                            )}
                           </p>
                         </div>
                       </div>
                     </div>
                   )}
-
-                  {/* Workflow Overview */}
-                  <div className="rounded-lg border bg-muted/30 p-4">
-                    <div className="flex items-start gap-2 mb-3">
-                      <Info className="h-4 w-4 mt-0.5 text-primary" />
-                      <div>
-                        <p className="font-medium text-sm">SSH Key Setup Workflow</p>
-                        <p className="text-xs text-muted-foreground">
-                          {editingId && hasStoredSshKey 
-                            ? 'Only follow these steps if you need to replace the existing SSH key'
-                            : 'Follow these steps to enable secure SSH access to deployed ZFS targets'}
-                        </p>
-                      </div>
-                    </div>
-                    <ol className="text-xs text-muted-foreground space-y-1.5 ml-6 list-decimal">
-                      <li>Generate a new SSH key pair below (or use an existing one)</li>
-                      <li>Copy the public key and add it to your template VM</li>
-                      <li>Convert the VM to a template (if not already)</li>
-                      <li>Save this form - the private key will be encrypted and stored securely</li>
-                    </ol>
-                  </div>
 
                   <div className="grid gap-2">
                     <Label htmlFor="default_ssh_username" className="flex items-center gap-1">
@@ -624,132 +653,216 @@ export function ZfsTemplateManagement() {
                     />
                   </div>
 
-                  {/* Key Generation Section */}
-                  <div className="border rounded-lg p-4 bg-muted/30 space-y-4">
+                  {/* SSH Key Selection / Generation */}
+                  <div className="border rounded-lg p-4 space-y-4">
                     <div className="flex items-center justify-between">
-                      <div>
-                        <Label className="text-base">SSH Key Pair</Label>
-                        <p className="text-xs text-muted-foreground">
-                          Generate a new Ed25519 key pair for secure access
-                        </p>
+                      <Label className="text-sm font-medium">SSH Key</Label>
+                      <div className="flex gap-1 text-xs">
+                        <Button
+                          type="button"
+                          variant={sshKeyMode === 'select' ? 'secondary' : 'ghost'}
+                          size="sm"
+                          className="h-7 px-2"
+                          onClick={() => setSshKeyMode('select')}
+                        >
+                          <Link2 className="h-3 w-3 mr-1" />
+                          Use Existing
+                        </Button>
+                        <Button
+                          type="button"
+                          variant={sshKeyMode === 'generate' ? 'secondary' : 'ghost'}
+                          size="sm"
+                          className="h-7 px-2"
+                          onClick={() => setSshKeyMode('generate')}
+                        >
+                          <KeyRound className="h-3 w-3 mr-1" />
+                          Generate New
+                        </Button>
                       </div>
-                      <Button 
-                        type="button"
-                        variant="outline"
-                        onClick={handleGenerateKeyPair} 
-                        disabled={isGeneratingKey}
-                      >
-                        {isGeneratingKey ? (
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        ) : (
-                          <KeyRound className="h-4 w-4 mr-2" />
-                        )}
-                        Generate Key Pair
-                      </Button>
                     </div>
 
-                    {/* Public Key Display */}
-                    {generatedPublicKey && (
+                    {sshKeyMode === 'select' ? (
                       <div className="space-y-3">
-                        <div className="space-y-2">
-                          <Label>Public Key</Label>
-                          <div className="relative">
-                            <Textarea
-                              readOnly
-                              value={generatedPublicKey}
-                              className="font-mono text-xs pr-12 bg-background"
-                              rows={3}
-                            />
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="absolute top-2 right-2"
-                              onClick={handleCopyPublicKey}
-                            >
-                              <Copy className="h-4 w-4" />
-                            </Button>
-                          </div>
-                          <p className="text-xs text-muted-foreground">
-                            The <code className="bg-muted px-1 rounded">@{formData.name || 'zfs-target'}</code> at the end is just a label to identify this key - it's not an address.
+                        <Select
+                          value={formData.ssh_key_id || ''}
+                          onValueChange={handleSelectSshKey}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select an SSH key from Key Management" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {activeSshKeys.length === 0 ? (
+                              <div className="p-2 text-sm text-muted-foreground text-center">
+                                No active keys. Generate one below or in Settings → SSH Keys.
+                              </div>
+                            ) : (
+                              activeSshKeys.map((key) => (
+                                <SelectItem key={key.id} value={key.id}>
+                                  <div className="flex items-center gap-2">
+                                    <span>{key.name}</span>
+                                    <code className="text-[10px] bg-muted px-1 rounded">
+                                      {key.public_key_fingerprint?.slice(0, 16)}...
+                                    </code>
+                                  </div>
+                                </SelectItem>
+                              ))
+                            )}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          Keys are managed centrally in Settings → SSH Keys. Usage is tracked automatically.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <p className="text-xs text-muted-foreground">
+                          Create a new key that will be added to SSH Key Management as "ZFS: {formData.name || '(template name)'}"
+                        </p>
+                        <Button 
+                          type="button"
+                          variant="outline"
+                          onClick={handleGenerateKeyPair} 
+                          disabled={isGeneratingKey || !formData.name}
+                          className="w-full"
+                        >
+                          {isGeneratingKey ? (
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          ) : (
+                            <KeyRound className="h-4 w-4 mr-2" />
+                          )}
+                          Generate & Link Key
+                        </Button>
+                        {!formData.name && (
+                          <p className="text-xs text-amber-600 dark:text-amber-500">
+                            Enter a template name in the Basic tab first
                           </p>
-                        </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
 
-                        {/* Command Block */}
-                        <div className="space-y-2">
-                          <Label className="flex items-center gap-1">
-                            <Terminal className="h-3 w-3" /> Add to Template VM
-                          </Label>
-                          <div className="bg-background border rounded-md p-3 font-mono text-xs overflow-x-auto">
-                            <p className="text-muted-foreground mb-1"># Run these commands on your template VM as root:</p>
+                  {/* Public Key Display & Quick Add Command */}
+                  {generatedPublicKey && (
+                    <div className="border rounded-lg p-4 space-y-4 bg-muted/30">
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-sm">Public Key</Label>
+                          {selectedSshKey && (
+                            <Badge variant="outline" className="text-xs">
+                              <Link2 className="h-3 w-3 mr-1" />
+                              {selectedSshKey.name}
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="relative">
+                          <Textarea
+                            readOnly
+                            value={generatedPublicKey}
+                            className="font-mono text-xs pr-12 bg-background"
+                            rows={2}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="absolute top-1 right-1 h-7 w-7"
+                            onClick={handleCopyPublicKey}
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* Quick Add Command */}
+                      <div className="space-y-2">
+                        <Label className="flex items-center gap-1 text-sm">
+                          <Terminal className="h-3 w-3" /> Quick Add Command
+                        </Label>
+                        <div className="relative">
+                          <div className="bg-background border rounded-md p-2 font-mono text-xs overflow-x-auto">
+                            echo "{generatedPublicKey}" &gt;&gt; ~/.ssh/authorized_keys
+                          </div>
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="absolute top-1 right-1 h-6 w-6"
+                                  onClick={async () => {
+                                    const cmd = `echo "${generatedPublicKey}" >> ~/.ssh/authorized_keys`;
+                                    await navigator.clipboard.writeText(cmd);
+                                    toast({ title: 'Command copied' });
+                                  }}
+                                >
+                                  <Copy className="h-3 w-3" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>Copy one-liner to clipboard</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Paste directly into the template VM terminal as the target user
+                        </p>
+                      </div>
+
+                      {/* Full Setup Commands (collapsed) */}
+                      <Collapsible>
+                        <CollapsibleTrigger className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                          <ChevronDown className="h-3 w-3" />
+                          Show full setup commands
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="pt-2">
+                          <div className="bg-background border rounded-md p-3 font-mono text-xs overflow-x-auto space-y-0.5">
+                            <p className="text-muted-foreground"># Run as root on template VM:</p>
                             <p>mkdir -p /home/{formData.default_ssh_username || 'zfsadmin'}/.ssh</p>
                             <p>echo "{generatedPublicKey}" &gt;&gt; /home/{formData.default_ssh_username || 'zfsadmin'}/.ssh/authorized_keys</p>
                             <p>chmod 700 /home/{formData.default_ssh_username || 'zfsadmin'}/.ssh</p>
                             <p>chmod 600 /home/{formData.default_ssh_username || 'zfsadmin'}/.ssh/authorized_keys</p>
                             <p>chown -R {formData.default_ssh_username || 'zfsadmin'}:{formData.default_ssh_username || 'zfsadmin'} /home/{formData.default_ssh_username || 'zfsadmin'}/.ssh</p>
                           </div>
-                          <div className="flex items-start gap-2 p-2 rounded bg-amber-500/10 border border-amber-500/20">
-                            <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-500 mt-0.5 shrink-0" />
-                            <p className="text-xs text-amber-700 dark:text-amber-400">
-                              Add this key to the VM <strong>before</strong> converting it to a template
-                            </p>
-                          </div>
+                        </CollapsibleContent>
+                      </Collapsible>
+                    </div>
+                  )}
+
+                  {/* Legacy: Direct private key paste (hidden if using centralized key) */}
+                  {!formData.ssh_key_id && (
+                    <Collapsible>
+                      <CollapsibleTrigger className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                        <ChevronDown className="h-3 w-3" />
+                        Advanced: Paste existing private key directly
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="pt-2">
+                        <div className="grid gap-2 p-3 border rounded-md bg-muted/30">
+                          <Label htmlFor="ssh_private_key" className="flex items-center gap-2 text-xs">
+                            SSH Private Key (Legacy)
+                            {editingId && hasStoredSshKey && !formData.ssh_private_key && !formData.ssh_key_id && (
+                              <Badge variant="outline" className="text-xs font-normal text-green-600 border-green-500/30">
+                                <CheckCircle2 className="h-3 w-3 mr-1" />
+                                Stored
+                              </Badge>
+                            )}
+                          </Label>
+                          <Textarea
+                            id="ssh_private_key"
+                            placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
+                            className="font-mono text-xs"
+                            rows={4}
+                            value={formData.ssh_private_key}
+                            onChange={(e) => setFormData({ ...formData, ssh_private_key: e.target.value, ssh_key_id: '' })}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Use this only if you have an existing key not in SSH Key Management. The key will be encrypted before storage.
+                          </p>
                         </div>
-
-                        {/* Already Built Template Recovery */}
-                        <Collapsible>
-                          <CollapsibleTrigger className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors w-full">
-                            <ChevronDown className="h-3 w-3" />
-                            Already converted to a template?
-                          </CollapsibleTrigger>
-                          <CollapsibleContent className="pt-2">
-                            <div className="text-xs space-y-2 p-3 rounded-md bg-muted/50 border">
-                              <p className="font-medium">To add the key to an existing template:</p>
-                              <ol className="list-decimal ml-4 space-y-1 text-muted-foreground">
-                                <li>In vCenter, right-click the template → <strong>Convert to Virtual Machine</strong></li>
-                                <li>Power on the VM and connect via console or SSH (using existing credentials)</li>
-                                <li>Run the commands above to add the public key</li>
-                                <li>Shut down the VM</li>
-                                <li>Right-click the VM → <strong>Convert to Template</strong></li>
-                              </ol>
-                              <p className="text-muted-foreground mt-2">
-                                Alternatively, if you already have an SSH key that works with the template, paste its private key in the field below instead.
-                              </p>
-                            </div>
-                          </CollapsibleContent>
-                        </Collapsible>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="grid gap-2">
-                    <Label htmlFor="ssh_private_key" className="flex items-center gap-2">
-                      SSH Private Key
-                      {editingId && hasStoredSshKey && !formData.ssh_private_key && (
-                        <Badge variant="outline" className="text-xs font-normal text-green-600 border-green-500/30">
-                          <CheckCircle2 className="h-3 w-3 mr-1" />
-                          Using stored key
-                        </Badge>
-                      )}
-                    </Label>
-                    <Textarea
-                      id="ssh_private_key"
-                      placeholder={editingId && hasStoredSshKey 
-                        ? "Leave empty to keep the existing encrypted key, or paste a new key to replace it"
-                        : "-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----"}
-                      className="font-mono text-xs"
-                      rows={6}
-                      value={formData.ssh_private_key}
-                      onChange={(e) => setFormData({ ...formData, ssh_private_key: e.target.value })}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      {generatedPublicKey 
-                        ? '✓ Private key auto-filled from generation above. Will be encrypted before storage.'
-                        : editingId && hasStoredSshKey
-                          ? 'Leave empty to keep the existing key, or paste/generate a new key to replace it.'
-                          : 'Paste an existing private key, or generate a new key pair above. Will be encrypted before storage.'}
-                    </p>
-                  </div>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  )}
                 </div>
               </TabsContent>
             </Tabs>
