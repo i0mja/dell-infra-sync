@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { Key, Copy, Calendar, Loader2, AlertCircle } from 'lucide-react';
+import { Key, Copy, Calendar, Loader2, AlertCircle, Terminal, Check } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -35,6 +35,8 @@ export function SshKeyGenerateDialog({
   const [expiresAt, setExpiresAt] = useState('');
   const [generatedKey, setGeneratedKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState(false);
+  const [copiedCommand, setCopiedCommand] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
 
   // Focus name input when dialog opens
@@ -43,6 +45,12 @@ export function SshKeyGenerateDialog({
       setTimeout(() => nameInputRef.current?.focus(), 100);
     }
   }, [open, generatedKey]);
+
+  // Reset copy states when key changes
+  useEffect(() => {
+    setCopiedKey(false);
+    setCopiedCommand(false);
+  }, [generatedKey]);
 
   const validateForm = useCallback(() => {
     if (!name.trim()) {
@@ -98,18 +106,42 @@ export function SshKeyGenerateDialog({
     setExpiresAt('');
     setGeneratedKey(null);
     setError(null);
+    setCopiedKey(false);
+    setCopiedCommand(false);
     onOpenChange(false);
   }, [onOpenChange]);
 
   const copyPublicKey = useCallback(() => {
     if (generatedKey) {
       navigator.clipboard.writeText(generatedKey).then(() => {
-        toast.success('Public key copied to clipboard');
+        setCopiedKey(true);
+        toast.success('Public key copied');
+        setTimeout(() => setCopiedKey(false), 2000);
       }).catch(() => {
-        toast.error('Failed to copy public key');
+        toast.error('Failed to copy');
       });
     }
   }, [generatedKey]);
+
+  const getOneLiner = useCallback(() => {
+    if (!generatedKey) return '';
+    // Escape single quotes in the key for shell safety
+    const escapedKey = generatedKey.replace(/'/g, "'\\''");
+    return `echo '${escapedKey}' >> ~/.ssh/authorized_keys`;
+  }, [generatedKey]);
+
+  const copyOneLiner = useCallback(() => {
+    const command = getOneLiner();
+    if (command) {
+      navigator.clipboard.writeText(command).then(() => {
+        setCopiedCommand(true);
+        toast.success('Command copied');
+        setTimeout(() => setCopiedCommand(false), 2000);
+      }).catch(() => {
+        toast.error('Failed to copy');
+      });
+    }
+  }, [getOneLiner]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey && !generatedKey && name.trim()) {
@@ -121,7 +153,7 @@ export function SshKeyGenerateDialog({
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent 
-        className="sm:max-w-[500px]"
+        className="sm:max-w-[550px]"
         onKeyDown={handleKeyDown}
         aria-describedby="generate-dialog-description"
       >
@@ -216,38 +248,60 @@ export function SshKeyGenerateDialog({
           <div className="space-y-4 py-4">
             <Alert className="bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800">
               <AlertDescription>
-                <p className="text-sm font-medium text-green-800 dark:text-green-200 mb-2">
+                <p className="text-sm font-medium text-green-800 dark:text-green-200">
                   Key Generated Successfully!
-                </p>
-                <p className="text-xs text-green-700 dark:text-green-300">
-                  Copy the public key below to add to your target systems' authorized_keys file.
                 </p>
               </AlertDescription>
             </Alert>
 
-            <div className="space-y-2">
-              <Label htmlFor="publicKey">Public Key</Label>
+            {/* Public Key */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="publicKey" className="text-xs">Public Key</Label>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  onClick={copyPublicKey}
+                >
+                  {copiedKey ? <Check className="h-3 w-3 mr-1" /> : <Copy className="h-3 w-3 mr-1" />}
+                  {copiedKey ? 'Copied' : 'Copy'}
+                </Button>
+              </div>
               <div className="relative">
                 <Textarea
                   id="publicKey"
                   value={generatedKey}
                   readOnly
-                  rows={4}
-                  className="font-mono text-xs pr-10"
+                  rows={3}
+                  className="font-mono text-xs resize-none"
                   aria-label="Generated public key"
                 />
+              </div>
+            </div>
+
+            {/* One-liner command */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs flex items-center gap-1.5">
+                  <Terminal className="h-3 w-3" />
+                  Quick Add Command
+                </Label>
                 <Button
                   variant="ghost"
-                  size="icon"
-                  className="absolute right-2 top-2 h-8 w-8"
-                  onClick={copyPublicKey}
-                  aria-label="Copy public key to clipboard"
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  onClick={copyOneLiner}
                 >
-                  <Copy className="h-4 w-4" aria-hidden="true" />
+                  {copiedCommand ? <Check className="h-3 w-3 mr-1" /> : <Copy className="h-3 w-3 mr-1" />}
+                  {copiedCommand ? 'Copied' : 'Copy'}
                 </Button>
               </div>
+              <div className="bg-muted rounded-md p-2 font-mono text-xs break-all select-all">
+                {getOneLiner()}
+              </div>
               <p className="text-xs text-muted-foreground">
-                The private key is securely encrypted and stored. You don't need to save it manually.
+                Paste this directly into the target server terminal to authorize the key.
               </p>
             </div>
           </div>
