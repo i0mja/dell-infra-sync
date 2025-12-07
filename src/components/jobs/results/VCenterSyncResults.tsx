@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { 
   Server, 
   HardDrive, 
@@ -53,31 +54,30 @@ const StatCard = ({ icon, label, value, subtext, variant = 'default' }: StatCard
   );
 };
 
-export const VCenterSyncResults = ({ details }: VCenterSyncResultsProps) => {
-  // Extract all possible sync metrics from details
-  const vcenterName = details?.vcenter_name || details?.vcenter_host || null;
-  const hostsSynced = details?.hosts_synced || details?.updated_hosts || 0;
-  const hostsNew = details?.hosts_new || details?.new_hosts || 0;
-  const vmsSynced = details?.vms_synced || details?.vms_processed || 0;
-  const clustersSynced = details?.clusters_synced || 0;
-  const datastoresSynced = details?.datastores_synced || 0;
-  const networksSynced = details?.networks_synced || 0;
-  const alarms = details?.alarms_synced || details?.alarms || 0;
-  const autoLinked = details?.auto_linked || 0;
-  const errors = details?.errors || 0;
-  
-  // Calculate duration if available
-  const syncDuration = details?.sync_duration_ms 
-    ? `${(details.sync_duration_ms / 1000).toFixed(1)}s`
-    : details?.sync_duration || null;
+// Component for displaying a single vCenter's results
+const SingleVCenterResults = ({ result, showHeader = true }: { result: any; showHeader?: boolean }) => {
+  const vcenterName = result?.vcenter_name || result?.vcenter_host || null;
+  const hostsSynced = result?.hosts_synced || result?.hosts || result?.updated_hosts || 0;
+  const hostsNew = result?.hosts_new || result?.new_hosts || 0;
+  const vmsSynced = result?.vms_synced || result?.vms || result?.vms_processed || 0;
+  const clustersSynced = result?.clusters_synced || result?.clusters || 0;
+  const datastoresSynced = result?.datastores_synced || result?.datastores || 0;
+  const networksSynced = result?.networks_synced || result?.networks || 0;
+  const alarms = result?.alarms_synced || result?.alarms || 0;
+  const autoLinked = result?.auto_linked || 0;
+  const errors = result?.errors || (result?.error ? 1 : 0);
+  const syncDuration = result?.sync_duration_seconds 
+    ? `${result.sync_duration_seconds}s`
+    : result?.sync_duration_ms 
+      ? `${(result.sync_duration_ms / 1000).toFixed(1)}s`
+      : result?.sync_duration || null;
 
-  // Determine if this was a successful sync
-  const isSuccess = errors === 0;
+  const isSuccess = result?.status !== 'failed' && errors === 0;
 
   return (
     <div className="space-y-4">
       {/* vCenter info header */}
-      {vcenterName && (
+      {showHeader && vcenterName && (
         <div className="flex items-center gap-3 pb-2 border-b">
           <Database className="h-5 w-5 text-primary" />
           <div>
@@ -93,6 +93,13 @@ export const VCenterSyncResults = ({ details }: VCenterSyncResultsProps) => {
               <><XCircle className="h-3 w-3 mr-1" /> {errors} Error{errors !== 1 ? 's' : ''}</>
             )}
           </Badge>
+        </div>
+      )}
+
+      {/* Error message for failed syncs */}
+      {result?.error && (
+        <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg">
+          <p className="text-sm text-destructive">{result.error}</p>
         </div>
       )}
 
@@ -188,7 +195,7 @@ export const VCenterSyncResults = ({ details }: VCenterSyncResultsProps) => {
         )}
 
         {/* Errors */}
-        {errors > 0 && (
+        {typeof errors === 'number' && errors > 0 && (
           <StatCard
             icon={<XCircle className="h-4 w-4" />}
             label="Errors"
@@ -198,25 +205,133 @@ export const VCenterSyncResults = ({ details }: VCenterSyncResultsProps) => {
           />
         )}
       </div>
-
-      {/* Phase breakdown if available */}
-      {details?.phases && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Sync Phases</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {Object.entries(details.phases).map(([phase, count]) => (
-                <div key={phase} className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground capitalize">{phase.replace(/_/g, ' ')}</span>
-                  <span className="font-medium">{String(count)}</span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
+};
+
+export const VCenterSyncResults = ({ details }: VCenterSyncResultsProps) => {
+  // Check if this is a multi-vCenter sync result
+  const vcenterResults = details?.vcenter_results as any[] | undefined;
+  const totalVcenters = details?.total_vcenters || 1;
+  const vcentersSynced = details?.vcenters_synced || 0;
+
+  // If we have multiple vCenter results, show them in an accordion
+  if (vcenterResults && vcenterResults.length > 1) {
+    const syncDuration = details?.sync_duration_seconds 
+      ? `${details.sync_duration_seconds}s`
+      : null;
+
+    return (
+      <div className="space-y-4">
+        {/* Overall summary header */}
+        <div className="flex items-center gap-3 pb-2 border-b">
+          <Database className="h-5 w-5 text-primary" />
+          <div>
+            <h4 className="font-semibold">Multi-vCenter Sync Complete</h4>
+            <p className="text-sm text-muted-foreground">
+              {vcentersSynced}/{totalVcenters} vCenters synced successfully
+              {syncDuration && ` in ${syncDuration}`}
+            </p>
+          </div>
+          <Badge 
+            variant={vcentersSynced === totalVcenters ? "secondary" : "outline"} 
+            className="ml-auto"
+          >
+            {vcentersSynced === totalVcenters ? (
+              <><CheckCircle className="h-3 w-3 mr-1" /> All Synced</>
+            ) : (
+              <>{vcentersSynced}/{totalVcenters} Complete</>
+            )}
+          </Badge>
+        </div>
+
+        {/* Aggregated totals */}
+        <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+          <div className="text-center p-2 bg-muted/50 rounded">
+            <p className="text-lg font-bold">{details?.clusters || 0}</p>
+            <p className="text-xs text-muted-foreground">Clusters</p>
+          </div>
+          <div className="text-center p-2 bg-muted/50 rounded">
+            <p className="text-lg font-bold">{details?.datastores || 0}</p>
+            <p className="text-xs text-muted-foreground">Datastores</p>
+          </div>
+          <div className="text-center p-2 bg-muted/50 rounded">
+            <p className="text-lg font-bold">{details?.networks || 0}</p>
+            <p className="text-xs text-muted-foreground">Networks</p>
+          </div>
+          <div className="text-center p-2 bg-muted/50 rounded">
+            <p className="text-lg font-bold">{details?.vms || 0}</p>
+            <p className="text-xs text-muted-foreground">VMs</p>
+          </div>
+          <div className="text-center p-2 bg-muted/50 rounded">
+            <p className="text-lg font-bold">{details?.hosts || 0}</p>
+            <p className="text-xs text-muted-foreground">Hosts</p>
+          </div>
+          <div className="text-center p-2 bg-muted/50 rounded">
+            <p className="text-lg font-bold text-success">{details?.auto_linked || 0}</p>
+            <p className="text-xs text-muted-foreground">Auto-Linked</p>
+          </div>
+        </div>
+
+        {/* Per-vCenter accordion */}
+        <Accordion type="multiple" className="w-full">
+          {vcenterResults.map((result, index) => {
+            const isSuccess = result?.status !== 'failed';
+            return (
+              <AccordionItem key={result?.vcenter_id || index} value={`vcenter-${index}`}>
+                <AccordionTrigger className="hover:no-underline">
+                  <div className="flex items-center gap-3 w-full pr-4">
+                    <Database className="h-4 w-4 text-muted-foreground" />
+                    <span className="font-medium">
+                      {result?.vcenter_name || result?.vcenter_host || `vCenter ${index + 1}`}
+                    </span>
+                    <Badge 
+                      variant={isSuccess ? "secondary" : "destructive"} 
+                      className="ml-auto text-xs"
+                    >
+                      {isSuccess ? 'Success' : 'Failed'}
+                    </Badge>
+                    {result?.sync_duration_seconds && (
+                      <span className="text-xs text-muted-foreground">
+                        {result.sync_duration_seconds}s
+                      </span>
+                    )}
+                  </div>
+                </AccordionTrigger>
+                <AccordionContent>
+                  <div className="pt-2">
+                    <SingleVCenterResults result={result} showHeader={false} />
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            );
+          })}
+        </Accordion>
+
+        {/* Error list if any */}
+        {details?.errors && Array.isArray(details.errors) && details.errors.length > 0 && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-destructive flex items-center gap-2">
+                <XCircle className="h-4 w-4" />
+                Errors ({details.errors.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-1">
+                {details.errors.map((error: string, idx: number) => (
+                  <p key={idx} className="text-sm text-muted-foreground font-mono">
+                    • {error}
+                  </p>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    );
+  }
+
+  // Single vCenter result (or no vcenter_results array)
+  return <SingleVCenterResults result={details} />;
 };

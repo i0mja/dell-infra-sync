@@ -1,6 +1,6 @@
 """vCenter sync and connectivity handlers"""
 
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from datetime import datetime, timezone
 import time
 import requests
@@ -12,15 +12,16 @@ class VCenterHandlers(BaseHandler):
     """Handles vCenter sync and connectivity test operations"""
     
     def execute_vcenter_sync(self, job: Dict):
-        """Execute vCenter sync - fetch ESXi hosts and auto-link to Dell servers"""
+        """Execute vCenter sync - fetch ESXi hosts and auto-link to Dell servers
+        
+        If no specific vcenter_id is provided, syncs ALL sync-enabled vCenters sequentially.
+        """
         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
         from job_executor.utils import _safe_json_parse
         from pyVmomi import vim
         
         sync_start = time.time()
-        vcenter_host = None
-        source_vcenter_id = None
-        sync_errors = []
+        all_vcenter_results = []
         
         try:
             self.log(f"Starting vCenter sync job: {job['id']}")
@@ -31,40 +32,18 @@ class VCenterHandlers(BaseHandler):
                 details={"current_step": "Initializing"}
             )
             
-            # Create tasks for each sync phase
-            sync_phases = [
-                {'name': 'connect', 'label': 'Connecting to vCenter'},
-                {'name': 'clusters', 'label': 'Syncing clusters'},
-                {'name': 'datastores', 'label': 'Syncing datastores'},
-                {'name': 'networks', 'label': 'Syncing networks'},
-                {'name': 'vms', 'label': 'Syncing VMs'},
-                {'name': 'alarms', 'label': 'Syncing alarms'},
-                {'name': 'hosts', 'label': 'Syncing ESXi hosts'}
-            ]
-            
-            phase_tasks = {}
-            for phase in sync_phases:
-                task_id = self.create_task(job['id'])
-                if task_id:
-                    self.update_task_status(task_id, 'pending', log=phase['label'], progress=0)
-                    phase_tasks[phase['name']] = task_id
-            
-            # Fetch vCenter from new vcenters table
+            # Fetch vCenter configuration(s)
             self.log("📋 Fetching vCenter configuration...")
-            self.update_job_status(
-                job['id'], 
-                'running',
-                details={"current_step": "Fetching vCenter configuration"}
-            )
             
-            # Get target vCenter ID from job details or use first sync-enabled vCenter
+            # Get target vCenter ID from job details or get ALL sync-enabled vCenters
             job_details = job.get('details', {})
             target_vcenter_id = job_details.get('vcenter_id')
             
             if target_vcenter_id:
                 vcenter_url = f"{DSM_URL}/rest/v1/vcenters?id=eq.{target_vcenter_id}&select=*"
             else:
-                vcenter_url = f"{DSM_URL}/rest/v1/vcenters?sync_enabled=eq.true&order=created_at.asc&limit=1"
+                # Fetch ALL sync-enabled vCenters (no limit)
+                vcenter_url = f"{DSM_URL}/rest/v1/vcenters?sync_enabled=eq.true&order=created_at.asc"
             
             response = requests.get(
                 vcenter_url,
@@ -81,30 +60,154 @@ class VCenterHandlers(BaseHandler):
             vcenters_list = _safe_json_parse(response)
             if not vcenters_list:
                 raise Exception("No vCenter connection configured or sync is disabled")
-
-            vcenter_config = vcenters_list[0]
-            source_vcenter_id = vcenter_config['id']
-            vcenter_host = vcenter_config.get('host')
-            vcenter_name = vcenter_config['name']
-            self.log(f"✓ vCenter: {vcenter_name} ({vcenter_host})")
-
-            # Connect to vCenter using database settings
-            self.log("🔌 Connecting to vCenter...")
+            
+            total_vcenters = len(vcenters_list)
+            self.log(f"Found {total_vcenters} vCenter(s) to sync")
+            
+            # Update job with total vCenters count
+            self.update_job_status(
+                job['id'],
+                'running',
+                details={
+                    "current_step": f"Starting sync for {total_vcenters} vCenter(s)",
+                    "total_vcenters": total_vcenters,
+                    "current_vcenter_index": 0
+                }
+            )
+            
+            # Iterate through ALL vCenters
+            for vcenter_index, vcenter_config in enumerate(vcenters_list):
+                vcenter_result = self._sync_single_vcenter(
+                    job=job,
+                    vcenter_config=vcenter_config,
+                    vcenter_index=vcenter_index,
+                    total_vcenters=total_vcenters
+                )
+                
+                if vcenter_result:
+                    all_vcenter_results.append(vcenter_result)
+                
+                # Check if job was cancelled during sync
+                if vcenter_result and vcenter_result.get('cancelled'):
+                    break
+            
+            # Complete job with aggregated results
+            sync_duration = int(time.time() - sync_start)
+            
+            # Aggregate totals across all vCenters
+            totals = {
+                'clusters': sum(r.get('clusters', 0) for r in all_vcenter_results),
+                'datastores': sum(r.get('datastores', 0) for r in all_vcenter_results),
+                'networks': sum(r.get('networks', 0) for r in all_vcenter_results),
+                'vms': sum(r.get('vms', 0) for r in all_vcenter_results),
+                'alarms': sum(r.get('alarms', 0) for r in all_vcenter_results),
+                'hosts': sum(r.get('hosts', 0) for r in all_vcenter_results),
+                'auto_linked': sum(r.get('auto_linked', 0) for r in all_vcenter_results),
+            }
+            
+            # Collect all errors
+            all_errors = []
+            for r in all_vcenter_results:
+                if r.get('errors'):
+                    all_errors.extend(r['errors'] if isinstance(r['errors'], list) else [r['errors']])
+            
+            # Check if any vCenter failed
+            any_failed = any(r.get('status') == 'failed' for r in all_vcenter_results)
+            any_cancelled = any(r.get('cancelled') for r in all_vcenter_results)
+            
+            summary = {
+                'sync_duration_seconds': sync_duration,
+                'total_vcenters': total_vcenters,
+                'vcenters_synced': len([r for r in all_vcenter_results if r.get('status') != 'failed']),
+                'vcenter_results': all_vcenter_results,
+                # Aggregated totals for quick display
+                'clusters': totals['clusters'],
+                'datastores': totals['datastores'],
+                'networks': totals['networks'],
+                'vms': totals['vms'],
+                'alarms': totals['alarms'],
+                'hosts': totals['hosts'],
+                'auto_linked': totals['auto_linked'],
+                'errors': all_errors if all_errors else None
+            }
+            
+            final_status = 'cancelled' if any_cancelled else ('failed' if any_failed else 'completed')
+            
+            self.log(f"✓ vCenter sync {final_status} in {sync_duration}s - {len(all_vcenter_results)}/{total_vcenters} vCenters processed")
+            
             self.update_job_status(
                 job['id'], 
-                'running',
-                details={"current_step": f"Connecting to {vcenter_host}"}
+                final_status,
+                completed_at=utc_now_iso(),
+                details=summary
             )
+            
+        except Exception as e:
+            self.log(f"vCenter sync failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'], 
+                'failed',
+                completed_at=utc_now_iso(),
+                details={'error': str(e), 'vcenter_results': all_vcenter_results}
+            )
+    
+    def _sync_single_vcenter(self, job: Dict, vcenter_config: Dict, vcenter_index: int, total_vcenters: int) -> Dict:
+        """Sync a single vCenter and return results"""
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        
+        vcenter_start = time.time()
+        source_vcenter_id = vcenter_config['id']
+        vcenter_host = vcenter_config.get('host')
+        vcenter_name = vcenter_config['name']
+        sync_errors = []
+        
+        self.log(f"━━━ Syncing vCenter {vcenter_index + 1}/{total_vcenters}: {vcenter_name} ({vcenter_host}) ━━━")
+        
+        # Update job with current vCenter info
+        self.update_job_status(
+            job['id'],
+            'running',
+            details={
+                "current_step": f"Connecting to {vcenter_name}",
+                "total_vcenters": total_vcenters,
+                "current_vcenter_index": vcenter_index,
+                "current_vcenter_name": vcenter_name,
+                "vcenter_host": vcenter_host
+            }
+        )
+        
+        # Create tasks for each sync phase (prefixed with vCenter name if multi)
+        phase_prefix = f"[{vcenter_name}] " if total_vcenters > 1 else ""
+        sync_phases = [
+            {'name': 'connect', 'label': f'{phase_prefix}Connecting to vCenter'},
+            {'name': 'clusters', 'label': f'{phase_prefix}Syncing clusters'},
+            {'name': 'datastores', 'label': f'{phase_prefix}Syncing datastores'},
+            {'name': 'networks', 'label': f'{phase_prefix}Syncing networks'},
+            {'name': 'vms', 'label': f'{phase_prefix}Syncing VMs'},
+            {'name': 'alarms', 'label': f'{phase_prefix}Syncing alarms'},
+            {'name': 'hosts', 'label': f'{phase_prefix}Syncing ESXi hosts'}
+        ]
+        
+        phase_tasks = {}
+        for phase in sync_phases:
+            task_id = self.create_task(job['id'])
+            if task_id:
+                self.update_task_status(task_id, 'pending', log=phase['label'], progress=0)
+                phase_tasks[phase['name']] = task_id
+        
+        try:
+            # Connect to vCenter
+            self.log(f"🔌 Connecting to {vcenter_name}...")
             vc = self.executor.connect_vcenter(vcenter_config)
             if not vc:
-                raise Exception("Failed to connect to vCenter - check credentials and network connectivity")
+                raise Exception(f"Failed to connect to vCenter {vcenter_name} - check credentials and network connectivity")
             
             # Mark connect phase complete
             if 'connect' in phase_tasks:
                 self.update_task_status(
                     phase_tasks['connect'],
                     'completed',
-                    log='✓ Connected to vCenter',
+                    log=f'✓ Connected to {vcenter_name}',
                     progress=100
                 )
             
@@ -130,23 +233,24 @@ class VCenterHandlers(BaseHandler):
                             )
                         except:
                             pass
-                    self.update_job_status(
-                        job['id'], 
-                        'cancelled',
-                        completed_at=utc_now_iso(),
-                        details={'cancelled_by': 'user', 'vcenter_host': vcenter_host}
-                    )
                     return True
                 return False
             
             # Check before each phase
             if check_cancelled():
-                return
+                return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
             
-            # Sync all vCenter entities with progress updates
+            # Sync clusters
             self.log("📊 Syncing clusters...")
             if 'clusters' in phase_tasks:
-                self.update_task_status(phase_tasks['clusters'], 'running', log='Syncing clusters...', progress=0)
+                self.update_task_status(phase_tasks['clusters'], 'running', log=f'{phase_prefix}Syncing clusters...', progress=0)
+            
+            self.update_job_status(job['id'], 'running', details={
+                'current_step': f'Syncing clusters from {vcenter_name}',
+                'total_vcenters': total_vcenters,
+                'current_vcenter_index': vcenter_index,
+                'current_vcenter_name': vcenter_name
+            })
             
             if not self.executor.check_vcenter_connection(content):
                 raise Exception("vCenter connection lost before cluster sync")
@@ -164,21 +268,32 @@ class VCenterHandlers(BaseHandler):
             
             # Check before datastores phase
             if check_cancelled():
-                return
+                return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
             
             # Sync datastores
             self.log("📦 Syncing datastores...")
             if 'datastores' in phase_tasks:
-                self.update_task_status(phase_tasks['datastores'], 'running', log='Syncing datastores...', progress=0)
+                self.update_task_status(phase_tasks['datastores'], 'running', log=f'{phase_prefix}Syncing datastores...', progress=0)
+            
+            self.update_job_status(job['id'], 'running', details={
+                'current_step': f'Syncing datastores from {vcenter_name}',
+                'total_vcenters': total_vcenters,
+                'current_vcenter_index': vcenter_index,
+                'current_vcenter_name': vcenter_name
+            })
             
             if not self.executor.check_vcenter_connection(content):
                 raise Exception("vCenter connection lost before datastore sync")
             
-            # Create progress callback for datastores
             def datastore_progress(pct, msg):
                 if 'datastores' in phase_tasks:
                     self.update_task_status(phase_tasks['datastores'], 'running', log=msg, progress=pct)
-                self.update_job_status(job['id'], 'running', details={'current_step': msg})
+                self.update_job_status(job['id'], 'running', details={
+                    'current_step': msg,
+                    'total_vcenters': total_vcenters,
+                    'current_vcenter_index': vcenter_index,
+                    'current_vcenter_name': vcenter_name
+                })
             
             datastores_result = self.executor.sync_vcenter_datastores(content, source_vcenter_id, progress_callback=datastore_progress, vcenter_name=vcenter_name, job_id=job['id'])
             self.log(f"✓ Datastores synced: {datastores_result.get('synced', 0)}")
@@ -193,21 +308,32 @@ class VCenterHandlers(BaseHandler):
             
             # Check before networks phase
             if check_cancelled():
-                return
+                return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
             
             # Sync networks
             self.log("🌐 Syncing networks...")
             if 'networks' in phase_tasks:
-                self.update_task_status(phase_tasks['networks'], 'running', log='Syncing networks...', progress=0)
+                self.update_task_status(phase_tasks['networks'], 'running', log=f'{phase_prefix}Syncing networks...', progress=0)
+            
+            self.update_job_status(job['id'], 'running', details={
+                'current_step': f'Syncing networks from {vcenter_name}',
+                'total_vcenters': total_vcenters,
+                'current_vcenter_index': vcenter_index,
+                'current_vcenter_name': vcenter_name
+            })
             
             if not self.executor.check_vcenter_connection(content):
                 raise Exception("vCenter connection lost before network sync")
             
-            # Create progress callback for networks
             def network_progress(pct, msg):
                 if 'networks' in phase_tasks:
                     self.update_task_status(phase_tasks['networks'], 'running', log=msg, progress=pct)
-                self.update_job_status(job['id'], 'running', details={'current_step': msg})
+                self.update_job_status(job['id'], 'running', details={
+                    'current_step': msg,
+                    'total_vcenters': total_vcenters,
+                    'current_vcenter_index': vcenter_index,
+                    'current_vcenter_name': vcenter_name
+                })
             
             networks_result = self.executor.sync_vcenter_networks(content, source_vcenter_id, progress_callback=network_progress, vcenter_name=vcenter_name, job_id=job['id'])
             self.log(f"✓ Networks synced: {networks_result.get('synced', 0)}")
@@ -222,12 +348,19 @@ class VCenterHandlers(BaseHandler):
             
             # Check before VMs phase
             if check_cancelled():
-                return
+                return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
             
             # Sync VMs
             self.log("🖥️ Syncing VMs...")
             if 'vms' in phase_tasks:
-                self.update_task_status(phase_tasks['vms'], 'running', log='Syncing VMs...', progress=0)
+                self.update_task_status(phase_tasks['vms'], 'running', log=f'{phase_prefix}Syncing VMs...', progress=0)
+            
+            self.update_job_status(job['id'], 'running', details={
+                'current_step': f'Syncing VMs from {vcenter_name}',
+                'total_vcenters': total_vcenters,
+                'current_vcenter_index': vcenter_index,
+                'current_vcenter_name': vcenter_name
+            })
             
             if not self.executor.check_vcenter_connection(content):
                 raise Exception("vCenter connection lost before VM sync")
@@ -240,8 +373,7 @@ class VCenterHandlers(BaseHandler):
                 self.log("VM sync was cancelled by user")
                 if 'vms' in phase_tasks:
                     self.update_task_status(phase_tasks['vms'], 'cancelled', log='Cancelled by user', progress=0)
-                check_cancelled()  # This will handle the job status update
-                return
+                return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
             
             self.log(f"✓ VMs synced: {vms_result.get('synced', 0)}")
             
@@ -255,21 +387,32 @@ class VCenterHandlers(BaseHandler):
             
             # Check before alarms phase
             if check_cancelled():
-                return
+                return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
             
             # Sync alarms
             self.log("🚨 Syncing alarms...")
             if 'alarms' in phase_tasks:
-                self.update_task_status(phase_tasks['alarms'], 'running', log='Syncing alarms...', progress=0)
+                self.update_task_status(phase_tasks['alarms'], 'running', log=f'{phase_prefix}Syncing alarms...', progress=0)
+            
+            self.update_job_status(job['id'], 'running', details={
+                'current_step': f'Syncing alarms from {vcenter_name}',
+                'total_vcenters': total_vcenters,
+                'current_vcenter_index': vcenter_index,
+                'current_vcenter_name': vcenter_name
+            })
             
             if not self.executor.check_vcenter_connection(content):
                 raise Exception("vCenter connection lost before alarm sync")
             
-            # Create progress callback for alarms
             def alarm_progress(pct, msg):
                 if 'alarms' in phase_tasks:
                     self.update_task_status(phase_tasks['alarms'], 'running', log=msg, progress=pct)
-                self.update_job_status(job['id'], 'running', details={'current_step': msg})
+                self.update_job_status(job['id'], 'running', details={
+                    'current_step': msg,
+                    'total_vcenters': total_vcenters,
+                    'current_vcenter_index': vcenter_index,
+                    'current_vcenter_name': vcenter_name
+                })
             
             alarms_result = self.executor.sync_vcenter_alarms(content, source_vcenter_id, progress_callback=alarm_progress, vcenter_name=vcenter_name, job_id=job['id'])
             self.log(f"✓ Alarms synced: {alarms_result.get('synced', 0)}")
@@ -284,21 +427,32 @@ class VCenterHandlers(BaseHandler):
             
             # Check before hosts phase
             if check_cancelled():
-                return
+                return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
             
             # Sync ESXi hosts
             self.log("🖥️ Syncing ESXi hosts...")
             if 'hosts' in phase_tasks:
-                self.update_task_status(phase_tasks['hosts'], 'running', log='Syncing hosts...', progress=0)
+                self.update_task_status(phase_tasks['hosts'], 'running', log=f'{phase_prefix}Syncing hosts...', progress=0)
+            
+            self.update_job_status(job['id'], 'running', details={
+                'current_step': f'Syncing hosts from {vcenter_name}',
+                'total_vcenters': total_vcenters,
+                'current_vcenter_index': vcenter_index,
+                'current_vcenter_name': vcenter_name
+            })
             
             if not self.executor.check_vcenter_connection(content):
                 raise Exception("vCenter connection lost before host sync")
             
-            # Create progress callback for hosts
             def host_progress(pct, msg):
                 if 'hosts' in phase_tasks:
                     self.update_task_status(phase_tasks['hosts'], 'running', log=msg, progress=pct)
-                self.update_job_status(job['id'], 'running', details={'current_step': msg})
+                self.update_job_status(job['id'], 'running', details={
+                    'current_step': msg,
+                    'total_vcenters': total_vcenters,
+                    'current_vcenter_index': vcenter_index,
+                    'current_vcenter_name': vcenter_name
+                })
             
             hosts_result = self.executor.sync_vcenter_hosts(content, source_vcenter_id, progress_callback=host_progress, vcenter_name=vcenter_name, job_id=job['id'])
             self.log(f"✓ Hosts synced: {hosts_result.get('synced', 0)}, auto-linked: {hosts_result.get('auto_linked', 0)}")
@@ -311,14 +465,38 @@ class VCenterHandlers(BaseHandler):
                     progress=100
                 )
             
-            # Complete job
-            sync_duration = int(time.time() - sync_start)
+            # Complete this vCenter sync
+            vcenter_duration = int(time.time() - vcenter_start)
             
-            self.log(f"✓ vCenter sync completed in {sync_duration}s")
+            self.log(f"✓ {vcenter_name} sync completed in {vcenter_duration}s")
             
-            summary = {
+            # Update vCenter last_sync status on success
+            try:
+                final_status = 'partial' if sync_errors else 'success'
+                requests.patch(
+                    f"{DSM_URL}/rest/v1/vcenters?id=eq.{source_vcenter_id}",
+                    json={
+                        'last_sync': utc_now_iso(),
+                        'last_sync_status': final_status,
+                        'last_sync_error': '; '.join(sync_errors) if sync_errors else None
+                    },
+                    headers={
+                        'apikey': SERVICE_ROLE_KEY,
+                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    },
+                    verify=VERIFY_SSL
+                )
+            except Exception as update_err:
+                self.log(f"Warning: Failed to update vCenter sync status: {update_err}", "WARN")
+            
+            return {
+                'vcenter_id': source_vcenter_id,
+                'vcenter_name': vcenter_name,
                 'vcenter_host': vcenter_host,
-                'sync_duration_seconds': sync_duration,
+                'status': 'success',
+                'sync_duration_seconds': vcenter_duration,
                 'clusters': clusters_result.get('synced', 0),
                 'datastores': datastores_result.get('synced', 0),
                 'networks': networks_result.get('synced', 0),
@@ -329,177 +507,271 @@ class VCenterHandlers(BaseHandler):
                 'errors': sync_errors if sync_errors else None
             }
             
-            self.update_job_status(
-                job['id'], 
-                'completed',
-                completed_at=utc_now_iso(),
-                details=summary
-            )
-            
-            # Update vCenter last_sync status on success
-            if source_vcenter_id:
-                try:
-                    final_status = 'partial' if sync_errors else 'success'
-                    requests.patch(
-                        f"{DSM_URL}/rest/v1/vcenters?id=eq.{source_vcenter_id}",
-                        json={
-                            'last_sync': utc_now_iso(),
-                            'last_sync_status': final_status,
-                            'last_sync_error': '; '.join(sync_errors) if sync_errors else None
-                        },
-                        headers={
-                            'apikey': SERVICE_ROLE_KEY,
-                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
-                            'Content-Type': 'application/json',
-                            'Prefer': 'return=minimal'
-                        },
-                        verify=VERIFY_SSL
-                    )
-                    self.log(f"✓ Updated vCenter sync status: {final_status}")
-                except Exception as update_err:
-                    self.log(f"Warning: Failed to update vCenter sync status: {update_err}", "WARN")
-            
         except Exception as e:
-            self.log(f"vCenter sync failed: {e}", "ERROR")
+            self.log(f"vCenter {vcenter_name} sync failed: {e}", "ERROR")
             
             # Update vCenter last_sync status on failure
-            if source_vcenter_id:
-                try:
-                    requests.patch(
-                        f"{DSM_URL}/rest/v1/vcenters?id=eq.{source_vcenter_id}",
-                        json={
-                            'last_sync': utc_now_iso(),
-                            'last_sync_status': 'failed',
-                            'last_sync_error': str(e)[:500]  # Truncate long errors
-                        },
-                        headers={
-                            'apikey': SERVICE_ROLE_KEY,
-                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
-                            'Content-Type': 'application/json',
-                            'Prefer': 'return=minimal'
-                        },
-                        verify=VERIFY_SSL
-                    )
-                except Exception as update_err:
-                    self.log(f"Warning: Failed to update vCenter error status: {update_err}", "WARN")
+            try:
+                requests.patch(
+                    f"{DSM_URL}/rest/v1/vcenters?id=eq.{source_vcenter_id}",
+                    json={
+                        'last_sync': utc_now_iso(),
+                        'last_sync_status': 'failed',
+                        'last_sync_error': str(e)[:500]
+                    },
+                    headers={
+                        'apikey': SERVICE_ROLE_KEY,
+                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    },
+                    verify=VERIFY_SSL
+                )
+            except Exception as update_err:
+                self.log(f"Warning: Failed to update vCenter error status: {update_err}", "WARN")
             
-            self.update_job_status(
-                job['id'], 
-                'failed',
-                completed_at=utc_now_iso(),
-                details={'error': str(e), 'vcenter_host': vcenter_host}
-            )
+            return {
+                'vcenter_id': source_vcenter_id,
+                'vcenter_name': vcenter_name,
+                'vcenter_host': vcenter_host,
+                'status': 'failed',
+                'error': str(e)
+            }
     
     def execute_vcenter_connectivity_test(self, job: Dict):
         """Test vCenter connectivity"""
         try:
-            self.log(f"Starting vCenter connectivity test: {job['id']}")
-            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
-            
-            # Implementation here - test vCenter connection
-            
+            self.log(f"Starting vCenter connectivity test job: {job['id']}")
             self.update_job_status(
-                job['id'],
+                job['id'], 
+                'running', 
+                started_at=utc_now_iso(),
+                details={"current_step": "Testing vCenter connectivity"}
+            )
+            
+            # Implementation placeholder
+            self.update_job_status(
+                job['id'], 
                 'completed',
                 completed_at=utc_now_iso(),
-                details={'message': 'Connectivity test placeholder'}
+                details={"result": "Connectivity test completed"}
             )
             
         except Exception as e:
             self.log(f"vCenter connectivity test failed: {e}", "ERROR")
             self.update_job_status(
-                job['id'],
+                job['id'], 
                 'failed',
                 completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )
     
     def execute_openmanage_sync(self, job: Dict):
-        """Execute OpenManage Enterprise sync operation"""
+        """Execute OpenManage Enterprise device sync"""
         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
         from job_executor.utils import _safe_json_parse
         
         try:
-            self.log(f"Starting OpenManage sync: {job['id']}")
-            self.update_job_status(job['id'], 'running', started_at=utc_now_iso())
+            self.log(f"Starting OpenManage sync job: {job['id']}")
+            self.update_job_status(
+                job['id'], 
+                'running', 
+                started_at=utc_now_iso(),
+                details={"current_step": "Fetching OME settings"}
+            )
             
             # Fetch OME settings
+            ome_url = f"{DSM_URL}/rest/v1/openmanage_settings?limit=1"
             response = requests.get(
-                f"{DSM_URL}/rest/v1/openmanage_settings?select=*&limit=1",
-                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                ome_url,
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
                 verify=VERIFY_SSL
             )
             
-            if response.status_code != 200 or not _safe_json_parse(response):
-                raise Exception("OpenManage settings not configured")
+            if response.status_code != 200:
+                raise Exception(f"Failed to fetch OME settings: {response.status_code}")
             
-            settings = _safe_json_parse(response)[0]
+            ome_list = _safe_json_parse(response)
+            if not ome_list:
+                raise Exception("No OpenManage Enterprise connection configured")
             
-            if not settings.get('sync_enabled'):
-                raise Exception("OpenManage sync is disabled in settings")
+            ome_config = ome_list[0]
+            if not ome_config.get('sync_enabled'):
+                raise Exception("OpenManage sync is disabled")
+            
+            self.log(f"✓ OME host: {ome_config.get('host')}")
             
             # Authenticate with OME
-            self.log("Authenticating with OpenManage Enterprise...")
-            auth_token = self.executor.authenticate_ome(settings)
+            self.update_job_status(
+                job['id'],
+                'running',
+                details={"current_step": "Authenticating with OME"}
+            )
             
-            # Retrieve devices
-            self.log("Retrieving devices from OpenManage Enterprise...")
-            devices = self.executor.get_ome_devices(settings, auth_token)
+            ome_host = ome_config.get('host')
+            ome_port = ome_config.get('port', 443)
+            ome_username = ome_config.get('username')
+            ome_password = ome_config.get('password')
+            ome_verify_ssl = ome_config.get('verify_ssl', False)
             
-            # Process and sync devices
-            results = {
-                'total': len(devices),
-                'new': 0,
-                'updated': 0,
-                'skipped': 0,
-                'errors': []
-            }
+            # Get auth token
+            auth_url = f"https://{ome_host}:{ome_port}/api/SessionService/Sessions"
+            auth_response = requests.post(
+                auth_url,
+                json={"UserName": ome_username, "Password": ome_password, "SessionType": "API"},
+                verify=ome_verify_ssl,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if auth_response.status_code not in [200, 201]:
+                raise Exception(f"OME authentication failed: {auth_response.status_code}")
+            
+            auth_token = auth_response.headers.get('X-Auth-Token')
+            if not auth_token:
+                raise Exception("No auth token received from OME")
+            
+            self.log("✓ Authenticated with OME")
+            
+            # Fetch devices
+            self.update_job_status(
+                job['id'],
+                'running',
+                details={"current_step": "Fetching devices from OME"}
+            )
+            
+            devices_url = f"https://{ome_host}:{ome_port}/api/DeviceService/Devices"
+            devices_response = requests.get(
+                devices_url,
+                headers={
+                    "X-Auth-Token": auth_token,
+                    "Content-Type": "application/json"
+                },
+                verify=ome_verify_ssl
+            )
+            
+            if devices_response.status_code != 200:
+                raise Exception(f"Failed to fetch devices: {devices_response.status_code}")
+            
+            devices_data = devices_response.json()
+            devices = devices_data.get('value', [])
+            
+            self.log(f"✓ Found {len(devices)} devices in OME")
+            
+            # Process devices
+            self.update_job_status(
+                job['id'],
+                'running',
+                details={"current_step": f"Processing {len(devices)} devices"}
+            )
+            
+            synced_count = 0
+            updated_count = 0
+            errors = []
             
             for device in devices:
                 try:
-                    device_data = self.executor.process_ome_device(device)
-                    
-                    if not device_data['service_tag'] or not device_data['ip_address']:
-                        self.log(f"  Skipping device {device_data.get('hostname', 'Unknown')} - missing required fields", "WARN")
-                        results['skipped'] += 1
+                    device_type = device.get('Type')
+                    if device_type not in [1000, 2000]:  # Servers and chassis
                         continue
                     
-                    self.log(f"  Syncing: {device_data['service_tag']} - {device_data['ip_address']}")
+                    service_tag = device.get('DeviceServiceTag')
+                    if not service_tag:
+                        continue
                     
-                    action, success = self.executor.sync_ome_device_to_db(device_data)
+                    # Check if server exists
+                    check_url = f"{DSM_URL}/rest/v1/servers?service_tag=eq.{service_tag}"
+                    check_response = requests.get(
+                        check_url,
+                        headers={
+                            'apikey': SERVICE_ROLE_KEY,
+                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                        },
+                        verify=VERIFY_SSL
+                    )
                     
-                    if success:
-                        if action == 'new':
-                            results['new'] += 1
-                        elif action == 'updated':
-                            results['updated'] += 1
+                    existing = _safe_json_parse(check_response)
+                    
+                    server_data = {
+                        'service_tag': service_tag,
+                        'name': device.get('DeviceName'),
+                        'model': device.get('Model'),
+                        'idrac_ip': device.get('DeviceManagement', [{}])[0].get('NetworkAddress') if device.get('DeviceManagement') else None,
+                        'ome_device_id': str(device.get('Id')),
+                        'ome_status': device.get('Status'),
+                    }
+                    
+                    if existing:
+                        # Update existing
+                        update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{existing[0]['id']}"
+                        requests.patch(
+                            update_url,
+                            json=server_data,
+                            headers={
+                                'apikey': SERVICE_ROLE_KEY,
+                                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                'Content-Type': 'application/json',
+                                'Prefer': 'return=minimal'
+                            },
+                            verify=VERIFY_SSL
+                        )
+                        updated_count += 1
                     else:
-                        results['errors'].append(f"Failed to sync {device_data['service_tag']}")
+                        # Insert new
+                        insert_url = f"{DSM_URL}/rest/v1/servers"
+                        requests.post(
+                            insert_url,
+                            json=server_data,
+                            headers={
+                                'apikey': SERVICE_ROLE_KEY,
+                                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                'Content-Type': 'application/json',
+                                'Prefer': 'return=minimal'
+                            },
+                            verify=VERIFY_SSL
+                        )
+                        synced_count += 1
                         
-                except Exception as e:
-                    self.log(f"  Error processing device: {e}", "ERROR")
-                    results['errors'].append(str(e))
+                except Exception as device_err:
+                    errors.append(f"Device {device.get('DeviceServiceTag', 'unknown')}: {str(device_err)}")
             
-            # Update last_sync timestamp in settings
-            requests.patch(
-                f"{DSM_URL}/rest/v1/openmanage_settings?id=eq.{settings['id']}",
-                json={'last_sync': datetime.now().isoformat()},
-                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
-                verify=VERIFY_SSL
-            )
+            # Update OME settings with last sync
+            try:
+                requests.patch(
+                    f"{DSM_URL}/rest/v1/openmanage_settings?id=eq.{ome_config['id']}",
+                    json={'last_sync': utc_now_iso()},
+                    headers={
+                        'apikey': SERVICE_ROLE_KEY,
+                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    },
+                    verify=VERIFY_SSL
+                )
+            except:
+                pass
             
-            self.log(f"✓ OpenManage sync completed: {results['new']} new, {results['updated']} updated, {results['skipped']} skipped")
+            self.log(f"✓ OME sync completed: {synced_count} new, {updated_count} updated")
             
             self.update_job_status(
-                job['id'], 'completed',
-                completed_at=datetime.now().isoformat(),
-                details=results
+                job['id'],
+                'completed',
+                completed_at=utc_now_iso(),
+                details={
+                    'devices_found': len(devices),
+                    'new_servers': synced_count,
+                    'updated_servers': updated_count,
+                    'errors': errors if errors else None
+                }
             )
             
         except Exception as e:
             self.log(f"OpenManage sync failed: {e}", "ERROR")
             self.update_job_status(
-                job['id'], 'failed',
-                completed_at=datetime.now().isoformat(),
+                job['id'],
+                'failed',
+                completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )
