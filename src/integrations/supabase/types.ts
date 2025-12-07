@@ -3906,6 +3906,7 @@ export type Database = {
         | "idrac_network_write"
         | "storage_vmotion"
         | "deploy_zfs_target"
+        | "copy_template_cross_vcenter"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -4089,6 +4090,7 @@ export const Constants = {
         "idrac_network_write",
         "storage_vmotion",
         "deploy_zfs_target",
+        "copy_template_cross_vcenter",
       ],
       operation_type: [
         "idrac_api",
