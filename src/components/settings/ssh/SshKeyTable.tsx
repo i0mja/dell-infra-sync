@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Key, Copy, Eye, Ban, Trash2, Clock, CheckCircle, XCircle, AlertCircle, Upload, RotateCcw } from 'lucide-react';
+import { useState, useCallback, useMemo } from 'react';
+import { Key, Copy, Eye, Ban, Trash2, Clock, CheckCircle, XCircle, AlertCircle, Upload, RotateCcw, ArrowUpDown } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import {
   Table,
@@ -31,22 +31,68 @@ interface SshKeyTableProps {
   onRotate?: (key: SshKey) => void;
 }
 
+type SortField = 'name' | 'status' | 'created_at' | 'last_used_at' | 'use_count';
+type SortDirection = 'asc' | 'desc';
+
 export function SshKeyTable({ keys, isLoading, onViewDetails, onRevoke, onDelete, onDeploy, onRotate }: SshKeyTableProps) {
-  const copyToClipboard = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
-    toast.success(`${label} copied to clipboard`);
-  };
+  const [sortField, setSortField] = useState<SortField>('created_at');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+
+  const copyToClipboard = useCallback((text: string, label: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      toast.success(`${label} copied to clipboard`);
+    }).catch(() => {
+      toast.error(`Failed to copy ${label}`);
+    });
+  }, []);
+
+  const handleSort = useCallback((field: SortField) => {
+    if (sortField === field) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  }, [sortField]);
+
+  const sortedKeys = useMemo(() => {
+    return [...keys].sort((a, b) => {
+      let comparison = 0;
+      
+      switch (sortField) {
+        case 'name':
+          comparison = a.name.localeCompare(b.name);
+          break;
+        case 'status':
+          comparison = a.status.localeCompare(b.status);
+          break;
+        case 'created_at':
+          comparison = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+          break;
+        case 'last_used_at':
+          const aTime = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;
+          const bTime = b.last_used_at ? new Date(b.last_used_at).getTime() : 0;
+          comparison = aTime - bTime;
+          break;
+        case 'use_count':
+          comparison = a.use_count - b.use_count;
+          break;
+      }
+      
+      return sortDirection === 'asc' ? comparison : -comparison;
+    });
+  }, [keys, sortField, sortDirection]);
 
   const getStatusBadge = (status: SshKey['status']) => {
     switch (status) {
       case 'active':
-        return <Badge variant="default" className="bg-green-600"><CheckCircle className="h-3 w-3 mr-1" />Active</Badge>;
+        return <Badge variant="default" className="bg-green-600"><CheckCircle className="h-3 w-3 mr-1" aria-hidden="true" />Active</Badge>;
       case 'pending':
-        return <Badge variant="secondary"><Clock className="h-3 w-3 mr-1" />Pending</Badge>;
+        return <Badge variant="secondary"><Clock className="h-3 w-3 mr-1" aria-hidden="true" />Pending</Badge>;
       case 'revoked':
-        return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Revoked</Badge>;
+        return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" aria-hidden="true" />Revoked</Badge>;
       case 'expired':
-        return <Badge variant="outline" className="text-amber-600 border-amber-600"><AlertCircle className="h-3 w-3 mr-1" />Expired</Badge>;
+        return <Badge variant="outline" className="text-amber-600 border-amber-600"><AlertCircle className="h-3 w-3 mr-1" aria-hidden="true" />Expired</Badge>;
       default:
         return <Badge variant="outline">{status}</Badge>;
     }
@@ -58,22 +104,36 @@ export function SshKeyTable({ keys, isLoading, onViewDetails, onRevoke, onDelete
     return `${fingerprint.substring(0, 16)}...`;
   };
 
+  const SortableHeader = ({ field, children }: { field: SortField; children: React.ReactNode }) => (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="-ml-3 h-8 data-[state=open]:bg-accent"
+      onClick={() => handleSort(field)}
+      aria-label={`Sort by ${field}`}
+    >
+      {children}
+      <ArrowUpDown className="ml-2 h-4 w-4" aria-hidden="true" />
+    </Button>
+  );
+
   if (isLoading) {
     return (
-      <div className="space-y-2">
+      <div className="space-y-2" role="status" aria-label="Loading SSH keys">
         {[1, 2, 3].map((i) => (
           <Skeleton key={i} className="h-12 w-full" />
         ))}
+        <span className="sr-only">Loading SSH keys...</span>
       </div>
     );
   }
 
   if (keys.length === 0) {
     return (
-      <div className="text-center py-8 text-muted-foreground">
-        <Key className="h-12 w-12 mx-auto mb-4 opacity-50" />
-        <p>No SSH keys configured</p>
-        <p className="text-sm">Generate a new key to get started</p>
+      <div className="text-center py-8 text-muted-foreground" role="status">
+        <Key className="h-12 w-12 mx-auto mb-4 opacity-50" aria-hidden="true" />
+        <p className="font-medium">No SSH keys configured</p>
+        <p className="text-sm mt-1">Generate a new key to get started with secure infrastructure access</p>
       </div>
     );
   }
@@ -83,21 +143,31 @@ export function SshKeyTable({ keys, isLoading, onViewDetails, onRevoke, onDelete
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Name</TableHead>
+            <TableHead>
+              <SortableHeader field="name">Name</SortableHeader>
+            </TableHead>
             <TableHead>Fingerprint</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Created</TableHead>
-            <TableHead>Last Used</TableHead>
-            <TableHead>Uses</TableHead>
+            <TableHead>
+              <SortableHeader field="status">Status</SortableHeader>
+            </TableHead>
+            <TableHead>
+              <SortableHeader field="created_at">Created</SortableHeader>
+            </TableHead>
+            <TableHead>
+              <SortableHeader field="last_used_at">Last Used</SortableHeader>
+            </TableHead>
+            <TableHead>
+              <SortableHeader field="use_count">Uses</SortableHeader>
+            </TableHead>
             <TableHead className="text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {keys.map((key) => (
+          {sortedKeys.map((key) => (
             <TableRow key={key.id}>
               <TableCell>
                 <div className="flex items-center gap-2">
-                  <Key className="h-4 w-4 text-muted-foreground" />
+                  <Key className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
                   <div>
                     <div className="font-medium">{key.name}</div>
                     {key.description && (
@@ -118,8 +188,9 @@ export function SshKeyTable({ keys, isLoading, onViewDetails, onRevoke, onDelete
                         size="icon"
                         className="h-6 w-6"
                         onClick={() => copyToClipboard(key.public_key_fingerprint, 'Fingerprint')}
+                        aria-label="Copy fingerprint to clipboard"
                       >
-                        <Copy className="h-3 w-3" />
+                        <Copy className="h-3 w-3" aria-hidden="true" />
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>Copy fingerprint</TooltipContent>
@@ -143,7 +214,7 @@ export function SshKeyTable({ keys, isLoading, onViewDetails, onRevoke, onDelete
                 <span className="text-sm">{key.use_count}</span>
               </TableCell>
               <TableCell className="text-right">
-                <div className="flex items-center justify-end gap-1">
+                <div className="flex items-center justify-end gap-1" role="group" aria-label={`Actions for ${key.name}`}>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -151,8 +222,9 @@ export function SshKeyTable({ keys, isLoading, onViewDetails, onRevoke, onDelete
                         size="icon"
                         className="h-8 w-8"
                         onClick={() => copyToClipboard(key.public_key, 'Public key')}
+                        aria-label="Copy public key"
                       >
-                        <Copy className="h-4 w-4" />
+                        <Copy className="h-4 w-4" aria-hidden="true" />
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>Copy public key</TooltipContent>
@@ -164,8 +236,9 @@ export function SshKeyTable({ keys, isLoading, onViewDetails, onRevoke, onDelete
                         size="icon"
                         className="h-8 w-8"
                         onClick={() => onViewDetails(key)}
+                        aria-label="View key details"
                       >
-                        <Eye className="h-4 w-4" />
+                        <Eye className="h-4 w-4" aria-hidden="true" />
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>View details</TooltipContent>
@@ -178,8 +251,9 @@ export function SshKeyTable({ keys, isLoading, onViewDetails, onRevoke, onDelete
                           size="icon"
                           className="h-8 w-8 text-primary hover:text-primary/80"
                           onClick={() => onDeploy(key)}
+                          aria-label="Deploy key to targets"
                         >
-                          <Upload className="h-4 w-4" />
+                          <Upload className="h-4 w-4" aria-hidden="true" />
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent>Deploy to targets</TooltipContent>
@@ -193,8 +267,9 @@ export function SshKeyTable({ keys, isLoading, onViewDetails, onRevoke, onDelete
                           size="icon"
                           className="h-8 w-8 text-blue-600 hover:text-blue-700"
                           onClick={() => onRotate(key)}
+                          aria-label="Rotate key"
                         >
-                          <RotateCcw className="h-4 w-4" />
+                          <RotateCcw className="h-4 w-4" aria-hidden="true" />
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent>Rotate key</TooltipContent>
@@ -208,8 +283,9 @@ export function SshKeyTable({ keys, isLoading, onViewDetails, onRevoke, onDelete
                           size="icon"
                           className="h-8 w-8 text-amber-600 hover:text-amber-700"
                           onClick={() => onRevoke(key)}
+                          aria-label="Revoke key"
                         >
-                          <Ban className="h-4 w-4" />
+                          <Ban className="h-4 w-4" aria-hidden="true" />
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent>Revoke key</TooltipContent>
@@ -223,8 +299,9 @@ export function SshKeyTable({ keys, isLoading, onViewDetails, onRevoke, onDelete
                           size="icon"
                           className="h-8 w-8 text-destructive hover:text-destructive"
                           onClick={() => onDelete(key)}
+                          aria-label="Delete key"
                         >
-                          <Trash2 className="h-4 w-4" />
+                          <Trash2 className="h-4 w-4" aria-hidden="true" />
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent>Delete key</TooltipContent>
