@@ -647,6 +647,24 @@ export function useDRShellPlan(protectedVmId?: string, selectedDrVcenterId?: str
     enabled: !!selectedDrVcenterId,
   });
 
+  // Fetch networks for selected DR vCenter (excludes uplink port groups)
+  const { data: drNetworks, isLoading: networksLoading } = useQuery({
+    queryKey: ['dr-networks', selectedDrVcenterId],
+    queryFn: async () => {
+      if (!selectedDrVcenterId) return [];
+      const { data, error } = await supabase
+        .from('vcenter_networks')
+        .select('id, name, vlan_id, vlan_range, vlan_type, network_type, parent_switch_name')
+        .eq('source_vcenter_id', selectedDrVcenterId)
+        .eq('uplink_port_group', false)
+        .eq('accessible', true)
+        .order('name');
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!selectedDrVcenterId,
+  });
+
   // This operation requires Job Executor
   const createDRShell = async (config: { 
     shell_vm_name?: string; 
@@ -677,5 +695,5 @@ export function useDRShellPlan(protectedVmId?: string, selectedDrVcenterId?: str
     }
   };
 
-  return { plan, loading, fetchPlan, createDRShell, vcenters, drDatastores, datastoresLoading };
+  return { plan, loading, fetchPlan, createDRShell, vcenters, drDatastores, datastoresLoading, drNetworks, networksLoading };
 }
