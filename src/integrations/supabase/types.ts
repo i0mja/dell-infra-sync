@@ -2012,6 +2012,7 @@ export type Database = {
           name: string
           port: number | null
           ssh_key_encrypted: string | null
+          ssh_key_id: string | null
           ssh_username: string | null
           target_type: string
           updated_at: string | null
@@ -2031,6 +2032,7 @@ export type Database = {
           name: string
           port?: number | null
           ssh_key_encrypted?: string | null
+          ssh_key_id?: string | null
           ssh_username?: string | null
           target_type?: string
           updated_at?: string | null
@@ -2050,6 +2052,7 @@ export type Database = {
           name?: string
           port?: number | null
           ssh_key_encrypted?: string | null
+          ssh_key_id?: string | null
           ssh_username?: string | null
           target_type?: string
           updated_at?: string | null
@@ -2062,6 +2065,13 @@ export type Database = {
             columns: ["dr_vcenter_id"]
             isOneToOne: false
             referencedRelation: "vcenter_settings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "replication_targets_ssh_key_id_fkey"
+            columns: ["ssh_key_id"]
+            isOneToOne: false
+            referencedRelation: "ssh_keys"
             referencedColumns: ["id"]
           },
         ]
@@ -2873,6 +2883,151 @@ export type Database = {
             columns: ["discovery_job_id"]
             isOneToOne: false
             referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ssh_key_deployments: {
+        Row: {
+          created_at: string
+          deployed_at: string | null
+          id: string
+          last_error: string | null
+          removed_at: string | null
+          replication_target_id: string | null
+          retry_count: number | null
+          ssh_key_id: string
+          status: string
+          updated_at: string
+          verified_at: string | null
+          zfs_template_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          deployed_at?: string | null
+          id?: string
+          last_error?: string | null
+          removed_at?: string | null
+          replication_target_id?: string | null
+          retry_count?: number | null
+          ssh_key_id: string
+          status?: string
+          updated_at?: string
+          verified_at?: string | null
+          zfs_template_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          deployed_at?: string | null
+          id?: string
+          last_error?: string | null
+          removed_at?: string | null
+          replication_target_id?: string | null
+          retry_count?: number | null
+          ssh_key_id?: string
+          status?: string
+          updated_at?: string
+          verified_at?: string | null
+          zfs_template_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ssh_key_deployments_replication_target_id_fkey"
+            columns: ["replication_target_id"]
+            isOneToOne: false
+            referencedRelation: "replication_targets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ssh_key_deployments_ssh_key_id_fkey"
+            columns: ["ssh_key_id"]
+            isOneToOne: false
+            referencedRelation: "ssh_keys"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ssh_key_deployments_zfs_template_id_fkey"
+            columns: ["zfs_template_id"]
+            isOneToOne: false
+            referencedRelation: "zfs_target_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ssh_keys: {
+        Row: {
+          activated_at: string | null
+          created_at: string
+          created_by: string | null
+          description: string | null
+          expires_at: string | null
+          id: string
+          key_type: string
+          last_used_at: string | null
+          name: string
+          private_key_encrypted: string
+          public_key: string
+          public_key_fingerprint: string
+          revocation_reason: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          status: string
+          updated_at: string
+          use_count: number | null
+        }
+        Insert: {
+          activated_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          expires_at?: string | null
+          id?: string
+          key_type?: string
+          last_used_at?: string | null
+          name: string
+          private_key_encrypted: string
+          public_key: string
+          public_key_fingerprint: string
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          status?: string
+          updated_at?: string
+          use_count?: number | null
+        }
+        Update: {
+          activated_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          expires_at?: string | null
+          id?: string
+          key_type?: string
+          last_used_at?: string | null
+          name?: string
+          private_key_encrypted?: string
+          public_key?: string
+          public_key_fingerprint?: string
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          status?: string
+          updated_at?: string
+          use_count?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ssh_keys_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ssh_keys_revoked_by_fkey"
+            columns: ["revoked_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -3735,6 +3890,7 @@ export type Database = {
           is_active: boolean | null
           name: string
           ssh_key_encrypted: string | null
+          ssh_key_id: string | null
           template_moref: string
           template_name: string
           updated_at: string | null
@@ -3760,6 +3916,7 @@ export type Database = {
           is_active?: boolean | null
           name: string
           ssh_key_encrypted?: string | null
+          ssh_key_id?: string | null
           template_moref: string
           template_name: string
           updated_at?: string | null
@@ -3785,6 +3942,7 @@ export type Database = {
           is_active?: boolean | null
           name?: string
           ssh_key_encrypted?: string | null
+          ssh_key_id?: string | null
           template_moref?: string
           template_name?: string
           updated_at?: string | null
@@ -3796,6 +3954,13 @@ export type Database = {
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "zfs_target_templates_ssh_key_id_fkey"
+            columns: ["ssh_key_id"]
+            isOneToOne: false
+            referencedRelation: "ssh_keys"
             referencedColumns: ["id"]
           },
           {

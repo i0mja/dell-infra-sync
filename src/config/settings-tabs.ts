@@ -1,4 +1,4 @@
-import { LucideIcon, Palette, Shield, Bell, Server, Activity, Users } from "lucide-react";
+import { LucideIcon, Palette, Shield, Bell, Server, Activity, Users, Key } from "lucide-react";
 
 export interface SettingsSubsection {
   id: string;
@@ -56,6 +56,12 @@ export const settingsTabs: SettingsTab[] = [
         name: 'Operations Safety',
         description: 'Configure throttling and emergency kill switch',
         icon: Shield,
+      },
+      {
+        id: 'ssh-keys',
+        name: 'SSH Keys',
+        description: 'Manage SSH key pairs for infrastructure access',
+        icon: Key,
       },
     ],
   },
@@ -245,6 +251,7 @@ export const mapLegacyTabId = (oldTabId: string): { tab: string; section?: strin
     'identity-provider': { tab: 'identity-management', section: 'overview' },
     'audit-logs': { tab: 'security', section: 'audit-logs' },
     'operations-safety': { tab: 'security', section: 'operations-safety' },
+    'ssh-keys': { tab: 'security', section: 'ssh-keys' },
     'smtp': { tab: 'notifications', section: 'smtp' },
     'teams': { tab: 'notifications', section: 'teams' },
     'openmanage': { tab: 'infrastructure', section: 'openmanage' },

@@ -19,12 +19,16 @@ serve(async (req) => {
   }
 
   try {
-    // Parse request body for optional comment
+    // Parse request body for optional comment and fingerprint option
     let comment = 'zfsadmin@zfs-target';
+    let returnFingerprint = false;
     try {
       const body = await req.json();
       if (body.comment) {
         comment = body.comment;
+      }
+      if (body.returnFingerprint) {
+        returnFingerprint = true;
       }
     } catch {
       // Use default comment if no body or invalid JSON
@@ -41,15 +45,27 @@ serve(async (req) => {
     // Format private key in OpenSSH format
     const privateKey = formatPrivateKeyOpenSSH(privateKeyBytes, publicKeyBytes, comment);
 
+    // Calculate SHA256 fingerprint of the public key
+    let fingerprint = '';
+    if (returnFingerprint) {
+      fingerprint = await calculateFingerprint(publicKeyBytes);
+    }
+
     console.log('Generated SSH Ed25519 key pair successfully');
 
+    const response: Record<string, string> = {
+      publicKey,
+      privateKey,
+      keyType: 'ed25519',
+      comment
+    };
+
+    if (returnFingerprint) {
+      response.fingerprint = fingerprint;
+    }
+
     return new Response(
-      JSON.stringify({
-        publicKey,
-        privateKey,
-        keyType: 'ed25519',
-        comment
-      }),
+      JSON.stringify(response),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
@@ -257,4 +273,34 @@ function base64Encode(data: Uint8Array): string {
   }
   
   return result;
+}
+
+/**
+ * Calculate SHA256 fingerprint of the public key in OpenSSH format
+ * Returns format: SHA256:<base64-hash>
+ */
+async function calculateFingerprint(publicKey: Uint8Array): Promise<string> {
+  const keyType = 'ssh-ed25519';
+  const keyTypeBytes = new TextEncoder().encode(keyType);
+  
+  // Build the public key blob (same as in formatPublicKeyOpenSSH)
+  const bufferSize = 4 + keyTypeBytes.length + 4 + publicKey.length;
+  const buffer = new Uint8Array(bufferSize);
+  let offset = 0;
+
+  writeUint32BE(buffer, keyTypeBytes.length, offset);
+  offset += 4;
+  buffer.set(keyTypeBytes, offset);
+  offset += keyTypeBytes.length;
+  writeUint32BE(buffer, publicKey.length, offset);
+  offset += 4;
+  buffer.set(publicKey, offset);
+
+  // Calculate SHA256 hash
+  const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+  const hashArray = new Uint8Array(hashBuffer);
+  
+  // Convert to base64 and format as OpenSSH fingerprint
+  const base64Hash = base64Encode(hashArray).replace(/=+$/, '');
+  return `SHA256:${base64Hash}`;
 }
