@@ -2002,6 +2002,9 @@ export type Database = {
         Row: {
           created_at: string | null
           created_by: string | null
+          deployed_ip_source: string | null
+          deployed_job_id: string | null
+          deployed_vm_moref: string | null
           description: string | null
           dr_vcenter_id: string | null
           health_status: string | null
@@ -2011,6 +2014,7 @@ export type Database = {
           last_health_check: string | null
           name: string
           port: number | null
+          source_template_id: string | null
           ssh_key_encrypted: string | null
           ssh_key_id: string | null
           ssh_username: string | null
@@ -2022,6 +2026,9 @@ export type Database = {
         Insert: {
           created_at?: string | null
           created_by?: string | null
+          deployed_ip_source?: string | null
+          deployed_job_id?: string | null
+          deployed_vm_moref?: string | null
           description?: string | null
           dr_vcenter_id?: string | null
           health_status?: string | null
@@ -2031,6 +2038,7 @@ export type Database = {
           last_health_check?: string | null
           name: string
           port?: number | null
+          source_template_id?: string | null
           ssh_key_encrypted?: string | null
           ssh_key_id?: string | null
           ssh_username?: string | null
@@ -2042,6 +2050,9 @@ export type Database = {
         Update: {
           created_at?: string | null
           created_by?: string | null
+          deployed_ip_source?: string | null
+          deployed_job_id?: string | null
+          deployed_vm_moref?: string | null
           description?: string | null
           dr_vcenter_id?: string | null
           health_status?: string | null
@@ -2051,6 +2062,7 @@ export type Database = {
           last_health_check?: string | null
           name?: string
           port?: number | null
+          source_template_id?: string | null
           ssh_key_encrypted?: string | null
           ssh_key_id?: string | null
           ssh_username?: string | null
@@ -2061,10 +2073,24 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "replication_targets_deployed_job_id_fkey"
+            columns: ["deployed_job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "replication_targets_dr_vcenter_id_fkey"
             columns: ["dr_vcenter_id"]
             isOneToOne: false
             referencedRelation: "vcenter_settings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "replication_targets_source_template_id_fkey"
+            columns: ["source_template_id"]
+            isOneToOne: false
+            referencedRelation: "zfs_target_templates"
             referencedColumns: ["id"]
           },
           {
@@ -3885,9 +3911,11 @@ export type Database = {
           default_zfs_disk_gb: number | null
           default_zfs_disk_path: string | null
           default_zfs_pool_name: string | null
+          deployment_count: number | null
           description: string | null
           id: string
           is_active: boolean | null
+          last_deployed_at: string | null
           name: string
           ssh_key_encrypted: string | null
           ssh_key_id: string | null
@@ -3911,9 +3939,11 @@ export type Database = {
           default_zfs_disk_gb?: number | null
           default_zfs_disk_path?: string | null
           default_zfs_pool_name?: string | null
+          deployment_count?: number | null
           description?: string | null
           id?: string
           is_active?: boolean | null
+          last_deployed_at?: string | null
           name: string
           ssh_key_encrypted?: string | null
           ssh_key_id?: string | null
@@ -3937,9 +3967,11 @@ export type Database = {
           default_zfs_disk_gb?: number | null
           default_zfs_disk_path?: string | null
           default_zfs_pool_name?: string | null
+          deployment_count?: number | null
           description?: string | null
           id?: string
           is_active?: boolean | null
+          last_deployed_at?: string | null
           name?: string
           ssh_key_encrypted?: string | null
           ssh_key_id?: string | null
@@ -4007,6 +4039,10 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      increment_template_deployment: {
+        Args: { template_id: string }
+        Returns: undefined
       }
       record_auth_attempt: {
         Args: {
