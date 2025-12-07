@@ -152,13 +152,27 @@ export function ZfsTemplateManagement() {
     });
   };
 
-  // Handle template selection from browser
-  const handleTemplateSelect = (template: { moref: string; name: string; cluster?: string }) => {
+  // Handle template selection from browser - auto-populate from template data
+  const handleTemplateSelect = (template: { 
+    moref: string; 
+    name: string; 
+    cluster?: string;
+    cpu_count?: number;
+    memory_mb?: number;
+    disk_gb?: number;
+    guest_os?: string;
+  }) => {
     setFormData({
       ...formData,
       template_moref: template.moref,
       template_name: template.name,
-      default_cluster: template.cluster || formData.default_cluster
+      default_cluster: template.cluster || formData.default_cluster,
+      // Auto-populate from template if available
+      default_cpu_count: template.cpu_count || formData.default_cpu_count,
+      default_memory_gb: template.memory_mb ? Math.round(template.memory_mb / 1024) : formData.default_memory_gb,
+      default_zfs_disk_gb: template.disk_gb ? Math.round(template.disk_gb) : formData.default_zfs_disk_gb,
+      // Auto-generate template name if empty
+      name: formData.name || `${template.name} ZFS Target`,
     });
   };
 

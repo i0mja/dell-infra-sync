@@ -53,7 +53,15 @@ interface VmTemplateSelectorProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   sourceVCenterId: string;
-  onSelect: (template: { moref: string; name: string; cluster?: string }) => void;
+  onSelect: (template: { 
+    moref: string; 
+    name: string; 
+    cluster?: string;
+    cpu_count?: number;
+    memory_mb?: number;
+    disk_gb?: number;
+    guest_os?: string;
+  }) => void;
 }
 
 export function VmTemplateSelector({
@@ -115,6 +123,10 @@ export function VmTemplateSelector({
       moref: selectedTemplate.vcenter_id,
       name: selectedTemplate.name,
       cluster: selectedTemplate.cluster_name || undefined,
+      cpu_count: selectedTemplate.cpu_count || undefined,
+      memory_mb: selectedTemplate.memory_mb || undefined,
+      disk_gb: selectedTemplate.disk_gb || undefined,
+      guest_os: selectedTemplate.guest_os || undefined,
     });
     handleClose();
   };
