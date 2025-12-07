@@ -5,7 +5,7 @@
  * for automated deployment.
  */
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -18,11 +18,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Trash2, Edit, Server, HardDrive, Cpu, MemoryStick, Network, Key, CheckCircle2, XCircle } from 'lucide-react';
+import { Plus, Trash2, Edit, Server, HardDrive, Cpu, MemoryStick, Network, Key, CheckCircle2, XCircle, Search } from 'lucide-react';
 import { useZfsTemplates, ZfsTemplateFormData } from '@/hooks/useZfsTemplates';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { formatDistanceToNow } from 'date-fns';
+import { VmTemplateSelector } from './VmTemplateSelector';
 
 const initialFormData: ZfsTemplateFormData = {
   name: '',
@@ -51,19 +52,106 @@ export function ZfsTemplateManagement() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState<ZfsTemplateFormData>(initialFormData);
   const [activeTab, setActiveTab] = useState('basic');
+  const [showTemplateSelector, setShowTemplateSelector] = useState(false);
 
-  // Fetch vCenters for dropdown
+  // Fetch vCenters for dropdown (use vcenters table, not vcenter_settings)
   const { data: vcenters = [] } = useQuery({
-    queryKey: ['vcenter-settings'],
+    queryKey: ['vcenters-list'],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('vcenter_settings')
-        .select('id, host')
-        .order('host');
+        .from('vcenters')
+        .select('id, name, host')
+        .order('name');
       if (error) throw error;
       return data;
     }
   });
+
+  // Fetch clusters for the selected vCenter
+  const { data: clusters = [] } = useQuery({
+    queryKey: ['vcenter-clusters', formData.vcenter_id],
+    queryFn: async () => {
+      if (!formData.vcenter_id) return [];
+      const { data, error } = await supabase
+        .from('vcenter_clusters')
+        .select('cluster_name')
+        .eq('source_vcenter_id', formData.vcenter_id)
+        .order('cluster_name');
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!formData.vcenter_id
+  });
+
+  // Fetch datastores for the selected vCenter
+  const { data: datastores = [] } = useQuery({
+    queryKey: ['vcenter-datastores', formData.vcenter_id],
+    queryFn: async () => {
+      if (!formData.vcenter_id) return [];
+      const { data, error } = await supabase
+        .from('vcenter_datastores')
+        .select('name')
+        .eq('source_vcenter_id', formData.vcenter_id)
+        .order('name');
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!formData.vcenter_id
+  });
+
+  // Fetch networks for the selected vCenter
+  const { data: networks = [] } = useQuery({
+    queryKey: ['vcenter-networks', formData.vcenter_id],
+    queryFn: async () => {
+      if (!formData.vcenter_id) return [];
+      const { data, error } = await supabase
+        .from('vcenter_networks')
+        .select('name')
+        .eq('source_vcenter_id', formData.vcenter_id)
+        .order('name');
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!formData.vcenter_id
+  });
+
+  // Get unique cluster names
+  const clusterNames = useMemo(() => {
+    return [...new Set(clusters.map(c => c.cluster_name))].filter(Boolean);
+  }, [clusters]);
+
+  // Get unique datastore names
+  const datastoreNames = useMemo(() => {
+    return [...new Set(datastores.map(d => d.name))].filter(Boolean);
+  }, [datastores]);
+
+  // Get unique network names
+  const networkNames = useMemo(() => {
+    return [...new Set(networks.map(n => n.name))].filter(Boolean);
+  }, [networks]);
+
+  // Handle vCenter change - clear dependent selections
+  const handleVCenterChange = (value: string) => {
+    setFormData({
+      ...formData,
+      vcenter_id: value,
+      template_moref: '',
+      template_name: '',
+      default_cluster: '',
+      default_datastore: '',
+      default_network: ''
+    });
+  };
+
+  // Handle template selection from browser
+  const handleTemplateSelect = (template: { moref: string; name: string; cluster?: string }) => {
+    setFormData({
+      ...formData,
+      template_moref: template.moref,
+      template_name: template.name,
+      default_cluster: template.cluster || formData.default_cluster
+    });
+  };
 
   const handleOpenDialog = (template?: typeof templates[0]) => {
     if (template) {
@@ -195,10 +283,10 @@ export function ZfsTemplateManagement() {
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="vcenter">vCenter</Label>
+                    <Label htmlFor="vcenter">vCenter *</Label>
                     <Select
                       value={formData.vcenter_id}
-                      onValueChange={(value) => setFormData({ ...formData, vcenter_id: value })}
+                      onValueChange={handleVCenterChange}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Select vCenter" />
@@ -206,41 +294,56 @@ export function ZfsTemplateManagement() {
                       <SelectContent>
                         {vcenters.map((vc) => (
                           <SelectItem key={vc.id} value={vc.id}>
-                            {vc.host}
+                            {vc.name} ({vc.host})
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Select a vCenter to browse templates, clusters, datastores, and networks
+                    </p>
                   </div>
                 </div>
               </TabsContent>
 
               <TabsContent value="vmware" className="space-y-4 mt-4">
-                <div className="grid gap-4">
-                  <div className="grid grid-cols-2 gap-4">
+                {!formData.vcenter_id ? (
+                  <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                    <Server className="h-12 w-12 mb-2 opacity-50" />
+                    <p>Please select a vCenter in the Basic tab first</p>
+                  </div>
+                ) : (
+                  <div className="grid gap-4">
+                    {/* Template Selection */}
                     <div className="grid gap-2">
-                      <Label htmlFor="template_moref">Template MoRef ID *</Label>
-                      <Input
-                        id="template_moref"
-                        placeholder="e.g., vm-123"
-                        value={formData.template_moref}
-                        onChange={(e) => setFormData({ ...formData, template_moref: e.target.value })}
-                      />
+                      <Label>VM Template *</Label>
+                      <div className="flex gap-2">
+                        <div className="flex-1 p-2 border rounded-md bg-muted/30 min-h-[38px] flex items-center">
+                          {formData.template_moref ? (
+                            <div className="flex items-center gap-2">
+                              <CheckCircle2 className="h-4 w-4 text-primary" />
+                              <span className="font-medium">{formData.template_name}</span>
+                              <code className="text-xs bg-muted px-1 rounded">{formData.template_moref}</code>
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">No template selected</span>
+                          )}
+                        </div>
+                        <Button 
+                          type="button" 
+                          variant="outline"
+                          onClick={() => setShowTemplateSelector(true)}
+                        >
+                          <Search className="h-4 w-4 mr-2" />
+                          Browse
+                        </Button>
+                      </div>
                       <p className="text-xs text-muted-foreground">
-                        VMware Managed Object Reference ID
+                        Select a powered-off VM or template from your vCenter inventory
                       </p>
                     </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="template_name">Template Display Name *</Label>
-                      <Input
-                        id="template_name"
-                        placeholder="e.g., debian12-zfs-template"
-                        value={formData.template_name}
-                        onChange={(e) => setFormData({ ...formData, template_name: e.target.value })}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
+
+                    {/* Datacenter - keep as text input since we don't sync datacenters */}
                     <div className="grid gap-2">
                       <Label htmlFor="default_datacenter">Default Datacenter</Label>
                       <Input
@@ -250,75 +353,109 @@ export function ZfsTemplateManagement() {
                         onChange={(e) => setFormData({ ...formData, default_datacenter: e.target.value })}
                       />
                     </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="default_cluster">Default Cluster</Label>
-                      <Input
-                        id="default_cluster"
-                        placeholder="e.g., Cluster1"
-                        value={formData.default_cluster}
-                        onChange={(e) => setFormData({ ...formData, default_cluster: e.target.value })}
-                      />
+
+                    <div className="grid grid-cols-2 gap-4">
+                      {/* Cluster Dropdown */}
+                      <div className="grid gap-2">
+                        <Label htmlFor="default_cluster">Default Cluster</Label>
+                        <Select
+                          value={formData.default_cluster}
+                          onValueChange={(value) => setFormData({ ...formData, default_cluster: value })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select cluster" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {clusterNames.map((name) => (
+                              <SelectItem key={name} value={name!}>
+                                {name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Datastore Dropdown */}
+                      <div className="grid gap-2">
+                        <Label htmlFor="default_datastore">Default Datastore</Label>
+                        <Select
+                          value={formData.default_datastore}
+                          onValueChange={(value) => setFormData({ ...formData, default_datastore: value })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select datastore" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {datastoreNames.map((name) => (
+                              <SelectItem key={name} value={name!}>
+                                {name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="grid gap-2">
-                      <Label htmlFor="default_datastore">Default Datastore</Label>
-                      <Input
-                        id="default_datastore"
-                        placeholder="e.g., datastore1"
-                        value={formData.default_datastore}
-                        onChange={(e) => setFormData({ ...formData, default_datastore: e.target.value })}
-                      />
-                    </div>
+
+                    {/* Network Dropdown */}
                     <div className="grid gap-2">
                       <Label htmlFor="default_network">Default Network</Label>
-                      <Input
-                        id="default_network"
-                        placeholder="e.g., VM Network"
+                      <Select
                         value={formData.default_network}
-                        onChange={(e) => setFormData({ ...formData, default_network: e.target.value })}
-                      />
+                        onValueChange={(value) => setFormData({ ...formData, default_network: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select network" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {networkNames.map((name) => (
+                            <SelectItem key={name} value={name!}>
+                              {name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor="default_cpu_count" className="flex items-center gap-1">
+                          <Cpu className="h-3 w-3" /> CPUs
+                        </Label>
+                        <Input
+                          id="default_cpu_count"
+                          type="number"
+                          min={1}
+                          value={formData.default_cpu_count}
+                          onChange={(e) => setFormData({ ...formData, default_cpu_count: parseInt(e.target.value) || 2 })}
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="default_memory_gb" className="flex items-center gap-1">
+                          <MemoryStick className="h-3 w-3" /> Memory (GB)
+                        </Label>
+                        <Input
+                          id="default_memory_gb"
+                          type="number"
+                          min={1}
+                          value={formData.default_memory_gb}
+                          onChange={(e) => setFormData({ ...formData, default_memory_gb: parseInt(e.target.value) || 8 })}
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="default_zfs_disk_gb" className="flex items-center gap-1">
+                          <HardDrive className="h-3 w-3" /> ZFS Disk (GB)
+                        </Label>
+                        <Input
+                          id="default_zfs_disk_gb"
+                          type="number"
+                          min={50}
+                          value={formData.default_zfs_disk_gb}
+                          onChange={(e) => setFormData({ ...formData, default_zfs_disk_gb: parseInt(e.target.value) || 500 })}
+                        />
+                      </div>
                     </div>
                   </div>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="grid gap-2">
-                      <Label htmlFor="default_cpu_count" className="flex items-center gap-1">
-                        <Cpu className="h-3 w-3" /> CPUs
-                      </Label>
-                      <Input
-                        id="default_cpu_count"
-                        type="number"
-                        min={1}
-                        value={formData.default_cpu_count}
-                        onChange={(e) => setFormData({ ...formData, default_cpu_count: parseInt(e.target.value) || 2 })}
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="default_memory_gb" className="flex items-center gap-1">
-                        <MemoryStick className="h-3 w-3" /> Memory (GB)
-                      </Label>
-                      <Input
-                        id="default_memory_gb"
-                        type="number"
-                        min={1}
-                        value={formData.default_memory_gb}
-                        onChange={(e) => setFormData({ ...formData, default_memory_gb: parseInt(e.target.value) || 8 })}
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="default_zfs_disk_gb" className="flex items-center gap-1">
-                        <HardDrive className="h-3 w-3" /> ZFS Disk (GB)
-                      </Label>
-                      <Input
-                        id="default_zfs_disk_gb"
-                        type="number"
-                        min={50}
-                        value={formData.default_zfs_disk_gb}
-                        onChange={(e) => setFormData({ ...formData, default_zfs_disk_gb: parseInt(e.target.value) || 500 })}
-                      />
-                    </div>
-                  </div>
-                </div>
+                )}
               </TabsContent>
 
               <TabsContent value="zfs" className="space-y-4 mt-4">
@@ -509,6 +646,14 @@ export function ZfsTemplateManagement() {
           </Table>
         )}
       </CardContent>
+
+      {/* Template Selector Dialog */}
+      <VmTemplateSelector
+        open={showTemplateSelector}
+        onOpenChange={setShowTemplateSelector}
+        sourceVCenterId={formData.vcenter_id}
+        onSelect={handleTemplateSelect}
+      />
     </Card>
   );
 }
