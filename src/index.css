@@ -98,6 +98,7 @@ All colors MUST be HSL.
 
 @layer base {
   html {
+    font-size: 87.5%; /* 14px base - compact global scaling */
     scroll-behavior: smooth;
   }
   
