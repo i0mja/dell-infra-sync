@@ -141,6 +141,12 @@ class ZfsTargetHandler(BaseHandler):
                 job_details['cpu_count'] = template.get('default_cpu', 2)
             if not job_details.get('memory_gb'):
                 job_details['memory_gb'] = template.get('default_memory_gb', 4)
+            if not job_details.get('cluster_name'):
+                job_details['cluster_name'] = template.get('default_cluster')
+            
+            # Pass use_template_disk setting from template
+            if 'use_template_disk' not in job_details:
+                job_details['use_template_disk'] = template.get('use_template_disk', False)
             
             self._log_console(job_id, 'INFO', f'Using template: {job_details["template_name"]}', job_details)
             self._log_console(job_id, 'INFO', f'vCenter ID: {job_details["vcenter_id"]}', job_details)
@@ -215,6 +221,19 @@ class ZfsTargetHandler(BaseHandler):
     # Phase Implementations
     # =========================================================================
     
+    def _find_resource_pool(self, content, cluster_name: str = None):
+        """Find resource pool, optionally within a specific cluster."""
+        for dc in content.rootFolder.childEntity:
+            if not isinstance(dc, vim.Datacenter):
+                continue
+            for entity in dc.hostFolder.childEntity:
+                if isinstance(entity, vim.ClusterComputeResource):
+                    if cluster_name is None or entity.name == cluster_name:
+                        return entity.resourcePool
+                elif isinstance(entity, vim.ComputeResource):
+                    return entity.resourcePool
+        return None
+
     def _clone_template(self, job_id: str, details: Dict) -> str:
         """Phase 1: Clone VM from template with ZFS disk and network config."""
         vcenter_id = details['vcenter_id']
@@ -222,6 +241,7 @@ class ZfsTargetHandler(BaseHandler):
         vm_name = details['vm_name']
         zfs_disk_gb = details.get('zfs_disk_gb', 500)
         network_name = details.get('network_name')
+        cluster_name = details.get('cluster_name') or details.get('default_cluster')
         
         self._log_console(job_id, 'INFO', f'Connecting to vCenter...', details)
         
@@ -250,9 +270,18 @@ class ZfsTargetHandler(BaseHandler):
         
         self._log_console(job_id, 'INFO', f'Found template: {template.name}', details)
         
+        # Find resource pool
+        content = self.vcenter_conn.RetrieveContent()
+        resource_pool = self._find_resource_pool(content, cluster_name)
+        if not resource_pool:
+            raise Exception(f"No resource pool found for cluster: {cluster_name or 'any'}")
+        
+        self._log_console(job_id, 'INFO', f'Using resource pool: {resource_pool.name}', details)
+        
         # Build clone spec
         clone_spec = vim.vm.CloneSpec()
         clone_spec.location = vim.vm.RelocateSpec()
+        clone_spec.location.pool = resource_pool
         clone_spec.powerOn = False
         clone_spec.template = False
         
