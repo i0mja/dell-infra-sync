@@ -630,7 +630,7 @@ class ZFSReplicationReal:
             from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
             
             response = requests.get(
-                f"{DSM_URL}/rest/v1/vcenter_settings",
+                f"{DSM_URL}/rest/v1/vcenters",
                 params={'id': f'eq.{vcenter_id}'},
                 headers={
                     'apikey': SERVICE_ROLE_KEY,
