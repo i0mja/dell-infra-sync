@@ -28,6 +28,8 @@ import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { ProtectionGroupsPanel } from "@/components/replication/ProtectionGroupsPanel";
 import { ReplicationTargetsPanel } from "@/components/replication/ReplicationTargetsPanel";
 import { ReplicationJobsPanel } from "@/components/replication/ReplicationJobsPanel";
+import { NetworksTable } from "@/components/vcenter/NetworksTable";
+import { NetworksFilterToolbar } from "@/components/vcenter/NetworksFilterToolbar";
 
 interface VCenterHost {
   id: string;
@@ -124,9 +126,16 @@ export default function VCenter() {
   const [searchParams, setSearchParams] = useSearchParams();
   
   const { vcenters } = useVCenters();
-  const { vms, clusters, datastores, alarms, loading: vmsLoading, refetch: refetchVCenterData } = useVCenterData(
+  const { vms, clusters, datastores, alarms, networks, loading: vmsLoading, refetch: refetchVCenterData } = useVCenterData(
     selectedVCenterId === "all" ? null : selectedVCenterId
   );
+  
+  // Networks filters
+  const [networksSearch, setNetworksSearch] = useState("");
+  const [networksTypeFilter, setNetworksTypeFilter] = useState("all");
+  const [networksVlanFilter, setNetworksVlanFilter] = useState("all");
+  const [selectedNetworkId, setSelectedNetworkId] = useState<string | null>(null);
+  const networksColumnVisibility = useColumnVisibility("vcenter-networks-columns", ["name", "type", "vlan", "switch", "hosts", "vms"]);
 
   const isPrivateNetwork = (host: string | null): boolean => {
     if (!host) return false;
@@ -210,7 +219,7 @@ export default function VCenter() {
     const clusterParam = searchParams.get('cluster');
     
     // Set active tab from URL param
-    if (tabParam && ['hosts', 'vms', 'clusters', 'datastores', 'esxi-profiles', 'replication'].includes(tabParam)) {
+    if (tabParam && ['hosts', 'vms', 'clusters', 'datastores', 'networks', 'esxi-profiles', 'replication'].includes(tabParam)) {
       setActiveTab(tabParam);
     }
     
@@ -609,6 +618,12 @@ export default function VCenter() {
                 Datastores ({datastores.length})
               </TabsTrigger>
               <TabsTrigger 
+                value="networks"
+                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
+              >
+                Networks ({networks.length})
+              </TabsTrigger>
+              <TabsTrigger
                 value="esxi-profiles"
                 className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
               >

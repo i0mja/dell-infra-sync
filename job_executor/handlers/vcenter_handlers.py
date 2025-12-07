@@ -36,6 +36,7 @@ class VCenterHandlers(BaseHandler):
                 {'name': 'connect', 'label': 'Connecting to vCenter'},
                 {'name': 'clusters', 'label': 'Syncing clusters'},
                 {'name': 'datastores', 'label': 'Syncing datastores'},
+                {'name': 'networks', 'label': 'Syncing networks'},
                 {'name': 'vms', 'label': 'Syncing VMs'},
                 {'name': 'alarms', 'label': 'Syncing alarms'},
                 {'name': 'hosts', 'label': 'Syncing ESXi hosts'}
@@ -190,6 +191,35 @@ class VCenterHandlers(BaseHandler):
                     progress=100
                 )
             
+            # Check before networks phase
+            if check_cancelled():
+                return
+            
+            # Sync networks
+            self.log("🌐 Syncing networks...")
+            if 'networks' in phase_tasks:
+                self.update_task_status(phase_tasks['networks'], 'running', log='Syncing networks...', progress=0)
+            
+            if not self.executor.check_vcenter_connection(content):
+                raise Exception("vCenter connection lost before network sync")
+            
+            # Create progress callback for networks
+            def network_progress(pct, msg):
+                if 'networks' in phase_tasks:
+                    self.update_task_status(phase_tasks['networks'], 'running', log=msg, progress=pct)
+                self.update_job_status(job['id'], 'running', details={'current_step': msg})
+            
+            networks_result = self.executor.sync_vcenter_networks(content, source_vcenter_id, progress_callback=network_progress, vcenter_name=vcenter_name, job_id=job['id'])
+            self.log(f"✓ Networks synced: {networks_result.get('synced', 0)}")
+            
+            if 'networks' in phase_tasks:
+                self.update_task_status(
+                    phase_tasks['networks'],
+                    'completed',
+                    log=f'✓ Synced {networks_result.get("synced", 0)} networks',
+                    progress=100
+                )
+            
             # Check before VMs phase
             if check_cancelled():
                 return
@@ -291,6 +321,7 @@ class VCenterHandlers(BaseHandler):
                 'sync_duration_seconds': sync_duration,
                 'clusters': clusters_result.get('synced', 0),
                 'datastores': datastores_result.get('synced', 0),
+                'networks': networks_result.get('synced', 0),
                 'vms': vms_result.get('synced', 0),
                 'alarms': alarms_result.get('synced', 0),
                 'hosts': hosts_result.get('synced', 0),

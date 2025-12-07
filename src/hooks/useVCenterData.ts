@@ -67,16 +67,36 @@ export interface VCenterAlarm {
   created_at: string;
 }
 
+export interface VCenterNetwork {
+  id: string;
+  name: string;
+  vcenter_id: string | null;
+  source_vcenter_id: string | null;
+  network_type: string | null;
+  vlan_id: number | null;
+  vlan_type: string | null;
+  vlan_range: string | null;
+  parent_switch_name: string | null;
+  parent_switch_id: string | null;
+  accessible: boolean | null;
+  host_count: number | null;
+  vm_count: number | null;
+  uplink_port_group: boolean | null;
+  last_sync: string | null;
+}
+
 export function useVCenterData(selectedVCenterId?: string | null) {
   const [vms, setVms] = useState<VCenterVM[]>([]);
   const [clusters, setClusters] = useState<VCenterCluster[]>([]);
   const [datastores, setDatastores] = useState<VCenterDatastore[]>([]);
   const [alarms, setAlarms] = useState<VCenterAlarm[]>([]);
+  const [networks, setNetworks] = useState<VCenterNetwork[]>([]);
   const [loading, setLoading] = useState(true);
   const [vmCount, setVmCount] = useState<number>(0);
   const [clusterCount, setClusterCount] = useState<number>(0);
   const [datastoreCount, setDatastoreCount] = useState<number>(0);
   const [alarmCount, setAlarmCount] = useState<number>(0);
+  const [networkCount, setNetworkCount] = useState<number>(0);
 
   // Helper to fetch VMs in batches
   const fetchVMsInBatches = async (filterValue?: string): Promise<{ data: VCenterVM[], count: number }> => {
@@ -226,6 +246,43 @@ export function useVCenterData(selectedVCenterId?: string | null) {
     return { data: allData, count: totalCount || allData.length };
   };
 
+  // Helper to fetch Networks in batches
+  const fetchNetworksInBatches = async (filterValue?: string): Promise<{ data: VCenterNetwork[], count: number }> => {
+    const allData: VCenterNetwork[] = [];
+    let from = 0;
+    const batchSize = 1000;
+    let totalCount = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      let query = supabase
+        .from("vcenter_networks")
+        .select("*", { count: from === 0 ? 'exact' : undefined })
+        .order("name", { ascending: true })
+        .range(from, from + batchSize - 1);
+
+      if (filterValue && filterValue !== "all") {
+        query = query.eq("source_vcenter_id", filterValue);
+      }
+
+      const { data, count, error } = await query;
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        allData.push(...data);
+        if (from === 0 && count !== null) {
+          totalCount = count;
+        }
+        hasMore = data.length === batchSize;
+        from += batchSize;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    return { data: allData, count: totalCount || allData.length };
+  };
+
   const fetchData = async () => {
     try {
       setLoading(true);
@@ -235,21 +292,24 @@ export function useVCenterData(selectedVCenterId?: string | null) {
         : undefined;
 
       // Fetch all data in batches (handles >1000 rows)
-      const [vmsResult, clustersResult, datastoresResult, alarmsResult] = await Promise.all([
+      const [vmsResult, clustersResult, datastoresResult, alarmsResult, networksResult] = await Promise.all([
         fetchVMsInBatches(filterValue),
         fetchClustersInBatches(filterValue),
         fetchDatastoresInBatches(filterValue),
         fetchAlarmsInBatches(filterValue),
+        fetchNetworksInBatches(filterValue),
       ]);
 
       setVms(vmsResult.data);
       setClusters(clustersResult.data);
       setDatastores(datastoresResult.data);
       setAlarms(alarmsResult.data);
+      setNetworks(networksResult.data);
       setVmCount(vmsResult.count);
       setClusterCount(clustersResult.count);
       setDatastoreCount(datastoresResult.count);
       setAlarmCount(alarmsResult.count);
+      setNetworkCount(networksResult.count);
     } catch (error) {
       console.error("Error fetching vCenter data:", error);
     } finally {
@@ -281,11 +341,17 @@ export function useVCenterData(selectedVCenterId?: string | null) {
       .on("postgres_changes", { event: "*", schema: "public", table: "vcenter_alarms" }, () => fetchData())
       .subscribe();
 
+    const networksChannel = supabase
+      .channel("vcenter_networks_changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "vcenter_networks" }, () => fetchData())
+      .subscribe();
+
     return () => {
       vmsChannel.unsubscribe();
       clustersChannel.unsubscribe();
       datastoresChannel.unsubscribe();
       alarmsChannel.unsubscribe();
+      networksChannel.unsubscribe();
     };
   }, [selectedVCenterId]);
 
@@ -294,11 +360,13 @@ export function useVCenterData(selectedVCenterId?: string | null) {
     clusters,
     datastores,
     alarms,
+    networks,
     loading,
     vmCount,
     clusterCount,
     datastoreCount,
     alarmCount,
+    networkCount,
     refetch: fetchData,
   };
 }
