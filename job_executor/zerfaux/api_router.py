@@ -820,11 +820,128 @@ class ZerfauxAPIRouter:
         handler._send_json({'success': True, 'plan': plan})
         return True
     
+    def _discover_replicated_vmdks(self, dr_vcenter_id: str, datastore_name: str, 
+                                     source_vm_name: str) -> list:
+        """
+        Browse DR datastore to find replicated VMDKs matching source VM name.
+        
+        Searches for patterns like:
+        - [ds] source_vm_name/source_vm_name.vmdk
+        - [ds] source_vm_name/*.vmdk
+        
+        Args:
+            dr_vcenter_id: ID of the DR vCenter
+            datastore_name: Name of the target datastore
+            source_vm_name: Name of the source VM to search for
+            
+        Returns:
+            List of full VMDK paths like '[datastore] vm_name/vm_name.vmdk'
+        """
+        try:
+            # Check if we're in stub mode - just return empty in stub mode
+            if USE_ZERFAUX_STUBS:
+                logger.info(f"Stub mode: skipping VMDK discovery for {source_vm_name}")
+                return []
+            
+            # Import pyVmomi here to avoid import errors in stub mode
+            try:
+                from pyVmomi import vim
+                from pyVim.task import WaitForTask
+                from pyVim.connect import Disconnect
+            except ImportError:
+                logger.warning("pyVmomi not available, cannot discover VMDKs")
+                return []
+            
+            # Get vCenter connection settings
+            settings = self.zfs_replication._get_vcenter_settings(dr_vcenter_id)
+            if not settings:
+                logger.warning(f"Could not get vCenter settings for {dr_vcenter_id}")
+                return []
+            
+            password = self.zfs_replication._decrypt_password(settings.get('password_encrypted'))
+            if not password:
+                logger.warning("Could not decrypt vCenter password")
+                return []
+            
+            si = self.zfs_replication._connect_vcenter(
+                settings['host'],
+                settings['username'],
+                password,
+                settings.get('port', 443),
+                settings.get('verify_ssl', False)
+            )
+            
+            if not si:
+                logger.warning("Could not connect to vCenter for VMDK discovery")
+                return []
+            
+            try:
+                content = si.RetrieveContent()
+                
+                # Find the datastore
+                ds_view = content.viewManager.CreateContainerView(
+                    content.rootFolder, [vim.Datastore], True
+                )
+                
+                target_ds = None
+                for ds in ds_view.view:
+                    if ds.name == datastore_name:
+                        target_ds = ds
+                        break
+                ds_view.Destroy()
+                
+                if not target_ds:
+                    logger.warning(f"Datastore {datastore_name} not found")
+                    return []
+                
+                # Search for VMDKs matching source VM name
+                browser = target_ds.browser
+                search_spec = vim.host.DatastoreBrowser.SearchSpec()
+                search_spec.matchPattern = ["*.vmdk"]
+                
+                # Search in folder matching source VM name
+                datastore_path = f"[{datastore_name}] {source_vm_name}"
+                
+                try:
+                    task = browser.SearchDatastoreSubFolders_Task(datastore_path, search_spec)
+                    WaitForTask(task)
+                    
+                    disk_paths = []
+                    for result in task.info.result:
+                        folder_path = result.folderPath
+                        for file_info in result.file:
+                            # Skip -flat.vmdk files (they're data files, not descriptors)
+                            if '-flat.vmdk' in file_info.path:
+                                continue
+                            # Skip -delta.vmdk files (snapshot deltas)
+                            if '-delta.vmdk' in file_info.path:
+                                continue
+                            # Skip -ctk.vmdk files (change tracking)
+                            if '-ctk.vmdk' in file_info.path:
+                                continue
+                            
+                            # Build full path
+                            full_path = f"{folder_path}{file_info.path}"
+                            disk_paths.append(full_path)
+                            logger.info(f"Discovered replicated VMDK: {full_path}")
+                    
+                    return disk_paths
+                    
+                except Exception as e:
+                    logger.warning(f"Could not browse for VMDKs in {datastore_path}: {e}")
+                    return []
+            finally:
+                Disconnect(si)
+                
+        except Exception as e:
+            logger.error(f"VMDK discovery failed: {e}")
+            return []
+    
     def _create_dr_shell(self, handler, protected_vm_id: str, data: Dict) -> bool:
         """
         Create DR shell VM at DR site.
         
-        STUB: Simulates VM creation.
+        Auto-discovers replicated VMDKs if disk_paths not provided.
         """
         vms = self._db_query('protected_vms', {'id': f'eq.{protected_vm_id}'})
         if not vms:
@@ -850,14 +967,28 @@ class ZerfauxAPIRouter:
             handler._send_error('No DR vCenter specified. Please select a DR vCenter in the wizard.', 400)
             return True
         
-        # Use stub to create shell VM
+        # Get disk paths from request, or auto-discover
+        disk_paths = data.get('disk_paths', [])
+        
+        # Auto-discover VMDKs if none provided
+        if not disk_paths:
+            source_vm_name = vm['vm_name']
+            logger.info(f"No disk_paths provided, discovering replicated VMDKs for {source_vm_name} on {target_datastore}")
+            disk_paths = self._discover_replicated_vmdks(
+                dr_vcenter_id=dr_vcenter_id,
+                datastore_name=target_datastore,
+                source_vm_name=source_vm_name
+            )
+            logger.info(f"Discovered {len(disk_paths)} replicated VMDKs for {source_vm_name}")
+        
+        # Create the shell VM with discovered disks
         result = self.zfs_replication.create_dr_shell_vm(
             dr_vcenter_id=dr_vcenter_id,
             vm_name=shell_vm_name,
             target_datastore=target_datastore,
             cpu_count=data.get('cpu_count', 4),
             memory_mb=data.get('memory_mb', 8192),
-            disk_paths=data.get('disk_paths', [])
+            disk_paths=disk_paths
         )
         
         if result['success']:
@@ -866,13 +997,15 @@ class ZerfauxAPIRouter:
                 'dr_shell_vm_name': shell_vm_name,
                 'dr_shell_vm_created': True,
                 'dr_shell_vm_id': result.get('vm_moref'),
-                'status_message': f"DR shell VM '{shell_vm_name}' created"
+                'status_message': f"DR shell VM '{shell_vm_name}' created with {len(disk_paths)} disks"
             })
         
         handler._send_json({
             'success': result['success'],
             'shell_vm_name': shell_vm_name,
             'vm_moref': result.get('vm_moref'),
+            'disks_attached': len(disk_paths),
+            'disk_paths': disk_paths,
             'message': result.get('message')
         })
         return True
