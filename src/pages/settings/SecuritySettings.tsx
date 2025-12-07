@@ -1,6 +1,6 @@
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { AuditLogViewer } from "@/components/settings/AuditLogViewer";
-import { Shield, FileText } from "lucide-react";
+import { Shield, FileText, Key } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -16,6 +16,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Info } from "lucide-react";
+import { useSshKeys, SshKey } from "@/hooks/useSshKeys";
+import { SshKeyTable, SshKeyGenerateDialog, SshKeyDetailsDialog, SshKeyRevokeDialog } from "@/components/settings/ssh";
 
 export function SecuritySettings() {
   const { toast } = useToast();
@@ -47,6 +49,13 @@ export function SecuritySettings() {
   const [lastScheduledCheck, setLastScheduledCheck] = useState<any>(null);
   const [runningScheduledCheck, setRunningScheduledCheck] = useState(false);
   const [scheduledCheckId, setScheduledCheckId] = useState<string | null>(null);
+
+  // SSH Keys state
+  const { sshKeys, isLoading: sshKeysLoading, generateKey, isGenerating, revokeKey, isRevoking, deleteKey, fetchDeployments } = useSshKeys();
+  const [showGenerateDialog, setShowGenerateDialog] = useState(false);
+  const [selectedSshKey, setSelectedSshKey] = useState<SshKey | null>(null);
+  const [showDetailsDialog, setShowDetailsDialog] = useState(false);
+  const [showRevokeDialog, setShowRevokeDialog] = useState(false);
 
   useEffect(() => {
     loadCredentialSets();
@@ -570,6 +579,70 @@ export function SecuritySettings() {
           )}
         </div>
       </SettingsSection>
+
+      {/* SSH Keys */}
+      <SettingsSection
+        id="ssh-keys"
+        title="SSH Keys"
+        description="Manage SSH key pairs for secure infrastructure access"
+        icon={Key}
+      >
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h4 className="text-sm font-medium">SSH Key Inventory</h4>
+              <p className="text-sm text-muted-foreground">
+                Centralized SSH key management for ZFS targets and replication
+              </p>
+            </div>
+            <Button onClick={() => setShowGenerateDialog(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Generate Key
+            </Button>
+          </div>
+
+          <SshKeyTable
+            keys={sshKeys}
+            isLoading={sshKeysLoading}
+            onViewDetails={(key) => {
+              setSelectedSshKey(key);
+              setShowDetailsDialog(true);
+            }}
+            onRevoke={(key) => {
+              setSelectedSshKey(key);
+              setShowRevokeDialog(true);
+            }}
+            onDelete={async (key) => {
+              if (confirm(`Delete SSH key "${key.name}"? This cannot be undone.`)) {
+                await deleteKey(key.id);
+              }
+            }}
+          />
+        </div>
+      </SettingsSection>
+
+      {/* SSH Key Dialogs */}
+      <SshKeyGenerateDialog
+        open={showGenerateDialog}
+        onOpenChange={setShowGenerateDialog}
+        onGenerate={generateKey}
+        isGenerating={isGenerating}
+      />
+
+      <SshKeyDetailsDialog
+        open={showDetailsDialog}
+        onOpenChange={setShowDetailsDialog}
+        sshKey={selectedSshKey}
+        fetchDeployments={fetchDeployments}
+      />
+
+      <SshKeyRevokeDialog
+        open={showRevokeDialog}
+        onOpenChange={setShowRevokeDialog}
+        sshKey={selectedSshKey}
+        onRevoke={revokeKey}
+        isRevoking={isRevoking}
+      />
 
       {/* Credential Dialog */}
       <Dialog open={showCredentialDialog} onOpenChange={setShowCredentialDialog}>
