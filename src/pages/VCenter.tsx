@@ -781,6 +781,19 @@ export default function VCenter() {
             />
           )}
 
+          {activeTab === "networks" && (
+            <NetworksFilterToolbar
+              searchTerm={networksSearch}
+              onSearchChange={setNetworksSearch}
+              typeFilter={networksTypeFilter}
+              onTypeFilterChange={setNetworksTypeFilter}
+              vlanFilter={networksVlanFilter}
+              onVlanFilterChange={setNetworksVlanFilter}
+              visibleColumns={networksColumnVisibility.visibleColumns}
+              onToggleColumn={networksColumnVisibility.toggleColumn}
+            />
+          )}
+
           <TabsContent value="hosts" className="flex-1 mt-0 overflow-hidden">
             <HostsTable
               clusterGroups={clusterGroups}
@@ -844,6 +857,19 @@ export default function VCenter() {
               accessFilter={datastoresAccessFilter}
               capacityFilter={datastoresCapacityFilter}
               visibleColumns={datastoresColumnVisibility.visibleColumns}
+            />
+          </TabsContent>
+
+          <TabsContent value="networks" className="flex-1 mt-0 overflow-hidden">
+            <NetworksTable
+              networks={networks}
+              selectedNetworkId={selectedNetworkId}
+              onNetworkClick={(net) => setSelectedNetworkId(selectedNetworkId === net.id ? null : net.id)}
+              loading={vmsLoading}
+              searchTerm={networksSearch}
+              typeFilter={networksTypeFilter}
+              vlanFilter={networksVlanFilter}
+              visibleColumns={networksColumnVisibility.visibleColumns}
             />
           </TabsContent>
 

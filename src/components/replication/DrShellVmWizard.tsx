@@ -53,6 +53,45 @@ function formatBytes(bytes: number | null): string {
   return `${gb.toFixed(1)} GB`;
 }
 
+// Smart network matching - scores similarity between source and DR network names
+function scoreNetworkMatch(sourceNetworkName: string, drNetworkName: string): number {
+  if (!sourceNetworkName || !drNetworkName) return 0;
+  
+  let score = 0;
+  const sourceLower = sourceNetworkName.toLowerCase();
+  const drLower = drNetworkName.toLowerCase();
+  
+  // Exact match
+  if (sourceLower === drLower) return 100;
+  
+  // Extract numbers (VLAN IDs like "102", "303")
+  const sourceNumbers: string[] = sourceLower.match(/\d+/g) || [];
+  const drNumbers: string[] = drLower.match(/\d+/g) || [];
+  
+  for (const num of sourceNumbers) {
+    if (drNumbers.includes(num)) {
+      score += 50; // Strong match for same VLAN number
+    }
+  }
+  
+  // Keyword matching
+  const keywords = ['prod', 'production', 'dev', 'development', 'test', 'staging', 
+                    'mgmt', 'management', 'backup', 'repl', 'replication', 'dr', 
+                    'vmotion', 'storage', 'dmz', 'public', 'private'];
+  for (const kw of keywords) {
+    if (sourceLower.includes(kw) && drLower.includes(kw)) {
+      score += 20;
+    }
+  }
+  
+  // Partial name overlap
+  if (drLower.includes(sourceLower) || sourceLower.includes(drLower)) {
+    score += 30;
+  }
+  
+  return score;
+}
+
 interface DrShellVmWizardProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -78,7 +117,19 @@ export function DrShellVmWizard({
   const [selectedDatastoreId, setSelectedDatastoreId] = useState<string | null>(null);
   const [networkName, setNetworkName] = useState("");
   
-  const { plan, loading: planLoading, fetchPlan, createDRShell, vcenters, drDatastores, datastoresLoading } = useDRShellPlan(vm?.id, selectedDrVcenterId);
+  const { plan, loading: planLoading, fetchPlan, createDRShell, vcenters, drDatastores, datastoresLoading, drNetworks, networksLoading } = useDRShellPlan(vm?.id, selectedDrVcenterId);
+  
+  // Compute sorted networks with match scores based on source VM's network (using current_datastore as proxy)
+  const sourceNetworkHint = vm?.current_datastore || vm?.vm_name || '';
+  const sortedNetworks = drNetworks
+    ?.map(net => ({
+      ...net,
+      matchScore: scoreNetworkMatch(sourceNetworkHint, net.name)
+    }))
+    .sort((a, b) => b.matchScore - a.matchScore) || [];
+  
+  // Get selected network details
+  const selectedNetwork = drNetworks?.find(n => n.id === networkName);
   
   // Filter out source vCenter to show only DR targets
   const sourceVcenterId = plan?.protection_group?.source_vcenter_id;
@@ -125,7 +176,7 @@ export function DrShellVmWizard({
         memory_mb: memoryMb,
         dr_vcenter_id: selectedDrVcenterId || undefined,
         datastore_name: selectedDatastore?.name,
-        network_name: networkName || undefined,
+        network_name: selectedNetwork?.name || undefined,
       });
       setResult({ 
         success: true, 
@@ -315,19 +366,55 @@ export function DrShellVmWizard({
                     )}
                   </div>
                   
-                  {/* Network Input */}
+                  {/* Network Selection with Smart Matching */}
                   <div className="space-y-2">
                     <Label className="flex items-center gap-2">
                       <Network className="h-4 w-4" />
-                      Network (optional)
+                      Target Network
                     </Label>
-                    <Input
-                      value={networkName}
-                      onChange={(e) => setNetworkName(e.target.value)}
-                      placeholder="Leave blank for default network"
-                    />
+                    {networksLoading ? (
+                      <Skeleton className="h-10 w-full" />
+                    ) : (
+                      <Select
+                        value={networkName || ''}
+                        onValueChange={setNetworkName}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select network (optional)..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">
+                            <span className="text-muted-foreground">Use default network</span>
+                          </SelectItem>
+                          {sortedNetworks.length === 0 ? (
+                            <SelectItem value="_none" disabled>
+                              No networks synced yet
+                            </SelectItem>
+                          ) : (
+                            sortedNetworks.map((net, idx) => (
+                              <SelectItem key={net.id} value={net.id}>
+                                <div className="flex items-center gap-2">
+                                  {net.matchScore > 30 && idx === 0 && (
+                                    <span className="text-green-600">🎯</span>
+                                  )}
+                                  <span>{net.name}</span>
+                                  {net.vlan_id && (
+                                    <span className="text-muted-foreground text-xs">(VLAN {net.vlan_id})</span>
+                                  )}
+                                  {net.matchScore > 30 && idx === 0 && (
+                                    <Badge variant="outline" className="text-xs py-0 text-green-600 border-green-500/30">
+                                      Suggested
+                                    </Badge>
+                                  )}
+                                </div>
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                    )}
                     <p className="text-xs text-muted-foreground">
-                      Specify port group name, or leave blank to use first available network
+                      Networks sorted by similarity to source VM. 🎯 indicates best match.
                     </p>
                   </div>
                 </div>
