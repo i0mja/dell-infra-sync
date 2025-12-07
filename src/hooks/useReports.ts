@@ -57,6 +57,17 @@ async function fetchReportData(
       return fetchBackupHistory(dateRange);
     case "backup_coverage":
       return fetchBackupCoverage();
+    // SSH Key reports
+    case "ssh_key_inventory":
+      return fetchSshKeyInventory();
+    case "ssh_key_expiring":
+      return fetchSshKeyExpiring();
+    case "ssh_key_unused":
+      return fetchSshKeyUnused();
+    case "ssh_key_revocation":
+      return fetchSshKeyRevocation(dateRange);
+    case "ssh_key_usage":
+      return fetchSshKeyUsage();
     default:
       throw new Error(`Unknown report type: ${reportType}`);
   }
@@ -1245,4 +1256,278 @@ function formatBytes(bytes: number): string {
   const sizes = ["B", "KB", "MB", "GB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
+
+// ============= SSH KEY REPORTS =============
+
+async function fetchSshKeyInventory(): Promise<ReportData> {
+  const { data: keys, error } = await supabase
+    .from("ssh_keys")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+
+  // Fetch deployments for each key
+  const { data: deployments } = await supabase
+    .from("ssh_key_deployments")
+    .select("ssh_key_id, status");
+
+  // Fetch profiles for created_by
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("id, full_name, email");
+
+  const profileMap = (profiles || []).reduce((acc, p) => {
+    acc[p.id] = p.full_name || p.email;
+    return acc;
+  }, {} as Record<string, string>);
+
+  // Count deployments per key
+  const deploymentCounts = (deployments || []).reduce((acc, d) => {
+    acc[d.ssh_key_id] = (acc[d.ssh_key_id] || 0) + (d.status === "deployed" ? 1 : 0);
+    return acc;
+  }, {} as Record<string, number>);
+
+  const rows = (keys || []).map(k => ({
+    name: k.name,
+    status: k.status,
+    key_type: k.key_type,
+    fingerprint: k.public_key_fingerprint,
+    created_at: k.created_at,
+    created_by: k.created_by ? profileMap[k.created_by] || "Unknown" : "System",
+    expires_at: k.expires_at,
+    last_used_at: k.last_used_at,
+    use_count: k.use_count || 0,
+    deployment_count: deploymentCounts[k.id] || 0,
+    age_days: differenceInDays(new Date(), new Date(k.created_at)),
+  }));
+
+  const summary = {
+    total: rows.length,
+    active: rows.filter(r => r.status === "active").length,
+    pending: rows.filter(r => r.status === "pending").length,
+    revoked: rows.filter(r => r.status === "revoked").length,
+    totalDeployments: Object.values(deploymentCounts).reduce((a, b) => a + b, 0),
+  };
+
+  const chartData = [
+    { name: "Active", value: summary.active },
+    { name: "Pending", value: summary.pending },
+    { name: "Revoked", value: summary.revoked },
+  ];
+
+  return { rows, summary, chartData };
+}
+
+async function fetchSshKeyExpiring(): Promise<ReportData> {
+  const now = new Date();
+  const { data: keys, error } = await supabase
+    .from("ssh_keys")
+    .select("*")
+    .eq("status", "active")
+    .not("expires_at", "is", null)
+    .order("expires_at", { ascending: true });
+
+  if (error) throw error;
+
+  const rows = (keys || [])
+    .map(k => {
+      const expiresAt = new Date(k.expires_at!);
+      const daysUntilExpiry = differenceInDays(expiresAt, now);
+      let urgency = "ok";
+      if (daysUntilExpiry <= 0) urgency = "expired";
+      else if (daysUntilExpiry <= 7) urgency = "critical";
+      else if (daysUntilExpiry <= 30) urgency = "warning";
+      else if (daysUntilExpiry <= 90) urgency = "info";
+      
+      return {
+        name: k.name,
+        key_type: k.key_type,
+        fingerprint: k.public_key_fingerprint,
+        expires_at: k.expires_at,
+        days_until_expiry: daysUntilExpiry,
+        urgency,
+        use_count: k.use_count || 0,
+      };
+    })
+    .filter(k => k.days_until_expiry <= 90);
+
+  const summary = {
+    total: rows.length,
+    expired: rows.filter(r => r.urgency === "expired").length,
+    critical: rows.filter(r => r.urgency === "critical").length,
+    warning: rows.filter(r => r.urgency === "warning").length,
+    info: rows.filter(r => r.urgency === "info").length,
+  };
+
+  const chartData = [
+    { name: "Expired", count: summary.expired },
+    { name: "Critical (≤7d)", count: summary.critical },
+    { name: "Warning (≤30d)", count: summary.warning },
+    { name: "Info (≤90d)", count: summary.info },
+  ];
+
+  return { rows, summary, chartData };
+}
+
+async function fetchSshKeyUnused(): Promise<ReportData> {
+  const now = new Date();
+  const { data: keys, error } = await supabase
+    .from("ssh_keys")
+    .select("*")
+    .eq("status", "active")
+    .order("last_used_at", { ascending: true, nullsFirst: true });
+
+  if (error) throw error;
+
+  const rows = (keys || []).map(k => {
+    const lastUsed = k.last_used_at ? new Date(k.last_used_at) : null;
+    const daysSinceUse = lastUsed ? differenceInDays(now, lastUsed) : null;
+    let status = "active";
+    if (!lastUsed) status = "never_used";
+    else if (daysSinceUse! > 90) status = "stale";
+    else if (daysSinceUse! > 30) status = "aging";
+
+    return {
+      name: k.name,
+      key_type: k.key_type,
+      fingerprint: k.public_key_fingerprint,
+      created_at: k.created_at,
+      last_used_at: k.last_used_at,
+      days_since_use: daysSinceUse,
+      use_count: k.use_count || 0,
+      usage_status: status,
+    };
+  });
+
+  const neverUsed = rows.filter(r => r.usage_status === "never_used");
+  const stale = rows.filter(r => r.usage_status === "stale");
+  const aging = rows.filter(r => r.usage_status === "aging");
+
+  const summary = {
+    total: rows.length,
+    neverUsed: neverUsed.length,
+    stale: stale.length,
+    aging: aging.length,
+    activelyUsed: rows.length - neverUsed.length - stale.length - aging.length,
+  };
+
+  const chartData = [
+    { name: "Never Used", value: summary.neverUsed },
+    { name: "Stale (>90d)", value: summary.stale },
+    { name: "Aging (>30d)", value: summary.aging },
+    { name: "Actively Used", value: summary.activelyUsed },
+  ];
+
+  return { rows, summary, chartData };
+}
+
+async function fetchSshKeyRevocation(dateRange: { start: Date; end: Date }): Promise<ReportData> {
+  const { data: keys, error } = await supabase
+    .from("ssh_keys")
+    .select("*")
+    .eq("status", "revoked")
+    .gte("revoked_at", dateRange.start.toISOString())
+    .lte("revoked_at", dateRange.end.toISOString())
+    .order("revoked_at", { ascending: false });
+
+  if (error) throw error;
+
+  // Fetch profiles for revoked_by
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("id, full_name, email");
+
+  const profileMap = (profiles || []).reduce((acc, p) => {
+    acc[p.id] = p.full_name || p.email;
+    return acc;
+  }, {} as Record<string, string>);
+
+  const rows = (keys || []).map(k => ({
+    name: k.name,
+    key_type: k.key_type,
+    fingerprint: k.public_key_fingerprint,
+    revoked_at: k.revoked_at,
+    revoked_by: k.revoked_by ? profileMap[k.revoked_by] || "Unknown" : "System",
+    revocation_reason: k.revocation_reason || "Not specified",
+    created_at: k.created_at,
+    lifetime_days: k.revoked_at && k.created_at
+      ? differenceInDays(new Date(k.revoked_at), new Date(k.created_at))
+      : null,
+  }));
+
+  // Group by day for chart
+  const byDay = rows.reduce((acc, r) => {
+    const day = format(new Date(r.revoked_at), "yyyy-MM-dd");
+    acc[day] = (acc[day] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
+  const summary = {
+    total: rows.length,
+    avgLifetimeDays: Math.round(
+      rows.filter(r => r.lifetime_days !== null)
+        .reduce((sum, r) => sum + (r.lifetime_days || 0), 0) / rows.length
+    ) || 0,
+  };
+
+  const chartData = Object.entries(byDay)
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  return { rows, summary, chartData };
+}
+
+async function fetchSshKeyUsage(): Promise<ReportData> {
+  const { data: keys, error } = await supabase
+    .from("ssh_keys")
+    .select("*")
+    .eq("status", "active")
+    .order("use_count", { ascending: false, nullsFirst: false });
+
+  if (error) throw error;
+
+  // Fetch deployments
+  const { data: deployments } = await supabase
+    .from("ssh_key_deployments")
+    .select("ssh_key_id, status, replication_target_id, zfs_template_id");
+
+  const deploymentCounts = (deployments || []).reduce((acc, d) => {
+    if (d.status === "deployed") {
+      acc[d.ssh_key_id] = (acc[d.ssh_key_id] || 0) + 1;
+    }
+    return acc;
+  }, {} as Record<string, number>);
+
+  const rows = (keys || []).map(k => ({
+    name: k.name,
+    key_type: k.key_type,
+    fingerprint: k.public_key_fingerprint,
+    use_count: k.use_count || 0,
+    last_used_at: k.last_used_at,
+    deployment_count: deploymentCounts[k.id] || 0,
+    avg_uses_per_deployment: deploymentCounts[k.id]
+      ? Math.round((k.use_count || 0) / deploymentCounts[k.id])
+      : 0,
+  }));
+
+  const totalUses = rows.reduce((sum, r) => sum + r.use_count, 0);
+  const totalDeployments = Object.values(deploymentCounts).reduce((a, b) => a + b, 0);
+
+  const summary = {
+    totalKeys: rows.length,
+    totalUses,
+    totalDeployments,
+    avgUsesPerKey: Math.round(totalUses / rows.length) || 0,
+  };
+
+  // Top 10 keys by usage for chart
+  const chartData = rows.slice(0, 10).map(k => ({
+    name: k.name.length > 15 ? k.name.slice(0, 15) + "..." : k.name,
+    uses: k.use_count,
+    deployments: k.deployment_count,
+  }));
+
+  return { rows, summary, chartData };
 }

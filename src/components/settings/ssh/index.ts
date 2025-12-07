@@ -4,3 +4,6 @@ export { SshKeyDetailsDialog } from './SshKeyDetailsDialog';
 export { SshKeyRevokeDialog } from './SshKeyRevokeDialog';
 export { SshKeyDeployDialog } from './SshKeyDeployDialog';
 export { SshKeyRotateWizard } from './SshKeyRotateWizard';
+export { SshKeyMigrationDialog } from './SshKeyMigrationDialog';
+export { SshKeyExpirationAlerts } from './SshKeyExpirationAlerts';
+export { SshKeyUsageStats } from './SshKeyUsageStats';
