@@ -164,12 +164,15 @@ export function useSshKeys() {
         throw new Error(ERROR_MESSAGES.KEY_GENERATION_FAILED);
       }
 
-      // Encrypt the private key
+      // Encrypt the private key - use 'ssh_key' type without ID to get encrypted value
       const { data: encryptedData, error: encryptError } = await supabase.functions.invoke('encrypt-credentials', {
-        body: { password: keyData.privateKey },
+        body: { 
+          password: keyData.privateKey,
+          type: 'ssh_key'  // Returns encrypted value without storing
+        },
       });
 
-      if (encryptError || !encryptedData) {
+      if (encryptError || !encryptedData?.encrypted) {
         await logAuditError('encrypt', encryptError, { name });
         throw new Error(ERROR_MESSAGES.ENCRYPTION_FAILED);
       }
