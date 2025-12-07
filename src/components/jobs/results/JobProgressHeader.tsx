@@ -185,7 +185,7 @@ export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
         {/* vCenter Sync Phase Progress */}
         {isVCenterSyncRunning && (
           <VCenterSyncProgress 
-            details={job.details} 
+            details={progress?.details || job.details} 
             currentStep={progress?.currentStep} 
           />
         )}
