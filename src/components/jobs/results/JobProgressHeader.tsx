@@ -2,8 +2,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { useJobProgress, formatElapsed } from "@/hooks/useJobProgress";
-import { Clock, Server, Database, Globe } from "lucide-react";
+import { Clock, Server, Database, Globe, Layers, HardDrive, Network, Monitor, AlertTriangle } from "lucide-react";
 import { useEffect, useState } from "react";
+import { VCenterSyncProgress } from "./VCenterSyncProgress";
 
 interface Job {
   id: string;
@@ -58,17 +59,20 @@ export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
     const scope = job.target_scope;
     const details = job.details;
 
-    // vCenter sync
-    if (job.job_type === 'vcenter_sync' && details?.vcenter_name) {
-      return (
-        <div className="flex items-center gap-2 text-sm">
-          <Database className="h-4 w-4 text-muted-foreground" />
-          <span className="font-medium">{details.vcenter_name}</span>
-          {details.vcenter_host && (
-            <span className="text-muted-foreground">({details.vcenter_host})</span>
-          )}
-        </div>
-      );
+    // vCenter sync - show more detail
+    if (job.job_type === 'vcenter_sync') {
+      const vcenterName = details?.vcenter_name || details?.vcenter_host;
+      if (vcenterName) {
+        return (
+          <div className="flex items-center gap-2 text-sm">
+            <Database className="h-4 w-4 text-muted-foreground" />
+            <span className="font-medium">{vcenterName}</span>
+            {details.vcenter_host && details.vcenter_name && (
+              <span className="text-muted-foreground">({details.vcenter_host})</span>
+            )}
+          </div>
+        );
+      }
     }
 
     // Discovery scan
@@ -105,6 +109,9 @@ export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
 
     return null;
   };
+
+  // Check if this is a vCenter sync job that's running
+  const isVCenterSyncRunning = job.job_type === 'vcenter_sync' && job.status === 'running';
 
   const getStatusColor = () => {
     switch (job.status) {
@@ -173,6 +180,14 @@ export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
               {job.status === 'running' ? 'Running for' : 'Completed in'} <span className="font-medium">{elapsed}</span>
             </span>
           </div>
+        )}
+
+        {/* vCenter Sync Phase Progress */}
+        {isVCenterSyncRunning && (
+          <VCenterSyncProgress 
+            details={job.details} 
+            currentStep={progress?.currentStep} 
+          />
         )}
       </CardContent>
     </Card>
