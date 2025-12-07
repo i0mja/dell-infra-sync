@@ -15,9 +15,10 @@ interface EncryptCredentialsRequest {
   openmanage_settings_id?: string;
   idm_settings_id?: string;
   template_id?: string;
+  ssh_key_id?: string;
   username?: string;
   password: string;
-  type: 'credential_set' | 'server' | 'vcenter' | 'openmanage' | 'activity_settings' | 'idm_settings' | 'idm_ad_bind' | 'zfs_template';
+  type: 'credential_set' | 'server' | 'vcenter' | 'openmanage' | 'activity_settings' | 'idm_settings' | 'idm_ad_bind' | 'zfs_template' | 'ssh_key' | 'return_only';
 }
 
 serve(async (req) => {
@@ -242,6 +243,28 @@ serve(async (req) => {
           .update({ ssh_key_encrypted: encryptedData })
           .eq('id', request.template_id);
         break;
+
+      case 'ssh_key':
+        // For SSH keys, store in the ssh_keys table or return encrypted value
+        if (!request.ssh_key_id) {
+          // If no ID provided, just return the encrypted value (for new keys)
+          return new Response(
+            JSON.stringify({ success: true, encrypted: encryptedData }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        updateResult = await supabaseAdmin
+          .from('ssh_keys')
+          .update({ private_key_encrypted: encryptedData })
+          .eq('id', request.ssh_key_id);
+        break;
+
+      case 'return_only':
+        // Just return the encrypted value without storing it
+        return new Response(
+          JSON.stringify({ success: true, encrypted: encryptedData }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
 
       default:
         return new Response(
