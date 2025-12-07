@@ -18,7 +18,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Trash2, Edit, Server, HardDrive, Cpu, MemoryStick, Network, Key, CheckCircle2, XCircle, Search, KeyRound, Copy, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Edit, Server, HardDrive, Cpu, MemoryStick, Network, Key, CheckCircle2, XCircle, Search, KeyRound, Copy, Loader2, ChevronDown, Terminal, AlertCircle, Info } from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useToast } from '@/hooks/use-toast';
 import { useZfsTemplates, ZfsTemplateFormData } from '@/hooks/useZfsTemplates';
 import { useQuery } from '@tanstack/react-query';
@@ -548,6 +549,23 @@ export function ZfsTemplateManagement() {
 
               <TabsContent value="ssh" className="space-y-4 mt-4">
                 <div className="grid gap-4">
+                  {/* Workflow Overview */}
+                  <div className="rounded-lg border bg-muted/30 p-4">
+                    <div className="flex items-start gap-2 mb-3">
+                      <Info className="h-4 w-4 mt-0.5 text-primary" />
+                      <div>
+                        <p className="font-medium text-sm">SSH Key Setup Workflow</p>
+                        <p className="text-xs text-muted-foreground">Follow these steps to enable secure SSH access to deployed ZFS targets</p>
+                      </div>
+                    </div>
+                    <ol className="text-xs text-muted-foreground space-y-1.5 ml-6 list-decimal">
+                      <li>Generate a new SSH key pair below (or use an existing one)</li>
+                      <li>Copy the public key and add it to your template VM</li>
+                      <li>Convert the VM to a template (if not already)</li>
+                      <li>Save this form - the private key will be encrypted and stored securely</li>
+                    </ol>
+                  </div>
+
                   <div className="grid gap-2">
                     <Label htmlFor="default_ssh_username" className="flex items-center gap-1">
                       <Key className="h-3 w-3" /> SSH Username
@@ -586,28 +604,74 @@ export function ZfsTemplateManagement() {
 
                     {/* Public Key Display */}
                     {generatedPublicKey && (
-                      <div className="space-y-2">
-                        <Label>Public Key (copy to template VM)</Label>
-                        <div className="relative">
-                          <Textarea
-                            readOnly
-                            value={generatedPublicKey}
-                            className="font-mono text-xs pr-12 bg-background"
-                            rows={3}
-                          />
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="absolute top-2 right-2"
-                            onClick={handleCopyPublicKey}
-                          >
-                            <Copy className="h-4 w-4" />
-                          </Button>
+                      <div className="space-y-3">
+                        <div className="space-y-2">
+                          <Label>Public Key</Label>
+                          <div className="relative">
+                            <Textarea
+                              readOnly
+                              value={generatedPublicKey}
+                              className="font-mono text-xs pr-12 bg-background"
+                              rows={3}
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="absolute top-2 right-2"
+                              onClick={handleCopyPublicKey}
+                            >
+                              <Copy className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            The <code className="bg-muted px-1 rounded">@{formData.name || 'zfs-target'}</code> at the end is just a label to identify this key - it's not an address.
+                          </p>
                         </div>
-                        <p className="text-xs text-amber-600 dark:text-amber-500">
-                          ⚠️ Add this to /home/zfsadmin/.ssh/authorized_keys on your template VM before converting to template
-                        </p>
+
+                        {/* Command Block */}
+                        <div className="space-y-2">
+                          <Label className="flex items-center gap-1">
+                            <Terminal className="h-3 w-3" /> Add to Template VM
+                          </Label>
+                          <div className="bg-background border rounded-md p-3 font-mono text-xs overflow-x-auto">
+                            <p className="text-muted-foreground mb-1"># Run these commands on your template VM as root:</p>
+                            <p>mkdir -p /home/{formData.default_ssh_username || 'zfsadmin'}/.ssh</p>
+                            <p>echo "{generatedPublicKey}" &gt;&gt; /home/{formData.default_ssh_username || 'zfsadmin'}/.ssh/authorized_keys</p>
+                            <p>chmod 700 /home/{formData.default_ssh_username || 'zfsadmin'}/.ssh</p>
+                            <p>chmod 600 /home/{formData.default_ssh_username || 'zfsadmin'}/.ssh/authorized_keys</p>
+                            <p>chown -R {formData.default_ssh_username || 'zfsadmin'}:{formData.default_ssh_username || 'zfsadmin'} /home/{formData.default_ssh_username || 'zfsadmin'}/.ssh</p>
+                          </div>
+                          <div className="flex items-start gap-2 p-2 rounded bg-amber-500/10 border border-amber-500/20">
+                            <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-500 mt-0.5 shrink-0" />
+                            <p className="text-xs text-amber-700 dark:text-amber-400">
+                              Add this key to the VM <strong>before</strong> converting it to a template
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Already Built Template Recovery */}
+                        <Collapsible>
+                          <CollapsibleTrigger className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors w-full">
+                            <ChevronDown className="h-3 w-3" />
+                            Already converted to a template?
+                          </CollapsibleTrigger>
+                          <CollapsibleContent className="pt-2">
+                            <div className="text-xs space-y-2 p-3 rounded-md bg-muted/50 border">
+                              <p className="font-medium">To add the key to an existing template:</p>
+                              <ol className="list-decimal ml-4 space-y-1 text-muted-foreground">
+                                <li>In vCenter, right-click the template → <strong>Convert to Virtual Machine</strong></li>
+                                <li>Power on the VM and connect via console or SSH (using existing credentials)</li>
+                                <li>Run the commands above to add the public key</li>
+                                <li>Shut down the VM</li>
+                                <li>Right-click the VM → <strong>Convert to Template</strong></li>
+                              </ol>
+                              <p className="text-muted-foreground mt-2">
+                                Alternatively, if you already have an SSH key that works with the template, paste its private key in the field below instead.
+                              </p>
+                            </div>
+                          </CollapsibleContent>
+                        </Collapsible>
                       </div>
                     )}
                   </div>
