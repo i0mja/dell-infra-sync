@@ -21,6 +21,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Server as ServerIcon,
   HardDrive,
   CheckCircle2,
@@ -56,8 +63,13 @@ export function DrShellVmWizard({
   const [memoryMb, setMemoryMb] = useState(4096);
   const [executing, setExecuting] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string; shell_vm_name?: string } | null>(null);
+  const [selectedDrVcenterId, setSelectedDrVcenterId] = useState<string | null>(null);
   
-  const { plan, loading: planLoading, fetchPlan, createDRShell } = useDRShellPlan(vm?.id);
+  const { plan, loading: planLoading, fetchPlan, createDRShell, vcenters } = useDRShellPlan(vm?.id);
+  
+  // Filter out source vCenter to show only DR targets
+  const sourceVcenterId = plan?.protection_group?.source_vcenter_id;
+  const drVcenterOptions = vcenters?.filter(vc => vc.id !== sourceVcenterId) || [];
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -65,6 +77,7 @@ export function DrShellVmWizard({
       setStep('analyze');
       setResult(null);
       setShellVmName(`${vm.vm_name}-DR`);
+      setSelectedDrVcenterId(null);
       fetchPlan();
     }
   }, [open, vm, fetchPlan]);
@@ -87,6 +100,7 @@ export function DrShellVmWizard({
         shell_vm_name: shellVmName,
         cpu_count: cpuCount,
         memory_mb: memoryMb,
+        dr_vcenter_id: selectedDrVcenterId || undefined,
       });
       setResult({ 
         success: true, 
@@ -202,23 +216,52 @@ export function DrShellVmWizard({
               <Cloud className="h-4 w-4 text-muted-foreground" />
               DR Site Target
             </h4>
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <span className="text-muted-foreground">vCenter:</span>
-                <span className="ml-2 font-medium">DR-vCenter</span>
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label>Select DR vCenter</Label>
+                <Select
+                  value={selectedDrVcenterId || ''}
+                  onValueChange={setSelectedDrVcenterId}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select DR vCenter..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {drVcenterOptions.length === 0 ? (
+                      <SelectItem value="_none" disabled>
+                        No DR vCenters available
+                      </SelectItem>
+                    ) : (
+                      drVcenterOptions.map(vc => (
+                        <SelectItem key={vc.id} value={vc.id}>
+                          <div className="flex items-center gap-2">
+                            <span>{vc.name}</span>
+                            {vc.host && (
+                              <span className="text-muted-foreground text-xs">({vc.host})</span>
+                            )}
+                            {vc.sync_enabled && (
+                              <Badge variant="outline" className="text-xs py-0">Enabled</Badge>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
               </div>
-              <div>
-                <span className="text-muted-foreground">Cluster:</span>
-                <span className="ml-2 font-medium">DR-Cluster</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Datastore:</span>
-                <span className="ml-2 font-medium">{vm?.target_datastore || 'DR-ZFS-Store'}</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Network:</span>
-                <span className="ml-2 font-medium">DR-Network</span>
-              </div>
+              
+              {selectedDrVcenterId && (
+                <div className="grid grid-cols-2 gap-4 text-sm pt-2">
+                  <div>
+                    <span className="text-muted-foreground">Datastore:</span>
+                    <span className="ml-2 font-medium">{vm?.target_datastore || 'Auto-select'}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Network:</span>
+                    <span className="ml-2 font-medium">Auto-mapped</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -227,10 +270,10 @@ export function DrShellVmWizard({
             <h4 className="font-medium">Pre-flight Checks</h4>
             <div className="space-y-2">
               {[
-                { name: 'DR vCenter accessible', passed: true },
+                { name: 'DR vCenter selected', passed: !!selectedDrVcenterId },
                 { name: 'Replicated disks available', passed: !!vm?.last_replication_at },
-                { name: 'Target cluster has capacity', passed: true },
-                { name: 'Network mapping configured', passed: true },
+                { name: 'Target cluster has capacity', passed: !!selectedDrVcenterId },
+                { name: 'Network mapping configured', passed: !!selectedDrVcenterId },
               ].map((check, i) => (
                 <div key={i} className="flex items-center gap-2 text-sm">
                   {check.passed ? (
@@ -395,7 +438,10 @@ export function DrShellVmWizard({
               <Button variant="outline" onClick={handleClose}>
                 Cancel
               </Button>
-              <Button onClick={() => setStep('configure')} disabled={planLoading}>
+              <Button 
+                onClick={() => setStep('configure')} 
+                disabled={planLoading || !selectedDrVcenterId}
+              >
                 Next
                 <ArrowRight className="h-4 w-4 ml-1" />
               </Button>

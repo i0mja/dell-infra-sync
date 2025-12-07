@@ -596,13 +596,19 @@ export function useDRShellPlan(protectedVmId?: string) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  // Fetch protected VM with protection group info
   const { data: plan, isLoading: loading, refetch: fetchPlan } = useQuery({
     queryKey: ['dr-shell-plan', protectedVmId],
     queryFn: async () => {
       if (!protectedVmId) return null;
       const { data, error } = await supabase
         .from('protected_vms')
-        .select('*')
+        .select(`
+          *,
+          protection_group:protection_groups(
+            id, name, source_vcenter_id, target_id, protection_datastore
+          )
+        `)
         .eq('id', protectedVmId)
         .single();
       if (error) throw error;
@@ -611,8 +617,21 @@ export function useDRShellPlan(protectedVmId?: string) {
     enabled: !!protectedVmId
   });
 
+  // Fetch all vCenters for DR site selection
+  const { data: vcenters } = useQuery({
+    queryKey: ['vcenters-for-dr'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('vcenters')
+        .select('id, name, host, sync_enabled')
+        .order('name');
+      if (error) throw error;
+      return data;
+    },
+  });
+
   // This operation requires Job Executor
-  const createDRShell = async (config: { shell_vm_name?: string; cpu_count?: number; memory_mb?: number }) => {
+  const createDRShell = async (config: { shell_vm_name?: string; cpu_count?: number; memory_mb?: number; dr_vcenter_id?: string }) => {
     if (!protectedVmId) return;
     
     try {
@@ -634,5 +653,5 @@ export function useDRShellPlan(protectedVmId?: string) {
     }
   };
 
-  return { plan, loading, fetchPlan, createDRShell };
+  return { plan, loading, fetchPlan, createDRShell, vcenters };
 }
