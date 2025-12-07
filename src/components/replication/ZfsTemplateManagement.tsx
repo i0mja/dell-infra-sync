@@ -50,7 +50,8 @@ const initialFormData: ZfsTemplateFormData = {
   default_zfs_disk_gb: 500,
   default_ssh_username: 'zfsadmin',
   ssh_key_id: '',
-  ssh_private_key: ''
+  ssh_private_key: '',
+  use_template_disk: false
 };
 
 export function ZfsTemplateManagement() {
@@ -217,7 +218,8 @@ export function ZfsTemplateManagement() {
         default_zfs_disk_gb: template.default_zfs_disk_gb,
         default_ssh_username: template.default_ssh_username,
         ssh_key_id: template.ssh_key_id || '',
-        ssh_private_key: ''
+        ssh_private_key: '',
+        use_template_disk: template.use_template_disk || false
       });
       // If template has linked key, show its public key
       if (template.ssh_key_id) {
@@ -576,8 +578,26 @@ export function ZfsTemplateManagement() {
                           min={50}
                           value={formData.default_zfs_disk_gb}
                           onChange={(e) => setFormData({ ...formData, default_zfs_disk_gb: parseInt(e.target.value) || 500 })}
+                          disabled={formData.use_template_disk}
                         />
                       </div>
+                    </div>
+
+                    {/* Use existing template disk toggle */}
+                    <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="use_template_disk" className="text-sm font-medium">
+                          Use existing template disk
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          Skip adding a new disk during deployment. Use if your template already has a dedicated data disk for ZFS.
+                        </p>
+                      </div>
+                      <Switch
+                        id="use_template_disk"
+                        checked={formData.use_template_disk || false}
+                        onCheckedChange={(checked) => setFormData({ ...formData, use_template_disk: checked })}
+                      />
                     </div>
                   </div>
                 )}

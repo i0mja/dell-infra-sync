@@ -40,6 +40,9 @@ export interface ZfsTargetTemplate {
   ssh_key_id?: string;           // Reference to centralized ssh_keys table (preferred)
   ssh_key_encrypted?: string;    // Legacy: direct encrypted key storage
   
+  // Disk configuration
+  use_template_disk?: boolean;   // Skip adding disk, use existing template disk
+  
   // Metadata
   is_active: boolean;
   created_by?: string;
@@ -67,6 +70,7 @@ export interface ZfsTemplateFormData {
   default_ssh_username?: string;
   ssh_key_id?: string;           // Reference to centralized SSH key
   ssh_private_key?: string;      // Legacy: for direct encryption
+  use_template_disk?: boolean;   // Skip adding disk, use existing template disk
 }
 
 export function useZfsTemplates() {
