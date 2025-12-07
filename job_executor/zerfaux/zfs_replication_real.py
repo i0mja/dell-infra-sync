@@ -648,6 +648,17 @@ class ZFSReplicationReal:
         
         return None
     
+    def _decrypt_password(self, encrypted: str) -> Optional[str]:
+        """Decrypt password using executor's credentials mixin"""
+        if not encrypted:
+            return None
+        
+        if self.executor and hasattr(self.executor, 'decrypt_password'):
+            return self.executor.decrypt_password(encrypted)
+        
+        # If not encrypted or no executor, return as-is
+        return encrypted
+    
     def _connect_vcenter(self, host: str, username: str, password: str,
                          port: int = 443, verify_ssl: bool = False) -> Optional[object]:
         """Connect to vCenter using pyVmomi"""
@@ -713,10 +724,20 @@ class ZFSReplicationReal:
                 'message': f'vCenter {dr_vcenter_id} not found'
             }
         
+        # Decrypt the password from password_encrypted column
+        password = self._decrypt_password(settings.get('password_encrypted'))
+        if not password:
+            return {
+                'success': False,
+                'vm_name': vm_name,
+                'error': 'Password decryption failed',
+                'message': 'Failed to decrypt vCenter password'
+            }
+        
         si = self._connect_vcenter(
             settings['host'],
             settings['username'],
-            settings.get('password'),
+            password,
             settings.get('port', 443),
             settings.get('verify_ssl', False)
         )
