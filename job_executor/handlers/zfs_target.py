@@ -285,13 +285,9 @@ class ZfsTargetHandler(BaseHandler):
         clone_spec.powerOn = False
         clone_spec.template = False
         
-        # Guest customization for hostname/IP
-        hostname = details.get('hostname', vm_name)
-        use_dhcp = details.get('use_dhcp', True)
-        
-        if hostname or not use_dhcp:
-            self._log_console(job_id, 'INFO', f'Applying guest customization (hostname: {hostname})', details)
-            clone_spec.customization = self._build_customization_spec(details)
+        # Skip VMware guest customization - hostname will be set via SSH
+        # (VMware customization requires Perl on the template which may not be present)
+        # Hostname and network config will be applied via SSH in _establish_ssh phase
         
         # Clone the VM
         self._log_console(job_id, 'INFO', f'Cloning template to: {vm_name}', details)
@@ -436,8 +432,21 @@ class ZfsTargetHandler(BaseHandler):
                 
                 # Verify connection
                 stdin, stdout, stderr = self.ssh_client.exec_command('hostname')
-                hostname = stdout.read().decode().strip()
-                self._log_console(job_id, 'INFO', f'SSH connected to: {hostname}', details)
+                current_hostname = stdout.read().decode().strip()
+                self._log_console(job_id, 'INFO', f'SSH connected to: {current_hostname}', details)
+                
+                # Set hostname via SSH (instead of VMware guest customization)
+                target_hostname = details.get('hostname', details.get('vm_name', ''))
+                if target_hostname and target_hostname != current_hostname:
+                    self._log_console(job_id, 'INFO', f'Setting hostname to: {target_hostname}', details)
+                    stdin, stdout, stderr = self.ssh_client.exec_command(f'sudo hostnamectl set-hostname {target_hostname}')
+                    exit_code = stdout.channel.recv_exit_status()
+                    if exit_code != 0:
+                        err = stderr.read().decode().strip()
+                        self._log_console(job_id, 'WARN', f'Failed to set hostname: {err}', details)
+                    else:
+                        self._log_console(job_id, 'INFO', f'Hostname set to: {target_hostname}', details)
+                
                 return
                 
             except Exception as e:
