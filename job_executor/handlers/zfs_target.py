@@ -111,15 +111,9 @@ class ZfsTargetHandler(BaseHandler):
             
             self._log_console(job_id, 'INFO', f'Fetching template configuration: {template_id}', job_details)
             
-            template_response = self.supabase.table('zfs_target_templates')\
-                .select('*')\
-                .eq('id', template_id)\
-                .execute()
-            
-            if not template_response.data or len(template_response.data) == 0:
+            template = self._fetch_template(template_id)
+            if not template:
                 raise Exception(f"Template not found in database: {template_id}. Please verify the template exists.")
-            
-            template = template_response.data[0]
             
             # Validate template has required fields
             if not template.get('vcenter_id'):
@@ -677,6 +671,31 @@ class ZfsTargetHandler(BaseHandler):
         
         # Also log to executor
         self.log(message, level)
+    
+    def _fetch_template(self, template_id: str) -> Optional[Dict]:
+        """Fetch ZFS target template from database using REST API."""
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+            }
+            
+            response = requests.get(
+                f'{DSM_URL}/rest/v1/zfs_target_templates',
+                params={'id': f'eq.{template_id}', 'select': '*'},
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=15
+            )
+            
+            if response.ok:
+                data = response.json()
+                if data and len(data) > 0:
+                    return data[0]
+            return None
+        except Exception as e:
+            self.log(f'Error fetching template: {e}', 'ERROR')
+            return None
     
     def _get_vcenter_settings(self, vcenter_id: str) -> Optional[Dict]:
         """Fetch vCenter connection settings from database."""
