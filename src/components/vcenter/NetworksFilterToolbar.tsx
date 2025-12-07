@@ -53,7 +53,7 @@ export function NetworksFilterToolbar({
   onGroupByNameChange,
 }: NetworksFilterToolbarProps) {
   return (
-    <div className="flex flex-wrap items-center gap-3">
+    <div className="flex items-center gap-3 px-4 py-3 border-b bg-muted/30">
       {/* Search */}
       <div className="relative flex-1 min-w-[200px] max-w-sm">
         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -61,13 +61,13 @@ export function NetworksFilterToolbar({
           placeholder="Search networks..."
           value={searchTerm}
           onChange={(e) => onSearchChange(e.target.value)}
-          className="pl-9"
+          className="pl-9 h-9"
         />
       </div>
 
       {/* Type Filter */}
       <Select value={typeFilter} onValueChange={onTypeFilterChange}>
-        <SelectTrigger className="w-[140px]">
+        <SelectTrigger className="w-[140px] h-9">
           <SelectValue placeholder="Type" />
         </SelectTrigger>
         <SelectContent>
@@ -79,7 +79,7 @@ export function NetworksFilterToolbar({
 
       {/* VLAN Filter */}
       <Select value={vlanFilter} onValueChange={onVlanFilterChange}>
-        <SelectTrigger className="w-[140px]">
+        <SelectTrigger className="w-[140px] h-9">
           <SelectValue placeholder="VLAN" />
         </SelectTrigger>
         <SelectContent>
