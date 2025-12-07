@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { 
   Server, 
   HardDrive, 
@@ -245,6 +246,25 @@ export const VCenterSyncResults = ({ details }: VCenterSyncResultsProps) => {
           </Badge>
         </div>
 
+        {/* Prominent error alert for failed vCenters */}
+        {vcenterResults.some(r => r?.status === 'failed') && (
+          <Alert variant="destructive">
+            <XCircle className="h-4 w-4" />
+            <AlertTitle>
+              {vcenterResults.filter(r => r?.status === 'failed').length} vCenter(s) Failed to Sync
+            </AlertTitle>
+            <AlertDescription className="mt-2 space-y-1">
+              {vcenterResults
+                .filter(r => r?.status === 'failed' && r?.error)
+                .map((r, idx) => (
+                  <div key={idx} className="text-sm">
+                    <strong>{r.vcenter_name || r.vcenter_host}:</strong> {r.error}
+                  </div>
+                ))}
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Aggregated totals */}
         <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
           <div className="text-center p-2 bg-muted/50 rounded">
@@ -280,21 +300,28 @@ export const VCenterSyncResults = ({ details }: VCenterSyncResultsProps) => {
             return (
               <AccordionItem key={result?.vcenter_id || index} value={`vcenter-${index}`}>
                 <AccordionTrigger className="hover:no-underline">
-                  <div className="flex items-center gap-3 w-full pr-4">
-                    <Database className="h-4 w-4 text-muted-foreground" />
-                    <span className="font-medium">
-                      {result?.vcenter_name || result?.vcenter_host || `vCenter ${index + 1}`}
-                    </span>
-                    <Badge 
-                      variant={isSuccess ? "secondary" : "destructive"} 
-                      className="ml-auto text-xs"
-                    >
-                      {isSuccess ? 'Success' : 'Failed'}
-                    </Badge>
-                    {result?.sync_duration_seconds && (
-                      <span className="text-xs text-muted-foreground">
-                        {result.sync_duration_seconds}s
+                  <div className="flex flex-col items-start w-full pr-4 gap-1">
+                    <div className="flex items-center gap-3 w-full">
+                      <Database className="h-4 w-4 text-muted-foreground" />
+                      <span className="font-medium">
+                        {result?.vcenter_name || result?.vcenter_host || `vCenter ${index + 1}`}
                       </span>
+                      <Badge 
+                        variant={isSuccess ? "secondary" : "destructive"} 
+                        className="ml-auto text-xs"
+                      >
+                        {isSuccess ? 'Success' : 'Failed'}
+                      </Badge>
+                      {result?.sync_duration_seconds && (
+                        <span className="text-xs text-muted-foreground">
+                          {result.sync_duration_seconds}s
+                        </span>
+                      )}
+                    </div>
+                    {!isSuccess && result?.error && (
+                      <p className="text-xs text-destructive text-left line-clamp-1 pl-7">
+                        {result.error}
+                      </p>
                     )}
                   </div>
                 </AccordionTrigger>
