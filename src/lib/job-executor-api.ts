@@ -221,6 +221,33 @@ export interface IdracJobsResponse {
   error?: string;
 }
 
+export interface JobExecutorStatusResponse {
+  status: string;
+  version: string;
+  polling: {
+    active: boolean;
+    poll_count: number;
+    jobs_processed: number;
+    last_poll_time: string | null;
+    last_poll_ago_seconds: number | null;
+    last_poll_error: string | null;
+  };
+  uptime_seconds: number;
+  startup_time: string | null;
+  api_server: {
+    running: boolean;
+    port: number | null;
+  };
+  media_server: {
+    running: boolean;
+  };
+  throttler: {
+    max_concurrent: number | null;
+    request_delay_ms: number | null;
+  };
+  operations_paused: boolean;
+}
+
 /**
  * Launch iDRAC console session
  */
@@ -408,6 +435,30 @@ export async function checkApiHealth(): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Get detailed Job Executor status including polling heartbeat
+ */
+export async function getJobExecutorStatus(): Promise<JobExecutorStatusResponse | null> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    
+    const response = await fetch(`${apiBaseUrl}/api/status`, {
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      return null;
+    }
+    
+    return await response.json();
+  } catch {
+    return null;
   }
 }
 

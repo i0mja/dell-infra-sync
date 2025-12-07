@@ -164,6 +164,13 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
         self.media_server = None  # Media HTTP server (ISOs + firmware)
         self.api_server = None  # API server for instant operations
         
+        # Polling heartbeat tracking for status endpoint
+        self.poll_count = 0  # Total polls since startup
+        self.jobs_processed = 0  # Total jobs processed since startup
+        self.last_poll_time = None  # Timestamp of last successful poll
+        self.last_poll_error = None  # Last error in polling loop (if any)
+        self.startup_time = datetime.now()  # When executor started
+        
         # Initialize job handlers
         self.idm_handler = IDMHandler(self)
         self.console_handler = ConsoleHandler(self)
@@ -1286,12 +1293,18 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
         try:
             while self.running:
                 try:
+                    # Update heartbeat tracking
+                    self.poll_count += 1
+                    self.last_poll_time = datetime.now()
+                    self.last_poll_error = None
+                    
                     # Process jobs from the queue (long-running operations only)
                     jobs = self.get_pending_jobs()
                     if jobs:
                         job = jobs[0]  # Process one job per cycle
                         self.log(f"Executing job {job['id']} ({job['job_type']})")
                         self.execute_job(job)
+                        self.jobs_processed += 1
                     
                     # Wait before next poll
                     time.sleep(POLL_INTERVAL)
@@ -1300,6 +1313,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
                     raise
                 except Exception as e:
                     self.log(f"Error in main loop: {e}", "ERROR")
+                    self.last_poll_error = str(e)
                     time.sleep(POLL_INTERVAL)
                     
         except KeyboardInterrupt:

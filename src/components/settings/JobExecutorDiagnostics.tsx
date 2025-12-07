@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, XCircle, Loader2, AlertCircle, ChevronDown, ChevronUp, Copy } from "lucide-react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { CheckCircle2, XCircle, Loader2, AlertCircle, ChevronDown, ChevronUp, Copy, Clock, Activity, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { testJobExecutorConnectivity, testCredentialAccess, testIdracReachability } from "@/lib/diagnostics";
+import { getJobExecutorStatus, JobExecutorStatusResponse } from "@/lib/job-executor-api";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
 interface DiagnosticTest {
@@ -20,6 +22,8 @@ interface DiagnosticTest {
 export function JobExecutorDiagnostics() {
   const { toast } = useToast();
   const [running, setRunning] = useState(false);
+  const [executorStatus, setExecutorStatus] = useState<JobExecutorStatusResponse | null>(null);
+  const [statusLoading, setStatusLoading] = useState(true);
   const [tests, setTests] = useState<DiagnosticTest[]>([
     {
       id: 'executor-ping',
@@ -41,6 +45,20 @@ export function JobExecutorDiagnostics() {
     }
   ]);
   const [expandedTests, setExpandedTests] = useState<Set<string>>(new Set());
+
+  // Fetch executor status on mount and periodically
+  const fetchStatus = async () => {
+    setStatusLoading(true);
+    const status = await getJobExecutorStatus();
+    setExecutorStatus(status);
+    setStatusLoading(false);
+  };
+
+  useEffect(() => {
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 10000); // Refresh every 10s
+    return () => clearInterval(interval);
+  }, []);
 
   const updateTest = (id: string, updates: Partial<DiagnosticTest>) => {
     setTests(prev => prev.map(test => 
@@ -222,12 +240,138 @@ export function JobExecutorDiagnostics() {
     }
   };
 
+  // Format uptime
+  const formatUptime = (seconds: number) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+  };
+
   const overallStatus = tests.every(t => t.status === 'success') ? 'online' :
                         tests.some(t => t.status === 'running') ? 'checking' :
                         tests.some(t => t.status === 'failed') ? 'offline' : 'unknown';
 
   return (
     <div className="space-y-4">
+      {/* Detailed Status Card */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-base">Job Executor Status</CardTitle>
+              {statusLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              ) : executorStatus ? (
+                <Badge variant="secondary" className="bg-success/10 text-success">
+                  <Wifi className="h-3 w-3 mr-1" />
+                  Connected
+                </Badge>
+              ) : (
+                <Badge variant="destructive">
+                  <WifiOff className="h-3 w-3 mr-1" />
+                  Unreachable
+                </Badge>
+              )}
+            </div>
+            <Button variant="ghost" size="sm" onClick={fetchStatus} disabled={statusLoading}>
+              <RefreshCw className={`h-4 w-4 ${statusLoading ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
+          <CardDescription>
+            Real-time status from the Job Executor's /api/status endpoint
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {executorStatus ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {/* Polling Status */}
+              <div className="space-y-1">
+                <div className="text-xs text-muted-foreground">Polling Loop</div>
+                <div className="flex items-center gap-2">
+                  {executorStatus.polling.active ? (
+                    <>
+                      <Activity className="h-4 w-4 text-success animate-pulse" />
+                      <span className="font-medium text-success">Active</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertCircle className="h-4 w-4 text-warning" />
+                      <span className="font-medium text-warning">Stale</span>
+                    </>
+                  )}
+                </div>
+                {executorStatus.polling.last_poll_ago_seconds !== null && (
+                  <div className="text-xs text-muted-foreground">
+                    Last poll: {executorStatus.polling.last_poll_ago_seconds}s ago
+                  </div>
+                )}
+              </div>
+
+              {/* Jobs Processed */}
+              <div className="space-y-1">
+                <div className="text-xs text-muted-foreground">Jobs Processed</div>
+                <div className="text-lg font-bold">{executorStatus.polling.jobs_processed}</div>
+                <div className="text-xs text-muted-foreground">
+                  {executorStatus.polling.poll_count} polls
+                </div>
+              </div>
+
+              {/* Uptime */}
+              <div className="space-y-1">
+                <div className="text-xs text-muted-foreground">Uptime</div>
+                <div className="flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-muted-foreground" />
+                  <span className="font-medium">{formatUptime(executorStatus.uptime_seconds)}</span>
+                </div>
+              </div>
+
+              {/* Operations Status */}
+              <div className="space-y-1">
+                <div className="text-xs text-muted-foreground">Operations</div>
+                {executorStatus.operations_paused ? (
+                  <Badge variant="destructive">Paused</Badge>
+                ) : (
+                  <Badge variant="secondary" className="bg-success/10 text-success">Running</Badge>
+                )}
+              </div>
+
+              {/* Show error if any */}
+              {executorStatus.polling.last_poll_error && (
+                <div className="col-span-full">
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      <strong>Last Poll Error:</strong> {executorStatus.polling.last_poll_error}
+                    </AlertDescription>
+                  </Alert>
+                </div>
+              )}
+
+              {/* Polling stale warning */}
+              {!executorStatus.polling.active && !executorStatus.polling.last_poll_error && (
+                <div className="col-span-full">
+                  <Alert>
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      <strong>Polling loop appears stale.</strong> The API server is responding, but the main job processing loop hasn't polled recently. 
+                      This usually means the executor process is stuck or needs to be restarted.
+                    </AlertDescription>
+                  </Alert>
+                </div>
+              )}
+            </div>
+          ) : (
+            <Alert variant="destructive">
+              <WifiOff className="h-4 w-4" />
+              <AlertDescription>
+                Cannot reach Job Executor. Ensure it's running and the URL is configured correctly in Settings → System.
+              </AlertDescription>
+            </Alert>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Status Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -238,10 +382,10 @@ export function JobExecutorDiagnostics() {
             'bg-muted'
           }`} />
           <span className="font-medium">
-            {overallStatus === 'online' ? 'Job Executor Online' :
+            {overallStatus === 'online' ? 'All Diagnostics Passed' :
              overallStatus === 'checking' ? 'Running Diagnostics...' :
              overallStatus === 'offline' ? 'Issues Detected' :
-             'Status Unknown'}
+             'Diagnostics Not Run'}
           </span>
         </div>
         <div className="flex gap-2">
