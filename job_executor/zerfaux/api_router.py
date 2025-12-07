@@ -842,11 +842,19 @@ class ZerfauxAPIRouter:
         targets = self._db_query('replication_targets', {'id': f"eq.{group.get('target_id')}"}) if group.get('target_id') else []
         target = targets[0] if targets else {}
         
+        # Prefer user-selected DR vCenter, fall back to target config
+        dr_vcenter_id = data.get('dr_vcenter_id') or target.get('dr_vcenter_id', '')
+        target_datastore = data.get('datastore_name') or target.get('zfs_pool', 'dr-pool')
+        
+        if not dr_vcenter_id:
+            handler._send_error('No DR vCenter specified. Please select a DR vCenter in the wizard.', 400)
+            return True
+        
         # Use stub to create shell VM
         result = self.zfs_replication.create_dr_shell_vm(
-            dr_vcenter_id=target.get('dr_vcenter_id', ''),
+            dr_vcenter_id=dr_vcenter_id,
             vm_name=shell_vm_name,
-            target_datastore=target.get('zfs_pool', 'dr-pool'),
+            target_datastore=target_datastore,
             cpu_count=data.get('cpu_count', 4),
             memory_mb=data.get('memory_mb', 8192),
             disk_paths=data.get('disk_paths', [])
