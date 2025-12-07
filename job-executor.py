@@ -98,6 +98,7 @@ from job_executor.config import (
 )
 from job_executor.connectivity import ConnectivityMixin
 from job_executor.scp import ScpMixin
+from job_executor.utils import utc_now_iso
 from job_executor.mixins.database import DatabaseMixin
 from job_executor.mixins.credentials import CredentialsMixin
 from job_executor.mixins.vcenter_ops import VCenterMixin
@@ -656,7 +657,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
                 'include_raid': 'RAID' in target or target == 'ALL',
                 'checksum': checksum,
                 'scp_checksum': checksum,
-                'exported_at': datetime.now().isoformat(),
+                'exported_at': utc_now_iso(),
                 'created_by': user_id,
                 'is_valid': True
             }
@@ -853,7 +854,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             self.update_job_status(
                 job['id'],
                 'cancelled',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={"message": "Job cancelled - iDRAC operations paused via activity settings"}
             )
             return
@@ -915,7 +916,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             self.update_job_status(
                 job['id'],
                 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={"error": f"Unsupported job type: {job_type}"}
             )
     
@@ -924,6 +925,19 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
     # Connectivity tests implemented in ConnectivityMixin
 
     # Connectivity test job implemented in ConnectivityMixin
+
+    def _add_console_log(self, job_id: str, level: str, message: str, current_details: Dict) -> Dict:
+        """Helper to add timestamped console log entry to job details."""
+        from datetime import datetime, timezone
+        timestamp = datetime.now(timezone.utc).strftime('%H:%M:%S')
+        log_entry = f"[{timestamp}] [{level}] {message}"
+        
+        console_log = current_details.get('console_log', [])
+        if not isinstance(console_log, list):
+            console_log = []
+        console_log.append(log_entry)
+        current_details['console_log'] = console_log
+        return current_details
 
     def execute_storage_vmotion(self, job: Dict):
         """
@@ -937,27 +951,104 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
         protected_vm_id = target_scope.get('protected_vm_id')
         target_datastore = details.get('target_datastore')
         
+        # Initialize job details with progress tracking
+        job_details = {
+            'progress_percent': 0,
+            'current_step': 'Initializing',
+            'console_log': []
+        }
+        
         if not protected_vm_id:
+            job_details = self._add_console_log(job_id, 'ERROR', 'No protected_vm_id specified', job_details)
             self.update_job_status(
                 job_id, 'failed',
-                completed_at=datetime.now().isoformat(),
-                details={'error': 'No protected_vm_id specified in target_scope'}
+                completed_at=utc_now_iso(),
+                details={**job_details, 'error': 'No protected_vm_id specified in target_scope', 'success': False}
             )
             return
         
         self.log(f"Starting storage vMotion for protected VM: {protected_vm_id}")
-        self.update_job_status(job_id, 'running', started_at=datetime.now().isoformat())
+        job_details = self._add_console_log(job_id, 'INFO', f'Starting storage vMotion for VM: {protected_vm_id}', job_details)
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso(), details=job_details)
+        
+        # Create tasks for tracking
+        task_ids = {}
+        task_phases = [
+            ('fetch_vm', 'Fetching protected VM details'),
+            ('fetch_group', 'Fetching protection group'),
+            ('connect_vcenter', 'Connecting to vCenter'),
+            ('relocate_vm', 'Relocating VM to target datastore'),
+            ('update_db', 'Updating database records')
+        ]
+        
+        for task_key, task_desc in task_phases:
+            try:
+                task_response = requests.post(
+                    f"{DSM_URL}/rest/v1/job_tasks",
+                    headers={
+                        'apikey': SERVICE_ROLE_KEY,
+                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=representation'
+                    },
+                    json={
+                        'job_id': job_id,
+                        'status': 'pending',
+                        'log': task_desc
+                    },
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+                if task_response.ok and task_response.json():
+                    task_ids[task_key] = task_response.json()[0]['id']
+            except Exception as te:
+                self.log(f"Failed to create task {task_key}: {te}", "WARN")
         
         start_time = time.time()
         source_datastore = None
         vm_name = None
         group_name = None
+        final_target = None
+        
+        def update_task(task_key: str, status: str, log_msg: str = None):
+            """Helper to update task status."""
+            if task_key not in task_ids:
+                return
+            try:
+                update_data = {'status': status}
+                if status == 'running':
+                    update_data['started_at'] = utc_now_iso()
+                elif status in ('completed', 'failed'):
+                    update_data['completed_at'] = utc_now_iso()
+                if log_msg:
+                    update_data['log'] = log_msg
+                
+                requests.patch(
+                    f"{DSM_URL}/rest/v1/job_tasks",
+                    headers={
+                        'apikey': SERVICE_ROLE_KEY,
+                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                        'Content-Type': 'application/json'
+                    },
+                    params={'id': f'eq.{task_ids[task_key]}'},
+                    json=update_data,
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+            except Exception as ue:
+                self.log(f"Failed to update task {task_key}: {ue}", "WARN")
         
         try:
             # Import Zerfaux router components
             from job_executor.zerfaux import VCenterInventory
             
-            # Get protected VM from database
+            # ===== PHASE 1: Fetch Protected VM =====
+            update_task('fetch_vm', 'running')
+            job_details['current_step'] = 'Fetching protected VM'
+            job_details['progress_percent'] = 10
+            job_details = self._add_console_log(job_id, 'INFO', 'Fetching protected VM from database...', job_details)
+            self.update_job_status(job_id, 'running', details=job_details)
+            
             headers = {
                 'apikey': SERVICE_ROLE_KEY,
                 'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
@@ -972,13 +1063,24 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             )
             
             if response.status_code != 200 or not response.json():
+                update_task('fetch_vm', 'failed', f'Protected VM not found: {protected_vm_id}')
                 raise Exception(f'Protected VM not found: {protected_vm_id}')
             
             vm = response.json()[0]
             vm_name = vm.get('vm_name', 'Unknown')
             source_datastore = vm.get('current_datastore')
             
-            # Get protection group
+            update_task('fetch_vm', 'completed', f'Found VM: {vm_name}')
+            job_details = self._add_console_log(job_id, 'INFO', f'Found VM: {vm_name} on datastore: {source_datastore}', job_details)
+            job_details['progress_percent'] = 20
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            # ===== PHASE 2: Fetch Protection Group =====
+            update_task('fetch_group', 'running')
+            job_details['current_step'] = 'Fetching protection group'
+            job_details = self._add_console_log(job_id, 'INFO', 'Fetching protection group...', job_details)
+            self.update_job_status(job_id, 'running', details=job_details)
+            
             group_response = requests.get(
                 f"{DSM_URL}/rest/v1/protection_groups",
                 headers=headers,
@@ -990,12 +1092,35 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             group = group_response.json()[0] if group_response.ok and group_response.json() else {}
             group_name = group.get('name')
             
+            update_task('fetch_group', 'completed', f'Found group: {group_name}')
+            job_details = self._add_console_log(job_id, 'INFO', f'Protection group: {group_name}', job_details)
+            job_details['progress_percent'] = 30
+            self.update_job_status(job_id, 'running', details=job_details)
+            
             # Determine target datastore
             final_target = target_datastore or group.get('protection_datastore')
             if not final_target:
+                update_task('fetch_group', 'failed', 'No target datastore specified')
                 raise Exception('No target datastore specified')
             
+            job_details = self._add_console_log(job_id, 'INFO', f'Target datastore: {final_target}', job_details)
+            
+            # ===== PHASE 3: Connect to vCenter =====
+            update_task('connect_vcenter', 'running')
+            job_details['current_step'] = 'Connecting to vCenter'
+            job_details['progress_percent'] = 40
+            job_details = self._add_console_log(job_id, 'INFO', 'Connecting to vCenter...', job_details)
+            self.update_job_status(job_id, 'running', details=job_details)
+            
             self.log(f"Relocating VM {vm_name} from {source_datastore} to {final_target}")
+            
+            # ===== PHASE 4: Relocate VM =====
+            update_task('connect_vcenter', 'completed', 'Connected to vCenter')
+            update_task('relocate_vm', 'running')
+            job_details['current_step'] = 'Relocating VM'
+            job_details['progress_percent'] = 50
+            job_details = self._add_console_log(job_id, 'INFO', f'Starting vMotion: {source_datastore} -> {final_target}', job_details)
+            self.update_job_status(job_id, 'running', details=job_details)
             
             # Use VCenterInventory to perform the relocation
             vcenter_inventory = VCenterInventory(self)
@@ -1008,6 +1133,18 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             duration_seconds = int(time.time() - start_time)
             
             if result.get('success'):
+                update_task('relocate_vm', 'completed', f'VM relocated in {duration_seconds}s')
+                job_details['progress_percent'] = 80
+                job_details = self._add_console_log(job_id, 'INFO', f'vMotion completed in {duration_seconds}s', job_details)
+                self.update_job_status(job_id, 'running', details=job_details)
+                
+                # ===== PHASE 5: Update Database =====
+                update_task('update_db', 'running')
+                job_details['current_step'] = 'Updating database'
+                job_details['progress_percent'] = 90
+                job_details = self._add_console_log(job_id, 'INFO', 'Updating database records...', job_details)
+                self.update_job_status(job_id, 'running', details=job_details)
+                
                 # Update protected VM in database
                 update_response = requests.patch(
                     f"{DSM_URL}/rest/v1/protected_vms",
@@ -1023,11 +1160,18 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
                     timeout=30
                 )
                 
+                update_task('update_db', 'completed', 'Database updated')
+                
                 self.log(f"VM {vm_name} successfully relocated to {final_target} in {duration_seconds}s")
+                job_details['current_step'] = 'Complete'
+                job_details['progress_percent'] = 100
+                job_details = self._add_console_log(job_id, 'INFO', f'SUCCESS: VM {vm_name} relocated to {final_target}', job_details)
+                
                 self.update_job_status(
                     job_id, 'completed',
-                    completed_at=datetime.now().isoformat(),
+                    completed_at=utc_now_iso(),
                     details={
+                        **job_details,
                         'message': result.get('message', 'VM relocated successfully'),
                         'vm_name': vm_name,
                         'source_datastore': source_datastore,
@@ -1038,19 +1182,32 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
                     }
                 )
             else:
+                update_task('relocate_vm', 'failed', result.get('message', 'Storage vMotion failed'))
                 raise Exception(result.get('message', 'Storage vMotion failed'))
                 
         except Exception as e:
             duration_seconds = int(time.time() - start_time)
             self.log(f"Storage vMotion failed: {e}", "ERROR")
+            job_details = self._add_console_log(job_id, 'ERROR', f'FAILED: {str(e)}', job_details)
+            job_details['current_step'] = 'Failed'
+            
+            # Mark remaining tasks as failed
+            for task_key in task_ids:
+                try:
+                    # Check if task was already completed
+                    update_task(task_key, 'failed', f'Job failed: {str(e)}')
+                except:
+                    pass
+            
             self.update_job_status(
                 job_id, 'failed',
-                completed_at=datetime.now().isoformat(),
+                completed_at=utc_now_iso(),
                 details={
+                    **job_details,
                     'error': str(e),
                     'vm_name': vm_name,
                     'source_datastore': source_datastore,
-                    'target_datastore': target_datastore,
+                    'target_datastore': final_target or target_datastore,
                     'protection_group_name': group_name,
                     'duration_seconds': duration_seconds,
                     'success': False
