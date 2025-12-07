@@ -18,6 +18,7 @@ export interface VCenterVM {
   overall_status: string | null;
   notes: string | null;
   last_sync: string | null;
+  is_template: boolean | null;
 }
 
 export interface VCenterCluster {

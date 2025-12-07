@@ -16,6 +16,7 @@ import {
   ArrowDown,
   HardDrive,
   X,
+  FileBox,
 } from "lucide-react";
 import type { VCenterVM } from "@/hooks/useVCenterData";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
@@ -198,7 +199,15 @@ export function VMsTable({
     setViewName("");
   };
 
-  const getPowerStateBadge = (state: string | null) => {
+  const getPowerStateBadge = (state: string | null, isTemplate: boolean | null) => {
+    if (isTemplate) {
+      return (
+        <Badge variant="outline" className="text-primary border-primary text-xs">
+          <FileBox className="mr-1 h-3 w-3" />
+          Template
+        </Badge>
+      );
+    }
     switch (state?.toLowerCase()) {
       case "poweredon":
         return (
@@ -219,6 +228,13 @@ export function VMsTable({
           <Badge variant="outline" className="text-warning text-xs">
             <Loader2 className="mr-1 h-3 w-3" />
             Suspended
+          </Badge>
+        );
+      case "template":
+        return (
+          <Badge variant="outline" className="text-primary border-primary text-xs">
+            <FileBox className="mr-1 h-3 w-3" />
+            Template
           </Badge>
         );
       default:
@@ -381,7 +397,7 @@ export function VMsTable({
                         />
                       </TableCell>
                       {isColVisible("name") && <TableCell className="py-1.5 px-2 font-medium text-xs truncate max-w-[160px]">{vm.name}</TableCell>}
-                      {isColVisible("power") && <TableCell className="py-1.5 px-2">{getPowerStateBadge(vm.power_state)}</TableCell>}
+                      {isColVisible("power") && <TableCell className="py-1.5 px-2">{getPowerStateBadge(vm.power_state, vm.is_template)}</TableCell>}
                       {isColVisible("ip") && (
                         <TableCell className="py-1.5 px-2 font-mono text-xs">{vm.ip_address || "N/A"}</TableCell>
                       )}
