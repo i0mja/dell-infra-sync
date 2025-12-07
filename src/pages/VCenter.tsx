@@ -795,7 +795,7 @@ export default function VCenter() {
             />
           )}
 
-          <TabsContent value="hosts" className="flex-1 mt-0 overflow-hidden">
+          <TabsContent value="hosts" className="flex-1 mt-0 flex flex-col overflow-hidden min-h-0">
             <HostsTable
               clusterGroups={clusterGroups}
               selectedHostId={selectedHostId}
@@ -818,7 +818,7 @@ export default function VCenter() {
             />
           </TabsContent>
 
-          <TabsContent value="vms" className="flex-1 mt-0 overflow-hidden">
+          <TabsContent value="vms" className="flex-1 mt-0 flex flex-col overflow-hidden min-h-0">
             <VMsTable
               vms={vms}
               selectedVmId={selectedVmId}
@@ -833,7 +833,7 @@ export default function VCenter() {
             />
           </TabsContent>
 
-          <TabsContent value="clusters" className="flex-1 mt-0 overflow-hidden">
+          <TabsContent value="clusters" className="flex-1 mt-0 flex flex-col overflow-hidden min-h-0">
             <ClustersTable
               clusters={clusters}
               selectedClusterId={selectedClusterId}
@@ -847,7 +847,7 @@ export default function VCenter() {
             />
           </TabsContent>
 
-          <TabsContent value="datastores" className="flex-1 mt-0 overflow-hidden">
+          <TabsContent value="datastores" className="flex-1 mt-0 flex flex-col overflow-hidden min-h-0">
             <DatastoresTable
               datastores={datastores}
               selectedDatastoreId={selectedDatastoreId}
@@ -861,7 +861,7 @@ export default function VCenter() {
             />
           </TabsContent>
 
-          <TabsContent value="networks" className="flex-1 mt-0 overflow-auto">
+          <TabsContent value="networks" className="flex-1 mt-0 flex flex-col overflow-auto min-h-0">
             <NetworksTable
               networks={networks}
               selectedNetworkId={selectedNetworkId}
@@ -876,11 +876,11 @@ export default function VCenter() {
             />
           </TabsContent>
 
-          <TabsContent value="esxi-profiles" className="flex-1 mt-0 p-6 overflow-auto">
+          <TabsContent value="esxi-profiles" className="flex-1 mt-0 flex flex-col p-6 overflow-auto min-h-0">
             <EsxiProfilesTab />
           </TabsContent>
 
-          <TabsContent value="replication" className="flex-1 mt-0 flex flex-col overflow-hidden">
+          <TabsContent value="replication" className="flex-1 mt-0 flex flex-col overflow-hidden min-h-0">
             <DrReplicationTab />
           </TabsContent>
         </Tabs>
