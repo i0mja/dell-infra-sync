@@ -376,14 +376,14 @@ export function DrShellVmWizard({
                       <Skeleton className="h-10 w-full" />
                     ) : (
                       <Select
-                        value={networkName || ''}
-                        onValueChange={setNetworkName}
+                        value={networkName || '_default'}
+                        onValueChange={(val) => setNetworkName(val === '_default' ? '' : val)}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Select network (optional)..." />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="">
+                          <SelectItem value="_default">
                             <span className="text-muted-foreground">Use default network</span>
                           </SelectItem>
                           {sortedNetworks.length === 0 ? (
