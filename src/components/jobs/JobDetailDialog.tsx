@@ -186,7 +186,11 @@ export const JobDetailDialog = ({
       running: "default",
       pending: "outline"
     };
-    return;
+    return (
+      <Badge variant={variants[status] || "outline"}>
+        {status.charAt(0).toUpperCase() + status.slice(1)}
+      </Badge>
+    );
   };
   const validationErrors = job.details?.validation_errors;
   const formatValidationErrors = () => {
