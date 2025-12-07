@@ -3711,6 +3711,99 @@ export type Database = {
           },
         ]
       }
+      zfs_target_templates: {
+        Row: {
+          created_at: string | null
+          created_by: string | null
+          default_cluster: string | null
+          default_cpu_count: number | null
+          default_datacenter: string | null
+          default_datastore: string | null
+          default_memory_gb: number | null
+          default_network: string | null
+          default_nfs_network: string | null
+          default_resource_pool: string | null
+          default_ssh_username: string | null
+          default_zfs_disk_gb: number | null
+          default_zfs_disk_path: string | null
+          default_zfs_pool_name: string | null
+          description: string | null
+          id: string
+          is_active: boolean | null
+          name: string
+          ssh_key_encrypted: string | null
+          template_moref: string
+          template_name: string
+          updated_at: string | null
+          vcenter_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          created_by?: string | null
+          default_cluster?: string | null
+          default_cpu_count?: number | null
+          default_datacenter?: string | null
+          default_datastore?: string | null
+          default_memory_gb?: number | null
+          default_network?: string | null
+          default_nfs_network?: string | null
+          default_resource_pool?: string | null
+          default_ssh_username?: string | null
+          default_zfs_disk_gb?: number | null
+          default_zfs_disk_path?: string | null
+          default_zfs_pool_name?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          name: string
+          ssh_key_encrypted?: string | null
+          template_moref: string
+          template_name: string
+          updated_at?: string | null
+          vcenter_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string | null
+          default_cluster?: string | null
+          default_cpu_count?: number | null
+          default_datacenter?: string | null
+          default_datastore?: string | null
+          default_memory_gb?: number | null
+          default_network?: string | null
+          default_nfs_network?: string | null
+          default_resource_pool?: string | null
+          default_ssh_username?: string | null
+          default_zfs_disk_gb?: number | null
+          default_zfs_disk_path?: string | null
+          default_zfs_pool_name?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          ssh_key_encrypted?: string | null
+          template_moref?: string
+          template_name?: string
+          updated_at?: string | null
+          vcenter_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "zfs_target_templates_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "zfs_target_templates_vcenter_id_fkey"
+            columns: ["vcenter_id"]
+            isOneToOne: false
+            referencedRelation: "vcenter_settings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -3812,6 +3905,7 @@ export type Database = {
         | "idrac_network_read"
         | "idrac_network_write"
         | "storage_vmotion"
+        | "deploy_zfs_target"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -3994,6 +4088,7 @@ export const Constants = {
         "idrac_network_read",
         "idrac_network_write",
         "storage_vmotion",
+        "deploy_zfs_target",
       ],
       operation_type: [
         "idrac_api",

@@ -15,6 +15,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { 
   Target, 
@@ -24,14 +30,20 @@ import {
   XCircle,
   AlertCircle,
   HardDrive,
-  Server
+  Server,
+  Rocket,
+  ChevronDown
 } from "lucide-react";
 import { useReplicationTargets } from "@/hooks/useReplication";
+import { useZfsTemplates } from "@/hooks/useZfsTemplates";
 import { formatDistanceToNow } from "date-fns";
+import { DeployZfsTargetWizard } from "./DeployZfsTargetWizard";
 
 export function ReplicationTargetsPanel() {
   const { targets, loading, createTarget, deleteTarget, refetch } = useReplicationTargets();
+  const { templates } = useZfsTemplates();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showDeployWizard, setShowDeployWizard] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
     description: "",
@@ -42,6 +54,8 @@ export function ReplicationTargetsPanel() {
     ssh_username: ""
   });
   const [creating, setCreating] = useState(false);
+  
+  const hasTemplates = templates.length > 0;
 
   const handleCreate = async () => {
     if (!formData.name.trim() || !formData.hostname.trim() || !formData.zfs_pool.trim()) return;
@@ -122,13 +136,20 @@ export function ReplicationTargetsPanel() {
               DR sites with ZFS storage for replicated data
             </CardDescription>
           </div>
-          <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="h-4 w-4 mr-1" />
-                Add Target
+          <div className="flex gap-2">
+            {hasTemplates && (
+              <Button variant="outline" onClick={() => setShowDeployWizard(true)}>
+                <Rocket className="h-4 w-4 mr-1" />
+                Deploy from Template
               </Button>
-            </DialogTrigger>
+            )}
+            <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="h-4 w-4 mr-1" />
+                  Add Target
+                </Button>
+              </DialogTrigger>
             <DialogContent className="max-w-lg">
               <DialogHeader>
                 <DialogTitle>Add Replication Target</DialogTitle>
@@ -221,8 +242,19 @@ export function ReplicationTargetsPanel() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
       </CardHeader>
+      
+      {/* Deploy from Template Wizard */}
+      <DeployZfsTargetWizard 
+        open={showDeployWizard} 
+        onOpenChange={setShowDeployWizard}
+        onSuccess={() => {
+          refetch();
+          setShowDeployWizard(false);
+        }}
+      />
       <CardContent>
         {loading ? (
           <div className="space-y-2">
