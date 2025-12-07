@@ -72,19 +72,19 @@ export function DatastoresFilterToolbar({
 
   return (
     <>
-      <div className="flex items-center gap-3 px-4 py-3 border-b bg-muted/30">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-muted/30">
+        <div className="relative flex-1 max-w-[160px]">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
             placeholder="Search datastores..."
             value={searchTerm}
             onChange={(e) => onSearchChange(e.target.value)}
-            className="pl-9 h-9"
+            className="pl-8 h-7 text-xs"
           />
         </div>
 
         <Select value={typeFilter} onValueChange={onTypeFilterChange}>
-          <SelectTrigger className="w-[140px] h-9">
+          <SelectTrigger className="w-[90px] h-7 text-xs">
             <SelectValue placeholder="Type" />
           </SelectTrigger>
           <SelectContent>
@@ -97,8 +97,8 @@ export function DatastoresFilterToolbar({
         </Select>
 
         <Select value={accessFilter} onValueChange={onAccessFilterChange}>
-          <SelectTrigger className="w-[140px] h-9">
-            <SelectValue placeholder="Accessible" />
+          <SelectTrigger className="w-[100px] h-7 text-xs">
+            <SelectValue placeholder="Access" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All</SelectItem>
@@ -108,28 +108,28 @@ export function DatastoresFilterToolbar({
         </Select>
 
         <Select value={capacityFilter} onValueChange={onCapacityFilterChange}>
-          <SelectTrigger className="w-[140px] h-9">
+          <SelectTrigger className="w-[100px] h-7 text-xs">
             <SelectValue placeholder="Capacity" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Capacities</SelectItem>
-            <SelectItem value="critical">&gt;90% Full</SelectItem>
-            <SelectItem value="warning">&gt;75% Full</SelectItem>
-            <SelectItem value="healthy">&lt;75% Full</SelectItem>
+            <SelectItem value="all">All</SelectItem>
+            <SelectItem value="critical">&gt;90%</SelectItem>
+            <SelectItem value="warning">&gt;75%</SelectItem>
+            <SelectItem value="healthy">&lt;75%</SelectItem>
           </SelectContent>
         </Select>
 
         <div className="flex-1" />
 
         {selectedCount > 0 && (
-          <span className="text-sm text-muted-foreground">{selectedCount} selected</span>
+          <span className="text-xs text-muted-foreground">{selectedCount} sel</span>
         )}
 
         {onToggleColumn && visibleColumns && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">
-                <Columns3 className="mr-1 h-4 w-4" /> Columns
+              <Button variant="outline" size="sm" className="h-7 w-7 p-0">
+                <Columns3 className="h-3.5 w-3.5" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
@@ -164,14 +164,14 @@ export function DatastoresFilterToolbar({
         )}
 
         {onExport && (
-          <Button variant="outline" size="sm" onClick={onExport}>
-            <Download className="mr-1 h-4 w-4" /> Export
+          <Button variant="outline" size="sm" className="h-7 w-7 p-0" onClick={onExport}>
+            <Download className="h-3.5 w-3.5" />
           </Button>
         )}
 
         {onSaveView && (
-          <Button variant="outline" size="sm" onClick={() => setSaveDialogOpen(true)}>
-            <Save className="mr-1 h-4 w-4" /> Save View
+          <Button variant="outline" size="sm" className="h-7 w-7 p-0" onClick={() => setSaveDialogOpen(true)}>
+            <Save className="h-3.5 w-3.5" />
           </Button>
         )}
       </div>

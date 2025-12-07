@@ -296,67 +296,67 @@ export function VMsTable({
               <Table>
                 <TableHeader className="sticky top-0 bg-muted z-10">
                   <TableRow>
-                    <TableHead className="w-12">
+                    <TableHead className="w-10 px-2">
                       <Checkbox checked={selectedVms.size === filteredVms.length} onCheckedChange={toggleAllVms} />
                     </TableHead>
                     {isColVisible("name") && (
-                      <TableHead className="w-[250px] cursor-pointer" onClick={() => handleSort("name")}>
+                      <TableHead className="w-[180px] px-2 cursor-pointer text-xs" onClick={() => handleSort("name")}>
                         <div className="flex items-center">
-                          VM Name {getSortIcon("name")}
+                          VM {getSortIcon("name")}
                         </div>
                       </TableHead>
                     )}
                     {isColVisible("power") && (
-                      <TableHead className="w-[120px] cursor-pointer" onClick={() => handleSort("power_state")}>
+                      <TableHead className="w-[80px] px-2 cursor-pointer text-xs" onClick={() => handleSort("power_state")}>
                         <div className="flex items-center">
                           Power {getSortIcon("power_state")}
                         </div>
                       </TableHead>
                     )}
                     {isColVisible("ip") && (
-                      <TableHead className="w-[140px] cursor-pointer" onClick={() => handleSort("ip_address")}>
+                      <TableHead className="w-[110px] px-2 cursor-pointer text-xs" onClick={() => handleSort("ip_address")}>
                         <div className="flex items-center">
-                          IP Address {getSortIcon("ip_address")}
+                          IP {getSortIcon("ip_address")}
                         </div>
                       </TableHead>
                     )}
                     {isColVisible("resources") && (
-                      <TableHead className="w-[60px] cursor-pointer" onClick={() => handleSort("cpu_count")}>
+                      <TableHead className="w-[50px] px-2 cursor-pointer text-xs" onClick={() => handleSort("cpu_count")}>
                         <div className="flex items-center">
                           CPU {getSortIcon("cpu_count")}
                         </div>
                       </TableHead>
                     )}
                     {isColVisible("resources") && (
-                      <TableHead className="w-[70px] cursor-pointer" onClick={() => handleSort("memory_mb")}>
+                      <TableHead className="w-[55px] px-2 cursor-pointer text-xs" onClick={() => handleSort("memory_mb")}>
                         <div className="flex items-center">
                           RAM {getSortIcon("memory_mb")}
                         </div>
                       </TableHead>
                     )}
                     {isColVisible("disk") && (
-                      <TableHead className="w-[80px] cursor-pointer" onClick={() => handleSort("disk_gb")}>
+                      <TableHead className="w-[60px] px-2 cursor-pointer text-xs" onClick={() => handleSort("disk_gb")}>
                         <div className="flex items-center">
-                          Disk (GB) {getSortIcon("disk_gb")}
+                          Disk {getSortIcon("disk_gb")}
                         </div>
                       </TableHead>
                     )}
                     {isColVisible("os") && (
-                      <TableHead className="w-[180px] cursor-pointer" onClick={() => handleSort("guest_os")}>
+                      <TableHead className="w-[140px] px-2 cursor-pointer text-xs" onClick={() => handleSort("guest_os")}>
                         <div className="flex items-center">
-                          Guest OS {getSortIcon("guest_os")}
+                          OS {getSortIcon("guest_os")}
                         </div>
                       </TableHead>
                     )}
                     {isColVisible("tools") && (
-                      <TableHead className="w-[120px] cursor-pointer" onClick={() => handleSort("tools_status")}>
+                      <TableHead className="w-[80px] px-2 cursor-pointer text-xs" onClick={() => handleSort("tools_status")}>
                         <div className="flex items-center">
                           Tools {getSortIcon("tools_status")}
                         </div>
                       </TableHead>
                     )}
                     {isColVisible("cluster") && (
-                      <TableHead className="w-[140px] cursor-pointer" onClick={() => handleSort("cluster_name")}>
+                      <TableHead className="w-[100px] px-2 cursor-pointer text-xs" onClick={() => handleSort("cluster_name")}>
                         <div className="flex items-center">
                           Cluster {getSortIcon("cluster_name")}
                         </div>
@@ -373,34 +373,34 @@ export function VMsTable({
                       } group`}
                       onClick={() => onVmClick(vm)}
                     >
-                      <TableCell>
+                      <TableCell className="py-1.5 px-2">
                         <Checkbox
                           checked={selectedVms.has(vm.id)}
                           onCheckedChange={() => toggleVmSelection(vm.id)}
                           onClick={(e) => e.stopPropagation()}
                         />
                       </TableCell>
-                      {isColVisible("name") && <TableCell className="font-medium">{vm.name}</TableCell>}
-                      {isColVisible("power") && <TableCell>{getPowerStateBadge(vm.power_state)}</TableCell>}
+                      {isColVisible("name") && <TableCell className="py-1.5 px-2 font-medium text-xs truncate max-w-[160px]">{vm.name}</TableCell>}
+                      {isColVisible("power") && <TableCell className="py-1.5 px-2">{getPowerStateBadge(vm.power_state)}</TableCell>}
                       {isColVisible("ip") && (
-                        <TableCell className="text-sm font-mono text-xs">{vm.ip_address || "N/A"}</TableCell>
+                        <TableCell className="py-1.5 px-2 font-mono text-xs">{vm.ip_address || "N/A"}</TableCell>
                       )}
                       {isColVisible("resources") && (
-                        <TableCell className="text-sm">{vm.cpu_count || 0}</TableCell>
+                        <TableCell className="py-1.5 px-2 text-xs">{vm.cpu_count || 0}</TableCell>
                       )}
                       {isColVisible("resources") && (
-                        <TableCell className="text-sm">{vm.memory_mb ? Math.round(vm.memory_mb / 1024) : 0}GB</TableCell>
+                        <TableCell className="py-1.5 px-2 text-xs">{vm.memory_mb ? Math.round(vm.memory_mb / 1024) : 0}G</TableCell>
                       )}
                       {isColVisible("disk") && (
-                        <TableCell className="text-sm">{vm.disk_gb ? vm.disk_gb.toFixed(0) : "0"}</TableCell>
+                        <TableCell className="py-1.5 px-2 text-xs">{vm.disk_gb ? vm.disk_gb.toFixed(0) : "0"}</TableCell>
                       )}
                       {isColVisible("os") && (
-                        <TableCell className="text-sm">
-                          <TruncatedCell value={vm.guest_os || "Unknown"} maxWidth="180px" />
+                        <TableCell className="py-1.5 px-2 text-xs">
+                          <TruncatedCell value={vm.guest_os || "Unknown"} maxWidth="120px" />
                         </TableCell>
                       )}
-                      {isColVisible("tools") && <TableCell>{getToolsStatusBadge(vm.tools_status)}</TableCell>}
-                      {isColVisible("cluster") && <TableCell className="text-sm">{vm.cluster_name || "N/A"}</TableCell>}
+                      {isColVisible("tools") && <TableCell className="py-1.5 px-2">{getToolsStatusBadge(vm.tools_status)}</TableCell>}
+                      {isColVisible("cluster") && <TableCell className="py-1.5 px-2 text-xs">{vm.cluster_name || "N/A"}</TableCell>}
                     </TableRow>
                   ))}
                 </TableBody>

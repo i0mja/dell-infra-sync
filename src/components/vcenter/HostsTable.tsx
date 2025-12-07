@@ -317,17 +317,17 @@ export function HostsTable({
     <div className="flex flex-col h-full bg-background">
       {/* Selection info */}
       {selectedHosts.size > 0 && (
-        <div className="flex items-center gap-2 px-4 py-2 border-b bg-muted/30">
-          <span className="text-sm text-muted-foreground">{selectedHosts.size} selected</span>
-          <Button variant="ghost" size="sm" onClick={handleSyncSelected}>
-            <RefreshCcw className="h-3.5 w-3.5 mr-1" />
-            Sync Selected
+        <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-muted/30">
+          <span className="text-xs text-muted-foreground">{selectedHosts.size} sel</span>
+          <Button variant="ghost" size="sm" className="h-6 text-xs px-2" onClick={handleSyncSelected}>
+            <RefreshCcw className="h-3 w-3 mr-1" />
+            Sync
           </Button>
           {onBulkDelete && (
-            <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive"
+            <Button variant="ghost" size="sm" className="h-6 text-xs px-2 text-destructive hover:text-destructive"
               onClick={() => onBulkDelete(Array.from(selectedHosts))}>
-              <Trash2 className="h-3.5 w-3.5 mr-1" />
-              Remove ({selectedHosts.size})
+              <Trash2 className="h-3 w-3 mr-1" />
+              Remove
             </Button>
           )}
         </div>
@@ -338,48 +338,48 @@ export function HostsTable({
         <Table>
           <TableHeader className="sticky top-0 bg-muted z-10">
             <TableRow>
-              <TableHead className="w-12">
+              <TableHead className="w-10 px-2">
                 <Checkbox checked={selectedHosts.size === allHosts.length} onCheckedChange={toggleAllHosts} />
               </TableHead>
               {isColumnVisible("name") && (
-                <TableHead className="w-[280px] cursor-pointer" onClick={() => handleSort("name")}>
+                <TableHead className="w-[200px] px-2 cursor-pointer text-xs" onClick={() => handleSort("name")}>
                   <div className="flex items-center">
                     Hostname {getSortIcon("name")}
                   </div>
                 </TableHead>
               )}
               {isColumnVisible("status") && (
-                <TableHead className="w-[140px] cursor-pointer" onClick={() => handleSort("status")}>
+                <TableHead className="w-[100px] px-2 cursor-pointer text-xs" onClick={() => handleSort("status")}>
                   <div className="flex items-center">
                     Status {getSortIcon("status")}
                   </div>
                 </TableHead>
               )}
               {isColumnVisible("esxi") && (
-                <TableHead className="w-[120px] cursor-pointer" onClick={() => handleSort("esxi_version")}>
+                <TableHead className="w-[100px] px-2 cursor-pointer text-xs" onClick={() => handleSort("esxi_version")}>
                   <div className="flex items-center">
-                    ESXi Version {getSortIcon("esxi_version")}
+                    ESXi {getSortIcon("esxi_version")}
                   </div>
                 </TableHead>
               )}
               {isColumnVisible("serial") && (
-                <TableHead className="w-[160px] cursor-pointer" onClick={() => handleSort("serial_number")}>
+                <TableHead className="w-[120px] px-2 cursor-pointer text-xs" onClick={() => handleSort("serial_number")}>
                   <div className="flex items-center">
-                    Serial Number {getSortIcon("serial_number")}
+                    Serial {getSortIcon("serial_number")}
                   </div>
                 </TableHead>
               )}
               {isColumnVisible("linked") && (
-                <TableHead className="w-[100px] cursor-pointer" onClick={() => handleSort("linked")}>
+                <TableHead className="w-[70px] px-2 cursor-pointer text-xs" onClick={() => handleSort("linked")}>
                   <div className="flex items-center">
-                    Linked {getSortIcon("linked")}
+                    Link {getSortIcon("linked")}
                   </div>
                 </TableHead>
               )}
               {isColumnVisible("sync") && (
-                <TableHead className="w-[140px] cursor-pointer" onClick={() => handleSort("last_sync")}>
+                <TableHead className="w-[100px] px-2 cursor-pointer text-xs" onClick={() => handleSort("last_sync")}>
                   <div className="flex items-center">
-                    Last Sync {getSortIcon("last_sync")}
+                    Sync {getSortIcon("last_sync")}
                   </div>
                 </TableHead>
               )}
@@ -397,7 +397,7 @@ export function HostsTable({
                       } group`}
                       onClick={() => onHostClick(host)}
                     >
-                      <TableCell>
+                      <TableCell className="py-1.5 px-2">
                         <Checkbox
                           checked={selectedHosts.has(host.id)}
                           onCheckedChange={() => toggleHostSelection(host.id)}
@@ -405,59 +405,58 @@ export function HostsTable({
                         />
                       </TableCell>
                       {isColumnVisible("name") && (
-                        <TableCell className="font-medium">
-                          <div className="flex items-center gap-2">
-                            {host.name}
-                            <div className="opacity-0 group-hover:opacity-100 flex gap-1">
+                        <TableCell className="py-1.5 px-2 font-medium text-xs">
+                          <div className="flex items-center gap-1">
+                            <span className="truncate max-w-[160px]">{host.name}</span>
+                            <div className="opacity-0 group-hover:opacity-100 flex gap-0.5">
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-6 w-6"
+                                className="h-5 w-5"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   onHostSync?.(host);
                                 }}
                               >
-                                <RefreshCcw className="h-3 w-3" />
+                                <RefreshCcw className="h-2.5 w-2.5" />
                               </Button>
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-6 w-6"
+                                className="h-5 w-5"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   copyToClipboard(host.serial_number, "Serial");
                                 }}
                               >
-                                <ClipboardCopy className="h-3 w-3" />
+                                <ClipboardCopy className="h-2.5 w-2.5" />
                               </Button>
                             </div>
                           </div>
                         </TableCell>
                       )}
-                      {isColumnVisible("status") && <TableCell>{getStatusBadge(host)}</TableCell>}
+                      {isColumnVisible("status") && <TableCell className="py-1.5 px-2">{getStatusBadge(host)}</TableCell>}
                       {isColumnVisible("esxi") && (
-                        <TableCell className="text-sm">{host.esxi_version || "N/A"}</TableCell>
+                        <TableCell className="py-1.5 px-2 text-xs">{host.esxi_version || "N/A"}</TableCell>
                       )}
                       {isColumnVisible("serial") && (
-                        <TableCell className="font-mono text-xs">
-                          <TruncatedCell value={host.serial_number} maxWidth="160px" />
+                        <TableCell className="py-1.5 px-2 font-mono text-xs">
+                          <TruncatedCell value={host.serial_number} maxWidth="100px" />
                         </TableCell>
                       )}
                       {isColumnVisible("linked") && (
-                        <TableCell>
+                        <TableCell className="py-1.5 px-2">
                           {host.server_id ? (
-                            <Badge variant="default" className="bg-success text-success-foreground text-xs">
-                              <Link2 className="mr-1 h-3 w-3" />
-                              Linked
+                            <Badge variant="default" className="bg-success text-success-foreground text-xs px-1.5 py-0">
+                              <Link2 className="h-2.5 w-2.5" />
                             </Badge>
                           ) : (
-                            <Badge variant="outline" className="text-xs">Not Linked</Badge>
+                            <Badge variant="outline" className="text-xs px-1.5 py-0">No</Badge>
                           )}
                         </TableCell>
                       )}
                       {isColumnVisible("sync") && (
-                        <TableCell className="text-xs text-muted-foreground">
+                        <TableCell className="py-1.5 px-2 text-xs text-muted-foreground">
                           {host.last_sync ? formatDistanceToNow(new Date(host.last_sync), { addSuffix: true }) : "Never"}
                         </TableCell>
                       )}

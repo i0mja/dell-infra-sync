@@ -86,20 +86,20 @@ export function VMsFilterToolbar({
 
   return (
     <>
-      <div className="flex items-center gap-3 px-4 py-3 border-b bg-muted/30">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-muted/30">
+        <div className="relative flex-1 max-w-[160px]">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
             placeholder="Search VMs..."
             value={searchTerm}
             onChange={(e) => onSearchChange(e.target.value)}
-            className="pl-9 h-9"
+            className="pl-8 h-7 text-xs"
           />
         </div>
 
         <Select value={clusterFilter} onValueChange={onClusterFilterChange}>
-          <SelectTrigger className="w-[160px] h-9">
-            <SelectValue placeholder="All Clusters" />
+          <SelectTrigger className="w-[110px] h-7 text-xs">
+            <SelectValue placeholder="Cluster" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Clusters</SelectItem>
@@ -112,41 +112,41 @@ export function VMsFilterToolbar({
         </Select>
 
         <Select value={powerFilter} onValueChange={onPowerFilterChange}>
-          <SelectTrigger className="w-[140px] h-9">
-            <SelectValue placeholder="Power State" />
+          <SelectTrigger className="w-[90px] h-7 text-xs">
+            <SelectValue placeholder="Power" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Power States</SelectItem>
-            <SelectItem value="poweredon">Powered On</SelectItem>
-            <SelectItem value="poweredoff">Powered Off</SelectItem>
-            <SelectItem value="suspended">Suspended</SelectItem>
+            <SelectItem value="all">All</SelectItem>
+            <SelectItem value="poweredon">On</SelectItem>
+            <SelectItem value="poweredoff">Off</SelectItem>
+            <SelectItem value="suspended">Susp</SelectItem>
           </SelectContent>
         </Select>
 
         <Select value={toolsFilter} onValueChange={onToolsFilterChange}>
-          <SelectTrigger className="w-[140px] h-9">
-            <SelectValue placeholder="Tools Status" />
+          <SelectTrigger className="w-[90px] h-7 text-xs">
+            <SelectValue placeholder="Tools" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Tools</SelectItem>
-            <SelectItem value="toolsok">Tools OK</SelectItem>
-            <SelectItem value="toolsold">Tools Old</SelectItem>
-            <SelectItem value="toolsnotinstalled">Not Installed</SelectItem>
-            <SelectItem value="toolsnotrunning">Not Running</SelectItem>
+            <SelectItem value="all">All</SelectItem>
+            <SelectItem value="toolsok">OK</SelectItem>
+            <SelectItem value="toolsold">Old</SelectItem>
+            <SelectItem value="toolsnotinstalled">None</SelectItem>
+            <SelectItem value="toolsnotrunning">Stopped</SelectItem>
           </SelectContent>
         </Select>
 
         <Select value={osFilter} onValueChange={onOsFilterChange}>
-          <SelectTrigger className="w-[140px] h-9">
-            <SelectValue placeholder="OS Type" />
+          <SelectTrigger className="w-[90px] h-7 text-xs">
+            <SelectValue placeholder="OS" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All OS Types</SelectItem>
+            <SelectItem value="all">All OS</SelectItem>
             <SelectItem value="windows">Windows</SelectItem>
-            <SelectItem value="rhel">RHEL/CentOS</SelectItem>
+            <SelectItem value="rhel">RHEL</SelectItem>
             <SelectItem value="ubuntu">Ubuntu</SelectItem>
             <SelectItem value="debian">Debian</SelectItem>
-            <SelectItem value="linux">Other Linux</SelectItem>
+            <SelectItem value="linux">Linux</SelectItem>
             <SelectItem value="other">Other</SelectItem>
           </SelectContent>
         </Select>
@@ -156,13 +156,13 @@ export function VMsFilterToolbar({
             <div className="flex-1" />
 
             {selectedCount > 0 && (
-              <span className="text-sm text-muted-foreground">{selectedCount} selected</span>
+              <span className="text-xs text-muted-foreground">{selectedCount} sel</span>
             )}
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm">
-                  <Columns3 className="mr-1 h-4 w-4" /> Columns
+                <Button variant="outline" size="sm" className="h-7 w-7 p-0">
+                  <Columns3 className="h-3.5 w-3.5" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
@@ -180,12 +180,12 @@ export function VMsFilterToolbar({
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <Button variant="outline" size="sm" onClick={onExport}>
-              <Download className="mr-1 h-4 w-4" /> Export
+            <Button variant="outline" size="sm" className="h-7 w-7 p-0" onClick={onExport}>
+              <Download className="h-3.5 w-3.5" />
             </Button>
 
-            <Button variant="outline" size="sm" onClick={() => setSaveDialogOpen(true)}>
-              <Save className="mr-1 h-4 w-4" /> Save View
+            <Button variant="outline" size="sm" className="h-7 w-7 p-0" onClick={() => setSaveDialogOpen(true)}>
+              <Save className="h-3.5 w-3.5" />
             </Button>
           </>
         )}

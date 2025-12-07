@@ -80,20 +80,20 @@ export function HostFilterToolbar({
 
   return (
     <>
-      <div className="flex items-center gap-3 px-4 py-3 border-b bg-muted/50">
-        <div className="flex-1 relative max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-muted/50">
+        <div className="flex-1 relative max-w-[180px]">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
-            placeholder="Search hosts, clusters, serial numbers..."
+            placeholder="Search hosts..."
             value={searchTerm}
             onChange={(e) => onSearchChange(e.target.value)}
-            className="pl-9 h-9"
+            className="pl-8 h-7 text-xs"
           />
         </div>
 
         <Select value={clusterFilter} onValueChange={onClusterFilterChange}>
-          <SelectTrigger className="w-[180px] h-9">
-            <SelectValue placeholder="All Clusters" />
+          <SelectTrigger className="w-[120px] h-7 text-xs">
+            <SelectValue placeholder="Cluster" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Clusters</SelectItem>
@@ -106,8 +106,8 @@ export function HostFilterToolbar({
         </Select>
 
         <Select value={statusFilter} onValueChange={onStatusFilterChange}>
-          <SelectTrigger className="w-[150px] h-9">
-            <SelectValue placeholder="All Status" />
+          <SelectTrigger className="w-[100px] h-7 text-xs">
+            <SelectValue placeholder="Status" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Status</SelectItem>
@@ -118,11 +118,11 @@ export function HostFilterToolbar({
         </Select>
 
         <Select value={linkFilter} onValueChange={onLinkFilterChange}>
-          <SelectTrigger className="w-[140px] h-9">
-            <SelectValue placeholder="All Links" />
+          <SelectTrigger className="w-[90px] h-7 text-xs">
+            <SelectValue placeholder="Link" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Links</SelectItem>
+            <SelectItem value="all">All</SelectItem>
             <SelectItem value="linked">Linked</SelectItem>
             <SelectItem value="unlinked">Unlinked</SelectItem>
           </SelectContent>
@@ -133,13 +133,13 @@ export function HostFilterToolbar({
             <div className="flex-1" />
 
             {selectedCount > 0 && (
-              <span className="text-sm text-muted-foreground">{selectedCount} selected</span>
+              <span className="text-xs text-muted-foreground">{selectedCount} sel</span>
             )}
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm">
-                  <Columns3 className="mr-1 h-4 w-4" /> Columns
+                <Button variant="outline" size="sm" className="h-7 w-7 p-0">
+                  <Columns3 className="h-3.5 w-3.5" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
@@ -157,12 +157,12 @@ export function HostFilterToolbar({
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <Button variant="outline" size="sm" onClick={onExport}>
-              <Download className="mr-1 h-4 w-4" /> Export
+            <Button variant="outline" size="sm" className="h-7 w-7 p-0" onClick={onExport}>
+              <Download className="h-3.5 w-3.5" />
             </Button>
 
-            <Button variant="outline" size="sm" onClick={() => setSaveDialogOpen(true)}>
-              <Save className="mr-1 h-4 w-4" /> Save View
+            <Button variant="outline" size="sm" className="h-7 w-7 p-0" onClick={() => setSaveDialogOpen(true)}>
+              <Save className="h-3.5 w-3.5" />
             </Button>
           </>
         )}
