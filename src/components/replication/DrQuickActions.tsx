@@ -46,8 +46,8 @@ function formatBytes(bytes: number | null): string {
 }
 
 export function DrQuickActions({ onProtectVm }: DrQuickActionsProps) {
-  const { vcenters } = useVCenters();
-  const { templates } = useZfsTemplates();
+  const { vcenters, loading: vcentersLoading } = useVCenters();
+  const { templates, loading: templatesLoading } = useZfsTemplates();
   const { createGroup } = useProtectionGroups();
   
   const [showDeployWizard, setShowDeployWizard] = useState(false);
@@ -62,6 +62,7 @@ export function DrQuickActions({ onProtectVm }: DrQuickActionsProps) {
     selectedVCenterId || undefined
   );
 
+  const isLoading = vcentersLoading || templatesLoading;
   const hasTemplates = templates.length > 0;
   const hasVCenters = vcenters.length > 0;
 
@@ -100,13 +101,13 @@ export function DrQuickActions({ onProtectVm }: DrQuickActionsProps) {
                 variant="outline" 
                 size="sm"
                 onClick={onProtectVm}
-                disabled={!hasVCenters}
+                disabled={isLoading || !hasVCenters}
               >
                 <Shield className="h-4 w-4 mr-2" />
                 Protect VM
               </Button>
             </TooltipTrigger>
-            {!hasVCenters && (
+            {!hasVCenters && !isLoading && (
               <TooltipContent>
                 <p>Configure a vCenter first</p>
               </TooltipContent>
@@ -114,15 +115,26 @@ export function DrQuickActions({ onProtectVm }: DrQuickActionsProps) {
           </Tooltip>
         </TooltipProvider>
 
-        <Button 
-          variant="outline" 
-          size="sm"
-          onClick={() => setShowCreateGroupDialog(true)}
-          disabled={!hasVCenters}
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          New Group
-        </Button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => setShowCreateGroupDialog(true)}
+                disabled={isLoading || !hasVCenters}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                New Group
+              </Button>
+            </TooltipTrigger>
+            {!hasVCenters && !isLoading && (
+              <TooltipContent>
+                <p>Configure a vCenter first</p>
+              </TooltipContent>
+            )}
+          </Tooltip>
+        </TooltipProvider>
 
         <TooltipProvider>
           <Tooltip>
@@ -131,15 +143,19 @@ export function DrQuickActions({ onProtectVm }: DrQuickActionsProps) {
                 variant="outline" 
                 size="sm"
                 onClick={() => setShowDeployWizard(true)}
-                disabled={!hasTemplates || !hasVCenters}
+                disabled={isLoading || !hasTemplates || !hasVCenters}
               >
                 <Rocket className="h-4 w-4 mr-2" />
                 Deploy ZFS Target
               </Button>
             </TooltipTrigger>
-            {!hasTemplates && (
+            {(!hasTemplates || !hasVCenters) && !isLoading && (
               <TooltipContent>
-                <p>Upload a ZFS VM template first in Settings → Infrastructure</p>
+                <p>
+                  {!hasVCenters 
+                    ? "Configure a vCenter first" 
+                    : "Create a ZFS template first in Settings → Infrastructure"}
+                </p>
               </TooltipContent>
             )}
           </Tooltip>
