@@ -337,32 +337,43 @@ export function DrShellVmWizard({
                     {datastoresLoading ? (
                       <Skeleton className="h-10 w-full" />
                     ) : (
-                      <Select
-                        value={selectedDatastoreId || ''}
-                        onValueChange={setSelectedDatastoreId}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select datastore..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {drDatastores?.length === 0 ? (
-                            <SelectItem value="_none" disabled>
-                              No datastores available
-                            </SelectItem>
-                          ) : (
-                            drDatastores?.map(ds => (
-                              <SelectItem key={ds.id} value={ds.id}>
-                                <div className="flex items-center gap-2">
-                                  <span>{ds.name}</span>
-                                  <span className="text-muted-foreground text-xs">
-                                    ({formatBytes(ds.free_bytes)} free)
-                                  </span>
-                                </div>
+                      <>
+                        <Select
+                          value={selectedDatastoreId || ''}
+                          onValueChange={setSelectedDatastoreId}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select datastore..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {drDatastores?.length === 0 ? (
+                              <SelectItem value="_none" disabled>
+                                No datastores available
                               </SelectItem>
-                            ))
-                          )}
-                        </SelectContent>
-                      </Select>
+                            ) : (
+                              drDatastores?.map(ds => (
+                                <SelectItem key={ds.id} value={ds.id}>
+                                  <div className="flex items-center gap-2">
+                                    <span>{ds.name}</span>
+                                    <span className="text-muted-foreground text-xs">
+                                      ({formatBytes(ds.free_bytes)} free)
+                                    </span>
+                                  </div>
+                                </SelectItem>
+                              ))
+                            )}
+                          </SelectContent>
+                        </Select>
+                        {drDatastores?.length === 0 && (
+                          <Alert variant="destructive" className="mt-2">
+                            <AlertTriangle className="h-4 w-4" />
+                            <AlertDescription>
+                              No datastores found for this vCenter. The vCenter may need to be synced first.
+                              Go to <strong>vCenter → Sync</strong> to refresh the inventory.
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                      </>
                     )}
                   </div>
                   

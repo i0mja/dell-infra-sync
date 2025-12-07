@@ -1445,9 +1445,9 @@ class VCenterMixin:
                         'last_sync': utc_now_iso()
                     }
                     
-                    # Upsert datastore
+                    # Upsert datastore - use composite key to avoid collisions across vCenters
                     response = requests.post(
-                        f"{DSM_URL}/rest/v1/vcenter_datastores?on_conflict=vcenter_id",
+                        f"{DSM_URL}/rest/v1/vcenter_datastores?on_conflict=vcenter_id,source_vcenter_id",
                         headers={**headers, 'Prefer': 'resolution=merge-duplicates,return=representation'},
                         json=datastore_data,
                         verify=VERIFY_SSL,
@@ -1659,9 +1659,9 @@ class VCenterMixin:
                         # Standard network (vSwitch portgroup)
                         network_data['network_type'] = 'standard'
                     
-                    # Upsert network
+                    # Upsert network - use composite key to avoid collisions across vCenters
                     response = requests.post(
-                        f"{DSM_URL}/rest/v1/vcenter_networks",
+                        f"{DSM_URL}/rest/v1/vcenter_networks?on_conflict=vcenter_id,source_vcenter_id",
                         headers={**headers, 'Prefer': 'resolution=merge-duplicates'},
                         json=network_data,
                         verify=VERIFY_SSL,
