@@ -3922,6 +3922,7 @@ export type Database = {
           template_moref: string
           template_name: string
           updated_at: string | null
+          use_template_disk: boolean | null
           vcenter_id: string | null
         }
         Insert: {
@@ -3950,6 +3951,7 @@ export type Database = {
           template_moref: string
           template_name: string
           updated_at?: string | null
+          use_template_disk?: boolean | null
           vcenter_id?: string | null
         }
         Update: {
@@ -3978,6 +3980,7 @@ export type Database = {
           template_moref?: string
           template_name?: string
           updated_at?: string | null
+          use_template_disk?: boolean | null
           vcenter_id?: string | null
         }
         Relationships: [

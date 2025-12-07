@@ -275,10 +275,14 @@ class ZfsTargetHandler(BaseHandler):
         
         self._log_console(job_id, 'INFO', f'VM cloned successfully: {vm_moref}', details)
         
-        # Add ZFS disk
-        self._log_console(job_id, 'INFO', f'Adding {zfs_disk_gb}GB disk for ZFS pool...', details)
-        self._add_disk(new_vm, zfs_disk_gb)
-        self._log_console(job_id, 'INFO', f'Disk added successfully', details)
+        # Add ZFS disk (unless template already has one)
+        use_template_disk = details.get('use_template_disk', False)
+        if use_template_disk:
+            self._log_console(job_id, 'INFO', 'Using existing template disk for ZFS pool (skipping disk add)', details)
+        else:
+            self._log_console(job_id, 'INFO', f'Adding {zfs_disk_gb}GB disk for ZFS pool...', details)
+            self._add_disk(new_vm, zfs_disk_gb)
+            self._log_console(job_id, 'INFO', f'Disk added successfully', details)
         
         # Configure network adapter
         if network_name:
