@@ -135,7 +135,8 @@ export default function VCenter() {
   const [networksTypeFilter, setNetworksTypeFilter] = useState("all");
   const [networksVlanFilter, setNetworksVlanFilter] = useState("all");
   const [selectedNetworkId, setSelectedNetworkId] = useState<string | null>(null);
-  const networksColumnVisibility = useColumnVisibility("vcenter-networks-columns", ["name", "type", "vlan", "switch", "hosts", "vms"]);
+  const [networksGroupByName, setNetworksGroupByName] = useState(true);
+  const networksColumnVisibility = useColumnVisibility("vcenter-networks-columns", ["name", "type", "vlan", "sites", "hosts", "vms"]);
 
   const isPrivateNetwork = (host: string | null): boolean => {
     if (!host) return false;
@@ -791,6 +792,8 @@ export default function VCenter() {
               onVlanFilterChange={setNetworksVlanFilter}
               visibleColumns={networksColumnVisibility.visibleColumns}
               onToggleColumn={networksColumnVisibility.toggleColumn}
+              groupByName={networksGroupByName}
+              onGroupByNameChange={setNetworksGroupByName}
             />
           )}
 
@@ -860,7 +863,7 @@ export default function VCenter() {
             />
           </TabsContent>
 
-          <TabsContent value="networks" className="flex-1 mt-0 overflow-hidden">
+          <TabsContent value="networks" className="flex-1 mt-0 overflow-auto">
             <NetworksTable
               networks={networks}
               selectedNetworkId={selectedNetworkId}
@@ -870,6 +873,8 @@ export default function VCenter() {
               typeFilter={networksTypeFilter}
               vlanFilter={networksVlanFilter}
               visibleColumns={networksColumnVisibility.visibleColumns}
+              groupByName={networksGroupByName}
+              vcenterMap={new Map(vcenters.map(vc => [vc.id, vc.name]))}
             />
           </TabsContent>
 

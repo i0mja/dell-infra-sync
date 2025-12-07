@@ -9,7 +9,9 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { Search, Columns3, Download } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Search, Columns3, Download, Layers } from "lucide-react";
 
 interface NetworksFilterToolbarProps {
   searchTerm: string;
@@ -22,12 +24,15 @@ interface NetworksFilterToolbarProps {
   onToggleColumn?: (column: string) => void;
   onExport?: () => void;
   selectedCount?: number;
+  groupByName?: boolean;
+  onGroupByNameChange?: (value: boolean) => void;
 }
 
 const allColumns = [
   { id: "name", label: "Name" },
   { id: "type", label: "Type" },
   { id: "vlan", label: "VLAN" },
+  { id: "sites", label: "Sites" },
   { id: "switch", label: "Switch" },
   { id: "hosts", label: "Hosts" },
   { id: "vms", label: "VMs" },
@@ -44,6 +49,8 @@ export function NetworksFilterToolbar({
   onToggleColumn,
   onExport,
   selectedCount = 0,
+  groupByName = false,
+  onGroupByNameChange,
 }: NetworksFilterToolbarProps) {
   return (
     <div className="flex flex-wrap items-center gap-3">
@@ -81,6 +88,21 @@ export function NetworksFilterToolbar({
           <SelectItem value="untagged">Untagged</SelectItem>
         </SelectContent>
       </Select>
+
+      {/* Group by Name Toggle */}
+      {onGroupByNameChange && (
+        <div className="flex items-center gap-2 px-2">
+          <Switch
+            id="group-by-name"
+            checked={groupByName}
+            onCheckedChange={onGroupByNameChange}
+          />
+          <Label htmlFor="group-by-name" className="text-sm flex items-center gap-1.5 cursor-pointer">
+            <Layers className="h-3.5 w-3.5" />
+            Group by name
+          </Label>
+        </div>
+      )}
 
       {/* Spacer */}
       <div className="flex-1" />
