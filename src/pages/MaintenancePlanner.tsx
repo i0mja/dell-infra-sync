@@ -14,7 +14,7 @@ import { ClusterUpdateWizard } from "@/components/jobs/ClusterUpdateWizard";
 import { MaintenanceWindowDetailDialog } from "@/components/maintenance/MaintenanceWindowDetailDialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { subMonths, addMonths, isFuture, format } from "date-fns";
@@ -85,7 +85,7 @@ export default function MaintenancePlanner() {
   const [updateWizardOpen, setUpdateWizardOpen] = useState(false);
   const [preSelectedClusterForUpdate, setPreSelectedClusterForUpdate] = useState<string | undefined>();
   const [jobs, setJobs] = useState<Job[]>([]);
-  const { toast } = useToast();
+  // Toast is now from sonner import
   const { userRole } = useAuth();
 
   const canManage = userRole === 'admin' || userRole === 'operator';
@@ -327,9 +327,9 @@ export default function MaintenancePlanner() {
         body: { job: { id: jobId, status: 'cancelled', completed_at: new Date().toISOString() } }
       });
       if (error) throw error;
-      toast({ title: "Job cancelled" });
+      toast.success("Job cancelled");
     } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      toast.error("Error", { description: error.message });
     }
   };
 
@@ -346,9 +346,9 @@ export default function MaintenancePlanner() {
       });
       if (error) throw error;
       if (!result?.success) throw new Error(result?.error || 'Failed');
-      toast({ title: "Job retried" });
+      // Job created - NotificationContext will show toast
     } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      toast.error("Error", { description: error.message });
     }
   };
 
@@ -360,10 +360,10 @@ export default function MaintenancePlanner() {
         .eq('id', id);
 
       if (error) throw error;
-      toast({ title: "Success", description: "Maintenance window deleted" });
+      toast.success("Maintenance window deleted");
       refetchData();
     } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      toast.error("Error", { description: error.message });
     }
   };
 
@@ -385,7 +385,7 @@ export default function MaintenancePlanner() {
     for (const jobId of jobsToCancel) {
       await supabase.from("jobs").update({ status: "cancelled" }).eq("id", jobId);
     }
-    toast({ title: "Jobs cancelled", description: `${jobsToCancel.length} job(s) cancelled` });
+    toast.success("Jobs cancelled", { description: `${jobsToCancel.length} job(s) cancelled` });
     setBulkCancelDialogOpen(false);
     setJobsToCancel([]);
   };
@@ -456,15 +456,13 @@ export default function MaintenancePlanner() {
         ? `${cancelledCount} job(s) cancelled and ${operationsToDelete.length} operation(s) deleted`
         : `${operationsToDelete.length} operation(s) deleted`;
       
-      toast({ title: "Operations deleted", description: message });
+      toast.success("Operations deleted", { description: message });
       setBulkDeleteDialogOpen(false);
       setOperationsToDelete([]);
       
     } catch (error: any) {
-      toast({ 
-        title: "Delete failed", 
-        description: error.message || "Failed to delete operations",
-        variant: "destructive" 
+      toast.error("Delete failed", { 
+        description: error.message || "Failed to delete operations"
       });
     }
   };
@@ -497,9 +495,9 @@ export default function MaintenancePlanner() {
       });
 
       if (error) throw error;
-      toast({ title: "Safety check started", description: "Checking all clusters..." });
+      // Job created - NotificationContext will show toast
     } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      toast.error("Error", { description: error.message });
     }
   };
 
@@ -517,15 +515,14 @@ export default function MaintenancePlanner() {
       });
 
       if (error) throw error;
-      toast({ title: "vCenter sync started" });
+      // Job created - NotificationContext will show toast
     } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      toast.error("Error", { description: error.message });
     }
   };
 
   const runDiscovery = async () => {
-    toast({ 
-      title: "Discovery scan", 
+    toast.info("Discovery scan", { 
       description: "Please configure discovery settings in the Servers page" 
     });
   };

@@ -107,6 +107,7 @@ const showJobStateToast = (job: Job, previousStatus: string) => {
 };
 
 const RECENTLY_COMPLETED_DURATION_MS = 15000; // 15 seconds
+const TOAST_DEDUP_WINDOW_MS = 2000; // 2 seconds dedup window
 
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth();
@@ -127,6 +128,8 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   // Use ref to avoid stale closures in subscription callbacks
   const previousJobStatusesRef = useRef<Map<string, string>>(new Map());
   const recentlyCompletedRef = useRef<RecentlyCompletedJob[]>([]);
+  // Track recent toasts to prevent duplicates
+  const recentToastsRef = useRef<Map<string, number>>(new Map());
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -427,11 +430,19 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
               }
             }
           } else if (payload.eventType === 'INSERT' && newJob) {
-            // New job created
-            toast.info(`Job Queued: ${formatJobType(newJob.job_type)}`, {
-              description: 'Job added to queue',
-              duration: 3000,
-            });
+            // New job created - check for duplicate toasts
+            const toastKey = `${newJob.id}-queued`;
+            const now = Date.now();
+            const lastToastTime = recentToastsRef.current.get(toastKey);
+            
+            // Only show toast if we haven't shown one for this job recently
+            if (!lastToastTime || (now - lastToastTime) > TOAST_DEDUP_WINDOW_MS) {
+              recentToastsRef.current.set(toastKey, now);
+              toast.info(`Job Queued: ${formatJobType(newJob.job_type)}`, {
+                description: 'Job added to queue',
+                duration: 3000,
+              });
+            }
             setPreviousJobStatuses(prev => new Map(prev).set(newJob.id, newJob.status));
           }
           

@@ -21,7 +21,7 @@ import { Plus, Loader2 } from "lucide-react";
 import { useVCenters, type VCenterFormData, type VCenter } from "@/hooks/useVCenters";
 import { VCenterConnectionCard } from "./VCenterConnectionCard";
 import { VCenterForm } from "./VCenterForm";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
 interface VCenterManagementDialogProps {
@@ -35,7 +35,6 @@ export function VCenterManagementDialog({
   onOpenChange,
   onVCenterAdded,
 }: VCenterManagementDialogProps) {
-  const { toast } = useToast();
   const { vcenters, loading, addVCenter, updateVCenter, deleteVCenter } = useVCenters();
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -80,12 +79,7 @@ export function VCenterManagementDialog({
   const handleTest = async (vcenter: VCenter) => {
     setTestingId(vcenter.id);
     try {
-      toast({
-        title: "Testing connection...",
-        description: `Testing connection to ${vcenter.name}`,
-      });
-
-      // Create test job
+      // Create test job - NotificationContext will handle the toast
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
@@ -98,17 +92,11 @@ export function VCenterManagementDialog({
       });
 
       if (error) throw error;
-
-      toast({
-        title: "Test initiated",
-        description: "Connection test job created. Check the Jobs panel for results.",
-      });
+      // Job created - NotificationContext will show toast
     } catch (error: any) {
       console.error("Error testing vCenter:", error);
-      toast({
-        title: "Error",
+      toast.error("Failed to test vCenter", {
         description: error.message || "Failed to test vCenter connection",
-        variant: "destructive",
       });
     } finally {
       setTestingId(null);
@@ -118,15 +106,11 @@ export function VCenterManagementDialog({
   const handleSync = async (vcenter: VCenter) => {
     setSyncingId(vcenter.id);
     try {
-      toast({
-        title: "Starting sync...",
-        description: `Syncing ${vcenter.name}`,
-      });
-
+      // Create sync job - NotificationContext will handle all toasts
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
-      const { data: jobData, error } = await supabase.functions.invoke("create-job", {
+      const { error } = await supabase.functions.invoke("create-job", {
         body: {
           job_type: "vcenter_sync",
           target_scope: { vcenter_ids: [vcenter.id] },
@@ -138,17 +122,11 @@ export function VCenterManagementDialog({
       });
 
       if (error) throw error;
-
-      toast({
-        title: "Sync initiated",
-        description: "vCenter sync job created. Check the Jobs panel for progress.",
-      });
+      // Job created - NotificationContext will show toast
     } catch (error: any) {
       console.error("Error syncing vCenter:", error);
-      toast({
-        title: "Error",
+      toast.error("Failed to sync vCenter", {
         description: error.message || "Failed to sync vCenter",
-        variant: "destructive",
       });
     } finally {
       setSyncingId(null);
@@ -158,11 +136,7 @@ export function VCenterManagementDialog({
   const handleInitialSync = async () => {
     if (!pendingSyncVCenter) return;
     
-    toast({
-      title: "Starting initial sync...",
-      description: `Syncing ${pendingSyncVCenter.name}`,
-    });
-
+    // Create sync job - NotificationContext will handle all toasts
     const { error } = await supabase.functions.invoke("create-job", {
       body: {
         job_type: "vcenter_sync",
@@ -176,17 +150,11 @@ export function VCenterManagementDialog({
     });
 
     if (error) {
-      toast({
-        title: "Error",
+      toast.error("Failed to start initial sync", {
         description: error.message || "Failed to start initial sync",
-        variant: "destructive",
-      });
-    } else {
-      toast({
-        title: "Sync initiated",
-        description: "Initial sync job created. Check the Jobs panel for progress.",
       });
     }
+    // Job created - NotificationContext will show toast
     
     setPendingSyncVCenter(null);
   };
