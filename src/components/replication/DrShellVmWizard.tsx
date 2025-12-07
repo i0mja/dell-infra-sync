@@ -39,8 +39,19 @@ import {
   Cpu,
   MemoryStick,
   Cloud,
+  Network,
 } from "lucide-react";
 import { ProtectedVM, useDRShellPlan } from "@/hooks/useReplication";
+
+// Format bytes to human-readable size
+function formatBytes(bytes: number | null): string {
+  if (!bytes) return 'Unknown';
+  const gb = bytes / (1024 * 1024 * 1024);
+  if (gb >= 1000) {
+    return `${(gb / 1024).toFixed(1)} TB`;
+  }
+  return `${gb.toFixed(1)} GB`;
+}
 
 interface DrShellVmWizardProps {
   open: boolean;
@@ -64,12 +75,17 @@ export function DrShellVmWizard({
   const [executing, setExecuting] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string; shell_vm_name?: string } | null>(null);
   const [selectedDrVcenterId, setSelectedDrVcenterId] = useState<string | null>(null);
+  const [selectedDatastoreId, setSelectedDatastoreId] = useState<string | null>(null);
+  const [networkName, setNetworkName] = useState("");
   
-  const { plan, loading: planLoading, fetchPlan, createDRShell, vcenters } = useDRShellPlan(vm?.id);
+  const { plan, loading: planLoading, fetchPlan, createDRShell, vcenters, drDatastores, datastoresLoading } = useDRShellPlan(vm?.id, selectedDrVcenterId);
   
   // Filter out source vCenter to show only DR targets
   const sourceVcenterId = plan?.protection_group?.source_vcenter_id;
   const drVcenterOptions = vcenters?.filter(vc => vc.id !== sourceVcenterId) || [];
+  
+  // Get selected datastore details
+  const selectedDatastore = drDatastores?.find(ds => ds.id === selectedDatastoreId);
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -78,9 +94,16 @@ export function DrShellVmWizard({
       setResult(null);
       setShellVmName(`${vm.vm_name}-DR`);
       setSelectedDrVcenterId(null);
+      setSelectedDatastoreId(null);
+      setNetworkName("");
       fetchPlan();
     }
   }, [open, vm, fetchPlan]);
+  
+  // Reset datastore selection when DR vCenter changes
+  useEffect(() => {
+    setSelectedDatastoreId(null);
+  }, [selectedDrVcenterId]);
 
   // Update config from plan when loaded (plan is now raw protected_vms row)
   useEffect(() => {
@@ -101,6 +124,8 @@ export function DrShellVmWizard({
         cpu_count: cpuCount,
         memory_mb: memoryMb,
         dr_vcenter_id: selectedDrVcenterId || undefined,
+        datastore_name: selectedDatastore?.name,
+        network_name: networkName || undefined,
       });
       setResult({ 
         success: true, 
@@ -251,14 +276,59 @@ export function DrShellVmWizard({
               </div>
               
               {selectedDrVcenterId && (
-                <div className="grid grid-cols-2 gap-4 text-sm pt-2">
-                  <div>
-                    <span className="text-muted-foreground">Datastore:</span>
-                    <span className="ml-2 font-medium">{vm?.target_datastore || 'Auto-select'}</span>
+                <div className="space-y-3 pt-2 border-t">
+                  {/* Datastore Selection */}
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-2">
+                      <HardDrive className="h-4 w-4" />
+                      Target Datastore
+                    </Label>
+                    {datastoresLoading ? (
+                      <Skeleton className="h-10 w-full" />
+                    ) : (
+                      <Select
+                        value={selectedDatastoreId || ''}
+                        onValueChange={setSelectedDatastoreId}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select datastore..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {drDatastores?.length === 0 ? (
+                            <SelectItem value="_none" disabled>
+                              No datastores available
+                            </SelectItem>
+                          ) : (
+                            drDatastores?.map(ds => (
+                              <SelectItem key={ds.id} value={ds.id}>
+                                <div className="flex items-center gap-2">
+                                  <span>{ds.name}</span>
+                                  <span className="text-muted-foreground text-xs">
+                                    ({formatBytes(ds.free_bytes)} free)
+                                  </span>
+                                </div>
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                    )}
                   </div>
-                  <div>
-                    <span className="text-muted-foreground">Network:</span>
-                    <span className="ml-2 font-medium">Auto-mapped</span>
+                  
+                  {/* Network Input */}
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-2">
+                      <Network className="h-4 w-4" />
+                      Network (optional)
+                    </Label>
+                    <Input
+                      value={networkName}
+                      onChange={(e) => setNetworkName(e.target.value)}
+                      placeholder="Leave blank for default network"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Specify port group name, or leave blank to use first available network
+                    </p>
                   </div>
                 </div>
               )}
@@ -271,9 +341,9 @@ export function DrShellVmWizard({
             <div className="space-y-2">
               {[
                 { name: 'DR vCenter selected', passed: !!selectedDrVcenterId },
+                { name: 'Target datastore selected', passed: !!selectedDatastoreId },
                 { name: 'Replicated disks available', passed: !!vm?.last_replication_at },
-                { name: 'Target cluster has capacity', passed: !!selectedDrVcenterId },
-                { name: 'Network mapping configured', passed: !!selectedDrVcenterId },
+                { name: 'Network configured', passed: true }, // Always passes - optional field
               ].map((check, i) => (
                 <div key={i} className="flex items-center gap-2 text-sm">
                   {check.passed ? (
@@ -440,7 +510,7 @@ export function DrShellVmWizard({
               </Button>
               <Button 
                 onClick={() => setStep('configure')} 
-                disabled={planLoading || !selectedDrVcenterId}
+                disabled={planLoading || !selectedDrVcenterId || !selectedDatastoreId}
               >
                 Next
                 <ArrowRight className="h-4 w-4 ml-1" />
