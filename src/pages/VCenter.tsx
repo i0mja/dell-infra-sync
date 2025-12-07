@@ -795,93 +795,107 @@ export default function VCenter() {
             />
           )}
 
-          <TabsContent value="hosts" className="flex-1 mt-0 flex flex-col overflow-hidden min-h-0">
-            <HostsTable
-              clusterGroups={clusterGroups}
-              selectedHostId={selectedHostId}
-              selectedCluster={null}
-              onHostClick={handleHostClick}
-              onClusterClick={() => {}}
-              onHostSync={(host) => handleHostSync(host.id)}
-              onClusterUpdate={handleClusterUpdate}
-              onViewLinkedServer={(host) => handleViewLinkedServer(host.server_id!)}
-              onLinkToServer={(host) => handleLinkToServer(host.id)}
-              onSync={handleSyncNow}
-              loading={hostsLoading}
-              onHostDelete={handleHostDelete}
-              onBulkDelete={handleBulkHostDelete}
-              visibleColumns={hostsColumnVisibility.visibleColumns}
-              onSelectionChange={(ids) => {
-                setSelectedHostIds(ids);
-                setHostsSelectedCount(ids.size);
-              }}
-            />
+          <TabsContent value="hosts" className="flex-1 mt-0 overflow-hidden min-h-0">
+            <div className="h-full flex flex-col">
+              <HostsTable
+                clusterGroups={clusterGroups}
+                selectedHostId={selectedHostId}
+                selectedCluster={null}
+                onHostClick={handleHostClick}
+                onClusterClick={() => {}}
+                onHostSync={(host) => handleHostSync(host.id)}
+                onClusterUpdate={handleClusterUpdate}
+                onViewLinkedServer={(host) => handleViewLinkedServer(host.server_id!)}
+                onLinkToServer={(host) => handleLinkToServer(host.id)}
+                onSync={handleSyncNow}
+                loading={hostsLoading}
+                onHostDelete={handleHostDelete}
+                onBulkDelete={handleBulkHostDelete}
+                visibleColumns={hostsColumnVisibility.visibleColumns}
+                onSelectionChange={(ids) => {
+                  setSelectedHostIds(ids);
+                  setHostsSelectedCount(ids.size);
+                }}
+              />
+            </div>
           </TabsContent>
 
-          <TabsContent value="vms" className="flex-1 mt-0 flex flex-col overflow-hidden min-h-0">
-            <VMsTable
-              vms={vms}
-              selectedVmId={selectedVmId}
-              onVmClick={(vm) => handleVmClick(vm.id)}
-              loading={vmsLoading}
-              searchTerm={vmsSearch}
-              clusterFilter={vmsClusterFilter}
-              powerFilter={vmsPowerFilter}
-              toolsFilter={vmsToolsFilter}
-              osFilter={vmsOsFilter}
-              visibleColumns={vmsColumnVisibility.visibleColumns}
-            />
+          <TabsContent value="vms" className="flex-1 mt-0 overflow-hidden min-h-0">
+            <div className="h-full flex flex-col">
+              <VMsTable
+                vms={vms}
+                selectedVmId={selectedVmId}
+                onVmClick={(vm) => handleVmClick(vm.id)}
+                loading={vmsLoading}
+                searchTerm={vmsSearch}
+                clusterFilter={vmsClusterFilter}
+                powerFilter={vmsPowerFilter}
+                toolsFilter={vmsToolsFilter}
+                osFilter={vmsOsFilter}
+                visibleColumns={vmsColumnVisibility.visibleColumns}
+              />
+            </div>
           </TabsContent>
 
-          <TabsContent value="clusters" className="flex-1 mt-0 flex flex-col overflow-hidden min-h-0">
-            <ClustersTable
-              clusters={clusters}
-              selectedClusterId={selectedClusterId}
-              onClusterClick={handleClusterDataClick}
-              loading={vmsLoading}
-              searchTerm={clustersSearch}
-              statusFilter={clustersStatusFilter}
-              haFilter={clustersHaFilter}
-              drsFilter={clustersDrsFilter}
-              visibleColumns={clustersColumnVisibility.visibleColumns}
-            />
+          <TabsContent value="clusters" className="flex-1 mt-0 overflow-hidden min-h-0">
+            <div className="h-full flex flex-col">
+              <ClustersTable
+                clusters={clusters}
+                selectedClusterId={selectedClusterId}
+                onClusterClick={handleClusterDataClick}
+                loading={vmsLoading}
+                searchTerm={clustersSearch}
+                statusFilter={clustersStatusFilter}
+                haFilter={clustersHaFilter}
+                drsFilter={clustersDrsFilter}
+                visibleColumns={clustersColumnVisibility.visibleColumns}
+              />
+            </div>
           </TabsContent>
 
-          <TabsContent value="datastores" className="flex-1 mt-0 flex flex-col overflow-hidden min-h-0">
-            <DatastoresTable
-              datastores={datastores}
-              selectedDatastoreId={selectedDatastoreId}
-              onDatastoreClick={(ds) => handleDatastoreClick(ds.id)}
-              loading={vmsLoading}
-              searchTerm={datastoresSearch}
-              typeFilter={datastoresTypeFilter}
-              accessFilter={datastoresAccessFilter}
-              capacityFilter={datastoresCapacityFilter}
-              visibleColumns={datastoresColumnVisibility.visibleColumns}
-            />
+          <TabsContent value="datastores" className="flex-1 mt-0 overflow-hidden min-h-0">
+            <div className="h-full flex flex-col">
+              <DatastoresTable
+                datastores={datastores}
+                selectedDatastoreId={selectedDatastoreId}
+                onDatastoreClick={(ds) => handleDatastoreClick(ds.id)}
+                loading={vmsLoading}
+                searchTerm={datastoresSearch}
+                typeFilter={datastoresTypeFilter}
+                accessFilter={datastoresAccessFilter}
+                capacityFilter={datastoresCapacityFilter}
+                visibleColumns={datastoresColumnVisibility.visibleColumns}
+              />
+            </div>
           </TabsContent>
 
-          <TabsContent value="networks" className="flex-1 mt-0 flex flex-col overflow-auto min-h-0">
-            <NetworksTable
-              networks={networks}
-              selectedNetworkId={selectedNetworkId}
-              onNetworkClick={(net) => setSelectedNetworkId(selectedNetworkId === net.id ? null : net.id)}
-              loading={vmsLoading}
-              searchTerm={networksSearch}
-              typeFilter={networksTypeFilter}
-              vlanFilter={networksVlanFilter}
-              visibleColumns={networksColumnVisibility.visibleColumns}
-              groupByName={networksGroupByName}
-              vcenterMap={new Map(vcenters.map(vc => [vc.id, vc.name]))}
-            />
+          <TabsContent value="networks" className="flex-1 mt-0 overflow-hidden min-h-0">
+            <div className="h-full flex flex-col">
+              <NetworksTable
+                networks={networks}
+                selectedNetworkId={selectedNetworkId}
+                onNetworkClick={(net) => setSelectedNetworkId(selectedNetworkId === net.id ? null : net.id)}
+                loading={vmsLoading}
+                searchTerm={networksSearch}
+                typeFilter={networksTypeFilter}
+                vlanFilter={networksVlanFilter}
+                visibleColumns={networksColumnVisibility.visibleColumns}
+                groupByName={networksGroupByName}
+                vcenterMap={new Map(vcenters.map(vc => [vc.id, vc.name]))}
+              />
+            </div>
           </TabsContent>
 
-          <TabsContent value="esxi-profiles" className="flex-1 mt-0 flex flex-col p-6 overflow-auto min-h-0">
-            <EsxiProfilesTab />
+          <TabsContent value="esxi-profiles" className="flex-1 mt-0 overflow-auto min-h-0">
+            <div className="p-6">
+              <EsxiProfilesTab />
+            </div>
           </TabsContent>
 
-          <TabsContent value="replication" className="flex-1 mt-0 flex flex-col overflow-hidden min-h-0">
-            <DrReplicationTab />
+          <TabsContent value="replication" className="flex-1 mt-0 overflow-hidden min-h-0">
+            <div className="h-full flex flex-col">
+              <DrReplicationTab />
+            </div>
           </TabsContent>
         </Tabs>
         </div>
