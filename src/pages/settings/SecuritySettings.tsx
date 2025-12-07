@@ -17,7 +17,18 @@ import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Info } from "lucide-react";
 import { useSshKeys, SshKey, SshKeyDeployment } from "@/hooks/useSshKeys";
-import { SshKeyTable, SshKeyGenerateDialog, SshKeyDetailsDialog, SshKeyRevokeDialog, SshKeyDeployDialog, SshKeyRotateWizard } from "@/components/settings/ssh";
+import { 
+  SshKeyTable, 
+  SshKeyGenerateDialog, 
+  SshKeyDetailsDialog, 
+  SshKeyRevokeDialog, 
+  SshKeyDeployDialog, 
+  SshKeyRotateWizard,
+  SshKeyMigrationDialog,
+  SshKeyExpirationAlerts,
+  SshKeyUsageStats
+} from "@/components/settings/ssh";
+import { ArrowRightLeft } from "lucide-react";
 
 export function SecuritySettings() {
   const { toast } = useToast();
@@ -58,6 +69,7 @@ export function SecuritySettings() {
   const [showRevokeDialog, setShowRevokeDialog] = useState(false);
   const [showDeployDialog, setShowDeployDialog] = useState(false);
   const [showRotateWizard, setShowRotateWizard] = useState(false);
+  const [showMigrationDialog, setShowMigrationDialog] = useState(false);
   const [selectedKeyDeployments, setSelectedKeyDeployments] = useState<SshKeyDeployment[]>([]);
 
   useEffect(() => {
@@ -591,6 +603,24 @@ export function SecuritySettings() {
         icon={Key}
       >
         <div className="space-y-4">
+          {/* Expiration Alerts */}
+          <SshKeyExpirationAlerts
+            keys={sshKeys}
+            onRotate={async (key) => {
+              setSelectedSshKey(key as SshKey);
+              const deployments = await fetchDeployments(key.id);
+              setSelectedKeyDeployments(deployments);
+              setShowRotateWizard(true);
+            }}
+            onRevoke={(key) => {
+              setSelectedSshKey(key as SshKey);
+              setShowRevokeDialog(true);
+            }}
+          />
+
+          {/* Usage Stats */}
+          <SshKeyUsageStats keys={sshKeys} />
+
           <div className="flex justify-between items-center">
             <div>
               <h4 className="text-sm font-medium">SSH Key Inventory</h4>
@@ -598,10 +628,16 @@ export function SecuritySettings() {
                 Centralized SSH key management for ZFS targets and replication
               </p>
             </div>
-            <Button onClick={() => setShowGenerateDialog(true)}>
-              <Plus className="h-4 w-4 mr-2" />
-              Generate Key
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setShowMigrationDialog(true)}>
+                <ArrowRightLeft className="h-4 w-4 mr-2" />
+                Migrate Keys
+              </Button>
+              <Button onClick={() => setShowGenerateDialog(true)}>
+                <Plus className="h-4 w-4 mr-2" />
+                Generate Key
+              </Button>
+            </div>
           </div>
 
           <SshKeyTable
@@ -677,6 +713,12 @@ export function SecuritySettings() {
         onComplete={() => {
           refetchSshKeys();
         }}
+      />
+
+      <SshKeyMigrationDialog
+        open={showMigrationDialog}
+        onOpenChange={setShowMigrationDialog}
+        onComplete={() => refetchSshKeys()}
       />
 
       {/* Credential Dialog */}

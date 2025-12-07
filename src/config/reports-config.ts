@@ -1,6 +1,6 @@
-import { BarChart3, Activity, Database, Shield, RefreshCw, Archive } from "lucide-react";
+import { BarChart3, Activity, Database, Shield, RefreshCw, Archive, Lock } from "lucide-react";
 
-export type ReportCategory = "inventory" | "operations" | "compliance" | "maintenance" | "updates" | "backups";
+export type ReportCategory = "inventory" | "operations" | "compliance" | "maintenance" | "updates" | "backups" | "security";
 export type ReportType = 
   | "server_inventory" 
   | "cluster_summary"
@@ -19,7 +19,13 @@ export type ReportType =
   // Backup reports
   | "scp_backup_status"
   | "backup_history"
-  | "backup_coverage";
+  | "backup_coverage"
+  // SSH Key reports
+  | "ssh_key_inventory"
+  | "ssh_key_expiring"
+  | "ssh_key_unused"
+  | "ssh_key_revocation"
+  | "ssh_key_usage";
 
 export interface ReportConfig {
   id: ReportType;
@@ -38,6 +44,7 @@ export const REPORT_CATEGORIES = [
   { id: "maintenance", label: "Maintenance", icon: BarChart3 },
   { id: "updates", label: "Updates", icon: RefreshCw },
   { id: "backups", label: "Backups", icon: Archive },
+  { id: "security", label: "Security", icon: Lock },
 ] as const;
 
 export const REPORTS: Record<ReportType, ReportConfig> = {
@@ -186,6 +193,52 @@ export const REPORTS: Record<ReportType, ReportConfig> = {
     icon: Archive,
     chartType: "pie",
     requiredRole: "operator",
+  },
+  // SSH Key Reports
+  ssh_key_inventory: {
+    id: "ssh_key_inventory",
+    name: "SSH Key Inventory",
+    description: "Complete list of SSH keys with status, age, and deployment details",
+    category: "security",
+    icon: Lock,
+    chartType: "pie",
+    requiredRole: "viewer",
+  },
+  ssh_key_expiring: {
+    id: "ssh_key_expiring",
+    name: "Expiring SSH Keys",
+    description: "SSH keys approaching expiration within configurable windows",
+    category: "security",
+    icon: Lock,
+    chartType: "bar",
+    requiredRole: "operator",
+  },
+  ssh_key_unused: {
+    id: "ssh_key_unused",
+    name: "Unused SSH Keys",
+    description: "SSH keys not used recently - candidates for review or revocation",
+    category: "security",
+    icon: Lock,
+    chartType: "pie",
+    requiredRole: "operator",
+  },
+  ssh_key_revocation: {
+    id: "ssh_key_revocation",
+    name: "SSH Key Revocations",
+    description: "History of revoked SSH keys with reasons and audit trail",
+    category: "security",
+    icon: Lock,
+    chartType: "line",
+    requiredRole: "admin",
+  },
+  ssh_key_usage: {
+    id: "ssh_key_usage",
+    name: "SSH Key Usage",
+    description: "Usage frequency and patterns for SSH keys across targets",
+    category: "security",
+    icon: Lock,
+    chartType: "bar",
+    requiredRole: "viewer",
   },
 };
 

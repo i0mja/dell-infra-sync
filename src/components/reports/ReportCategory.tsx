@@ -365,6 +365,99 @@ function getTableColumns(reportType: ReportType) {
         { key: "days_since_backup", label: "Days Ago", format: (value: number) => value !== null ? value : "-" },
       ];
 
+    // ============= SSH KEY REPORTS =============
+
+    case "ssh_key_inventory":
+      return [
+        { key: "name", label: "Key Name" },
+        { key: "key_type", label: "Type" },
+        { 
+          key: "status", 
+          label: "Status",
+          format: (value: string) => (
+            <Badge variant={value === "active" ? "default" : value === "revoked" ? "destructive" : "secondary"}>
+              {value}
+            </Badge>
+          )
+        },
+        { key: "fingerprint", label: "Fingerprint" },
+        { key: "deployment_count", label: "Deployments" },
+        { key: "use_count", label: "Uses" },
+        { key: "created_by", label: "Created By" },
+        { key: "created_at", label: "Created", format: (value: string) => new Date(value).toLocaleDateString() },
+        { key: "age_days", label: "Age (days)" },
+      ];
+
+    case "ssh_key_expiring":
+      return [
+        { key: "name", label: "Key Name" },
+        { key: "key_type", label: "Type" },
+        { 
+          key: "urgency", 
+          label: "Urgency",
+          format: (value: string) => (
+            <Badge variant={
+              value === "expired" ? "destructive" : 
+              value === "critical" ? "destructive" : 
+              value === "warning" ? "secondary" : 
+              "outline"
+            }>
+              {value}
+            </Badge>
+          )
+        },
+        { key: "days_until_expiry", label: "Days Left", format: (value: number) => value <= 0 ? "Expired" : value },
+        { key: "expires_at", label: "Expires", format: (value: string) => new Date(value).toLocaleDateString() },
+        { key: "use_count", label: "Uses" },
+      ];
+
+    case "ssh_key_unused":
+      return [
+        { key: "name", label: "Key Name" },
+        { key: "key_type", label: "Type" },
+        { 
+          key: "usage_status", 
+          label: "Status",
+          format: (value: string) => (
+            <Badge variant={
+              value === "never_used" ? "destructive" : 
+              value === "stale" ? "secondary" : 
+              value === "aging" ? "outline" : 
+              "default"
+            }>
+              {value === "never_used" ? "Never Used" : 
+               value === "stale" ? "Stale (>90d)" : 
+               value === "aging" ? "Aging (>30d)" : 
+               "Active"}
+            </Badge>
+          )
+        },
+        { key: "days_since_use", label: "Days Since Use", format: (value: number | null) => value !== null ? value : "Never" },
+        { key: "last_used_at", label: "Last Used", format: (value: string) => value ? new Date(value).toLocaleDateString() : "Never" },
+        { key: "use_count", label: "Total Uses" },
+        { key: "created_at", label: "Created", format: (value: string) => new Date(value).toLocaleDateString() },
+      ];
+
+    case "ssh_key_revocation":
+      return [
+        { key: "name", label: "Key Name" },
+        { key: "key_type", label: "Type" },
+        { key: "revocation_reason", label: "Reason" },
+        { key: "revoked_by", label: "Revoked By" },
+        { key: "revoked_at", label: "Revoked At", format: (value: string) => new Date(value).toLocaleString() },
+        { key: "lifetime_days", label: "Lifetime (days)", format: (value: number | null) => value !== null ? value : "-" },
+      ];
+
+    case "ssh_key_usage":
+      return [
+        { key: "name", label: "Key Name" },
+        { key: "key_type", label: "Type" },
+        { key: "use_count", label: "Total Uses" },
+        { key: "deployment_count", label: "Deployments" },
+        { key: "avg_uses_per_deployment", label: "Avg Uses/Target" },
+        { key: "last_used_at", label: "Last Used", format: (value: string) => value ? new Date(value).toLocaleDateString() : "Never" },
+      ];
+
     default:
       return [];
   }
