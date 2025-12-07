@@ -2,7 +2,8 @@ import { SettingsSection } from "@/components/settings/SettingsSection";
 import { ServerGroupsManagement } from "@/components/settings/ServerGroupsManagement";
 import { IsoImageLibrary } from "@/components/settings/IsoImageLibrary";
 import { FirmwareLibrary } from "@/components/settings/FirmwareLibrary";
-import { Briefcase, Disc, Database, Server } from "lucide-react";
+import { ZfsTemplateManagement } from "@/components/replication/ZfsTemplateManagement";
+import { Briefcase, Disc, Database, Server, HardDrive } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -144,6 +145,16 @@ export function InfrastructureSettings() {
         icon={Database}
       >
         <FirmwareLibrary />
+      </SettingsSection>
+
+      {/* ZFS Target Templates */}
+      <SettingsSection
+        id="zfs-templates"
+        title="ZFS Target Templates"
+        description="VMware templates for automated ZFS replication target deployment"
+        icon={HardDrive}
+      >
+        <ZfsTemplateManagement />
       </SettingsSection>
 
       {/* OpenManage Integration */}
