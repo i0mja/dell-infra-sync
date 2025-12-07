@@ -1920,6 +1920,19 @@ class VCenterMixin:
                     existing_host_lookup = {h['name']: h['id'] for h in existing_hosts_list}
             self.log(f"  Pre-fetched {len(existing_host_lookup)} existing hosts")
             
+            # Pre-fetch hosts owned by OTHER vCenters to avoid duplicating
+            other_hosts_response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_hosts?source_vcenter_id=neq.{source_vcenter_id}&select=name",
+                headers=headers,
+                verify=VERIFY_SSL
+            )
+            other_vcenter_hosts = set()
+            if other_hosts_response.status_code == 200:
+                other_hosts_list = _safe_json_parse(other_hosts_response)
+                if other_hosts_list:
+                    other_vcenter_hosts = {h['name'] for h in other_hosts_list}
+            self.log(f"  Found {len(other_vcenter_hosts)} hosts owned by other vCenters (will skip)")
+            
             # Pre-fetch all unlinked servers with service tags for auto-linking
             servers_response = requests.get(
                 f"{DSM_URL}/rest/v1/servers?select=id,hostname,service_tag&vcenter_host_id=is.null&service_tag=not.is.null",
@@ -1948,9 +1961,15 @@ class VCenterMixin:
             
             synced = 0
             auto_linked = 0
+            skipped_other_vcenter = 0
             
             for i, host in enumerate(container.view):
                 try:
+                    # Skip hosts that are already owned by another vCenter
+                    if host.name in other_vcenter_hosts and host.name not in existing_host_lookup:
+                        skipped_other_vcenter += 1
+                        self.log(f"  Skipping {host.name} (owned by another vCenter)", "DEBUG")
+                        continue
                     runtime = host.runtime if hasattr(host, 'runtime') else None
                     config = host.config if hasattr(host, 'config') else None
                     hardware = host.hardware if hasattr(host, 'hardware') else None
@@ -2133,7 +2152,7 @@ class VCenterMixin:
                     self.log(f"  Error syncing host {host.name}: {e}", "WARNING")
             
             container.Destroy()
-            self.log(f"  Synced {synced}/{total_hosts} hosts, auto-linked {auto_linked}")
+            self.log(f"  Synced {synced}/{total_hosts} hosts, auto-linked {auto_linked}, skipped {skipped_other_vcenter} (other vCenter)")
             
             # Log completion
             response_time = int((time.time() - start_time) * 1000)
@@ -2146,7 +2165,8 @@ class VCenterMixin:
                 details={
                     "synced": synced,
                     "total": total_hosts,
-                    "auto_linked": auto_linked
+                    "auto_linked": auto_linked,
+                    "skipped_other_vcenter": skipped_other_vcenter
                 },
                 job_id=job_id
             )

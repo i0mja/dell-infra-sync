@@ -67,11 +67,17 @@ interface VCenterHost {
   status: string | null;
   maintenance_mode: boolean | null;
   last_sync: string | null;
+  source_vcenter_id?: string | null;
 }
 
 interface ClusterGroup {
   name: string;
   hosts: VCenterHost[];
+}
+
+interface VCenterInfo {
+  id: string;
+  name: string;
 }
 
 interface HostsTableProps {
@@ -90,6 +96,7 @@ interface HostsTableProps {
   onBulkDelete?: (hostIds: string[]) => void;
   visibleColumns: string[];
   onSelectionChange?: (selectedIds: Set<string>) => void;
+  vcenters?: VCenterInfo[];
 }
 
 export function HostsTable({
@@ -108,6 +115,7 @@ export function HostsTable({
   onBulkDelete,
   visibleColumns,
   onSelectionChange,
+  vcenters = [],
 }: HostsTableProps) {
   const [collapsedClusters, setCollapsedClusters] = useState<Set<string>>(new Set());
   const [sortField, setSortField] = useState<string | null>(null);
@@ -376,6 +384,13 @@ export function HostsTable({
                   </div>
                 </TableHead>
               )}
+              {isColumnVisible("vcenter") && (
+                <TableHead className="w-[100px] px-2 cursor-pointer text-xs" onClick={() => handleSort("source_vcenter_id")}>
+                  <div className="flex items-center">
+                    vCenter {getSortIcon("source_vcenter_id")}
+                  </div>
+                </TableHead>
+              )}
               {isColumnVisible("sync") && (
                 <TableHead className="w-[100px] px-2 cursor-pointer text-xs" onClick={() => handleSort("last_sync")}>
                   <div className="flex items-center">
@@ -453,6 +468,14 @@ export function HostsTable({
                           ) : (
                             <Badge variant="outline" className="text-xs px-1.5 py-0">No</Badge>
                           )}
+                        </TableCell>
+                      )}
+                      {isColumnVisible("vcenter") && (
+                        <TableCell className="py-1.5 px-2 text-xs">
+                          {(() => {
+                            const vc = vcenters.find(v => v.id === host.source_vcenter_id);
+                            return vc?.name || "-";
+                          })()}
                         </TableCell>
                       )}
                       {isColumnVisible("sync") && (
