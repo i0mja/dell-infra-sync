@@ -49,6 +49,17 @@ interface RevokeKeyParams {
   hardRevoke?: boolean;
 }
 
+interface DeployKeyParams {
+  keyId: string;
+  targetIds: string[];
+  adminPassword?: string;
+}
+
+interface VerifyKeyParams {
+  keyId: string;
+  targetIds: string[];
+}
+
 export function useSshKeys() {
   const queryClient = useQueryClient();
 
@@ -230,6 +241,103 @@ export function useSshKeys() {
       .eq('id', keyId);
   };
 
+  // Deploy key to targets (creates job)
+  const deployKeyMutation = useMutation({
+    mutationFn: async ({ keyId, targetIds, adminPassword }: DeployKeyParams) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const { data: job, error } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'ssh_key_deploy',
+          status: 'pending',
+          created_by: user.id,
+          details: {
+            ssh_key_id: keyId,
+            target_ids: targetIds,
+            admin_password: adminPassword,
+          },
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return job;
+    },
+    onSuccess: () => {
+      toast.success('Deployment job created');
+    },
+    onError: (error) => {
+      console.error('Failed to create deploy job:', error);
+      toast.error('Failed to start deployment');
+    },
+  });
+
+  // Verify key on targets (creates job)
+  const verifyKeyMutation = useMutation({
+    mutationFn: async ({ keyId, targetIds }: VerifyKeyParams) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const { data: job, error } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'ssh_key_verify',
+          status: 'pending',
+          created_by: user.id,
+          details: {
+            ssh_key_id: keyId,
+            target_ids: targetIds,
+          },
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return job;
+    },
+    onSuccess: () => {
+      toast.success('Verification job created');
+    },
+    onError: (error) => {
+      console.error('Failed to create verify job:', error);
+      toast.error('Failed to start verification');
+    },
+  });
+
+  // Remove key from targets (creates job)
+  const removeFromTargetsMutation = useMutation({
+    mutationFn: async ({ keyId, targetIds }: VerifyKeyParams) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const { data: job, error } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'ssh_key_remove',
+          status: 'pending',
+          created_by: user.id,
+          details: {
+            ssh_key_id: keyId,
+            target_ids: targetIds,
+          },
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return job;
+    },
+    onSuccess: () => {
+      toast.success('Removal job created');
+    },
+    onError: (error) => {
+      console.error('Failed to create remove job:', error);
+      toast.error('Failed to start removal');
+    },
+  });
+
   return {
     sshKeys: sshKeys ?? [],
     isLoading,
@@ -244,5 +352,11 @@ export function useSshKeys() {
     deleteKey: deleteKeyMutation.mutateAsync,
     isDeleting: deleteKeyMutation.isPending,
     updateKeyUsage,
+    deployKey: deployKeyMutation.mutateAsync,
+    isDeploying: deployKeyMutation.isPending,
+    verifyKey: verifyKeyMutation.mutateAsync,
+    isVerifying: verifyKeyMutation.isPending,
+    removeFromTargets: removeFromTargetsMutation.mutateAsync,
+    isRemoving: removeFromTargetsMutation.isPending,
   };
 }
