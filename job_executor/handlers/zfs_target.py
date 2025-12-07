@@ -416,8 +416,20 @@ class ZfsTargetHandler(BaseHandler):
                 self.ssh_client = paramiko.SSHClient()
                 self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                 
-                # Parse private key
-                pkey = paramiko.RSAKey.from_private_key(io.StringIO(private_key))
+                # Parse private key - try multiple key types
+                pkey = None
+                key_file = io.StringIO(private_key)
+                for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                    try:
+                        key_file.seek(0)
+                        pkey = key_class.from_private_key(key_file)
+                        self._log_console(job_id, 'DEBUG', f'Loaded SSH key as {key_class.__name__}', details)
+                        break
+                    except Exception:
+                        continue
+                
+                if not pkey:
+                    raise Exception("Failed to parse SSH private key - unsupported key format")
                 
                 self._log_console(job_id, 'INFO', f'SSH attempt {attempt + 1}/{max_retries} to {ip}', details)
                 
