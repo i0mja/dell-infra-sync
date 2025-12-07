@@ -133,7 +133,8 @@ export function DeploymentConsole({ jobId, isRunning = false, className }: Deplo
     }
   };
 
-  const isSSHCommand = (message: string) => {
+  const isSSHCommand = (message: string | null | undefined) => {
+    if (!message) return false;
     return message.startsWith('$') || 
            message.includes('sudo ') || 
            message.includes('zpool ') || 
@@ -143,7 +144,11 @@ export function DeploymentConsole({ jobId, isRunning = false, className }: Deplo
   };
 
   const formatMessage = (entry: ConsoleEntry) => {
-    const message = entry.message;
+    const message = entry.message ?? '';
+    
+    if (!message) {
+      return <span className="text-muted-foreground italic">[empty]</span>;
+    }
     
     // Highlight SSH commands
     if (entry.level === 'ssh' || isSSHCommand(message)) {
