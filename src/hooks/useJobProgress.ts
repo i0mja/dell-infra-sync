@@ -10,6 +10,7 @@ export interface JobProgress {
   currentStep?: string;
   progressPercent: number;
   elapsedMs?: number;
+  details?: Record<string, any>;
 }
 
 export function useJobProgress(jobId: string | null, enabled: boolean = true) {
@@ -191,7 +192,8 @@ export function useJobProgress(jobId: string | null, enabled: boolean = true) {
           ? (job.details as any).current_step 
           : undefined),
         progressPercent,
-        elapsedMs
+        elapsedMs,
+        details: job?.details as Record<string, any> | undefined
       };
       
       return progress;
