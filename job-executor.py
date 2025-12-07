@@ -110,6 +110,7 @@ from job_executor.handlers import (
     VirtualMediaHandler, PowerHandler, BootHandler, DiscoveryHandler,
     FirmwareHandler, ClusterHandler, ESXiHandler, VCenterHandlers, NetworkHandler
 )
+from job_executor.handlers.template_copy import TemplateCopyHandler
 
 # Import IDM/FreeIPA authentication (conditional)
 try:
@@ -177,6 +178,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
         self.esxi_handler = ESXiHandler(self)
         self.vcenter_handler = VCenterHandlers(self)
         self.network_handler = NetworkHandler(self)
+        self.template_copy_handler = TemplateCopyHandler(self)
 
     def _validate_service_role_key(self):
         """Ensure SERVICE_ROLE_KEY is present before making Supabase requests"""
@@ -906,6 +908,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             'idrac_network_read': self.network_handler.execute_idrac_network_read,
             'idrac_network_write': self.network_handler.execute_idrac_network_write,
             'storage_vmotion': self.execute_storage_vmotion,
+            'copy_template_cross_vcenter': self.template_copy_handler.execute_copy_template,
         }
         
         handler = handler_map.get(job_type)

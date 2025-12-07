@@ -18,7 +18,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Trash2, Edit, Server, HardDrive, Cpu, MemoryStick, Network, Key, CheckCircle2, XCircle, Search, KeyRound, Copy, Loader2, ChevronDown, Terminal, AlertCircle, Info } from 'lucide-react';
+import { Plus, Trash2, Edit, Server, HardDrive, Cpu, MemoryStick, Network, Key, CheckCircle2, XCircle, Search, KeyRound, Copy, Loader2, ChevronDown, Terminal, AlertCircle, Info, ArrowRightLeft, MoreHorizontal } from 'lucide-react';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
+import { CopyTemplateDialog } from './CopyTemplateDialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useToast } from '@/hooks/use-toast';
 import { useZfsTemplates, ZfsTemplateFormData } from '@/hooks/useZfsTemplates';
@@ -57,6 +59,8 @@ export function ZfsTemplateManagement() {
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [generatedPublicKey, setGeneratedPublicKey] = useState('');
   const [isGeneratingKey, setIsGeneratingKey] = useState(false);
+  const [showCopyDialog, setShowCopyDialog] = useState(false);
+  const [templateToCopy, setTemplateToCopy] = useState<typeof templates[0] | null>(null);
   const { toast } = useToast();
 
   // Fetch vCenters for dropdown (use vcenters table, not vcenter_settings)
@@ -257,6 +261,11 @@ export function ZfsTemplateManagement() {
     if (confirm('Are you sure you want to delete this template?')) {
       await deleteTemplate(id);
     }
+  };
+
+  const handleCopyTemplate = (template: typeof templates[0]) => {
+    setTemplateToCopy(template);
+    setShowCopyDialog(true);
   };
 
   if (loading) {
@@ -789,21 +798,36 @@ export function ZfsTemplateManagement() {
                       {formatDistanceToNow(new Date(template.created_at), { addSuffix: true })}
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
+                      <div className="flex justify-end gap-1">
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => handleOpenDialog(template)}
+                          title="Edit template"
                         >
                           <Edit className="h-4 w-4" />
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDelete(template.id)}
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => handleCopyTemplate(template)}>
+                              <ArrowRightLeft className="h-4 w-4 mr-2" />
+                              Copy to vCenter
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem 
+                              onClick={() => handleDelete(template.id)}
+                              className="text-destructive focus:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -820,6 +844,14 @@ export function ZfsTemplateManagement() {
         onOpenChange={setShowTemplateSelector}
         sourceVCenterId={formData.vcenter_id}
         onSelect={handleTemplateSelect}
+      />
+
+      {/* Copy Template Dialog */}
+      <CopyTemplateDialog
+        open={showCopyDialog}
+        onOpenChange={setShowCopyDialog}
+        template={templateToCopy}
+        sourceVCenterName={templateToCopy ? (vcenters.find(vc => vc.id === templateToCopy.vcenter_id)?.name || 'Unknown') : ''}
       />
     </Card>
   );
