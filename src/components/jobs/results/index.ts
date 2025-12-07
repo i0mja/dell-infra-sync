@@ -13,3 +13,4 @@ export { JobConsoleLog } from './JobConsoleLog';
 export { WorkflowStepDetails } from './WorkflowStepDetails';
 export { MaintenanceFailureDetails } from './MaintenanceFailureDetails';
 export { StorageVMotionResults } from './StorageVMotionResults';
+export { VCenterSyncProgress } from './VCenterSyncProgress';
