@@ -43,18 +43,17 @@ import { supabase } from '@/integrations/supabase/client';
 import { DeploymentConsole } from './DeploymentConsole';
 import { cn } from '@/lib/utils';
 
-// Deployment phases for progress timeline
+// Deployment phases for progress timeline - matches handler phases in zfs_target.py
 const DEPLOYMENT_PHASES = [
-  { id: 'clone', label: 'Cloning Template', icon: Rocket, progress: 10 },
-  { id: 'customize', label: 'Guest Customization', icon: Server, progress: 25 },
-  { id: 'add_disk', label: 'Adding ZFS Disk', icon: HardDrive, progress: 35 },
-  { id: 'power_on', label: 'Powering On', icon: Power, progress: 45 },
-  { id: 'wait_tools', label: 'Waiting for VM Tools', icon: Loader2, progress: 55 },
-  { id: 'ssh_connect', label: 'Connecting via SSH', icon: Key, progress: 65 },
-  { id: 'zfs_create', label: 'Creating ZFS Pool', icon: Database, progress: 75 },
-  { id: 'nfs_setup', label: 'Configuring NFS Exports', icon: FolderOpen, progress: 85 },
-  { id: 'register', label: 'Registering Target', icon: ClipboardCheck, progress: 95 },
-  { id: 'complete', label: 'Complete', icon: CheckCircle2, progress: 100 }
+  { id: 'clone', label: 'Cloning Template', icon: Rocket, progress: 20 },
+  { id: 'power_on', label: 'Powering On VM', icon: Power, progress: 25 },
+  { id: 'wait_tools', label: 'Waiting for VM Tools', icon: Loader2, progress: 35 },
+  { id: 'wait_ip', label: 'Waiting for IP Address', icon: Wifi, progress: 40 },
+  { id: 'ssh_connect', label: 'Connecting via SSH', icon: Key, progress: 50 },
+  { id: 'zfs_create', label: 'Creating ZFS Pool', icon: Database, progress: 60 },
+  { id: 'nfs_setup', label: 'Configuring NFS Share', icon: FolderOpen, progress: 75 },
+  { id: 'register_target', label: 'Registering Target', icon: ClipboardCheck, progress: 85 },
+  { id: 'register_datastore', label: 'Registering Datastore', icon: HardDrive, progress: 100 },
 ] as const;
 
 interface DeployZfsTargetWizardProps {
