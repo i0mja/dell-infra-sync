@@ -11,22 +11,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
 import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
 import { ApiCallStream } from "./ApiCallStream";
-import { 
-  DiscoveryScanResults,
-  VCenterSyncResults,
-  CredentialTestResults,
-  ScpResults,
-  MultiServerResults,
-  GenericResults,
-  JobTimingCard,
-  EsxiUpgradeResults,
-  EsxiPreflightResults,
-  JobProgressHeader,
-  JobTasksTimeline,
-  JobConsoleLog,
-  StorageVMotionResults
-} from "./results";
-
+import { DiscoveryScanResults, VCenterSyncResults, CredentialTestResults, ScpResults, MultiServerResults, GenericResults, JobTimingCard, EsxiUpgradeResults, EsxiPreflightResults, JobProgressHeader, JobTasksTimeline, JobConsoleLog, StorageVMotionResults } from "./results";
 interface Job {
   id: string;
   job_type: string;
@@ -38,7 +23,6 @@ interface Job {
   completed_at: string | null;
   component_order?: number | null;
 }
-
 interface ParentWindow {
   id: string;
   title: string;
@@ -46,14 +30,12 @@ interface ParentWindow {
   maintenance_type: string;
   planned_start: string;
 }
-
 interface JobDetailDialogProps {
   job: Job | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onViewWindow?: (windowId: string) => void;
 }
-
 type IdracCommand = {
   id: string;
   endpoint: string;
@@ -65,27 +47,30 @@ type IdracCommand = {
   command_type: string | null;
   success: boolean | null;
 };
-
-export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDetailDialogProps) => {
+export const JobDetailDialog = ({
+  job,
+  open,
+  onOpenChange,
+  onViewWindow
+}: JobDetailDialogProps) => {
   const [subJobs, setSubJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [idracCommands, setIdracCommands] = useState<IdracCommand[]>([]);
   const [idracLoading, setIdracLoading] = useState(false);
   const [parentWindow, setParentWindow] = useState<ParentWindow | null>(null);
-  const { minimizeJob } = useMinimizedJobs();
+  const {
+    minimizeJob
+  } = useMinimizedJobs();
 
   // Check if this is a workflow job type (safe even when job is null)
   const workflowJobTypes = ['prepare_host_for_update', 'verify_host_after_update', 'rolling_cluster_update'];
   const isWorkflowJob = job ? workflowJobTypes.includes(job.job_type) : false;
-
   useEffect(() => {
     if (!open || !job) return;
 
     // Check if this job belongs to a maintenance window
     fetchParentWindow();
-
     if (isWorkflowJob) return;
-
     fetchIdracCommands();
 
     // Fetch sub-jobs for full_server_update jobs
@@ -94,27 +79,16 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
     }
 
     // Subscribe to sub-jobs updates if this is a full server update
-    const jobsChannel = job.job_type === 'full_server_update'
-      ? supabase
-          .channel(`sub-jobs-${job.id}`)
-          .on(
-            'postgres_changes',
-            {
-              event: '*',
-              schema: 'public',
-              table: 'jobs',
-              filter: `parent_job_id=eq.${job.id}`
-            },
-            () => {
-              console.log('Sub-jobs updated');
-              fetchSubJobs();
-            }
-          )
-          .subscribe()
-      : null;
-
+    const jobsChannel = job.job_type === 'full_server_update' ? supabase.channel(`sub-jobs-${job.id}`).on('postgres_changes', {
+      event: '*',
+      schema: 'public',
+      table: 'jobs',
+      filter: `parent_job_id=eq.${job.id}`
+    }, () => {
+      console.log('Sub-jobs updated');
+      fetchSubJobs();
+    }).subscribe() : null;
     setLoading(false);
-
     return () => {
       if (jobsChannel) {
         supabase.removeChannel(jobsChannel);
@@ -124,31 +98,24 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
 
   // Early return if no job selected (after all hooks)
   if (!job) {
-    return (
-      <Dialog open={open} onOpenChange={onOpenChange}>
+    return <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Job Details</DialogTitle>
           </DialogHeader>
           <p className="text-muted-foreground">No job selected</p>
         </DialogContent>
-      </Dialog>
-    );
+      </Dialog>;
   }
-
   const fetchParentWindow = async () => {
     if (!job) return;
-    
     try {
       // Find any maintenance window that has this job in its job_ids
       // Use overlaps instead of contains for better UUID array compatibility
-      const { data, error } = await supabase
-        .from('maintenance_windows')
-        .select('id, title, status, maintenance_type, planned_start')
-        .overlaps('job_ids', [job.id])
-        .limit(1)
-        .maybeSingle();
-      
+      const {
+        data,
+        error
+      } = await supabase.from('maintenance_windows').select('id, title, status, maintenance_type, planned_start').overlaps('job_ids', [job.id]).limit(1).maybeSingle();
       if (error) {
         // 406 errors can occur with array queries - handle gracefully
         if (error.code === '406' || error.message?.includes('406')) {
@@ -156,47 +123,42 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
           setParentWindow(null);
           return;
         }
-        if (error.code !== 'PGRST116') { // PGRST116 = no rows returned
+        if (error.code !== 'PGRST116') {
+          // PGRST116 = no rows returned
           console.error('Error fetching parent window:', error);
         }
       }
-      
       setParentWindow(data || null);
     } catch (error) {
       console.error('Error fetching parent window:', error);
       setParentWindow(null);
     }
   };
-
   const fetchSubJobs = async () => {
     if (!job) return;
-
     try {
-      const { data, error } = await supabase
-        .from("jobs")
-        .select("*")
-        .eq("parent_job_id", job.id)
-        .order("component_order", { ascending: true });
-
+      const {
+        data,
+        error
+      } = await supabase.from("jobs").select("*").eq("parent_job_id", job.id).order("component_order", {
+        ascending: true
+      });
       if (error) throw error;
       setSubJobs(data || []);
     } catch (error) {
       console.error("Error fetching sub-jobs:", error);
     }
   };
-
   const fetchIdracCommands = async () => {
     if (!job) return;
-
     try {
       setIdracLoading(true);
-      const { data, error } = await supabase
-        .from('idrac_commands')
-        .select('id, endpoint, status_code, error_message, response_body, created_at, operation_type, command_type, success')
-        .eq('job_id', job.id)
-        .order('created_at', { ascending: false })
-        .limit(5);
-
+      const {
+        data,
+        error
+      } = await supabase.from('idrac_commands').select('id, endpoint, status_code, error_message, response_body, created_at, operation_type, command_type, success').eq('job_id', job.id).order('created_at', {
+        ascending: false
+      }).limit(5);
       if (error) throw error;
       setIdracCommands(data || []);
     } catch (error) {
@@ -205,7 +167,6 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
       setIdracLoading(false);
     }
   };
-
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'completed':
@@ -218,19 +179,16 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
         return <Clock className="h-4 w-4 text-muted-foreground" />;
     }
   };
-
   const getStatusBadge = (status: string) => {
     const variants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
       completed: "secondary",
       failed: "destructive",
       running: "default",
-      pending: "outline",
+      pending: "outline"
     };
-    return <Badge variant={variants[status] || "outline"}>{status}</Badge>;
+    return;
   };
-
   const validationErrors = job.details?.validation_errors;
-
   const formatValidationErrors = () => {
     if (!validationErrors) return [] as string[];
     if (Array.isArray(validationErrors)) return validationErrors.map(String);
@@ -239,9 +197,7 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
     }
     return [String(validationErrors)];
   };
-
   const failingCommand = idracCommands.find(cmd => cmd.success === false || (cmd.status_code ?? 0) >= 400) || idracCommands[0];
-
   const renderResponseBody = (body: any) => {
     if (!body) return 'No response body provided by iDRAC.';
     if (typeof body === 'string') return body;
@@ -254,7 +210,11 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
   };
 
   // Job-type-specific result renderer
-  const JobResultsCard = ({ job }: { job: Job }) => {
+  const JobResultsCard = ({
+    job
+  }: {
+    job: Job;
+  }) => {
     switch (job.job_type) {
       case 'discovery_scan':
         return <DiscoveryScanResults details={job.details} />;
@@ -285,9 +245,7 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
   // Parent window banner component
   const ParentWindowBanner = () => {
     if (!parentWindow) return null;
-    
-    return (
-      <div className="mb-4 p-3 bg-muted/50 border rounded-lg flex items-center justify-between">
+    return <div className="mb-4 p-3 bg-muted/50 border rounded-lg flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Link2 className="h-4 w-4 text-muted-foreground" />
           <div>
@@ -298,24 +256,14 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
             </p>
           </div>
         </div>
-        {onViewWindow && (
-          <Button 
-            variant="outline" 
-            size="sm"
-            onClick={() => onViewWindow(parentWindow.id)}
-          >
+        {onViewWindow && <Button variant="outline" size="sm" onClick={() => onViewWindow(parentWindow.id)}>
             <ExternalLink className="h-3 w-3 mr-1" />
             View Window
-          </Button>
-        )}
-      </div>
-    );
+          </Button>}
+      </div>;
   };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      {isWorkflowJob ? (
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+  return <Dialog open={open} onOpenChange={onOpenChange}>
+      {isWorkflowJob ? <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <div className="flex items-center justify-between">
               <div>
@@ -326,32 +274,17 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
                   Workflow execution details for job {job.id}
                 </DialogDescription>
               </div>
-              {(job.status === 'running' || job.status === 'pending') && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => {
-                    minimizeJob(job.id, job.job_type);
-                    onOpenChange(false);
-                  }}
-                  title="Minimize to floating monitor"
-                >
+              {(job.status === 'running' || job.status === 'pending') && <Button variant="ghost" size="icon" onClick={() => {
+            minimizeJob(job.id, job.job_type);
+            onOpenChange(false);
+          }} title="Minimize to floating monitor">
                   <Minimize2 className="h-4 w-4" />
-                </Button>
-              )}
+                </Button>}
             </div>
           </DialogHeader>
           <ParentWindowBanner />
-          <WorkflowExecutionViewer 
-            jobId={job.id} 
-            workflowType={job.job_type}
-            jobStatus={job.status}
-            jobDetails={job.details}
-            hideHeader={true}
-          />
-        </DialogContent>
-      ) : (
-        <DialogContent className="max-w-4xl max-h-[90vh]">
+          <WorkflowExecutionViewer jobId={job.id} workflowType={job.job_type} jobStatus={job.status} jobDetails={job.details} hideHeader={true} />
+        </DialogContent> : <DialogContent className="max-w-4xl max-h-[90vh]">
           <DialogHeader>
             <div className="flex items-center justify-between">
               <DialogTitle>Job Details</DialogTitle>
@@ -375,9 +308,7 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
             <TabsContent value="progress" className="space-y-4 mt-4">
               <JobProgressHeader job={job} />
               {/* Hide task timeline for vcenter_sync jobs since VCenterSyncProgress shows phase progress */}
-              {job.job_type !== 'vcenter_sync' && (
-                <JobTasksTimeline jobId={job.id} />
-              )}
+              {job.job_type !== 'vcenter_sync' && <JobTasksTimeline jobId={job.id} />}
             </TabsContent>
 
             <TabsContent value="console" className="mt-4">
@@ -388,18 +319,15 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
               {/* Job Timing */}
               <JobTimingCard job={job} />
 
-              {job.details?.notes && (
-                <Card>
+              {job.details?.notes && <Card>
                   <CardContent className="pt-6">
                     <span className="text-sm text-muted-foreground">Notes:</span>
                     <p className="text-sm mt-1">{job.details.notes}</p>
                   </CardContent>
-                </Card>
-              )}
+                </Card>}
 
             {/* Error Alert for Failed Jobs */}
-            {job.status === 'failed' && job.details?.error && (
-              <Alert variant="destructive">
+            {job.status === 'failed' && job.details?.error && <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Job Failed</AlertTitle>
                 <AlertDescription className="mt-2">
@@ -407,12 +335,10 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
                     {job.details.error}
                   </div>
                 </AlertDescription>
-              </Alert>
-            )}
+              </Alert>}
 
             {/* Validation Errors */}
-            {job.status === 'failed' && validationErrors && (
-              <Card>
+            {job.status === 'failed' && validationErrors && <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <div className="flex items-center gap-2">
                     <ListChecks className="h-4 w-4 text-destructive" />
@@ -421,38 +347,29 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
                   <Badge variant="destructive">Validation failed</Badge>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                  {formatValidationErrors().map((err, idx) => (
-                    <div key={idx} className="flex items-start gap-2 text-sm">
+                  {formatValidationErrors().map((err, idx) => <div key={idx} className="flex items-start gap-2 text-sm">
                       <span className="mt-0.5 text-destructive">•</span>
                       <span className="font-mono text-destructive/80 whitespace-pre-wrap">{err}</span>
-                    </div>
-                  ))}
+                    </div>)}
                   <p className="text-xs text-muted-foreground">
                     Fix the validation errors above and retry the job.
                   </p>
                 </CardContent>
-              </Card>
-            )}
+              </Card>}
 
             {/* iDRAC Response Details */}
-            {job.status === 'failed' && (
-              <Card>
+            {job.status === 'failed' && <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <div className="flex items-center gap-2">
                     <FileCode className="h-4 w-4 text-destructive" />
                     <CardTitle className="text-base">iDRAC response that triggered failure</CardTitle>
                   </div>
-                  {failingCommand?.status_code && (
-                    <Badge variant={failingCommand.status_code >= 400 ? 'destructive' : 'secondary'}>
+                  {failingCommand?.status_code && <Badge variant={failingCommand.status_code >= 400 ? 'destructive' : 'secondary'}>
                       HTTP {failingCommand.status_code}
-                    </Badge>
-                  )}
+                    </Badge>}
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {idracLoading ? (
-                    <p className="text-sm text-muted-foreground">Loading iDRAC command details...</p>
-                  ) : failingCommand ? (
-                    <div className="space-y-3">
+                  {idracLoading ? <p className="text-sm text-muted-foreground">Loading iDRAC command details...</p> : failingCommand ? <div className="space-y-3">
                       <div className="space-y-1 text-sm">
                         <div className="flex items-center gap-2">
                           <span className="text-muted-foreground">Endpoint</span>
@@ -460,15 +377,13 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
                         </div>
                         <p className="font-mono break-all text-xs bg-muted p-2 rounded">{failingCommand.endpoint}</p>
                       </div>
-                      {failingCommand.error_message && (
-                        <Alert variant="destructive">
+                      {failingCommand.error_message && <Alert variant="destructive">
                           <AlertCircle className="h-4 w-4" />
                           <AlertTitle>Rejected by iDRAC</AlertTitle>
                           <AlertDescription className="mt-1 text-sm font-mono whitespace-pre-wrap">
                             {failingCommand.error_message}
                           </AlertDescription>
-                        </Alert>
-                      )}
+                        </Alert>}
                       <div className="space-y-1">
                         <p className="text-sm text-muted-foreground">Raw response</p>
                         <ScrollArea className="h-48 rounded border bg-muted p-3">
@@ -480,47 +395,35 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
                           Captured at {new Date(failingCommand.created_at).toLocaleString()}
                         </p>
                       </div>
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">No iDRAC responses were logged for this job.</p>
-                  )}
+                    </div> : <p className="text-sm text-muted-foreground">No iDRAC responses were logged for this job.</p>}
                 </CardContent>
-              </Card>
-            )}
+              </Card>}
 
             {/* Health Check Failure Details */}
-            {job.status === 'failed' && job.job_type === 'health_check' && job.details?.failed_servers && (
-              <Alert variant="destructive">
+            {job.status === 'failed' && job.job_type === 'health_check' && job.details?.failed_servers && <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Health Check Failures ({job.details.failed_count}/{job.details.total})</AlertTitle>
                 <AlertDescription className="mt-2">
                   <ScrollArea className="h-[200px]">
                     <div className="space-y-2">
-                      {job.details.failed_servers.map((failure: any, idx: number) => (
-                        <div key={idx} className="p-2 bg-destructive/10 rounded border border-destructive/20">
+                      {job.details.failed_servers.map((failure: any, idx: number) => <div key={idx} className="p-2 bg-destructive/10 rounded border border-destructive/20">
                           <div className="font-medium">{failure.ip_address}</div>
                           <div className="text-sm font-mono mt-1">{failure.error}</div>
-                        </div>
-                      ))}
+                        </div>)}
                     </div>
                   </ScrollArea>
                 </AlertDescription>
-              </Alert>
-            )}
+              </Alert>}
 
               {/* Job-Type-Specific Results */}
-              {job.status === 'completed' && (
-                <JobResultsCard job={job} />
-              )}
+              {job.status === 'completed' && <JobResultsCard job={job} />}
 
               {/* Sub-Jobs List (for full_server_update) */}
-              {job.job_type === 'full_server_update' && subJobs.length > 0 && (
-                <Card>
+              {job.job_type === 'full_server_update' && subJobs.length > 0 && <Card>
                   <CardContent className="pt-6">
                     <h3 className="font-semibold mb-4">Component Updates ({subJobs.length})</h3>
                     <div className="space-y-2">
-                      {subJobs.map((subJob) => (
-                        <div key={subJob.id} className="flex items-center justify-between p-3 border rounded-lg">
+                      {subJobs.map(subJob => <div key={subJob.id} className="flex items-center justify-between p-3 border rounded-lg">
                           <div className="flex items-center gap-3">
                             {getStatusIcon(subJob.status)}
                             <div>
@@ -533,20 +436,16 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
                             </div>
                           </div>
                           {getStatusBadge(subJob.status)}
-                        </div>
-                      ))}
+                        </div>)}
                     </div>
                   </CardContent>
-                </Card>
-              )}
+                </Card>}
             </TabsContent>
 
             <TabsContent value="api-calls" className="mt-4">
               <ApiCallStream jobId={job.id} />
             </TabsContent>
           </Tabs>
-        </DialogContent>
-      )}
-    </Dialog>
-  );
+        </DialogContent>}
+    </Dialog>;
 };
