@@ -60,6 +60,51 @@ interface VerifyKeyParams {
   targetIds: string[];
 }
 
+// Error messages for better user feedback
+const ERROR_MESSAGES = {
+  NOT_AUTHENTICATED: 'You must be logged in to perform this action',
+  KEY_NOT_FOUND: 'SSH key not found',
+  KEY_ALREADY_REVOKED: 'This key has already been revoked',
+  KEY_GENERATION_FAILED: 'Failed to generate SSH key pair. Please try again.',
+  ENCRYPTION_FAILED: 'Failed to encrypt private key. Please try again.',
+  DATABASE_ERROR: 'Database operation failed. Please try again.',
+  NETWORK_ERROR: 'Network error. Please check your connection and try again.',
+  NO_TARGETS_SELECTED: 'Please select at least one target',
+  INVALID_KEY_NAME: 'Key name must be between 3 and 100 characters',
+} as const;
+
+// Helper to get user-friendly error message
+function getErrorMessage(error: unknown, defaultMessage: string): string {
+  if (error instanceof Error) {
+    // Check for specific error types
+    if (error.message.includes('network') || error.message.includes('fetch')) {
+      return ERROR_MESSAGES.NETWORK_ERROR;
+    }
+    if (error.message.includes('auth') || error.message.includes('unauthorized')) {
+      return ERROR_MESSAGES.NOT_AUTHENTICATED;
+    }
+    return error.message;
+  }
+  return defaultMessage;
+}
+
+// Helper to log errors to audit
+async function logAuditError(action: string, error: unknown, details?: Record<string, unknown>) {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    await supabase.from('audit_logs').insert({
+      user_id: user?.id || null,
+      action: `ssh_key_${action}_error`,
+      details: {
+        error: error instanceof Error ? error.message : String(error),
+        ...details,
+      },
+    });
+  } catch (logError) {
+    console.error('Failed to log audit error:', logError);
+  }
+}
+
 export function useSshKeys() {
   const queryClient = useQueryClient();
 
@@ -72,62 +117,91 @@ export function useSshKeys() {
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Failed to fetch SSH keys:', error);
+        throw new Error(ERROR_MESSAGES.DATABASE_ERROR);
+      }
       return data as SshKey[];
     },
+    retry: 2,
+    retryDelay: 1000,
   });
 
   // Fetch deployments for a specific key
-  const fetchDeployments = async (keyId: string) => {
+  const fetchDeployments = async (keyId: string): Promise<SshKeyDeployment[]> => {
+    if (!keyId) {
+      throw new Error(ERROR_MESSAGES.KEY_NOT_FOUND);
+    }
+
     const { data, error } = await supabase
       .from('ssh_key_deployments')
       .select('*')
       .eq('ssh_key_id', keyId)
       .order('created_at', { ascending: false });
 
-    if (error) throw error;
+    if (error) {
+      console.error('Failed to fetch deployments:', error);
+      throw new Error(ERROR_MESSAGES.DATABASE_ERROR);
+    }
     return data as SshKeyDeployment[];
   };
 
   // Generate new SSH key
   const generateKeyMutation = useMutation({
     mutationFn: async ({ name, description, expiresAt }: GenerateKeyParams) => {
+      // Validate input
+      if (!name || name.trim().length < 3 || name.trim().length > 100) {
+        throw new Error(ERROR_MESSAGES.INVALID_KEY_NAME);
+      }
+
       // First generate the key pair
       const { data: keyData, error: keyError } = await supabase.functions.invoke('generate-ssh-keypair', {
         body: { comment: name, returnFingerprint: true },
       });
 
-      if (keyError) throw keyError;
+      if (keyError || !keyData) {
+        await logAuditError('generate', keyError, { name });
+        throw new Error(ERROR_MESSAGES.KEY_GENERATION_FAILED);
+      }
 
       // Encrypt the private key
       const { data: encryptedData, error: encryptError } = await supabase.functions.invoke('encrypt-credentials', {
         body: { password: keyData.privateKey },
       });
 
-      if (encryptError) throw encryptError;
+      if (encryptError || !encryptedData) {
+        await logAuditError('encrypt', encryptError, { name });
+        throw new Error(ERROR_MESSAGES.ENCRYPTION_FAILED);
+      }
 
       // Get current user
       const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        throw new Error(ERROR_MESSAGES.NOT_AUTHENTICATED);
+      }
 
       // Store in database
       const { data: sshKey, error: insertError } = await supabase
         .from('ssh_keys')
         .insert({
-          name,
-          description: description || null,
+          name: name.trim(),
+          description: description?.trim() || null,
           key_type: keyData.keyType || 'ed25519',
           public_key: keyData.publicKey,
           public_key_fingerprint: keyData.fingerprint,
           private_key_encrypted: encryptedData.encrypted,
           status: 'active',
-          created_by: user?.id,
+          created_by: user.id,
           activated_at: new Date().toISOString(),
           expires_at: expiresAt || null,
         })
         .select()
         .single();
 
-      if (insertError) throw insertError;
+      if (insertError) {
+        await logAuditError('insert', insertError, { name });
+        throw new Error(ERROR_MESSAGES.DATABASE_ERROR);
+      }
 
       return { sshKey, publicKey: keyData.publicKey };
     },
@@ -136,14 +210,19 @@ export function useSshKeys() {
       toast.success('SSH key generated successfully');
     },
     onError: (error) => {
-      console.error('Failed to generate SSH key:', error);
-      toast.error('Failed to generate SSH key');
+      const message = getErrorMessage(error, 'Failed to generate SSH key');
+      console.error('SSH key generation failed:', error);
+      toast.error(message);
     },
   });
 
   // Activate a pending key
   const activateKeyMutation = useMutation({
     mutationFn: async (keyId: string) => {
+      if (!keyId) {
+        throw new Error(ERROR_MESSAGES.KEY_NOT_FOUND);
+      }
+
       const { data, error } = await supabase
         .from('ssh_keys')
         .update({
@@ -154,7 +233,10 @@ export function useSshKeys() {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        await logAuditError('activate', error, { keyId });
+        throw new Error(ERROR_MESSAGES.DATABASE_ERROR);
+      }
       return data;
     },
     onSuccess: () => {
@@ -162,34 +244,58 @@ export function useSshKeys() {
       toast.success('SSH key activated');
     },
     onError: (error) => {
-      console.error('Failed to activate SSH key:', error);
-      toast.error('Failed to activate SSH key');
+      const message = getErrorMessage(error, 'Failed to activate SSH key');
+      console.error('SSH key activation failed:', error);
+      toast.error(message);
     },
   });
 
   // Revoke a key
   const revokeKeyMutation = useMutation({
     mutationFn: async ({ keyId, reason, hardRevoke }: RevokeKeyParams) => {
+      if (!keyId) {
+        throw new Error(ERROR_MESSAGES.KEY_NOT_FOUND);
+      }
+
+      // Check if key is already revoked
+      const { data: existingKey } = await supabase
+        .from('ssh_keys')
+        .select('status')
+        .eq('id', keyId)
+        .single();
+
+      if (existingKey?.status === 'revoked') {
+        throw new Error(ERROR_MESSAGES.KEY_ALREADY_REVOKED);
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        throw new Error(ERROR_MESSAGES.NOT_AUTHENTICATED);
+      }
 
       const { data, error } = await supabase
         .from('ssh_keys')
         .update({
           status: 'revoked',
           revoked_at: new Date().toISOString(),
-          revoked_by: user?.id,
+          revoked_by: user.id,
           revocation_reason: reason,
         })
         .eq('id', keyId)
         .select()
         .single();
 
-      if (error) throw error;
-
-      // If hard revoke, trigger job to remove from targets (future phase)
-      if (hardRevoke) {
-        console.log('Hard revoke requested - will remove from targets in Phase 2');
+      if (error) {
+        await logAuditError('revoke', error, { keyId, reason });
+        throw new Error(ERROR_MESSAGES.DATABASE_ERROR);
       }
+
+      // Log the revocation for audit
+      await supabase.from('audit_logs').insert({
+        user_id: user.id,
+        action: 'ssh_key_revoked',
+        details: { keyId, reason, hardRevoke },
+      });
 
       return data;
     },
@@ -198,54 +304,79 @@ export function useSshKeys() {
       toast.success('SSH key revoked');
     },
     onError: (error) => {
-      console.error('Failed to revoke SSH key:', error);
-      toast.error('Failed to revoke SSH key');
+      const message = getErrorMessage(error, 'Failed to revoke SSH key');
+      console.error('SSH key revocation failed:', error);
+      toast.error(message);
     },
   });
 
   // Delete a key (only if not deployed)
   const deleteKeyMutation = useMutation({
     mutationFn: async (keyId: string) => {
+      if (!keyId) {
+        throw new Error(ERROR_MESSAGES.KEY_NOT_FOUND);
+      }
+
       const { error } = await supabase
         .from('ssh_keys')
         .delete()
         .eq('id', keyId);
 
-      if (error) throw error;
+      if (error) {
+        await logAuditError('delete', error, { keyId });
+        throw new Error(ERROR_MESSAGES.DATABASE_ERROR);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ssh-keys'] });
       toast.success('SSH key deleted');
     },
     onError: (error) => {
-      console.error('Failed to delete SSH key:', error);
-      toast.error('Failed to delete SSH key');
+      const message = getErrorMessage(error, 'Failed to delete SSH key');
+      console.error('SSH key deletion failed:', error);
+      toast.error(message);
     },
   });
 
   // Update key usage (called by Job Executor)
   const updateKeyUsage = async (keyId: string) => {
-    // First get current use_count
-    const { data: currentKey } = await supabase
-      .from('ssh_keys')
-      .select('use_count')
-      .eq('id', keyId)
-      .single();
+    if (!keyId) return;
 
-    await supabase
-      .from('ssh_keys')
-      .update({
-        last_used_at: new Date().toISOString(),
-        use_count: (currentKey?.use_count || 0) + 1,
-      })
-      .eq('id', keyId);
+    try {
+      // First get current use_count
+      const { data: currentKey } = await supabase
+        .from('ssh_keys')
+        .select('use_count')
+        .eq('id', keyId)
+        .single();
+
+      await supabase
+        .from('ssh_keys')
+        .update({
+          last_used_at: new Date().toISOString(),
+          use_count: (currentKey?.use_count || 0) + 1,
+        })
+        .eq('id', keyId);
+    } catch (error) {
+      console.error('Failed to update key usage:', error);
+      // Don't throw - this is a non-critical operation
+    }
   };
 
   // Deploy key to targets (creates job)
   const deployKeyMutation = useMutation({
     mutationFn: async ({ keyId, targetIds, adminPassword }: DeployKeyParams) => {
+      if (!keyId) {
+        throw new Error(ERROR_MESSAGES.KEY_NOT_FOUND);
+      }
+      if (!targetIds || targetIds.length === 0) {
+        throw new Error(ERROR_MESSAGES.NO_TARGETS_SELECTED);
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not authenticated');
+      if (!user) {
+        throw new Error(ERROR_MESSAGES.NOT_AUTHENTICATED);
+      }
 
       const { data: job, error } = await supabase
         .from('jobs')
@@ -262,23 +393,36 @@ export function useSshKeys() {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        await logAuditError('deploy', error, { keyId, targetCount: targetIds.length });
+        throw new Error(ERROR_MESSAGES.DATABASE_ERROR);
+      }
       return job;
     },
     onSuccess: () => {
       toast.success('Deployment job created');
     },
     onError: (error) => {
-      console.error('Failed to create deploy job:', error);
-      toast.error('Failed to start deployment');
+      const message = getErrorMessage(error, 'Failed to start deployment');
+      console.error('SSH key deployment failed:', error);
+      toast.error(message);
     },
   });
 
   // Verify key on targets (creates job)
   const verifyKeyMutation = useMutation({
     mutationFn: async ({ keyId, targetIds }: VerifyKeyParams) => {
+      if (!keyId) {
+        throw new Error(ERROR_MESSAGES.KEY_NOT_FOUND);
+      }
+      if (!targetIds || targetIds.length === 0) {
+        throw new Error(ERROR_MESSAGES.NO_TARGETS_SELECTED);
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not authenticated');
+      if (!user) {
+        throw new Error(ERROR_MESSAGES.NOT_AUTHENTICATED);
+      }
 
       const { data: job, error } = await supabase
         .from('jobs')
@@ -294,23 +438,36 @@ export function useSshKeys() {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        await logAuditError('verify', error, { keyId, targetCount: targetIds.length });
+        throw new Error(ERROR_MESSAGES.DATABASE_ERROR);
+      }
       return job;
     },
     onSuccess: () => {
       toast.success('Verification job created');
     },
     onError: (error) => {
-      console.error('Failed to create verify job:', error);
-      toast.error('Failed to start verification');
+      const message = getErrorMessage(error, 'Failed to start verification');
+      console.error('SSH key verification failed:', error);
+      toast.error(message);
     },
   });
 
   // Remove key from targets (creates job)
   const removeFromTargetsMutation = useMutation({
     mutationFn: async ({ keyId, targetIds }: VerifyKeyParams) => {
+      if (!keyId) {
+        throw new Error(ERROR_MESSAGES.KEY_NOT_FOUND);
+      }
+      if (!targetIds || targetIds.length === 0) {
+        throw new Error(ERROR_MESSAGES.NO_TARGETS_SELECTED);
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not authenticated');
+      if (!user) {
+        throw new Error(ERROR_MESSAGES.NOT_AUTHENTICATED);
+      }
 
       const { data: job, error } = await supabase
         .from('jobs')
@@ -326,15 +483,19 @@ export function useSshKeys() {
         .select()
         .single();
 
-      if (error) throw error;
-      return job;
+      if (error) {
+        await logAuditError('remove', error, { keyId, targetCount: targetIds.length });
+        throw new Error(ERROR_MESSAGES.DATABASE_ERROR);
+      }
+      return { job, jobId: job.id };
     },
     onSuccess: () => {
       toast.success('Removal job created');
     },
     onError: (error) => {
-      console.error('Failed to create remove job:', error);
-      toast.error('Failed to start removal');
+      const message = getErrorMessage(error, 'Failed to start removal');
+      console.error('SSH key removal failed:', error);
+      toast.error(message);
     },
   });
 
