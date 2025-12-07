@@ -1,20 +1,17 @@
 import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ProtectionGroupsPanel } from "./ProtectionGroupsPanel";
-import { ReplicationTargetsPanel } from "./ReplicationTargetsPanel";
 import { ReplicationJobsPanel } from "./ReplicationJobsPanel";
 import { DrStatsBar } from "./DrStatsBar";
 import { DrQuickActions } from "./DrQuickActions";
 import { DrOnboarding } from "./DrOnboarding";
-import { useProtectionGroups, useReplicationTargets } from "@/hooks/useReplication";
+import { useProtectionGroups } from "@/hooks/useReplication";
 
 export function DrReplicationTab() {
-  const { groups, loading: groupsLoading } = useProtectionGroups();
-  const { targets, loading: targetsLoading } = useReplicationTargets();
+  const { groups, loading } = useProtectionGroups();
   const [activeTab, setActiveTab] = useState("groups");
 
-  const loading = groupsLoading || targetsLoading;
-  const hasData = groups.length > 0 || targets.length > 0;
+  const hasData = groups.length > 0;
 
   // Show onboarding if no data
   if (!loading && !hasData) {
@@ -29,14 +26,10 @@ export function DrReplicationTab() {
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList>
             <TabsTrigger value="groups">Protection Groups</TabsTrigger>
-            <TabsTrigger value="targets">DR Targets</TabsTrigger>
             <TabsTrigger value="jobs">Replication Jobs</TabsTrigger>
           </TabsList>
           <TabsContent value="groups" className="mt-4">
             <ProtectionGroupsPanel />
-          </TabsContent>
-          <TabsContent value="targets" className="mt-4">
-            <ReplicationTargetsPanel />
           </TabsContent>
           <TabsContent value="jobs" className="mt-4">
             <ReplicationJobsPanel />
