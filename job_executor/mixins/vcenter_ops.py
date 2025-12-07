@@ -318,6 +318,10 @@ class VCenterMixin:
                         result['blocked_vms'] += 1
                     else:
                         result['migratable_vms'] += 1
+                
+                except Exception as vm_err:
+                    self.log(f"  Error analyzing VM: {vm_err}", "DEBUG")
+                    continue
             
             # Check 7: DRS compatibility - simulate maintenance mode recommendations
             drs_blockers = self._check_drs_evacuation_feasibility(target_host, content, result['host_name'])
@@ -331,10 +335,6 @@ class VCenterMixin:
                         result['migratable_vms'] = max(0, result['migratable_vms'] - 1)
                         if drs_blocker['severity'] == 'critical':
                             result['can_enter_maintenance'] = False
-                        
-                except Exception as vm_err:
-                    self.log(f"  Error analyzing VM: {vm_err}", "DEBUG")
-                    continue
             
             # Estimate evacuation time (rough: 30 seconds per migratable VM)
             result['estimated_evacuation_time'] = result['migratable_vms'] * 30
