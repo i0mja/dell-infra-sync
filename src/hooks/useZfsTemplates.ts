@@ -230,14 +230,21 @@ export function useZfsTemplates() {
     mutationFn: async (config: {
       template_id: string;
       vm_name: string;
-      ip_address: string;
-      subnet_mask: string;
-      gateway: string;
+      // Network configuration
+      network_id?: string;
+      network_name?: string;
+      use_dhcp?: boolean;
+      // Static IP config (optional if DHCP)
+      ip_address?: string;
+      subnet_mask?: string;
+      gateway?: string;
       dns_servers?: string[];
       hostname?: string;
+      // ZFS config
       zfs_pool_name?: string;
       zfs_disk_gb?: number;
       nfs_network?: string;
+      // Resources
       cpu_count?: number;
       memory_gb?: number;
     }) => {
@@ -253,14 +260,21 @@ export function useZfsTemplates() {
           target_scope: { template_id: config.template_id },
           details: {
             vm_name: config.vm_name,
+            // Network config
+            network_id: config.network_id,
+            network_name: config.network_name,
+            use_dhcp: config.use_dhcp ?? false,
+            // IP config (may be undefined if DHCP)
             ip_address: config.ip_address,
             subnet_mask: config.subnet_mask,
             gateway: config.gateway,
             dns_servers: config.dns_servers || [],
             hostname: config.hostname || config.vm_name,
+            // ZFS config
             zfs_pool_name: config.zfs_pool_name,
             zfs_disk_gb: config.zfs_disk_gb,
             nfs_network: config.nfs_network,
+            // Resources
             cpu_count: config.cpu_count,
             memory_gb: config.memory_gb
           }
