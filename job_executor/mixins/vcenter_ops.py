@@ -1910,6 +1910,19 @@ class VCenterMixin:
                     server_by_service_tag = {s['service_tag']: s for s in servers_list if s.get('service_tag')}
             self.log(f"  Pre-fetched {len(server_by_service_tag)} unlinked servers for auto-linking")
             
+            # Pre-fetch already-linked servers (vcenter_host_id is set) to update their last_seen
+            linked_servers_response = requests.get(
+                f"{DSM_URL}/rest/v1/servers?select=id,service_tag,vcenter_host_id&vcenter_host_id=not.is.null&service_tag=not.is.null",
+                headers=headers,
+                verify=VERIFY_SSL
+            )
+            linked_server_by_vcenter_host_id = {}
+            if linked_servers_response.status_code == 200:
+                linked_servers_list = _safe_json_parse(linked_servers_response)
+                if linked_servers_list:
+                    linked_server_by_vcenter_host_id = {s['vcenter_host_id']: s['id'] for s in linked_servers_list if s.get('vcenter_host_id')}
+            self.log(f"  Pre-fetched {len(linked_server_by_vcenter_host_id)} already-linked servers")
+            
             synced = 0
             auto_linked = 0
             
@@ -2036,7 +2049,7 @@ class VCenterMixin:
                             matching_server = server_by_service_tag.get(serial_number)
                             
                             if matching_server:
-                                    # Link server to vCenter host
+                                    # Link server to vCenter host and update last_seen
                                     link_response = requests.patch(
                                         f"{DSM_URL}/rest/v1/servers?id=eq.{matching_server['id']}",
                                         headers={
@@ -2045,7 +2058,10 @@ class VCenterMixin:
                                             'Content-Type': 'application/json',
                                             'Prefer': 'return=minimal'
                                         },
-                                        json={'vcenter_host_id': host_id},
+                                        json={
+                                            'vcenter_host_id': host_id,
+                                            'last_seen': utc_now_iso()
+                                        },
                                         verify=VERIFY_SSL
                                     )
                                     if link_response.status_code == 204:
@@ -2065,6 +2081,23 @@ class VCenterMixin:
                                         # Remove from lookup so we don't try to link again
                                         del server_by_service_tag[serial_number]
                                         self.log(f"  Auto-linked {host.name} to server {matching_server['hostname']}")
+                                        # Track this newly linked server for last_seen updates
+                                        linked_server_by_vcenter_host_id[host_id] = matching_server['id']
+                            
+                            # Update last_seen for already-linked servers
+                            elif host_id in linked_server_by_vcenter_host_id:
+                                linked_server_id = linked_server_by_vcenter_host_id[host_id]
+                                requests.patch(
+                                    f"{DSM_URL}/rest/v1/servers?id=eq.{linked_server_id}",
+                                    headers={
+                                        'apikey': SERVICE_ROLE_KEY,
+                                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                        'Content-Type': 'application/json',
+                                        'Prefer': 'return=minimal'
+                                    },
+                                    json={'last_seen': utc_now_iso()},
+                                    verify=VERIFY_SSL
+                                )
                         
                         self.log(f"  Synced host: {host.name}")
                         
