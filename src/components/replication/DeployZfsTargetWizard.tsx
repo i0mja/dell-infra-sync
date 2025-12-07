@@ -32,8 +32,11 @@ import {
   Key,
   Database,
   FolderOpen,
-  ClipboardCheck
+  ClipboardCheck,
+  Wifi,
+  Info
 } from 'lucide-react';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { useZfsTemplates, ZfsTargetTemplate } from '@/hooks/useZfsTemplates';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -63,14 +66,22 @@ interface DeployZfsTargetWizardProps {
 interface DeploymentConfig {
   template_id: string;
   vm_name: string;
+  // Network selection
+  network_id?: string;
+  network_name?: string;
+  vlan_id?: number;
+  use_dhcp: boolean;
+  // Static IP config
   ip_address: string;
   subnet_mask: string;
   gateway: string;
   dns_servers: string;
   hostname: string;
+  // ZFS config
   zfs_pool_name: string;
   zfs_disk_gb: number;
   nfs_network: string;
+  // Resources
   cpu_count: number;
   memory_gb: number;
 }
@@ -78,6 +89,10 @@ interface DeploymentConfig {
 const initialConfig: DeploymentConfig = {
   template_id: '',
   vm_name: '',
+  network_id: undefined,
+  network_name: undefined,
+  vlan_id: undefined,
+  use_dhcp: false,
   ip_address: '',
   subnet_mask: '255.255.255.0',
   gateway: '',
@@ -90,6 +105,15 @@ const initialConfig: DeploymentConfig = {
   memory_gb: 8
 };
 
+interface VCenterNetwork {
+  id: string;
+  name: string;
+  vlan_id?: number;
+  vlan_type?: string;
+  network_type?: string;
+  parent_switch_name?: string;
+}
+
 export function DeployZfsTargetWizard({ open, onOpenChange, onSuccess }: DeployZfsTargetWizardProps) {
   const { templates, loading: templatesLoading, deployFromTemplate, isDeploying } = useZfsTemplates();
   const [step, setStep] = useState(1);
@@ -98,6 +122,24 @@ export function DeployZfsTargetWizard({ open, onOpenChange, onSuccess }: DeployZ
   const [deployedJobId, setDeployedJobId] = useState<string | null>(null);
   
   const activeTemplates = templates.filter(t => t.is_active);
+
+  // Fetch networks for the selected template's vCenter
+  const { data: networks = [] } = useQuery({
+    queryKey: ['vcenter-networks-for-deploy', selectedTemplate?.vcenter_id],
+    queryFn: async () => {
+      if (!selectedTemplate?.vcenter_id) return [];
+      const { data, error } = await supabase
+        .from('vcenter_networks')
+        .select('id, name, vlan_id, vlan_type, network_type, parent_switch_name')
+        .eq('source_vcenter_id', selectedTemplate.vcenter_id)
+        .eq('uplink_port_group', false)
+        .eq('accessible', true)
+        .order('name');
+      if (error) throw error;
+      return data as VCenterNetwork[];
+    },
+    enabled: !!selectedTemplate?.vcenter_id
+  });
 
   // Poll job status when deployed
   const { data: jobStatus } = useQuery({
@@ -131,6 +173,21 @@ export function DeployZfsTargetWizard({ open, onOpenChange, onSuccess }: DeployZ
     }
   }, [selectedTemplate]);
 
+  // Auto-select default network when networks load and template has a default
+  useEffect(() => {
+    if (selectedTemplate?.default_network && networks.length > 0 && !config.network_id) {
+      const defaultNetwork = networks.find(n => n.name === selectedTemplate.default_network);
+      if (defaultNetwork) {
+        setConfig(prev => ({
+          ...prev,
+          network_id: defaultNetwork.id,
+          network_name: defaultNetwork.name,
+          vlan_id: defaultNetwork.vlan_id ?? undefined
+        }));
+      }
+    }
+  }, [selectedTemplate, networks]);
+
   // Generate default VM name
   useEffect(() => {
     if (selectedTemplate && !config.vm_name) {
@@ -156,10 +213,17 @@ export function DeployZfsTargetWizard({ open, onOpenChange, onSuccess }: DeployZ
       const job = await deployFromTemplate({
         template_id: config.template_id,
         vm_name: config.vm_name,
-        ip_address: config.ip_address,
-        subnet_mask: config.subnet_mask,
-        gateway: config.gateway,
-        dns_servers: config.dns_servers ? config.dns_servers.split(',').map(s => s.trim()) : undefined,
+        // Network config
+        network_id: config.network_id,
+        network_name: config.network_name,
+        use_dhcp: config.use_dhcp,
+        // Only include static IP config if not using DHCP
+        ip_address: config.use_dhcp ? undefined : config.ip_address,
+        subnet_mask: config.use_dhcp ? undefined : config.subnet_mask,
+        gateway: config.use_dhcp ? undefined : config.gateway,
+        dns_servers: config.use_dhcp 
+          ? undefined 
+          : (config.dns_servers ? config.dns_servers.split(',').map(s => s.trim()) : undefined),
         hostname: config.hostname || config.vm_name,
         zfs_pool_name: config.zfs_pool_name,
         zfs_disk_gb: config.zfs_disk_gb,
@@ -174,12 +238,27 @@ export function DeployZfsTargetWizard({ open, onOpenChange, onSuccess }: DeployZ
     }
   };
 
+  const handleNetworkSelect = (networkId: string) => {
+    const network = networks.find(n => n.id === networkId);
+    if (network) {
+      setConfig(prev => ({
+        ...prev,
+        network_id: network.id,
+        network_name: network.name,
+        vlan_id: network.vlan_id ?? undefined
+      }));
+    }
+  };
+
   const canProceed = () => {
     switch (step) {
       case 1:
         return !!selectedTemplate;
       case 2:
-        return config.vm_name && config.ip_address && config.subnet_mask && config.gateway;
+        // Network required, and either DHCP or full static config
+        const hasNetwork = !!config.network_id;
+        const hasStaticConfig = config.ip_address && config.subnet_mask && config.gateway;
+        return config.vm_name && hasNetwork && (config.use_dhcp || hasStaticConfig);
       case 3:
         return true;
       default:
@@ -363,44 +442,123 @@ export function DeployZfsTargetWizard({ open, onOpenChange, onSuccess }: DeployZ
               <h4 className="font-medium flex items-center gap-2">
                 <Network className="h-4 w-4" /> Network Configuration
               </h4>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="ip_address">IP Address *</Label>
-                  <Input
-                    id="ip_address"
-                    value={config.ip_address}
-                    onChange={(e) => setConfig({ ...config, ip_address: e.target.value })}
-                    placeholder="e.g., 10.0.1.100"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="subnet_mask">Subnet Mask *</Label>
-                  <Input
-                    id="subnet_mask"
-                    value={config.subnet_mask}
-                    onChange={(e) => setConfig({ ...config, subnet_mask: e.target.value })}
-                    placeholder="e.g., 255.255.255.0"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="gateway">Gateway *</Label>
-                  <Input
-                    id="gateway"
-                    value={config.gateway}
-                    onChange={(e) => setConfig({ ...config, gateway: e.target.value })}
-                    placeholder="e.g., 10.0.1.1"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="dns_servers">DNS Servers</Label>
-                  <Input
-                    id="dns_servers"
-                    value={config.dns_servers}
-                    onChange={(e) => setConfig({ ...config, dns_servers: e.target.value })}
-                    placeholder="e.g., 8.8.8.8, 8.8.4.4"
-                  />
-                </div>
+              
+              {/* Network/VLAN Selection */}
+              <div className="space-y-2">
+                <Label htmlFor="network">Network/VLAN *</Label>
+                <Select
+                  value={config.network_id || ''}
+                  onValueChange={handleNetworkSelect}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a network..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {networks.length === 0 ? (
+                      <SelectItem value="_none" disabled>
+                        No networks available
+                      </SelectItem>
+                    ) : (
+                      networks.map((network) => (
+                        <SelectItem key={network.id} value={network.id}>
+                          <div className="flex items-center gap-2">
+                            <span>{network.name}</span>
+                            {network.vlan_id && (
+                              <Badge variant="outline" className="text-xs">
+                                VLAN {network.vlan_id}
+                              </Badge>
+                            )}
+                            {network.parent_switch_name && (
+                              <span className="text-muted-foreground text-xs">
+                                • {network.parent_switch_name}
+                              </span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+                {selectedTemplate?.default_network && config.network_name === selectedTemplate.default_network && (
+                  <p className="text-xs text-muted-foreground flex items-center gap-1">
+                    <CheckCircle2 className="h-3 w-3 text-green-500" />
+                    Auto-selected from template default
+                  </p>
+                )}
               </div>
+
+              {/* DHCP Toggle */}
+              <div className="space-y-3">
+                <Label>IP Configuration</Label>
+                <RadioGroup
+                  value={config.use_dhcp ? 'dhcp' : 'static'}
+                  onValueChange={(v) => setConfig({ ...config, use_dhcp: v === 'dhcp' })}
+                  className="flex gap-4"
+                >
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="static" id="static" />
+                    <Label htmlFor="static" className="cursor-pointer font-normal">Static IP</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="dhcp" id="dhcp" />
+                    <Label htmlFor="dhcp" className="cursor-pointer font-normal flex items-center gap-1">
+                      <Wifi className="h-3 w-3" /> DHCP
+                    </Label>
+                  </div>
+                </RadioGroup>
+              </div>
+
+              {/* Static IP Configuration */}
+              {!config.use_dhcp ? (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="ip_address">IP Address *</Label>
+                    <Input
+                      id="ip_address"
+                      value={config.ip_address}
+                      onChange={(e) => setConfig({ ...config, ip_address: e.target.value })}
+                      placeholder="e.g., 10.0.1.100"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="subnet_mask">Subnet Mask *</Label>
+                    <Input
+                      id="subnet_mask"
+                      value={config.subnet_mask}
+                      onChange={(e) => setConfig({ ...config, subnet_mask: e.target.value })}
+                      placeholder="e.g., 255.255.255.0"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="gateway">Gateway *</Label>
+                    <Input
+                      id="gateway"
+                      value={config.gateway}
+                      onChange={(e) => setConfig({ ...config, gateway: e.target.value })}
+                      placeholder="e.g., 10.0.1.1"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="dns_servers">DNS Servers</Label>
+                    <Input
+                      id="dns_servers"
+                      value={config.dns_servers}
+                      onChange={(e) => setConfig({ ...config, dns_servers: e.target.value })}
+                      placeholder="e.g., 8.8.8.8, 8.8.4.4"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-muted/50 rounded-lg p-3 border border-border/50">
+                  <p className="text-sm text-muted-foreground flex items-start gap-2">
+                    <Info className="h-4 w-4 mt-0.5 shrink-0" />
+                    <span>
+                      IP will be assigned by DHCP. Ensure DHCP is available on the selected VLAN.
+                      The target will be registered once the IP is detected via VMware Tools.
+                    </span>
+                  </p>
+                </div>
+              )}
             </div>
 
             <Separator />
@@ -486,11 +644,31 @@ export function DeployZfsTargetWizard({ open, onOpenChange, onSuccess }: DeployZ
                   <div className="text-muted-foreground">Hostname</div>
                   <div className="font-medium">{config.hostname || config.vm_name}</div>
                   
-                  <div className="text-muted-foreground">IP Address</div>
-                  <div className="font-medium">{config.ip_address}</div>
+                  <div className="text-muted-foreground">Network</div>
+                  <div className="font-medium flex items-center gap-2">
+                    {config.network_name}
+                    {config.vlan_id && (
+                      <Badge variant="outline" className="text-xs">VLAN {config.vlan_id}</Badge>
+                    )}
+                  </div>
                   
-                  <div className="text-muted-foreground">Gateway</div>
-                  <div className="font-medium">{config.gateway}</div>
+                  <div className="text-muted-foreground">IP Configuration</div>
+                  <div className="font-medium">
+                    {config.use_dhcp ? (
+                      <span className="flex items-center gap-1">
+                        <Wifi className="h-3 w-3" /> DHCP
+                      </span>
+                    ) : (
+                      config.ip_address
+                    )}
+                  </div>
+                  
+                  {!config.use_dhcp && (
+                    <>
+                      <div className="text-muted-foreground">Gateway</div>
+                      <div className="font-medium">{config.gateway}</div>
+                    </>
+                  )}
                   
                   <div className="text-muted-foreground">ZFS Pool</div>
                   <div className="font-medium">{config.zfs_pool_name}</div>
