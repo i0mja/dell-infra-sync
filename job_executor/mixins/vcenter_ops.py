@@ -871,27 +871,44 @@ class VCenterMixin:
         Returns:
             vCenter connection object or None if connection fails
         """
-        # If we have a cached connection, validate it's still alive
+        # Determine the target host for this connection request
+        target_host = settings.get('host') if settings else VCENTER_HOST
+        
+        # If we have a cached connection, check if it's to the SAME vCenter
         if self.vcenter_conn and not force_reconnect:
-            try:
-                # Quick validation - check session is still authenticated
-                content = self.vcenter_conn.RetrieveContent()
-                session = content.sessionManager.currentSession
-                if session is not None:
-                    return self.vcenter_conn  # Session still valid
-                else:
-                    self.log("vCenter session expired (no active session), reconnecting...", "WARN")
-            except vim.fault.NotAuthenticated:
-                self.log("vCenter session not authenticated, reconnecting...", "WARN")
-            except Exception as e:
-                self.log(f"vCenter connection lost ({e}), reconnecting...", "WARN")
-            
-            # Clear stale connection
-            try:
-                Disconnect(self.vcenter_conn)
-            except:
-                pass
-            self.vcenter_conn = None
+            # Check if cached connection is to a DIFFERENT vCenter
+            cached_host = getattr(self, 'vcenter_conn_host', None)
+            if cached_host and cached_host != target_host:
+                self.log(f"Switching vCenter connection: {cached_host} → {target_host}")
+                # Force disconnect from old vCenter before connecting to new one
+                try:
+                    Disconnect(self.vcenter_conn)
+                except:
+                    pass
+                self.vcenter_conn = None
+                self.vcenter_conn_host = None
+            else:
+                # Same vCenter (or unknown) - validate session is still alive
+                try:
+                    # Quick validation - check session is still authenticated
+                    content = self.vcenter_conn.RetrieveContent()
+                    session = content.sessionManager.currentSession
+                    if session is not None:
+                        return self.vcenter_conn  # Session still valid
+                    else:
+                        self.log("vCenter session expired (no active session), reconnecting...", "WARN")
+                except vim.fault.NotAuthenticated:
+                    self.log("vCenter session not authenticated, reconnecting...", "WARN")
+                except Exception as e:
+                    self.log(f"vCenter connection lost ({e}), reconnecting...", "WARN")
+                
+                # Clear stale connection
+                try:
+                    Disconnect(self.vcenter_conn)
+                except:
+                    pass
+                self.vcenter_conn = None
+                self.vcenter_conn_host = None
         elif force_reconnect and self.vcenter_conn:
             # Force disconnect existing connection
             try:
@@ -899,9 +916,10 @@ class VCenterMixin:
             except:
                 pass
             self.vcenter_conn = None
+            self.vcenter_conn_host = None
 
         # Use provided settings or fall back to environment variables
-        host = settings.get('host') if settings else VCENTER_HOST
+        host = target_host
         user = settings.get('username') if settings else VCENTER_USER
         
         # Handle encrypted passwords from database
@@ -951,6 +969,8 @@ class VCenterMixin:
                 socket.setdefaulttimeout(old_timeout)  # Reset timeout
             
             atexit.register(Disconnect, self.vcenter_conn)
+            # Track which vCenter this connection is for
+            self.vcenter_conn_host = host
             self.log(f"✓ Connected to vCenter at {host}")
             self.log_vcenter_activity(
                 operation="connect_vcenter",
