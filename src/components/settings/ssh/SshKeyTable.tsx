@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Key, Copy, Eye, Ban, Trash2, Clock, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { Key, Copy, Eye, Ban, Trash2, Clock, CheckCircle, XCircle, AlertCircle, Upload, RotateCcw } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import {
   Table,
@@ -27,9 +27,11 @@ interface SshKeyTableProps {
   onViewDetails: (key: SshKey) => void;
   onRevoke: (key: SshKey) => void;
   onDelete: (key: SshKey) => void;
+  onDeploy?: (key: SshKey) => void;
+  onRotate?: (key: SshKey) => void;
 }
 
-export function SshKeyTable({ keys, isLoading, onViewDetails, onRevoke, onDelete }: SshKeyTableProps) {
+export function SshKeyTable({ keys, isLoading, onViewDetails, onRevoke, onDelete, onDeploy, onRotate }: SshKeyTableProps) {
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
     toast.success(`${label} copied to clipboard`);
@@ -168,6 +170,36 @@ export function SshKeyTable({ keys, isLoading, onViewDetails, onRevoke, onDelete
                     </TooltipTrigger>
                     <TooltipContent>View details</TooltipContent>
                   </Tooltip>
+                  {key.status === 'active' && onDeploy && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-primary hover:text-primary/80"
+                          onClick={() => onDeploy(key)}
+                        >
+                          <Upload className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Deploy to targets</TooltipContent>
+                    </Tooltip>
+                  )}
+                  {key.status === 'active' && onRotate && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-blue-600 hover:text-blue-700"
+                          onClick={() => onRotate(key)}
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Rotate key</TooltipContent>
+                    </Tooltip>
+                  )}
                   {key.status === 'active' && (
                     <Tooltip>
                       <TooltipTrigger asChild>

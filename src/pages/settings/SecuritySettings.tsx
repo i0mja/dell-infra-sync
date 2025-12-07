@@ -16,8 +16,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Info } from "lucide-react";
-import { useSshKeys, SshKey } from "@/hooks/useSshKeys";
-import { SshKeyTable, SshKeyGenerateDialog, SshKeyDetailsDialog, SshKeyRevokeDialog } from "@/components/settings/ssh";
+import { useSshKeys, SshKey, SshKeyDeployment } from "@/hooks/useSshKeys";
+import { SshKeyTable, SshKeyGenerateDialog, SshKeyDetailsDialog, SshKeyRevokeDialog, SshKeyDeployDialog, SshKeyRotateWizard } from "@/components/settings/ssh";
 
 export function SecuritySettings() {
   const { toast } = useToast();
@@ -51,11 +51,14 @@ export function SecuritySettings() {
   const [scheduledCheckId, setScheduledCheckId] = useState<string | null>(null);
 
   // SSH Keys state
-  const { sshKeys, isLoading: sshKeysLoading, generateKey, isGenerating, revokeKey, isRevoking, deleteKey, fetchDeployments } = useSshKeys();
+  const { sshKeys, isLoading: sshKeysLoading, refetch: refetchSshKeys, generateKey, isGenerating, revokeKey, isRevoking, deleteKey, fetchDeployments, removeFromTargets } = useSshKeys();
   const [showGenerateDialog, setShowGenerateDialog] = useState(false);
   const [selectedSshKey, setSelectedSshKey] = useState<SshKey | null>(null);
   const [showDetailsDialog, setShowDetailsDialog] = useState(false);
   const [showRevokeDialog, setShowRevokeDialog] = useState(false);
+  const [showDeployDialog, setShowDeployDialog] = useState(false);
+  const [showRotateWizard, setShowRotateWizard] = useState(false);
+  const [selectedKeyDeployments, setSelectedKeyDeployments] = useState<SshKeyDeployment[]>([]);
 
   useEffect(() => {
     loadCredentialSets();
@@ -617,6 +620,17 @@ export function SecuritySettings() {
                 await deleteKey(key.id);
               }
             }}
+            onDeploy={(key) => {
+              setSelectedSshKey(key);
+              setShowDeployDialog(true);
+            }}
+            onRotate={async (key) => {
+              setSelectedSshKey(key);
+              // Fetch deployments for the rotation wizard
+              const deployments = await fetchDeployments(key.id);
+              setSelectedKeyDeployments(deployments);
+              setShowRotateWizard(true);
+            }}
           />
         </div>
       </SettingsSection>
@@ -642,6 +656,27 @@ export function SecuritySettings() {
         sshKey={selectedSshKey}
         onRevoke={revokeKey}
         isRevoking={isRevoking}
+        fetchDeployments={fetchDeployments}
+        removeFromTargets={removeFromTargets}
+      />
+
+      <SshKeyDeployDialog
+        open={showDeployDialog}
+        onOpenChange={setShowDeployDialog}
+        sshKey={selectedSshKey}
+        onDeployComplete={() => {
+          refetchSshKeys();
+        }}
+      />
+
+      <SshKeyRotateWizard
+        open={showRotateWizard}
+        onOpenChange={setShowRotateWizard}
+        oldKey={selectedSshKey}
+        deployments={selectedKeyDeployments}
+        onComplete={() => {
+          refetchSshKeys();
+        }}
       />
 
       {/* Credential Dialog */}
