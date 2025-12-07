@@ -3802,7 +3802,7 @@ export type Database = {
             foreignKeyName: "zfs_target_templates_vcenter_id_fkey"
             columns: ["vcenter_id"]
             isOneToOne: false
-            referencedRelation: "vcenter_settings"
+            referencedRelation: "vcenters"
             referencedColumns: ["id"]
           },
         ]
