@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Shield, Plus, Rocket, RefreshCw, TestTube } from "lucide-react";
+import { Shield, Plus, Rocket, TestTube } from "lucide-react";
 import { useVCenters } from "@/hooks/useVCenters";
 import { useZfsTemplates } from "@/hooks/useZfsTemplates";
 import { DeployZfsTargetWizard } from "./DeployZfsTargetWizard";
@@ -68,10 +68,11 @@ export function DrQuickActions() {
   const existingVMIds = protectedVMs?.map(vm => vm.vm_id).filter(Boolean) as string[] || [];
 
   const handleProtectVm = () => {
-    if (vcenters.length === 1) {
-      setSelectedVCenterForProtection(vcenters[0].id);
-    } else if (vcenters.length > 0) {
-      setSelectedVCenterForProtection(vcenters[0].id);
+    // Use primary vCenter if available, otherwise first vCenter
+    const primaryVCenter = vcenters.find(vc => vc.is_primary);
+    const targetVCenter = primaryVCenter || vcenters[0];
+    if (targetVCenter) {
+      setSelectedVCenterForProtection(targetVCenter.id);
     }
     setShowAddVMDialog(true);
   };
@@ -189,12 +190,6 @@ export function DrQuickActions() {
           </Tooltip>
         </TooltipProvider>
 
-        <div className="flex-1" />
-
-        <Button variant="ghost" size="sm">
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Sync vCenter
-        </Button>
       </div>
 
       {/* Deploy ZFS Target Wizard */}
