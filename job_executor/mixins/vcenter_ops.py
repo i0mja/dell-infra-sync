@@ -1541,6 +1541,182 @@ class VCenterMixin:
             
             return {'synced': 0, 'error': str(e)}
 
+    def sync_vcenter_networks(self, content, source_vcenter_id: str, progress_callback=None, vcenter_name: str = None, job_id: str = None) -> Dict:
+        """Sync network/port group information from vCenter using pyVmomi"""
+        start_time = time.time()
+        try:
+            self.log("Creating network container view...")
+            
+            # Log start
+            endpoint_prefix = f"{vcenter_name} - " if vcenter_name else ""
+            self.log_vcenter_activity(
+                operation="sync_networks_start",
+                endpoint=f"{endpoint_prefix}Networks",
+                success=True,
+                details={"source_vcenter_id": source_vcenter_id, "vcenter_name": vcenter_name},
+                job_id=job_id
+            )
+            
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            # Build DVS lookup for parent switch names
+            self.log("Building distributed virtual switch lookup...")
+            dvs_lookup = {}
+            try:
+                dvs_container = content.viewManager.CreateContainerView(
+                    content.rootFolder, [vim.DistributedVirtualSwitch], True
+                )
+                for dvs in dvs_container.view:
+                    dvs_lookup[str(dvs._moId)] = dvs.name
+                dvs_container.Destroy()
+                self.log(f"  Found {len(dvs_lookup)} distributed virtual switches")
+            except Exception as dvs_err:
+                self.log(f"  Warning: Could not fetch DVS info: {dvs_err}", "WARN")
+            
+            # Get all networks (includes both standard and distributed)
+            container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.Network], True
+            )
+            
+            # Also get distributed port groups separately for detailed info
+            dvpg_container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.dvs.DistributedVirtualPortgroup], True
+            )
+            
+            # Build set of DVPGs for lookup
+            dvpg_set = {str(pg._moId): pg for pg in dvpg_container.view}
+            
+            total_networks = len(container.view)
+            self.log(f"Found {total_networks} networks in vCenter")
+            
+            synced = 0
+            
+            for i, net in enumerate(container.view):
+                try:
+                    network_data = {
+                        'name': net.name,
+                        'vcenter_id': str(net._moId),
+                        'source_vcenter_id': source_vcenter_id,
+                        'host_count': len(net.host) if hasattr(net, 'host') and net.host else 0,
+                        'vm_count': len(net.vm) if hasattr(net, 'vm') and net.vm else 0,
+                        'accessible': True,
+                        'last_sync': utc_now_iso()
+                    }
+                    
+                    # Check if this is a distributed port group (has more detailed config)
+                    if str(net._moId) in dvpg_set:
+                        dvpg = dvpg_set[str(net._moId)]
+                        network_data['network_type'] = 'distributed'
+                        
+                        try:
+                            config = dvpg.config
+                            
+                            # Get parent DVS info
+                            if config.distributedVirtualSwitch:
+                                dvs_moid = str(config.distributedVirtualSwitch._moId)
+                                network_data['parent_switch_id'] = dvs_moid
+                                network_data['parent_switch_name'] = dvs_lookup.get(dvs_moid)
+                            
+                            # Check if uplink port group
+                            network_data['uplink_port_group'] = config.uplink if hasattr(config, 'uplink') else False
+                            
+                            # Parse VLAN configuration
+                            if hasattr(config, 'defaultPortConfig') and config.defaultPortConfig:
+                                port_config = config.defaultPortConfig
+                                if hasattr(port_config, 'vlan') and port_config.vlan:
+                                    vlan_config = port_config.vlan
+                                    
+                                    # Handle different VLAN spec types
+                                    if isinstance(vlan_config, vim.dvs.VmwareDistributedVirtualSwitch.VlanIdSpec):
+                                        # Simple VLAN ID
+                                        network_data['vlan_id'] = vlan_config.vlanId if hasattr(vlan_config, 'vlanId') else None
+                                        network_data['vlan_type'] = 'access'
+                                    elif isinstance(vlan_config, vim.dvs.VmwareDistributedVirtualSwitch.TrunkVlanSpec):
+                                        # Trunk with VLAN ranges
+                                        network_data['vlan_type'] = 'trunk'
+                                        if hasattr(vlan_config, 'vlanId') and vlan_config.vlanId:
+                                            ranges = []
+                                            for vlan_range in vlan_config.vlanId:
+                                                if hasattr(vlan_range, 'start') and hasattr(vlan_range, 'end'):
+                                                    if vlan_range.start == vlan_range.end:
+                                                        ranges.append(str(vlan_range.start))
+                                                    else:
+                                                        ranges.append(f"{vlan_range.start}-{vlan_range.end}")
+                                            network_data['vlan_range'] = ','.join(ranges)
+                                    elif isinstance(vlan_config, vim.dvs.VmwareDistributedVirtualSwitch.PvlanSpec):
+                                        # Private VLAN
+                                        network_data['vlan_type'] = 'pvlan'
+                                        network_data['vlan_id'] = vlan_config.pvlanId if hasattr(vlan_config, 'pvlanId') else None
+                                    else:
+                                        network_data['vlan_type'] = 'unknown'
+                        except Exception as config_err:
+                            self.log(f"    Warning parsing DVP config for {net.name}: {config_err}", "DEBUG")
+                    else:
+                        # Standard network (vSwitch portgroup)
+                        network_data['network_type'] = 'standard'
+                    
+                    # Upsert network
+                    response = requests.post(
+                        f"{DSM_URL}/rest/v1/vcenter_networks",
+                        headers={**headers, 'Prefer': 'resolution=merge-duplicates'},
+                        json=network_data,
+                        verify=VERIFY_SSL,
+                        timeout=10
+                    )
+                    
+                    if response.status_code in [200, 201]:
+                        synced += 1
+                    
+                    # Report progress
+                    if progress_callback and i % 10 == 0:
+                        pct = int((i + 1) / total_networks * 100)
+                        progress_callback(pct, f"Synced {i+1}/{total_networks} networks")
+                        
+                except Exception as net_err:
+                    self.log(f"  Error syncing network {net.name}: {net_err}", "WARNING")
+            
+            container.Destroy()
+            dvpg_container.Destroy()
+            
+            self.log(f"  Synced {synced}/{total_networks} networks")
+            
+            # Log completion
+            response_time = int((time.time() - start_time) * 1000)
+            self.log_vcenter_activity(
+                operation="sync_networks_complete",
+                endpoint=f"{endpoint_prefix}Networks",
+                success=True,
+                response_time_ms=response_time,
+                details={
+                    "synced": synced,
+                    "total": total_networks
+                },
+                job_id=job_id
+            )
+            
+            return {'synced': synced, 'total': total_networks}
+            
+        except Exception as e:
+            self.log(f"Failed to sync networks: {e}", "ERROR")
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
+            
+            # Log error
+            endpoint_prefix = f"{vcenter_name} - " if vcenter_name else ""
+            self.log_vcenter_activity(
+                operation="sync_networks_error",
+                endpoint=f"{endpoint_prefix}Networks",
+                success=False,
+                error=str(e),
+                job_id=job_id
+            )
+            
+            return {'synced': 0, 'error': str(e)}
+
     def sync_vcenter_alarms(self, content, source_vcenter_id: str, progress_callback=None, vcenter_name: str = None, job_id: str = None) -> Dict:
         """Sync active alarms from vCenter"""
         start_time = time.time()

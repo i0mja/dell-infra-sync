@@ -3269,6 +3269,74 @@ export type Database = {
           },
         ]
       }
+      vcenter_networks: {
+        Row: {
+          accessible: boolean | null
+          created_at: string | null
+          host_count: number | null
+          id: string
+          last_sync: string | null
+          name: string
+          network_type: string | null
+          parent_switch_id: string | null
+          parent_switch_name: string | null
+          source_vcenter_id: string | null
+          updated_at: string | null
+          uplink_port_group: boolean | null
+          vcenter_id: string | null
+          vlan_id: number | null
+          vlan_range: string | null
+          vlan_type: string | null
+          vm_count: number | null
+        }
+        Insert: {
+          accessible?: boolean | null
+          created_at?: string | null
+          host_count?: number | null
+          id?: string
+          last_sync?: string | null
+          name: string
+          network_type?: string | null
+          parent_switch_id?: string | null
+          parent_switch_name?: string | null
+          source_vcenter_id?: string | null
+          updated_at?: string | null
+          uplink_port_group?: boolean | null
+          vcenter_id?: string | null
+          vlan_id?: number | null
+          vlan_range?: string | null
+          vlan_type?: string | null
+          vm_count?: number | null
+        }
+        Update: {
+          accessible?: boolean | null
+          created_at?: string | null
+          host_count?: number | null
+          id?: string
+          last_sync?: string | null
+          name?: string
+          network_type?: string | null
+          parent_switch_id?: string | null
+          parent_switch_name?: string | null
+          source_vcenter_id?: string | null
+          updated_at?: string | null
+          uplink_port_group?: boolean | null
+          vcenter_id?: string | null
+          vlan_id?: number | null
+          vlan_range?: string | null
+          vlan_type?: string | null
+          vm_count?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vcenter_networks_source_vcenter_id_fkey"
+            columns: ["source_vcenter_id"]
+            isOneToOne: false
+            referencedRelation: "vcenters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vcenter_settings: {
         Row: {
           created_at: string
