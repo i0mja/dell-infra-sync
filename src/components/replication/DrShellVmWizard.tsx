@@ -213,26 +213,26 @@ export function DrShellVmWizard({
     const currentIndex = steps.findIndex(s => s.id === step);
     
     return (
-      <div className="flex items-center gap-2 mb-6">
+      <div className="flex items-center gap-1.5 mb-4">
         {steps.map((s, i) => (
-          <div key={s.id} className="flex items-center gap-2">
+          <div key={s.id} className="flex items-center gap-1.5">
             <div className={`
-              w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium
+              w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium
               ${i <= currentIndex 
                 ? 'bg-primary text-primary-foreground' 
                 : 'bg-muted text-muted-foreground'}
             `}>
               {i < currentIndex ? (
-                <CheckCircle2 className="h-4 w-4" />
+                <CheckCircle2 className="h-3 w-3" />
               ) : (
                 i + 1
               )}
             </div>
-            <span className={`text-sm ${i <= currentIndex ? 'text-foreground' : 'text-muted-foreground'}`}>
+            <span className={`text-xs ${i <= currentIndex ? 'text-foreground' : 'text-muted-foreground'}`}>
               {s.label}
             </span>
             {i < steps.length - 1 && (
-              <ArrowRight className="h-4 w-4 text-muted-foreground mx-2" />
+              <ArrowRight className="h-3 w-3 text-muted-foreground mx-1" />
             )}
           </div>
         ))}
@@ -241,65 +241,65 @@ export function DrShellVmWizard({
   };
 
   const renderAnalyzeStep = () => (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <Alert>
-        <Info className="h-4 w-4" />
-        <AlertDescription>
+        <Info className="h-3.5 w-3.5" />
+        <AlertDescription className="text-xs">
           Analyzing source VM configuration and DR site resources...
         </AlertDescription>
       </Alert>
       
       {planLoading ? (
-        <div className="space-y-4">
-          <Skeleton className="h-24 w-full" />
-          <Skeleton className="h-24 w-full" />
+        <div className="space-y-3">
+          <Skeleton className="h-20 w-full" />
+          <Skeleton className="h-20 w-full" />
         </div>
       ) : plan || vm ? (
-        <div className="space-y-4">
+        <div className="space-y-3">
           {/* Source VM Config */}
-          <div className="border rounded-lg p-4 space-y-3">
-            <h4 className="font-medium flex items-center gap-2">
-              <ServerIcon className="h-4 w-4 text-muted-foreground" />
+          <div className="border rounded-lg p-3 space-y-2">
+            <h4 className="text-sm font-medium flex items-center gap-1.5">
+              <ServerIcon className="h-3.5 w-3.5 text-muted-foreground" />
               Source VM Configuration
             </h4>
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div className="flex items-center gap-2">
-                <ServerIcon className="h-4 w-4 text-muted-foreground" />
-                <span className="text-muted-foreground">VM Name:</span>
-                <span className="font-medium">{vm?.vm_name || '-'}</span>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="flex items-center gap-1.5">
+                <ServerIcon className="h-3 w-3 text-muted-foreground" />
+                <span className="text-muted-foreground">VM:</span>
+                <span className="font-medium truncate">{vm?.vm_name || '-'}</span>
               </div>
-              <div className="flex items-center gap-2">
-                <HardDrive className="h-4 w-4 text-muted-foreground" />
-                <span className="text-muted-foreground">Current Datastore:</span>
-                <span className="font-medium">{vm?.current_datastore || '-'}</span>
+              <div className="flex items-center gap-1.5">
+                <HardDrive className="h-3 w-3 text-muted-foreground" />
+                <span className="text-muted-foreground">Datastore:</span>
+                <span className="font-medium truncate">{vm?.current_datastore || '-'}</span>
               </div>
-              <div className="flex items-center gap-2">
-                <Cpu className="h-4 w-4 text-muted-foreground" />
+              <div className="flex items-center gap-1.5">
+                <Cpu className="h-3 w-3 text-muted-foreground" />
                 <span className="text-muted-foreground">CPU:</span>
-                <span className="font-medium">{cpuCount} vCPU (configurable)</span>
+                <span className="font-medium">{cpuCount} vCPU</span>
               </div>
-              <div className="flex items-center gap-2">
-                <MemoryStick className="h-4 w-4 text-muted-foreground" />
+              <div className="flex items-center gap-1.5">
+                <MemoryStick className="h-3 w-3 text-muted-foreground" />
                 <span className="text-muted-foreground">Memory:</span>
-                <span className="font-medium">{(memoryMb / 1024).toFixed(1)} GB (configurable)</span>
+                <span className="font-medium">{(memoryMb / 1024).toFixed(1)} GB</span>
               </div>
             </div>
           </div>
 
           {/* DR Site Target */}
-          <div className="border rounded-lg p-4 space-y-3">
-            <h4 className="font-medium flex items-center gap-2">
-              <Cloud className="h-4 w-4 text-muted-foreground" />
+          <div className="border rounded-lg p-3 space-y-2">
+            <h4 className="text-sm font-medium flex items-center gap-1.5">
+              <Cloud className="h-3.5 w-3.5 text-muted-foreground" />
               DR Site Target
             </h4>
-            <div className="space-y-3">
-              <div className="space-y-2">
-                <Label>Select DR vCenter</Label>
+            <div className="space-y-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Select DR vCenter</Label>
                 <Select
                   value={selectedDrVcenterId || ''}
                   onValueChange={setSelectedDrVcenterId}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="h-8 text-xs">
                     <SelectValue placeholder="Select DR vCenter..." />
                   </SelectTrigger>
                   <SelectContent>
@@ -310,13 +310,10 @@ export function DrShellVmWizard({
                     ) : (
                       drVcenterOptions.map(vc => (
                         <SelectItem key={vc.id} value={vc.id}>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5 text-xs">
                             <span>{vc.name}</span>
                             {vc.host && (
-                              <span className="text-muted-foreground text-xs">({vc.host})</span>
-                            )}
-                            {vc.sync_enabled && (
-                              <Badge variant="outline" className="text-xs py-0">Enabled</Badge>
+                              <span className="text-muted-foreground">({vc.host})</span>
                             )}
                           </div>
                         </SelectItem>
@@ -327,22 +324,22 @@ export function DrShellVmWizard({
               </div>
               
               {selectedDrVcenterId && (
-                <div className="space-y-3 pt-2 border-t">
+                <div className="space-y-2 pt-2 border-t">
                   {/* Datastore Selection */}
-                  <div className="space-y-2">
-                    <Label className="flex items-center gap-2">
-                      <HardDrive className="h-4 w-4" />
+                  <div className="space-y-1.5">
+                    <Label className="flex items-center gap-1.5 text-xs">
+                      <HardDrive className="h-3 w-3" />
                       Target Datastore
                     </Label>
                     {datastoresLoading ? (
-                      <Skeleton className="h-10 w-full" />
+                      <Skeleton className="h-8 w-full" />
                     ) : (
                       <>
                         <Select
                           value={selectedDatastoreId || ''}
                           onValueChange={setSelectedDatastoreId}
                         >
-                          <SelectTrigger>
+                          <SelectTrigger className="h-8 text-xs">
                             <SelectValue placeholder="Select datastore..." />
                           </SelectTrigger>
                           <SelectContent>
@@ -353,9 +350,9 @@ export function DrShellVmWizard({
                             ) : (
                               drDatastores?.map(ds => (
                                 <SelectItem key={ds.id} value={ds.id}>
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-1.5 text-xs">
                                     <span>{ds.name}</span>
-                                    <span className="text-muted-foreground text-xs">
+                                    <span className="text-muted-foreground">
                                       ({formatBytes(ds.free_bytes)} free)
                                     </span>
                                   </div>
@@ -365,11 +362,10 @@ export function DrShellVmWizard({
                           </SelectContent>
                         </Select>
                         {drDatastores?.length === 0 && (
-                          <Alert variant="destructive" className="mt-2">
-                            <AlertTriangle className="h-4 w-4" />
-                            <AlertDescription>
-                              No datastores found for this vCenter. The vCenter may need to be synced first.
-                              Go to <strong>vCenter → Sync</strong> to refresh the inventory.
+                          <Alert variant="destructive" className="mt-1.5">
+                            <AlertTriangle className="h-3 w-3" />
+                            <AlertDescription className="text-xs">
+                              No datastores found. Sync vCenter first.
                             </AlertDescription>
                           </Alert>
                         )}
@@ -377,56 +373,40 @@ export function DrShellVmWizard({
                     )}
                   </div>
                   
-                  {/* Network Selection with Smart Matching */}
-                  <div className="space-y-2">
-                    <Label className="flex items-center gap-2">
-                      <Network className="h-4 w-4" />
+                  {/* Network Selection */}
+                  <div className="space-y-1.5">
+                    <Label className="flex items-center gap-1.5 text-xs">
+                      <Network className="h-3 w-3" />
                       Target Network
                     </Label>
                     {networksLoading ? (
-                      <Skeleton className="h-10 w-full" />
+                      <Skeleton className="h-8 w-full" />
                     ) : (
                       <Select
                         value={networkName || '_default'}
                         onValueChange={(val) => setNetworkName(val === '_default' ? '' : val)}
                       >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select network (optional)..." />
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue placeholder="Select network..." />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="_default">
-                            <span className="text-muted-foreground">Use default network</span>
+                            <span className="text-muted-foreground text-xs">Use default</span>
                           </SelectItem>
-                          {sortedNetworks.length === 0 ? (
-                            <SelectItem value="_none" disabled>
-                              No networks synced yet
+                          {sortedNetworks.map((net, idx) => (
+                            <SelectItem key={net.id} value={net.id}>
+                              <div className="flex items-center gap-1.5 text-xs">
+                                {net.matchScore > 30 && idx === 0 && <span>🎯</span>}
+                                <span>{net.name}</span>
+                                {net.vlan_id && (
+                                  <span className="text-muted-foreground">(VLAN {net.vlan_id})</span>
+                                )}
+                              </div>
                             </SelectItem>
-                          ) : (
-                            sortedNetworks.map((net, idx) => (
-                              <SelectItem key={net.id} value={net.id}>
-                                <div className="flex items-center gap-2">
-                                  {net.matchScore > 30 && idx === 0 && (
-                                    <span className="text-green-600">🎯</span>
-                                  )}
-                                  <span>{net.name}</span>
-                                  {net.vlan_id && (
-                                    <span className="text-muted-foreground text-xs">(VLAN {net.vlan_id})</span>
-                                  )}
-                                  {net.matchScore > 30 && idx === 0 && (
-                                    <Badge variant="outline" className="text-xs py-0 text-green-600 border-green-500/30">
-                                      Suggested
-                                    </Badge>
-                                  )}
-                                </div>
-                              </SelectItem>
-                            ))
-                          )}
+                          ))}
                         </SelectContent>
                       </Select>
                     )}
-                    <p className="text-xs text-muted-foreground">
-                      Networks sorted by similarity to source VM. 🎯 indicates best match.
-                    </p>
                   </div>
                 </div>
               )}
@@ -434,20 +414,20 @@ export function DrShellVmWizard({
           </div>
 
           {/* Pre-checks */}
-          <div className="border rounded-lg p-4 space-y-3">
-            <h4 className="font-medium">Pre-flight Checks</h4>
-            <div className="space-y-2">
+          <div className="border rounded-lg p-3 space-y-2">
+            <h4 className="text-sm font-medium">Pre-flight Checks</h4>
+            <div className="space-y-1">
               {[
                 { name: 'DR vCenter selected', passed: !!selectedDrVcenterId },
                 { name: 'Target datastore selected', passed: !!selectedDatastoreId },
                 { name: 'Replicated disks available', passed: !!vm?.last_replication_at },
-                { name: 'Network configured', passed: true }, // Always passes - optional field
+                { name: 'Network configured', passed: true },
               ].map((check, i) => (
-                <div key={i} className="flex items-center gap-2 text-sm">
+                <div key={i} className="flex items-center gap-1.5 text-xs">
                   {check.passed ? (
-                    <CheckCircle2 className="h-4 w-4 text-green-500" />
+                    <CheckCircle2 className="h-3 w-3 text-green-500" />
                   ) : (
-                    <AlertTriangle className="h-4 w-4 text-amber-500" />
+                    <AlertTriangle className="h-3 w-3 text-amber-500" />
                   )}
                   {check.name}
                 </div>
@@ -464,24 +444,22 @@ export function DrShellVmWizard({
   );
 
   const renderConfigureStep = () => (
-    <div className="space-y-4">
-      <div className="space-y-4">
-        <div className="space-y-2">
-          <Label>DR Shell VM Name</Label>
+    <div className="space-y-3">
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <Label className="text-xs">DR Shell VM Name</Label>
           <Input
             value={shellVmName}
             onChange={(e) => setShellVmName(e.target.value)}
             placeholder="Enter VM name"
+            className="h-8 text-sm"
           />
-          <p className="text-xs text-muted-foreground">
-            The name for the shell VM at the DR site
-          </p>
         </div>
         
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label className="flex items-center gap-2">
-              <Cpu className="h-4 w-4" />
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label className="flex items-center gap-1.5 text-xs">
+              <Cpu className="h-3 w-3" />
               CPU (vCPU)
             </Label>
             <Input
@@ -490,11 +468,12 @@ export function DrShellVmWizard({
               onChange={(e) => setCpuCount(parseInt(e.target.value) || 1)}
               min={1}
               max={128}
+              className="h-8 text-sm"
             />
           </div>
-          <div className="space-y-2">
-            <Label className="flex items-center gap-2">
-              <MemoryStick className="h-4 w-4" />
+          <div className="space-y-1.5">
+            <Label className="flex items-center gap-1.5 text-xs">
+              <MemoryStick className="h-3 w-3" />
               Memory (MB)
             </Label>
             <Input
@@ -503,26 +482,26 @@ export function DrShellVmWizard({
               onChange={(e) => setMemoryMb(parseInt(e.target.value) || 1024)}
               min={512}
               step={512}
+              className="h-8 text-sm"
             />
           </div>
         </div>
 
         <Alert>
-          <Info className="h-4 w-4" />
-          <AlertDescription>
-            The DR Shell VM will be created in a powered-off state with replicated disks attached.
-            During DR failover, power on the VM and update network settings as needed.
+          <Info className="h-3 w-3" />
+          <AlertDescription className="text-xs">
+            Shell VM created powered-off with replicated disks. Power on during failover.
           </AlertDescription>
         </Alert>
 
-        <div className="border rounded-lg p-4 space-y-2">
-          <h4 className="font-medium">Shell VM Summary</h4>
-          <div className="text-sm space-y-1">
+        <div className="border rounded-lg p-3 space-y-1.5">
+          <h4 className="text-sm font-medium">Summary</h4>
+          <div className="text-xs space-y-0.5">
             <p><span className="text-muted-foreground">Name:</span> {shellVmName}</p>
             <p><span className="text-muted-foreground">CPU:</span> {cpuCount} vCPU</p>
             <p><span className="text-muted-foreground">Memory:</span> {(memoryMb / 1024).toFixed(1)} GB</p>
-            <p><span className="text-muted-foreground">Disks:</span> Attached from ZFS replication</p>
-            <p><span className="text-muted-foreground">Power State:</span> Off (ready for failover)</p>
+            <p><span className="text-muted-foreground">Disks:</span> ZFS replicated</p>
+            <p><span className="text-muted-foreground">Power:</span> Off</p>
           </div>
         </div>
       </div>
@@ -530,46 +509,46 @@ export function DrShellVmWizard({
   );
 
   const renderExecuteStep = () => (
-    <div className="space-y-4">
-      <div className="text-center py-8">
-        <Loader2 className="h-12 w-12 mx-auto mb-4 animate-spin text-primary" />
-        <h4 className="font-medium mb-2">Creating DR Shell VM...</h4>
-        <p className="text-sm text-muted-foreground mb-4">
-          Creating {shellVmName} at DR site
+    <div className="space-y-3">
+      <div className="text-center py-6">
+        <Loader2 className="h-8 w-8 mx-auto mb-3 animate-spin text-primary" />
+        <h4 className="text-sm font-medium mb-1">Creating DR Shell VM...</h4>
+        <p className="text-xs text-muted-foreground mb-3">
+          {shellVmName}
         </p>
-        <Progress value={66} className="w-64 mx-auto" />
-        <div className="text-xs text-muted-foreground mt-4 space-y-1">
-          <p>• Creating VM shell at DR vCenter</p>
-          <p>• Attaching replicated disks from ZFS</p>
-          <p>• Configuring network adapters</p>
+        <Progress value={66} className="w-48 mx-auto" />
+        <div className="text-xs text-muted-foreground mt-3 space-y-0.5">
+          <p>• Creating VM shell</p>
+          <p>• Attaching disks</p>
+          <p>• Configuring network</p>
         </div>
       </div>
     </div>
   );
 
   const renderCompleteStep = () => (
-    <div className="space-y-4">
-      <div className="text-center py-8">
+    <div className="space-y-3">
+      <div className="text-center py-6">
         {result?.success ? (
           <>
-            <CheckCircle2 className="h-12 w-12 mx-auto mb-4 text-green-500" />
-            <h4 className="font-medium mb-2">DR Shell VM Created</h4>
-            <p className="text-sm text-muted-foreground mb-4">
+            <CheckCircle2 className="h-8 w-8 mx-auto mb-3 text-green-500" />
+            <h4 className="text-sm font-medium mb-1">DR Shell VM Created</h4>
+            <p className="text-xs text-muted-foreground mb-3">
               {result.message}
             </p>
-            <div className="inline-flex items-center gap-2 bg-muted/50 px-4 py-2 rounded-lg">
-              <ServerIcon className="h-4 w-4" />
-              <span className="font-medium">{result.shell_vm_name || shellVmName}</span>
-              <Badge variant="outline" className="text-green-600 border-green-500/30">
+            <div className="inline-flex items-center gap-1.5 bg-muted/50 px-3 py-1.5 rounded-lg">
+              <ServerIcon className="h-3.5 w-3.5" />
+              <span className="text-sm font-medium">{result.shell_vm_name || shellVmName}</span>
+              <Badge variant="outline" className="text-green-600 border-green-500/30 text-xs py-0">
                 Ready
               </Badge>
             </div>
           </>
         ) : (
           <>
-            <AlertTriangle className="h-12 w-12 mx-auto mb-4 text-destructive" />
-            <h4 className="font-medium mb-2">Creation Failed</h4>
-            <p className="text-sm text-destructive">
+            <AlertTriangle className="h-8 w-8 mx-auto mb-3 text-destructive" />
+            <h4 className="text-sm font-medium mb-1">Creation Failed</h4>
+            <p className="text-xs text-destructive">
               {result?.message || 'An error occurred'}
             </p>
           </>
@@ -580,20 +559,20 @@ export function DrShellVmWizard({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <ServerIcon className="h-5 w-5" />
+          <DialogTitle className="flex items-center gap-1.5 text-base">
+            <ServerIcon className="h-4 w-4" />
             DR Shell VM Wizard
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="text-xs">
             Create a shell VM at the DR site with replicated disks
           </DialogDescription>
         </DialogHeader>
 
         {renderStepIndicator()}
 
-        <div className="min-h-[350px]">
+        <div className="min-h-[280px]">
           {step === 'analyze' && renderAnalyzeStep()}
           {step === 'configure' && renderConfigureStep()}
           {step === 'execute' && renderExecuteStep()}
@@ -603,44 +582,46 @@ export function DrShellVmWizard({
         <DialogFooter>
           {step === 'analyze' && (
             <>
-              <Button variant="outline" onClick={handleClose}>
+              <Button variant="outline" size="sm" onClick={handleClose}>
                 Cancel
               </Button>
               <Button 
+                size="sm"
                 onClick={() => setStep('configure')} 
                 disabled={planLoading || !selectedDrVcenterId || !selectedDatastoreId}
               >
                 Next
-                <ArrowRight className="h-4 w-4 ml-1" />
+                <ArrowRight className="h-3.5 w-3.5 ml-1" />
               </Button>
             </>
           )}
           {step === 'configure' && (
             <>
-              <Button variant="outline" onClick={() => setStep('analyze')}>
-                <ArrowLeft className="h-4 w-4 mr-1" />
+              <Button variant="outline" size="sm" onClick={() => setStep('analyze')}>
+                <ArrowLeft className="h-3.5 w-3.5 mr-1" />
                 Back
               </Button>
               <Button 
+                size="sm"
                 onClick={() => {
                   setStep('execute');
                   handleExecute();
                 }} 
                 disabled={!shellVmName}
               >
-                Create Shell VM
-                <ArrowRight className="h-4 w-4 ml-1" />
+                Create
+                <ArrowRight className="h-3.5 w-3.5 ml-1" />
               </Button>
             </>
           )}
           {step === 'execute' && (
-            <Button variant="outline" disabled>
-              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+            <Button variant="outline" size="sm" disabled>
+              <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
               Creating...
             </Button>
           )}
           {step === 'complete' && (
-            <Button onClick={handleClose}>
+            <Button size="sm" onClick={handleClose}>
               {result?.success ? 'Done' : 'Close'}
             </Button>
           )}
