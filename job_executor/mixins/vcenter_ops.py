@@ -1208,19 +1208,41 @@ class VCenterMixin:
                     guest = vm.summary.guest if hasattr(vm.summary, 'guest') else None
                     storage = vm.summary.storage if hasattr(vm.summary, 'storage') else None
                     
+                    # Check if this is a template
+                    is_template = False
+                    if hasattr(vm, 'config') and vm.config and hasattr(vm.config, 'template'):
+                        is_template = vm.config.template
+                    
                     # Track OS distribution
                     guest_os = config.guestFullName if config and hasattr(config, 'guestFullName') else 'unknown'
                     os_counts[guest_os] = os_counts.get(guest_os, 0) + 1
                     
                     # Get host_id from pre-fetched cache (O(1) lookup instead of N+1 queries)
+                    # Templates don't have a runtime host assigned
                     host_id = None
                     if runtime and runtime.host:
                         host_id = host_lookup.get(runtime.host.name)
                     
-                    # Get cluster name
+                    # Get cluster name - templates may not have runtime.host
                     cluster_name = None
                     if runtime and runtime.host and runtime.host.parent and isinstance(runtime.host.parent, vim.ClusterComputeResource):
                         cluster_name = runtime.host.parent.name
+                    elif is_template and hasattr(vm, 'resourcePool') and vm.resourcePool:
+                        # For templates, try to get cluster from resource pool
+                        try:
+                            rp = vm.resourcePool
+                            if hasattr(rp, 'parent') and isinstance(rp.parent, vim.ClusterComputeResource):
+                                cluster_name = rp.parent.name
+                        except Exception:
+                            pass
+                    
+                    # Set power state - templates show as 'template' instead of 'unknown'
+                    if is_template:
+                        power_state = 'template'
+                    elif runtime:
+                        power_state = str(runtime.powerState)
+                    else:
+                        power_state = 'unknown'
                     
                     vm_data = {
                         'name': config.name if config else vm.name,
@@ -1228,7 +1250,7 @@ class VCenterMixin:
                         'source_vcenter_id': source_vcenter_id,
                         'host_id': host_id,
                         'cluster_name': cluster_name,
-                        'power_state': str(runtime.powerState) if runtime else 'unknown',
+                        'power_state': power_state,
                         'guest_os': guest_os,
                         'cpu_count': config.numCpu if config and hasattr(config, 'numCpu') else None,
                         'memory_mb': config.memorySizeMB if config and hasattr(config, 'memorySizeMB') else None,
@@ -1237,6 +1259,7 @@ class VCenterMixin:
                         'tools_status': str(guest.toolsStatus) if guest and hasattr(guest, 'toolsStatus') else None,
                         'tools_version': guest.toolsVersion if guest and hasattr(guest, 'toolsVersion') else None,
                         'overall_status': str(vm.summary.overallStatus) if hasattr(vm.summary, 'overallStatus') else 'unknown',
+                        'is_template': is_template,
                         'last_sync': utc_now_iso()
                     }
                     

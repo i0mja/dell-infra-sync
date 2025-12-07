@@ -3386,6 +3386,7 @@ export type Database = {
           host_id: string | null
           id: string
           ip_address: string | null
+          is_template: boolean | null
           last_sync: string | null
           memory_mb: number | null
           name: string
@@ -3407,6 +3408,7 @@ export type Database = {
           host_id?: string | null
           id?: string
           ip_address?: string | null
+          is_template?: boolean | null
           last_sync?: string | null
           memory_mb?: number | null
           name: string
@@ -3428,6 +3430,7 @@ export type Database = {
           host_id?: string | null
           id?: string
           ip_address?: string | null
+          is_template?: boolean | null
           last_sync?: string | null
           memory_mb?: number | null
           name?: string
