@@ -53,21 +53,21 @@ export function NetworksFilterToolbar({
   onGroupByNameChange,
 }: NetworksFilterToolbarProps) {
   return (
-    <div className="flex items-center gap-3 px-4 py-3 border-b bg-muted/30">
+    <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-muted/30">
       {/* Search */}
-      <div className="relative flex-1 min-w-[200px] max-w-sm">
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+      <div className="relative flex-1 min-w-[140px] max-w-[160px]">
+        <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
         <Input
           placeholder="Search networks..."
           value={searchTerm}
           onChange={(e) => onSearchChange(e.target.value)}
-          className="pl-9 h-9"
+          className="pl-8 h-7 text-xs"
         />
       </div>
 
       {/* Type Filter */}
       <Select value={typeFilter} onValueChange={onTypeFilterChange}>
-        <SelectTrigger className="w-[140px] h-9">
+        <SelectTrigger className="w-[100px] h-7 text-xs">
           <SelectValue placeholder="Type" />
         </SelectTrigger>
         <SelectContent>
@@ -79,7 +79,7 @@ export function NetworksFilterToolbar({
 
       {/* VLAN Filter */}
       <Select value={vlanFilter} onValueChange={onVlanFilterChange}>
-        <SelectTrigger className="w-[140px] h-9">
+        <SelectTrigger className="w-[90px] h-7 text-xs">
           <SelectValue placeholder="VLAN" />
         </SelectTrigger>
         <SelectContent>
@@ -91,15 +91,16 @@ export function NetworksFilterToolbar({
 
       {/* Group by Name Toggle */}
       {onGroupByNameChange && (
-        <div className="flex items-center gap-2 px-2">
+        <div className="flex items-center gap-1.5 px-1">
           <Switch
             id="group-by-name"
             checked={groupByName}
             onCheckedChange={onGroupByNameChange}
+            className="scale-75"
           />
-          <Label htmlFor="group-by-name" className="text-sm flex items-center gap-1.5 cursor-pointer">
-            <Layers className="h-3.5 w-3.5" />
-            Group by name
+          <Label htmlFor="group-by-name" className="text-xs flex items-center gap-1 cursor-pointer">
+            <Layers className="h-3 w-3" />
+            Group
           </Label>
         </div>
       )}
@@ -109,8 +110,8 @@ export function NetworksFilterToolbar({
 
       {/* Selection count */}
       {selectedCount > 0 && (
-        <span className="text-sm text-muted-foreground">
-          {selectedCount} selected
+        <span className="text-xs text-muted-foreground">
+          {selectedCount} sel
         </span>
       )}
 
@@ -118,9 +119,8 @@ export function NetworksFilterToolbar({
       {onToggleColumn && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm">
-              <Columns3 className="h-4 w-4 mr-2" />
-              Columns
+            <Button variant="outline" size="sm" className="h-7 w-7 p-0">
+              <Columns3 className="h-3.5 w-3.5" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
@@ -141,9 +141,8 @@ export function NetworksFilterToolbar({
 
       {/* Export */}
       {onExport && (
-        <Button variant="outline" size="sm" onClick={onExport}>
-          <Download className="h-4 w-4 mr-2" />
-          Export
+        <Button variant="outline" size="sm" className="h-7 w-7 p-0" onClick={onExport}>
+          <Download className="h-3.5 w-3.5" />
         </Button>
       )}
     </div>

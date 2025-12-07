@@ -85,13 +85,13 @@ export function VCenterStatsBar({
   };
   return (
     <div className="border-b bg-card">
-      <div className="flex flex-col gap-3 px-4 py-3 sm:px-6 lg:px-8 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex min-w-0 flex-wrap items-center gap-3 sm:gap-6">
+      <div className="flex flex-col gap-2 px-3 py-2 sm:px-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
           {/* vCenter Selector */}
           {vcenters.length > 0 && onVCenterChange && (
             <>
               <Select value={selectedVCenterId || "all"} onValueChange={onVCenterChange}>
-                <SelectTrigger className="w-[200px] h-9">
+                <SelectTrigger className="w-[160px] h-7 text-xs">
                   <SelectValue placeholder="Select vCenter" />
                 </SelectTrigger>
                 <SelectContent>
@@ -113,56 +113,52 @@ export function VCenterStatsBar({
               <div className="hidden h-4 w-px bg-border sm:block" />
             </>
           )}
-          <div className="flex items-center gap-2 text-sm whitespace-nowrap">
-            <Database className="h-4 w-4 text-muted-foreground" />
+          <div className="flex items-center gap-1.5 text-xs whitespace-nowrap">
+            <Database className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="text-muted-foreground">Hosts:</span>
             <span className="font-semibold">{totalHosts}</span>
           </div>
 
-          <div className="hidden h-4 w-px bg-border sm:block" />
+          <div className="hidden h-3 w-px bg-border sm:block" />
 
-          <div className="flex items-center gap-2 text-sm whitespace-nowrap">
-            <LinkIcon className="h-4 w-4 text-success" />
-            <span className="text-muted-foreground">Linked:</span>
+          <div className="flex items-center gap-1.5 text-xs whitespace-nowrap">
+            <LinkIcon className="h-3.5 w-3.5 text-success" />
             <span className="font-semibold text-success">{linkedHosts}</span>
           </div>
 
-          <div className="hidden h-4 w-px bg-border sm:block" />
+          <div className="hidden h-3 w-px bg-border sm:block" />
 
-          <div className="flex items-center gap-2 text-sm whitespace-nowrap">
-            <LinkIcon className="h-4 w-4 text-warning" />
-            <span className="text-muted-foreground">Unlinked:</span>
+          <div className="flex items-center gap-1.5 text-xs whitespace-nowrap">
+            <LinkIcon className="h-3.5 w-3.5 text-warning" />
             <span className="font-semibold text-warning">{unlinkedHosts}</span>
           </div>
 
-          <div className="hidden h-4 w-px bg-border sm:block" />
+          <div className="hidden h-3 w-px bg-border sm:block" />
 
-          <div className="flex items-center gap-2 text-sm whitespace-nowrap">
-            <Activity className="h-4 w-4 text-muted-foreground" />
+          <div className="flex items-center gap-1.5 text-xs whitespace-nowrap">
+            <Activity className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="text-muted-foreground">VMs:</span>
             <span className="font-semibold">{totalVms}</span>
           </div>
 
-          <div className="hidden h-4 w-px bg-border sm:block" />
+          <div className="hidden h-3 w-px bg-border sm:block" />
 
-          <div className="flex items-center gap-2 text-sm whitespace-nowrap">
-            <HardDrive className="h-4 w-4 text-muted-foreground" />
-            <span className="text-muted-foreground">Datastores:</span>
+          <div className="flex items-center gap-1.5 text-xs whitespace-nowrap">
+            <HardDrive className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="font-semibold">{totalDatastores}</span>
           </div>
 
           {totalAlarms > 0 && (
             <>
-              <div className="hidden h-4 w-px bg-border sm:block" />
+              <div className="hidden h-3 w-px bg-border sm:block" />
               
               <Popover>
                 <PopoverTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-auto p-0 hover:bg-transparent gap-2 text-sm whitespace-nowrap">
-                    <AlertTriangle className="h-4 w-4 text-warning" />
-                    <span className="text-muted-foreground">Alarms:</span>
+                  <Button variant="ghost" size="sm" className="h-auto p-0 hover:bg-transparent gap-1.5 text-xs whitespace-nowrap">
+                    <AlertTriangle className="h-3.5 w-3.5 text-warning" />
                     <span className="font-semibold text-warning">{totalAlarms}</span>
                     {redAlarms > 0 && (
-                      <Badge variant="destructive" className="text-xs h-5">
+                      <Badge variant="destructive" className="text-xs h-4 px-1">
                         {redAlarms}
                       </Badge>
                     )}
@@ -267,36 +263,37 @@ export function VCenterStatsBar({
             </>
           )}
 
-          <div className="hidden h-4 w-px bg-border sm:block" />
+          <div className="hidden h-3 w-px bg-border sm:block" />
 
-          <div className="flex min-w-0 items-center gap-2 text-sm whitespace-nowrap">
-            <span className="text-muted-foreground">Last Sync:</span>
-            <span className="font-semibold truncate max-w-[200px]">
+          <div className="flex min-w-0 items-center gap-1.5 text-xs whitespace-nowrap">
+            <span className="text-muted-foreground">Sync:</span>
+            <span className="font-semibold truncate max-w-[120px]">
               {lastSync ? formatDistanceToNow(new Date(lastSync), { addSuffix: true }) : 'Never'}
             </span>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-          <Button variant="outline" size="sm" onClick={onSettings}>
-            <Settings className="mr-2 h-4 w-4" />
+        <div className="flex flex-wrap items-center gap-1.5 lg:justify-end">
+          <Button variant="outline" size="sm" className="h-7 text-xs px-2" onClick={onSettings}>
+            <Settings className="mr-1 h-3.5 w-3.5" />
             Settings
           </Button>
 
           <Button
             variant="outline"
             size="sm"
+            className="h-7 text-xs px-2"
             onClick={onTest}
             disabled={testing}
           >
             {testing ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Testing...
+                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                Test...
               </>
             ) : (
               <>
-                <Activity className="mr-2 h-4 w-4" />
+                <Activity className="mr-1 h-3.5 w-3.5" />
                 Test
               </>
             )}
@@ -305,37 +302,35 @@ export function VCenterStatsBar({
           <Button
             variant="outline"
             size="sm"
+            className="h-7 text-xs px-2"
             onClick={onClusterUpdate}
             disabled={!hasActiveClusters}
           >
-            <RefreshCcw className="mr-2 h-4 w-4" />
-            Cluster Update
+            <RefreshCcw className="mr-1 h-3.5 w-3.5" />
+            Cluster
           </Button>
 
-          <Button size="sm" onClick={onSync} disabled={syncing}>
+          <Button size="sm" className="h-7 text-xs px-2" onClick={onSync} disabled={syncing}>
             {syncing ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Syncing...
+                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                Sync...
               </>
             ) : (
               <>
-                <RefreshCcw className="mr-2 h-4 w-4" />
-                Sync Now
+                <RefreshCcw className="mr-1 h-3.5 w-3.5" />
+                Sync
               </>
             )}
           </Button>
 
-          <Button variant="outline" size="sm" onClick={onRefresh}>
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Refresh
+          <Button variant="outline" size="sm" className="h-7 w-7 p-0" onClick={onRefresh}>
+            <RefreshCw className="h-3.5 w-3.5" />
           </Button>
 
-          <Badge variant="outline" className="gap-2 sm:ml-2 sm:border-l sm:pl-2">
-            <span className={`h-2 w-2 rounded-full ${mode === 'job-executor' ? 'bg-blue-500' : 'bg-emerald-500'}`} />
-            <span className="text-xs font-medium tracking-wide">
-              {mode === 'job-executor' ? 'Job Executor' : 'Cloud Mode'}
-            </span>
+          <Badge variant="outline" className="gap-1.5 text-xs h-6">
+            <span className={`h-1.5 w-1.5 rounded-full ${mode === 'job-executor' ? 'bg-blue-500' : 'bg-emerald-500'}`} />
+            {mode === 'job-executor' ? 'Executor' : 'Cloud'}
           </Badge>
         </div>
       </div>
