@@ -144,12 +144,68 @@ class APIHandler(BaseHTTPRequestHandler):
             
             if self.path == '/api/health':
                 self._send_json({'status': 'ok', 'version': '1.0.0'})
+            elif self.path == '/api/status':
+                self._handle_status()
             elif self.path.startswith('/api/preflight-check-stream'):
                 self._handle_preflight_check_stream()
             else:
                 self._send_error(f'Unknown endpoint: {self.path}', 404)
         except Exception as e:
             self.executor.log(f"API error: {e}", "ERROR")
+            self._send_error(str(e), 500)
+    
+    def _handle_status(self):
+        """Return detailed Job Executor status including polling heartbeat"""
+        try:
+            now = datetime.now(timezone.utc)
+            
+            # Calculate uptime
+            uptime_seconds = 0
+            if self.executor.startup_time:
+                uptime_delta = datetime.now() - self.executor.startup_time
+                uptime_seconds = int(uptime_delta.total_seconds())
+            
+            # Calculate time since last poll
+            last_poll_ago_seconds = None
+            polling_active = False
+            if self.executor.last_poll_time:
+                last_poll_delta = datetime.now() - self.executor.last_poll_time
+                last_poll_ago_seconds = int(last_poll_delta.total_seconds())
+                # Consider polling "active" if last poll was within 2x poll interval
+                from job_executor.config import POLL_INTERVAL
+                polling_active = last_poll_ago_seconds < (POLL_INTERVAL * 2)
+            
+            status_data = {
+                'status': 'ok',
+                'version': '1.0.0',
+                'polling': {
+                    'active': polling_active,
+                    'poll_count': self.executor.poll_count,
+                    'jobs_processed': self.executor.jobs_processed,
+                    'last_poll_time': self.executor.last_poll_time.isoformat() if self.executor.last_poll_time else None,
+                    'last_poll_ago_seconds': last_poll_ago_seconds,
+                    'last_poll_error': self.executor.last_poll_error,
+                },
+                'uptime_seconds': uptime_seconds,
+                'startup_time': self.executor.startup_time.isoformat() if self.executor.startup_time else None,
+                'api_server': {
+                    'running': True,
+                    'port': self.executor.api_server.port if self.executor.api_server else None,
+                },
+                'media_server': {
+                    'running': self.executor.media_server is not None,
+                },
+                'throttler': {
+                    'max_concurrent': self.executor.throttler.max_concurrent if self.executor.throttler else None,
+                    'request_delay_ms': self.executor.throttler.request_delay_ms if self.executor.throttler else None,
+                },
+                'operations_paused': self.executor.activity_settings.get('pause_idrac_operations', False),
+            }
+            
+            self._send_json(status_data)
+            
+        except Exception as e:
+            self.executor.log(f"Error getting status: {e}", "ERROR")
             self._send_error(str(e), 500)
     
     def do_PUT(self):
