@@ -4075,6 +4075,11 @@ export type Database = {
         | "storage_vmotion"
         | "deploy_zfs_target"
         | "copy_template_cross_vcenter"
+        | "ssh_key_deploy"
+        | "ssh_key_verify"
+        | "ssh_key_remove"
+        | "ssh_key_rotate"
+        | "ssh_key_health_check"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -4259,6 +4264,11 @@ export const Constants = {
         "storage_vmotion",
         "deploy_zfs_target",
         "copy_template_cross_vcenter",
+        "ssh_key_deploy",
+        "ssh_key_verify",
+        "ssh_key_remove",
+        "ssh_key_rotate",
+        "ssh_key_health_check",
       ],
       operation_type: [
         "idrac_api",

@@ -111,6 +111,7 @@ from job_executor.handlers import (
     FirmwareHandler, ClusterHandler, ESXiHandler, VCenterHandlers, NetworkHandler
 )
 from job_executor.handlers.template_copy import TemplateCopyHandler
+from job_executor.handlers.ssh_key_handlers import SshKeyHandler
 
 # Import IDM/FreeIPA authentication (conditional)
 try:
@@ -186,6 +187,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
         self.vcenter_handler = VCenterHandlers(self)
         self.network_handler = NetworkHandler(self)
         self.template_copy_handler = TemplateCopyHandler(self)
+        self.ssh_key_handler = SshKeyHandler(self)
 
     def _validate_service_role_key(self):
         """Ensure SERVICE_ROLE_KEY is present before making Supabase requests"""
@@ -916,6 +918,10 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             'idrac_network_write': self.network_handler.execute_idrac_network_write,
             'storage_vmotion': self.execute_storage_vmotion,
             'copy_template_cross_vcenter': self.template_copy_handler.execute_copy_template,
+            'ssh_key_deploy': self.ssh_key_handler.execute_ssh_key_deploy,
+            'ssh_key_verify': self.ssh_key_handler.execute_ssh_key_verify,
+            'ssh_key_remove': self.ssh_key_handler.execute_ssh_key_remove,
+            'ssh_key_health_check': self.ssh_key_handler.execute_ssh_key_health_check,
         }
         
         handler = handler_map.get(job_type)
