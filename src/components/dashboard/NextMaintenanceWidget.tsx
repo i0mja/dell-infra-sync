@@ -20,9 +20,9 @@ export function NextMaintenanceWidget() {
         .gte('planned_start', new Date().toISOString())
         .order('planned_start', { ascending: true })
         .limit(1)
-        .single();
+        .maybeSingle();
 
-      if (error && error.code !== 'PGRST116') throw error;
+      if (error) throw error;
       return data;
     }
   });
