@@ -108,7 +108,8 @@ from job_executor.dell_redfish.adapter import DellRedfishAdapter
 from job_executor.handlers import (
     IDMHandler, ConsoleHandler, DatastoreHandler, MediaUploadHandler,
     VirtualMediaHandler, PowerHandler, BootHandler, DiscoveryHandler,
-    FirmwareHandler, ClusterHandler, ESXiHandler, VCenterHandlers, NetworkHandler
+    FirmwareHandler, ClusterHandler, ESXiHandler, VCenterHandlers, NetworkHandler,
+    ZfsTargetHandler
 )
 from job_executor.handlers.template_copy import TemplateCopyHandler
 from job_executor.handlers.ssh_key_handlers import SshKeyHandler
@@ -188,6 +189,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
         self.network_handler = NetworkHandler(self)
         self.template_copy_handler = TemplateCopyHandler(self)
         self.ssh_key_handler = SshKeyHandler(self)
+        self.zfs_target_handler = ZfsTargetHandler(self)
 
     def _validate_service_role_key(self):
         """Ensure SERVICE_ROLE_KEY is present before making Supabase requests"""
@@ -922,6 +924,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             'ssh_key_verify': self.ssh_key_handler.execute_ssh_key_verify,
             'ssh_key_remove': self.ssh_key_handler.execute_ssh_key_remove,
             'ssh_key_health_check': self.ssh_key_handler.execute_ssh_key_health_check,
+            'deploy_zfs_target': self.zfs_target_handler.execute_deploy_zfs_target,
         }
         
         handler = handler_map.get(job_type)
