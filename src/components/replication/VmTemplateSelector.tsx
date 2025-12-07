@@ -76,7 +76,7 @@ export function VmTemplateSelector({
         .from("vcenter_vms")
         .select("id, name, vcenter_id, cluster_name, power_state, guest_os, disk_gb, memory_mb, cpu_count")
         .eq("source_vcenter_id", sourceVCenterId)
-        .or("power_state.eq.poweredOff,name.ilike.%template%")
+        .or("is_template.eq.true,power_state.eq.template,power_state.eq.poweredOff,name.ilike.%template%")
         .order("name");
 
       if (error) throw error;
