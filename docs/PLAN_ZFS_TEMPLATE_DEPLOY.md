@@ -335,42 +335,109 @@ async def customize_guest(self, vcenter, vm, hostname, ip_address, ...):
 The VMware template must be pre-configured with:
 
 ### Required Software
-- Debian 12 (or similar Linux)
+- Debian 12 or 13 (Bookworm/Trixie)
 - ZFS utilities (`zfsutils-linux`)
 - NFS server (`nfs-kernel-server`)
 - SSH server with key-based auth enabled
 - VMware Tools (open-vm-tools)
 
 ### Template Preparation Script
+
+> **Important**: ZFS packages require the `contrib` repository which is not enabled by default on Debian.
+
 ```bash
 #!/bin/bash
+# ZFS Target Template Preparation Script
+# Compatible with Debian 12 (Bookworm) and Debian 13 (Trixie)
 # Run this on the template VM before converting to template
 
-# Install packages
-apt update && apt install -y \
+set -e
+
+echo "=== ZFS Target Template Preparation ==="
+echo "Debian $(cat /etc/debian_version)"
+
+# Step 1: Enable contrib repository (required for ZFS)
+echo "[1/7] Enabling contrib repository..."
+
+# Handle both old-style sources.list and new DEB822 format
+if [ -f /etc/apt/sources.list.d/debian.sources ]; then
+    # DEB822 format (Debian 12+)
+    if ! grep -q "contrib" /etc/apt/sources.list.d/debian.sources; then
+        sed -i 's/Components: main/Components: main contrib/' /etc/apt/sources.list.d/debian.sources
+        echo "  Added contrib to debian.sources"
+    else
+        echo "  contrib already enabled in debian.sources"
+    fi
+elif [ -f /etc/apt/sources.list ]; then
+    # Old-style sources.list
+    if ! grep -q "contrib" /etc/apt/sources.list; then
+        sed -i 's/main$/main contrib/' /etc/apt/sources.list
+        echo "  Added contrib to sources.list"
+    else
+        echo "  contrib already enabled in sources.list"
+    fi
+else
+    echo "ERROR: Could not find apt sources configuration"
+    exit 1
+fi
+
+# Step 2: Update package lists
+echo "[2/7] Updating package lists..."
+apt update
+
+# Step 3: Verify ZFS packages are available
+echo "[3/7] Verifying ZFS package availability..."
+if ! apt-cache show zfsutils-linux >/dev/null 2>&1; then
+    echo "ERROR: zfsutils-linux package not available."
+    echo "Please verify the contrib repository is properly enabled."
+    exit 1
+fi
+
+# Step 4: Install required packages
+echo "[4/7] Installing required packages..."
+apt install -y \
     zfsutils-linux \
     nfs-kernel-server \
     open-vm-tools \
     openssh-server
 
-# Enable services
+# Step 5: Enable services
+echo "[5/7] Enabling services..."
 systemctl enable ssh nfs-kernel-server
 
-# Create zfsadmin user
-useradd -m -s /bin/bash zfsadmin
+# Step 6: Create zfsadmin user
+echo "[6/7] Creating zfsadmin user..."
+if ! id zfsadmin >/dev/null 2>&1; then
+    useradd -m -s /bin/bash zfsadmin
+fi
 echo "zfsadmin ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/zfsadmin
+chmod 440 /etc/sudoers.d/zfsadmin
 
 # Add SSH key (replace with your key)
 mkdir -p /home/zfsadmin/.ssh
-echo "ssh-rsa AAAA..." > /home/zfsadmin/.ssh/authorized_keys
+cat > /home/zfsadmin/.ssh/authorized_keys << 'EOF'
+# Add your SSH public key here
+ssh-rsa AAAA...
+EOF
 chown -R zfsadmin:zfsadmin /home/zfsadmin/.ssh
 chmod 700 /home/zfsadmin/.ssh
 chmod 600 /home/zfsadmin/.ssh/authorized_keys
 
-# Clean up for templating
+# Step 7: Clean up for templating
+echo "[7/7] Cleaning up for templating..."
 apt clean
 cat /dev/null > /etc/machine-id
-cloud-init clean  # If cloud-init is installed
+# Clean cloud-init if installed
+if command -v cloud-init >/dev/null 2>&1; then
+    cloud-init clean
+fi
+
+echo ""
+echo "=== Template preparation complete! ==="
+echo "Next steps:"
+echo "  1. Add your SSH public key to /home/zfsadmin/.ssh/authorized_keys"
+echo "  2. Shut down the VM"
+echo "  3. Convert to template in vCenter"
 ```
 
 ---
