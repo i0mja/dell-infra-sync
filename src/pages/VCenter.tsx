@@ -40,6 +40,7 @@ interface VCenterHost {
   status: string | null;
   maintenance_mode: boolean | null;
   last_sync: string | null;
+  source_vcenter_id?: string | null;
 }
 
 interface ClusterGroup {
@@ -77,7 +78,7 @@ export default function VCenter() {
   const [datastoresCapacityFilter, setDatastoresCapacityFilter] = useState("all");
   
   // Column visibility hooks
-  const hostsColumnVisibility = useColumnVisibility("vcenter-hosts-columns", ["name", "status", "esxi", "serial", "linked", "sync"]);
+  const hostsColumnVisibility = useColumnVisibility("vcenter-hosts-columns", ["name", "status", "esxi", "serial", "linked", "vcenter", "sync"]);
   const vmsColumnVisibility = useColumnVisibility("vcenter-vms-columns", ["name", "power", "ip", "resources", "disk", "os", "tools", "cluster"]);
   const clustersColumnVisibility = useColumnVisibility("vcenter-clusters-columns", ["name", "status", "hosts", "vms", "ha", "drs", "cpu", "memory", "storage", "sync"]);
   const datastoresColumnVisibility = useColumnVisibility("vcenter-datastores-columns", ["name", "type", "capacity", "usage", "hosts", "vms", "accessible"]);
@@ -816,6 +817,7 @@ export default function VCenter() {
                   setSelectedHostIds(ids);
                   setHostsSelectedCount(ids.size);
                 }}
+                vcenters={vcenters}
               />
             </div>
           </TabsContent>

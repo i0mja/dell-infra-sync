@@ -45,6 +45,7 @@ const COLUMN_OPTIONS = [
   { key: "esxi", label: "ESXi Version" },
   { key: "serial", label: "Serial Number" },
   { key: "linked", label: "Linked" },
+  { key: "vcenter", label: "vCenter" },
   { key: "sync", label: "Last Sync" },
 ];
 
