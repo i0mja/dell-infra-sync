@@ -47,3 +47,6 @@ verify_jwt = true  # Requires admin authentication for user deletion
 
 [functions.delete-user]
 verify_jwt = true  # Requires admin authentication to delete signed-in users
+
+[functions.generate-ssh-keypair]
+verify_jwt = true  # Requires authentication for SSH key generation

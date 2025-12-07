@@ -18,7 +18,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Trash2, Edit, Server, HardDrive, Cpu, MemoryStick, Network, Key, CheckCircle2, XCircle, Search } from 'lucide-react';
+import { Plus, Trash2, Edit, Server, HardDrive, Cpu, MemoryStick, Network, Key, CheckCircle2, XCircle, Search, KeyRound, Copy, Loader2 } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 import { useZfsTemplates, ZfsTemplateFormData } from '@/hooks/useZfsTemplates';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -53,6 +54,9 @@ export function ZfsTemplateManagement() {
   const [formData, setFormData] = useState<ZfsTemplateFormData>(initialFormData);
   const [activeTab, setActiveTab] = useState('basic');
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
+  const [generatedPublicKey, setGeneratedPublicKey] = useState('');
+  const [isGeneratingKey, setIsGeneratingKey] = useState(false);
+  const { toast } = useToast();
 
   // Fetch vCenters for dropdown (use vcenters table, not vcenter_settings)
   const { data: vcenters = [] } = useQuery({
@@ -188,6 +192,51 @@ export function ZfsTemplateManagement() {
     setShowDialog(false);
     setEditingId(null);
     setFormData(initialFormData);
+    setGeneratedPublicKey('');
+  };
+
+  const handleGenerateKeyPair = async () => {
+    setIsGeneratingKey(true);
+    try {
+      const comment = `zfsadmin@${formData.name || 'zfs-target'}`;
+      const { data, error } = await supabase.functions.invoke('generate-ssh-keypair', {
+        body: { comment }
+      });
+      
+      if (error) throw error;
+      
+      setGeneratedPublicKey(data.publicKey);
+      setFormData({ ...formData, ssh_private_key: data.privateKey });
+      toast({
+        title: 'SSH key pair generated',
+        description: 'Copy the public key to your template VM\'s authorized_keys file'
+      });
+    } catch (err) {
+      console.error('Failed to generate SSH key pair:', err);
+      toast({
+        title: 'Error generating key pair',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive'
+      });
+    } finally {
+      setIsGeneratingKey(false);
+    }
+  };
+
+  const handleCopyPublicKey = async () => {
+    try {
+      await navigator.clipboard.writeText(generatedPublicKey);
+      toast({
+        title: 'Copied to clipboard',
+        description: 'Public key copied successfully'
+      });
+    } catch (err) {
+      toast({
+        title: 'Copy failed',
+        description: 'Please select and copy manually',
+        variant: 'destructive'
+      });
+    }
   };
 
   const handleSubmit = async () => {
@@ -510,8 +559,61 @@ export function ZfsTemplateManagement() {
                       onChange={(e) => setFormData({ ...formData, default_ssh_username: e.target.value })}
                     />
                   </div>
+
+                  {/* Key Generation Section */}
+                  <div className="border rounded-lg p-4 bg-muted/30 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label className="text-base">SSH Key Pair</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Generate a new Ed25519 key pair for secure access
+                        </p>
+                      </div>
+                      <Button 
+                        type="button"
+                        variant="outline"
+                        onClick={handleGenerateKeyPair} 
+                        disabled={isGeneratingKey}
+                      >
+                        {isGeneratingKey ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                          <KeyRound className="h-4 w-4 mr-2" />
+                        )}
+                        Generate Key Pair
+                      </Button>
+                    </div>
+
+                    {/* Public Key Display */}
+                    {generatedPublicKey && (
+                      <div className="space-y-2">
+                        <Label>Public Key (copy to template VM)</Label>
+                        <div className="relative">
+                          <Textarea
+                            readOnly
+                            value={generatedPublicKey}
+                            className="font-mono text-xs pr-12 bg-background"
+                            rows={3}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="absolute top-2 right-2"
+                            onClick={handleCopyPublicKey}
+                          >
+                            <Copy className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        <p className="text-xs text-amber-600 dark:text-amber-500">
+                          ⚠️ Add this to /home/zfsadmin/.ssh/authorized_keys on your template VM before converting to template
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="grid gap-2">
-                    <Label htmlFor="ssh_private_key">SSH Private Key (Optional)</Label>
+                    <Label htmlFor="ssh_private_key">SSH Private Key</Label>
                     <Textarea
                       id="ssh_private_key"
                       placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
@@ -521,8 +623,9 @@ export function ZfsTemplateManagement() {
                       onChange={(e) => setFormData({ ...formData, ssh_private_key: e.target.value })}
                     />
                     <p className="text-xs text-muted-foreground">
-                      Private key for SSH access. Will be encrypted before storage.
-                      The template VM should have the corresponding public key in ~/.ssh/authorized_keys
+                      {generatedPublicKey 
+                        ? '✓ Private key auto-filled from generation above. Will be encrypted before storage.'
+                        : 'Paste an existing private key, or generate a new key pair above. Will be encrypted before storage.'}
                     </p>
                   </div>
                 </div>

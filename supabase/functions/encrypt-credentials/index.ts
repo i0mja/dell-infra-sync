@@ -14,9 +14,10 @@ interface EncryptCredentialsRequest {
   vcenter_settings_id?: string;
   openmanage_settings_id?: string;
   idm_settings_id?: string;
+  template_id?: string;
   username?: string;
   password: string;
-  type: 'credential_set' | 'server' | 'vcenter' | 'openmanage' | 'activity_settings' | 'idm_settings' | 'idm_ad_bind';
+  type: 'credential_set' | 'server' | 'vcenter' | 'openmanage' | 'activity_settings' | 'idm_settings' | 'idm_ad_bind' | 'zfs_template';
 }
 
 serve(async (req) => {
@@ -76,7 +77,8 @@ serve(async (req) => {
       );
     }
 
-    if (request.password.length > 255) {
+    // SSH private keys can be longer than 255 chars, so only apply limit for non-zfs_template types
+    if (request.type !== 'zfs_template' && request.password.length > 255) {
       return new Response(
         JSON.stringify({ error: 'password must be less than 255 characters' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -226,6 +228,19 @@ serve(async (req) => {
           .from('idm_settings')
           .update({ ad_bind_password_encrypted: encryptedData })
           .eq('id', request.idm_settings_id);
+        break;
+
+      case 'zfs_template':
+        if (!request.template_id) {
+          return new Response(
+            JSON.stringify({ error: 'template_id required for zfs_template type' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        updateResult = await supabaseAdmin
+          .from('zfs_target_templates')
+          .update({ ssh_key_encrypted: encryptedData })
+          .eq('id', request.template_id);
         break;
 
       default:
