@@ -244,10 +244,10 @@ export function NetworksTable({
   const itemCount = groupByName ? (groupedNetworks?.length || 0) : filteredNetworks.length;
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-md border">
+    <div className="flex flex-col h-full bg-background overflow-hidden">
+      <div className="overflow-auto flex-1 rounded-md border">
         <Table>
-          <TableHeader>
+          <TableHeader className="sticky top-0 bg-muted z-10">
             <TableRow>
               <TableHead className="w-10">
                 <Checkbox
@@ -423,7 +423,6 @@ export function NetworksTable({
           </TableBody>
         </Table>
       </div>
-      
       <TablePagination
         currentPage={currentPage}
         totalPages={totalPages}
