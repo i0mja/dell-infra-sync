@@ -100,9 +100,9 @@ export function ServerQuickView({
   };
 
   return (
-    <div className="w-80 h-full border-l bg-background flex flex-col flex-shrink-0 overflow-hidden">
+    <div className="w-72 h-full border-l bg-background flex flex-col flex-shrink-0 overflow-hidden">
       {/* Header */}
-      <div className="p-4 border-b space-y-3">
+      <div className="p-3 border-b space-y-2">
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
             <h3 className="font-semibold text-base truncate">
@@ -155,8 +155,8 @@ export function ServerQuickView({
       </div>
 
       {/* Key Stats Grid */}
-      <div className="p-4 border-b">
-        <div className="grid grid-cols-3 gap-3 text-xs">
+      <div className="p-3 border-b">
+        <div className="grid grid-cols-3 gap-2 text-xs">
           <div className="space-y-1">
             <div className="flex items-center gap-1 text-muted-foreground">
               <Cpu className="h-3 w-3" />
@@ -223,12 +223,12 @@ export function ServerQuickView({
       </div>
 
       {/* Quick Actions */}
-      <div className="p-4 border-b">
+      <div className="p-3 border-b">
         <div className="flex gap-1">
           <Button
             variant="outline"
             size="icon"
-            className="h-9 w-9"
+            className="h-8 w-8"
             onClick={onConsoleLaunch}
             title="Launch Console"
           >
@@ -237,7 +237,7 @@ export function ServerQuickView({
           <Button
             variant="outline"
             size="icon"
-            className="h-9 w-9"
+            className="h-8 w-8"
             onClick={onPowerControl}
             title="Power Control"
           >
@@ -246,7 +246,7 @@ export function ServerQuickView({
           <Button
             variant="outline"
             size="icon"
-            className="h-9 w-9"
+            className="h-8 w-8"
             onClick={onRefresh}
             disabled={refreshing}
             title="Refresh Info"
@@ -256,7 +256,7 @@ export function ServerQuickView({
           <Button
             variant="outline"
             size="icon"
-            className="h-9 w-9"
+            className="h-8 w-8"
             onClick={onHealthCheck}
             title="Health Check"
           >
@@ -264,7 +264,7 @@ export function ServerQuickView({
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className="h-9 w-9" title="More Actions">
+              <Button variant="outline" size="icon" className="h-8 w-8" title="More Actions">
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>

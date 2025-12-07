@@ -161,27 +161,27 @@ const Layout = () => {
   return (
     <div className="flex h-screen bg-background">
       {/* Desktop Sidebar */}
-      <aside className="hidden w-64 border-r bg-card md:block">
+      <aside className="hidden w-52 border-r bg-card md:block">
         <div className="flex h-full flex-col">
-          <div className="flex h-16 items-center justify-between border-b px-6 flex-shrink-0">
+          <div className="flex h-14 items-center justify-between border-b px-4 flex-shrink-0">
             <div className="flex items-center">
-              <Server className="h-6 w-6 text-primary mr-2" />
-              <span className="text-lg font-semibold">Server Manager</span>
+              <Server className="h-5 w-5 text-primary mr-2" />
+              <span className="text-sm font-semibold">Server Manager</span>
             </div>
             <NotificationCenter />
           </div>
           <ScrollArea className="flex-1">
-            <nav className="space-y-1 p-4">
+            <nav className="space-y-0.5 p-3">
               <NavLinks />
             </nav>
           </ScrollArea>
-          <div className="border-t p-4 flex-shrink-0">
-            <div className="mb-2 px-2">
-              <p className="text-sm font-medium">{user.email}</p>
+          <div className="border-t p-3 flex-shrink-0">
+            <div className="mb-1.5 px-2">
+              <p className="text-xs font-medium truncate">{user.email}</p>
               <p className="text-xs text-muted-foreground">Administrator</p>
             </div>
-            <Button variant="ghost" className="w-full justify-start" onClick={signOut}>
-              <LogOut className="mr-2 h-4 w-4" />
+            <Button variant="ghost" size="sm" className="w-full justify-start h-8" onClick={signOut}>
+              <LogOut className="mr-2 h-3.5 w-3.5" />
               Sign Out
             </Button>
           </div>
@@ -198,7 +198,7 @@ const Layout = () => {
                   <Menu className="h-6 w-6" />
                 </Button>
               </SheetTrigger>
-              <SheetContent side="left" className="w-64 p-0">
+              <SheetContent side="left" className="w-52 p-0">
                 <div className="flex h-full flex-col">
                   <div className="flex h-16 items-center border-b px-6 flex-shrink-0">
                     <Server className="h-6 w-6 text-primary mr-2" />

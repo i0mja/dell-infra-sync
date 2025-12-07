@@ -96,14 +96,14 @@ export const FleetStatusBar = () => {
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
       {stats.map((stat, idx) => (
-        <div key={idx} className="p-4 border rounded-lg bg-card hover:bg-accent/5 transition-colors">
-          <div className="flex items-center gap-3">
-            <stat.icon className={`h-8 w-8 ${stat.color}`} />
+        <div key={idx} className="p-3 border rounded-lg bg-card hover:bg-accent/5 transition-colors">
+          <div className="flex items-center gap-2">
+            <stat.icon className={`h-6 w-6 ${stat.color}`} />
             <div className="flex-1 min-w-0">
-              <div className="text-sm text-muted-foreground truncate">{stat.label}</div>
-              <div className={`text-2xl font-bold ${stat.color}`}>{stat.value}</div>
+              <div className="text-xs text-muted-foreground truncate">{stat.label}</div>
+              <div className={`text-xl font-bold ${stat.color}`}>{stat.value}</div>
               <div className="text-xs text-muted-foreground">{stat.subtext}</div>
             </div>
           </div>
