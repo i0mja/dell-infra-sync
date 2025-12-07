@@ -78,8 +78,9 @@ serve(async (req) => {
       );
     }
 
-    // SSH private keys can be longer than 255 chars, so only apply limit for non-zfs_template types
-    if (request.type !== 'zfs_template' && request.password.length > 255) {
+    // SSH private keys and similar types can be longer than 255 chars
+    const longValueTypes = ['zfs_template', 'ssh_key', 'return_only'];
+    if (!longValueTypes.includes(request.type) && request.password.length > 255) {
       return new Response(
         JSON.stringify({ error: 'password must be less than 255 characters' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
