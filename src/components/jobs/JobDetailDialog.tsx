@@ -11,7 +11,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
 import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
 import { ApiCallStream } from "./ApiCallStream";
-import { DiscoveryScanResults, VCenterSyncResults, CredentialTestResults, ScpResults, MultiServerResults, GenericResults, JobTimingCard, EsxiUpgradeResults, EsxiPreflightResults, JobProgressHeader, JobTasksTimeline, JobConsoleLog, StorageVMotionResults } from "./results";
+import { DiscoveryScanResults, VCenterSyncResults, CredentialTestResults, ScpResults, MultiServerResults, GenericResults, JobTimingCard, EsxiUpgradeResults, EsxiPreflightResults, JobProgressHeader, JobTasksTimeline, JobConsoleLog, StorageVMotionResults, ZfsDeploymentResults } from "./results";
 interface Job {
   id: string;
   job_type: string;
@@ -241,6 +241,8 @@ export const JobDetailDialog = ({
         return <EsxiPreflightResults details={job.details} />;
       case 'storage_vmotion':
         return <StorageVMotionResults details={job.details} status={job.status} />;
+      case 'deploy_zfs_target':
+        return <ZfsDeploymentResults details={job.details} status={job.status} />;
       default:
         return <GenericResults details={job.details} />;
     }
@@ -419,8 +421,8 @@ export const JobDetailDialog = ({
                 </AlertDescription>
               </Alert>}
 
-              {/* Job-Type-Specific Results */}
-              {job.status === 'completed' && <JobResultsCard job={job} />}
+              {/* Job-Type-Specific Results - show for all statuses for jobs that have detailed progress */}
+              {(job.status === 'completed' || job.job_type === 'deploy_zfs_target') && <JobResultsCard job={job} />}
 
               {/* Sub-Jobs List (for full_server_update) */}
               {job.job_type === 'full_server_update' && subJobs.length > 0 && <Card>
