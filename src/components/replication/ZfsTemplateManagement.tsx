@@ -61,6 +61,7 @@ export function ZfsTemplateManagement() {
   const [isGeneratingKey, setIsGeneratingKey] = useState(false);
   const [showCopyDialog, setShowCopyDialog] = useState(false);
   const [templateToCopy, setTemplateToCopy] = useState<typeof templates[0] | null>(null);
+  const [hasStoredSshKey, setHasStoredSshKey] = useState(false);
   const { toast } = useToast();
 
   // Fetch vCenters for dropdown (use vcenters table, not vcenter_settings)
@@ -179,6 +180,7 @@ export function ZfsTemplateManagement() {
   const handleOpenDialog = (template?: typeof templates[0]) => {
     if (template) {
       setEditingId(template.id);
+      setHasStoredSshKey(!!template.ssh_key_encrypted);
       setFormData({
         name: template.name,
         description: template.description || '',
@@ -201,6 +203,7 @@ export function ZfsTemplateManagement() {
       });
     } else {
       setEditingId(null);
+      setHasStoredSshKey(false);
       setFormData(initialFormData);
     }
     setActiveTab('basic');
@@ -212,6 +215,7 @@ export function ZfsTemplateManagement() {
     setEditingId(null);
     setFormData(initialFormData);
     setGeneratedPublicKey('');
+    setHasStoredSshKey(false);
   };
 
   const handleGenerateKeyPair = async () => {
@@ -572,13 +576,32 @@ export function ZfsTemplateManagement() {
 
               <TabsContent value="ssh" className="space-y-4 mt-4">
                 <div className="grid gap-4">
+                  {/* SSH Key Already Stored Indicator */}
+                  {editingId && hasStoredSshKey && (
+                    <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-4">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-500" />
+                        <div>
+                          <p className="font-medium text-sm text-green-700 dark:text-green-400">SSH Key Already Configured</p>
+                          <p className="text-xs text-green-600 dark:text-green-500">
+                            An encrypted SSH key is stored for this template. You can skip this section unless you need to replace the key.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Workflow Overview */}
                   <div className="rounded-lg border bg-muted/30 p-4">
                     <div className="flex items-start gap-2 mb-3">
                       <Info className="h-4 w-4 mt-0.5 text-primary" />
                       <div>
                         <p className="font-medium text-sm">SSH Key Setup Workflow</p>
-                        <p className="text-xs text-muted-foreground">Follow these steps to enable secure SSH access to deployed ZFS targets</p>
+                        <p className="text-xs text-muted-foreground">
+                          {editingId && hasStoredSshKey 
+                            ? 'Only follow these steps if you need to replace the existing SSH key'
+                            : 'Follow these steps to enable secure SSH access to deployed ZFS targets'}
+                        </p>
                       </div>
                     </div>
                     <ol className="text-xs text-muted-foreground space-y-1.5 ml-6 list-decimal">
@@ -700,10 +723,20 @@ export function ZfsTemplateManagement() {
                   </div>
 
                   <div className="grid gap-2">
-                    <Label htmlFor="ssh_private_key">SSH Private Key</Label>
+                    <Label htmlFor="ssh_private_key" className="flex items-center gap-2">
+                      SSH Private Key
+                      {editingId && hasStoredSshKey && !formData.ssh_private_key && (
+                        <Badge variant="outline" className="text-xs font-normal text-green-600 border-green-500/30">
+                          <CheckCircle2 className="h-3 w-3 mr-1" />
+                          Using stored key
+                        </Badge>
+                      )}
+                    </Label>
                     <Textarea
                       id="ssh_private_key"
-                      placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
+                      placeholder={editingId && hasStoredSshKey 
+                        ? "Leave empty to keep the existing encrypted key, or paste a new key to replace it"
+                        : "-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----"}
                       className="font-mono text-xs"
                       rows={6}
                       value={formData.ssh_private_key}
@@ -712,7 +745,9 @@ export function ZfsTemplateManagement() {
                     <p className="text-xs text-muted-foreground">
                       {generatedPublicKey 
                         ? '✓ Private key auto-filled from generation above. Will be encrypted before storage.'
-                        : 'Paste an existing private key, or generate a new key pair above. Will be encrypted before storage.'}
+                        : editingId && hasStoredSshKey
+                          ? 'Leave empty to keep the existing key, or paste/generate a new key to replace it.'
+                          : 'Paste an existing private key, or generate a new key pair above. Will be encrypted before storage.'}
                     </p>
                   </div>
                 </div>
