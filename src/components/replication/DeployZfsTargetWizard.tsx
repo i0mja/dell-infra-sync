@@ -26,11 +26,33 @@ import {
   ArrowRight, 
   ArrowLeft,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Circle,
+  Power,
+  Key,
+  Database,
+  FolderOpen,
+  ClipboardCheck
 } from 'lucide-react';
 import { useZfsTemplates, ZfsTargetTemplate } from '@/hooks/useZfsTemplates';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { DeploymentConsole } from './DeploymentConsole';
+import { cn } from '@/lib/utils';
+
+// Deployment phases for progress timeline
+const DEPLOYMENT_PHASES = [
+  { id: 'clone', label: 'Cloning Template', icon: Rocket, progress: 10 },
+  { id: 'customize', label: 'Guest Customization', icon: Server, progress: 25 },
+  { id: 'add_disk', label: 'Adding ZFS Disk', icon: HardDrive, progress: 35 },
+  { id: 'power_on', label: 'Powering On', icon: Power, progress: 45 },
+  { id: 'wait_tools', label: 'Waiting for VM Tools', icon: Loader2, progress: 55 },
+  { id: 'ssh_connect', label: 'Connecting via SSH', icon: Key, progress: 65 },
+  { id: 'zfs_create', label: 'Creating ZFS Pool', icon: Database, progress: 75 },
+  { id: 'nfs_setup', label: 'Configuring NFS Exports', icon: FolderOpen, progress: 85 },
+  { id: 'register', label: 'Registering Target', icon: ClipboardCheck, progress: 95 },
+  { id: 'complete', label: 'Complete', icon: CheckCircle2, progress: 100 }
+] as const;
 
 interface DeployZfsTargetWizardProps {
   open: boolean;
@@ -165,15 +187,60 @@ export function DeployZfsTargetWizard({ open, onOpenChange, onSuccess }: DeployZ
     }
   };
 
-  const getJobProgress = () => {
+  // Get current phase from job details
+  const getCurrentPhase = (): string => {
+    const details = jobStatus?.details as Record<string, unknown> | null;
+    return (details?.current_phase as string) || 'clone';
+  };
+
+  // Calculate progress based on current phase
+  const getJobProgress = (): number => {
     if (!jobStatus) return 0;
+    if (jobStatus.status === 'completed') return 100;
+    if (jobStatus.status === 'failed') return 100;
+    
+    const details = jobStatus?.details as Record<string, unknown> | null;
+    
+    // Use explicit progress_percent if available
+    if (details?.progress_percent !== undefined) {
+      return details.progress_percent as number;
+    }
+    
+    // Calculate from current phase
+    const currentPhase = getCurrentPhase();
+    const phaseIndex = DEPLOYMENT_PHASES.findIndex(p => p.id === currentPhase);
+    if (phaseIndex >= 0) {
+      return DEPLOYMENT_PHASES[phaseIndex].progress;
+    }
+    
+    // Fallback
     switch (jobStatus.status) {
-      case 'pending': return 10;
+      case 'pending': return 5;
       case 'running': return 50;
-      case 'completed': return 100;
-      case 'failed': return 100;
       default: return 0;
     }
+  };
+
+  // Get phase status for timeline
+  const getPhaseStatus = (phaseId: string): 'completed' | 'running' | 'pending' => {
+    if (!jobStatus || jobStatus.status === 'pending') return phaseId === 'clone' ? 'running' : 'pending';
+    if (jobStatus.status === 'completed') return 'completed';
+    if (jobStatus.status === 'failed') {
+      const currentPhase = getCurrentPhase();
+      const phaseIndex = DEPLOYMENT_PHASES.findIndex(p => p.id === phaseId);
+      const currentIndex = DEPLOYMENT_PHASES.findIndex(p => p.id === currentPhase);
+      if (phaseIndex < currentIndex) return 'completed';
+      if (phaseIndex === currentIndex) return 'running';
+      return 'pending';
+    }
+    
+    const currentPhase = getCurrentPhase();
+    const phaseIndex = DEPLOYMENT_PHASES.findIndex(p => p.id === phaseId);
+    const currentIndex = DEPLOYMENT_PHASES.findIndex(p => p.id === currentPhase);
+    
+    if (phaseIndex < currentIndex) return 'completed';
+    if (phaseIndex === currentIndex) return 'running';
+    return 'pending';
   };
 
   return (
@@ -449,38 +516,100 @@ export function DeployZfsTargetWizard({ open, onOpenChange, onSuccess }: DeployZ
 
         {/* Step 4: Progress */}
         {step === 4 && (
-          <div className="space-y-6 py-4">
-            <div className="text-center">
+          <div className="space-y-4">
+            {/* Status Header */}
+            <div className="text-center pb-2">
               {jobStatus?.status === 'completed' ? (
-                <>
-                  <CheckCircle2 className="h-16 w-16 text-green-500 mx-auto mb-4" />
-                  <h3 className="text-lg font-medium mb-2">Deployment Complete!</h3>
-                  <p className="text-muted-foreground">
-                    The ZFS target has been deployed and registered.
-                  </p>
-                </>
+                <div className="flex items-center justify-center gap-2 text-green-500">
+                  <CheckCircle2 className="h-5 w-5" />
+                  <span className="font-medium">Deployment Complete!</span>
+                </div>
               ) : jobStatus?.status === 'failed' ? (
-                <>
-                  <AlertCircle className="h-16 w-16 text-destructive mx-auto mb-4" />
-                  <h3 className="text-lg font-medium mb-2">Deployment Failed</h3>
-                  <p className="text-muted-foreground">
+                <div className="flex flex-col items-center gap-2">
+                  <div className="flex items-center gap-2 text-destructive">
+                    <AlertCircle className="h-5 w-5" />
+                    <span className="font-medium">Deployment Failed</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
                     {(jobStatus.details as Record<string, unknown>)?.error as string || 'An error occurred during deployment'}
                   </p>
-                </>
+                </div>
               ) : (
-                <>
-                  <Loader2 className="h-16 w-16 text-primary animate-spin mx-auto mb-4" />
-                  <h3 className="text-lg font-medium mb-2">Deploying...</h3>
-                  <p className="text-muted-foreground mb-4">
-                    This may take several minutes
-                  </p>
-                  <Progress value={getJobProgress()} className="w-64 mx-auto" />
-                  <p className="text-sm text-muted-foreground mt-2">
-                    Status: {jobStatus?.status || 'Initializing...'}
-                  </p>
-                </>
+                <div className="flex items-center justify-center gap-2 text-primary">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  <span className="font-medium">Deploying ZFS Target...</span>
+                </div>
               )}
             </div>
+
+            {/* Progress Bar */}
+            <div className="space-y-1">
+              <Progress value={getJobProgress()} className="h-2" />
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Progress</span>
+                <span>{getJobProgress()}%</span>
+              </div>
+            </div>
+
+            {/* Phase Timeline */}
+            <div className="grid grid-cols-5 gap-1 text-xs">
+              {DEPLOYMENT_PHASES.slice(0, 5).map((phase) => {
+                const status = getPhaseStatus(phase.id);
+                const Icon = phase.icon;
+                return (
+                  <div
+                    key={phase.id}
+                    className={cn(
+                      'flex flex-col items-center gap-1 p-2 rounded-lg transition-colors',
+                      status === 'completed' && 'text-green-500',
+                      status === 'running' && 'text-primary bg-primary/10',
+                      status === 'pending' && 'text-muted-foreground'
+                    )}
+                  >
+                    {status === 'completed' ? (
+                      <CheckCircle2 className="h-4 w-4" />
+                    ) : status === 'running' ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Circle className="h-4 w-4" />
+                    )}
+                    <span className="text-center leading-tight">{phase.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="grid grid-cols-5 gap-1 text-xs">
+              {DEPLOYMENT_PHASES.slice(5, 10).map((phase) => {
+                const status = getPhaseStatus(phase.id);
+                const Icon = phase.icon;
+                return (
+                  <div
+                    key={phase.id}
+                    className={cn(
+                      'flex flex-col items-center gap-1 p-2 rounded-lg transition-colors',
+                      status === 'completed' && 'text-green-500',
+                      status === 'running' && 'text-primary bg-primary/10',
+                      status === 'pending' && 'text-muted-foreground'
+                    )}
+                  >
+                    {status === 'completed' ? (
+                      <CheckCircle2 className="h-4 w-4" />
+                    ) : status === 'running' ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Circle className="h-4 w-4" />
+                    )}
+                    <span className="text-center leading-tight">{phase.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Console Output */}
+            <DeploymentConsole
+              jobId={deployedJobId}
+              isRunning={jobStatus?.status === 'running' || jobStatus?.status === 'pending'}
+            />
           </div>
         )}
 
