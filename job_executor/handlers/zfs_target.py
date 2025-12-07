@@ -75,28 +75,22 @@ class ZfsTargetHandler(BaseHandler):
         """
         Main entry point for deploy_zfs_target job.
         
-        Expected job details:
-        - template_id: UUID of zfs_target_templates entry
-        - vcenter_id: UUID of vCenter
-        - template_moref: MoRef ID of source template
-        - template_name: Name of source template
-        - vm_name: Name for new VM
-        - hostname: Hostname to configure
-        - network_name: vCenter network/port group name
-        - use_dhcp: Whether to use DHCP (true) or static IP
-        - ip_address: Static IP if not using DHCP
-        - subnet_mask: Subnet mask for static IP
-        - gateway: Gateway for static IP
-        - zfs_pool_name: Name for ZFS pool
-        - zfs_disk_gb: Size of ZFS disk in GB
-        - nfs_network: Network CIDR for NFS exports
-        - ssh_key_id: UUID of SSH key to use
-        - ssh_username: SSH username (default: root)
-        - register_datastore: Whether to register as vCenter datastore
-        - datastore_hosts: List of ESXi hosts to mount datastore on
+        Expected job structure:
+        - target_scope.template_id: UUID of zfs_target_templates entry
+        - details.vm_name: Name for new VM
+        - details.hostname: Hostname to configure
+        - details.network_name: vCenter network/port group name
+        - details.use_dhcp: Whether to use DHCP (true) or static IP
+        - details.zfs_pool_name: Name for ZFS pool
+        - details.zfs_disk_gb: Size of ZFS disk in GB
+        - details.nfs_network: Network CIDR for NFS exports
+        
+        The handler fetches template data (vcenter_id, template_moref, ssh_key_id, etc.)
+        from the zfs_target_templates table using target_scope.template_id
         """
         job_id = job['id']
         details = job.get('details', {}) or {}
+        target_scope = job.get('target_scope', {}) or {}
         
         # Initialize job tracking
         job_details = {
@@ -110,6 +104,57 @@ class ZfsTargetHandler(BaseHandler):
         self.update_job_status(job_id, 'running', started_at=utc_now_iso(), details=job_details)
         
         try:
+            # Fetch template from database using target_scope.template_id
+            template_id = target_scope.get('template_id')
+            if not template_id:
+                raise Exception("No template_id provided in job target_scope. Please select a template.")
+            
+            self._log_console(job_id, 'INFO', f'Fetching template configuration: {template_id}', job_details)
+            
+            template_response = self.supabase.table('zfs_target_templates')\
+                .select('*')\
+                .eq('id', template_id)\
+                .execute()
+            
+            if not template_response.data or len(template_response.data) == 0:
+                raise Exception(f"Template not found in database: {template_id}. Please verify the template exists.")
+            
+            template = template_response.data[0]
+            
+            # Validate template has required fields
+            if not template.get('vcenter_id'):
+                raise Exception(f"Template '{template.get('name', template_id)}' is not linked to a vCenter. Please edit the template in Settings → Infrastructure.")
+            
+            if not template.get('template_moref'):
+                raise Exception(f"Template '{template.get('name', template_id)}' has no VM template configured (template_moref missing). Please edit the template configuration.")
+            
+            # Merge template data into job details
+            job_details['template_id'] = template_id
+            job_details['template_name'] = template.get('name', 'Unknown Template')
+            job_details['vcenter_id'] = template['vcenter_id']
+            job_details['template_moref'] = template['template_moref']
+            job_details['ssh_key_id'] = template.get('ssh_key_id')
+            job_details['ssh_username'] = details.get('ssh_username') or template.get('default_ssh_username', 'root')
+            
+            # Apply template defaults where job details are missing
+            if not job_details.get('zfs_pool_name'):
+                job_details['zfs_pool_name'] = template.get('default_zfs_pool', 'datapool')
+            if not job_details.get('zfs_disk_gb'):
+                job_details['zfs_disk_gb'] = template.get('default_zfs_disk_gb', 500)
+            if not job_details.get('nfs_network'):
+                job_details['nfs_network'] = template.get('default_nfs_network', '10.0.0.0/8')
+            if not job_details.get('cpu_count'):
+                job_details['cpu_count'] = template.get('default_cpu', 2)
+            if not job_details.get('memory_gb'):
+                job_details['memory_gb'] = template.get('default_memory_gb', 4)
+            
+            self._log_console(job_id, 'INFO', f'Using template: {job_details["template_name"]}', job_details)
+            self._log_console(job_id, 'INFO', f'vCenter ID: {job_details["vcenter_id"]}', job_details)
+            self._log_console(job_id, 'INFO', f'VM Template MoRef: {job_details["template_moref"]}', job_details)
+            
+            # Update job with merged details
+            self.update_job_status(job_id, 'running', details=job_details)
+        
             # Validate paramiko is available
             if not PARAMIKO_AVAILABLE:
                 raise Exception("paramiko library not installed - required for SSH operations")
