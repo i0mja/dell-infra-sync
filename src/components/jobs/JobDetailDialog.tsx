@@ -374,7 +374,10 @@ export const JobDetailDialog = ({ job, open, onOpenChange, onViewWindow }: JobDe
 
             <TabsContent value="progress" className="space-y-4 mt-4">
               <JobProgressHeader job={job} />
-              <JobTasksTimeline jobId={job.id} />
+              {/* Hide task timeline for vcenter_sync jobs since VCenterSyncProgress shows phase progress */}
+              {job.job_type !== 'vcenter_sync' && (
+                <JobTasksTimeline jobId={job.id} />
+              )}
             </TabsContent>
 
             <TabsContent value="console" className="mt-4">

@@ -10,7 +10,8 @@ import {
   Server,
   CheckCircle,
   Loader2,
-  Circle
+  Circle,
+  Database
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +37,11 @@ const SYNC_PHASES: SyncPhase[] = [
 ];
 
 export const VCenterSyncProgress = ({ details, currentStep }: VCenterSyncProgressProps) => {
+  // Multi-vCenter support
+  const totalVcenters = details?.total_vcenters || 1;
+  const currentVcenterIndex = details?.current_vcenter_index ?? 0;
+  const currentVcenterName = details?.current_vcenter_name || details?.vcenter_name || details?.vcenter_host;
+  
   // Parse current step to determine which phase we're in
   const getCurrentPhaseIndex = (): number => {
     if (!currentStep) return -1;
@@ -75,31 +81,53 @@ export const VCenterSyncProgress = ({ details, currentStep }: VCenterSyncProgres
   // Get counts from details for completed phases
   const getPhaseCounts = (): Record<string, number> => {
     return {
-      clusters: details?.clusters_synced || 0,
-      datastores: details?.datastores_synced || 0,
-      networks: details?.networks_synced || 0,
-      vms: details?.vms_synced || details?.vms_processed || 0,
+      clusters: details?.clusters_synced || details?.clusters || 0,
+      datastores: details?.datastores_synced || details?.datastores || 0,
+      networks: details?.networks_synced || details?.networks || 0,
+      vms: details?.vms_synced || details?.vms_processed || details?.vms || 0,
       alarms: details?.alarms_synced || details?.alarms || 0,
-      hosts: details?.hosts_synced || details?.updated_hosts || 0,
+      hosts: details?.hosts_synced || details?.updated_hosts || details?.hosts || 0,
     };
   };
 
   const phaseCounts = getPhaseCounts();
-  const vcenterName = details?.vcenter_name || details?.vcenter_host;
 
   return (
     <Card>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-base font-medium">
+          <CardTitle className="text-base font-medium flex items-center gap-2">
+            <Database className="h-4 w-4" />
             Sync Progress
           </CardTitle>
-          {vcenterName && (
-            <Badge variant="outline" className="font-normal">
-              {vcenterName}
-            </Badge>
-          )}
+          <div className="flex items-center gap-2">
+            {/* Multi-vCenter indicator */}
+            {totalVcenters > 1 && (
+              <Badge variant="outline" className="font-mono text-xs">
+                vCenter {currentVcenterIndex + 1}/{totalVcenters}
+              </Badge>
+            )}
+            {currentVcenterName && (
+              <Badge variant="secondary" className="font-normal max-w-[200px] truncate">
+                {currentVcenterName}
+              </Badge>
+            )}
+          </div>
         </div>
+        
+        {/* Multi-vCenter overall progress */}
+        {totalVcenters > 1 && (
+          <div className="mt-2 space-y-1">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Overall Progress</span>
+              <span>{currentVcenterIndex + 1} of {totalVcenters} vCenters</span>
+            </div>
+            <Progress 
+              value={((currentVcenterIndex) / totalVcenters) * 100} 
+              className="h-1.5" 
+            />
+          </div>
+        )}
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Phase Stepper */}
@@ -157,7 +185,7 @@ export const VCenterSyncProgress = ({ details, currentStep }: VCenterSyncProgres
           <div className="space-y-2">
             <div className="flex items-center justify-between text-sm">
               <span className="text-muted-foreground">Current operation:</span>
-              <span className="font-mono text-xs">{currentStep}</span>
+              <span className="font-mono text-xs max-w-[300px] truncate">{currentStep}</span>
             </div>
             
             {/* Progress bar for current phase if we can parse it */}
