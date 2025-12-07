@@ -25,9 +25,7 @@ import { useSavedViews } from "@/hooks/useSavedViews";
 import { Button } from "@/components/ui/button";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
-import { ProtectionGroupsPanel } from "@/components/replication/ProtectionGroupsPanel";
-import { ReplicationTargetsPanel } from "@/components/replication/ReplicationTargetsPanel";
-import { ReplicationJobsPanel } from "@/components/replication/ReplicationJobsPanel";
+import { DrReplicationTab } from "@/components/replication/DrReplicationTab";
 import { NetworksTable } from "@/components/vcenter/NetworksTable";
 import { NetworksFilterToolbar } from "@/components/vcenter/NetworksFilterToolbar";
 
@@ -882,12 +880,8 @@ export default function VCenter() {
             <EsxiProfilesTab />
           </TabsContent>
 
-          <TabsContent value="replication" className="flex-1 mt-0 p-6 overflow-auto">
-            <div className="space-y-6">
-              <ProtectionGroupsPanel />
-              <ReplicationTargetsPanel />
-              <ReplicationJobsPanel />
-            </div>
+          <TabsContent value="replication" className="flex-1 mt-0 flex flex-col overflow-hidden">
+            <DrReplicationTab />
           </TabsContent>
         </Tabs>
         </div>
