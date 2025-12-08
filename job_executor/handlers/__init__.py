@@ -14,6 +14,7 @@ from .esxi_handlers import ESXiHandler
 from .vcenter_handlers import VCenterHandlers
 from .network import NetworkHandler
 from .zfs_target import ZfsTargetHandler
+from .replication import ReplicationHandler
 
 __all__ = [
     'IDMHandler',
@@ -29,5 +30,6 @@ __all__ = [
     'ESXiHandler',
     'VCenterHandlers',
     'NetworkHandler',
-    'ZfsTargetHandler'
+    'ZfsTargetHandler',
+    'ReplicationHandler'
 ]

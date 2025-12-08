@@ -109,7 +109,7 @@ from job_executor.handlers import (
     IDMHandler, ConsoleHandler, DatastoreHandler, MediaUploadHandler,
     VirtualMediaHandler, PowerHandler, BootHandler, DiscoveryHandler,
     FirmwareHandler, ClusterHandler, ESXiHandler, VCenterHandlers, NetworkHandler,
-    ZfsTargetHandler
+    ZfsTargetHandler, ReplicationHandler
 )
 from job_executor.handlers.template_copy import TemplateCopyHandler
 from job_executor.handlers.ssh_key_handlers import SshKeyHandler
@@ -190,6 +190,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
         self.template_copy_handler = TemplateCopyHandler(self)
         self.ssh_key_handler = SshKeyHandler(self)
         self.zfs_target_handler = ZfsTargetHandler(self)
+        self.replication_handler = ReplicationHandler(self)
 
     def _validate_service_role_key(self):
         """Ensure SERVICE_ROLE_KEY is present before making Supabase requests"""
@@ -925,6 +926,17 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             'ssh_key_remove': self.ssh_key_handler.execute_ssh_key_remove,
             'ssh_key_health_check': self.ssh_key_handler.execute_ssh_key_health_check,
             'deploy_zfs_target': self.zfs_target_handler.execute_deploy_zfs_target,
+            'validate_zfs_template': self.zfs_target_handler.execute_validate_zfs_template,
+            # Replication handlers
+            'test_replication_pair': self.replication_handler.execute_test_replication_pair,
+            'run_replication_sync': self.replication_handler.execute_run_replication_sync,
+            'pause_protection_group': self.replication_handler.execute_pause_protection_group,
+            'resume_protection_group': self.replication_handler.execute_resume_protection_group,
+            'test_failover': self.replication_handler.execute_test_failover,
+            'live_failover': self.replication_handler.execute_live_failover,
+            'commit_failover': self.replication_handler.execute_commit_failover,
+            'rollback_failover': self.replication_handler.execute_rollback_failover,
+            'collect_replication_metrics': self.replication_handler.execute_collect_replication_metrics,
         }
         
         handler = handler_map.get(job_type)
