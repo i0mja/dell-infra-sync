@@ -2,6 +2,7 @@
  * Hook to fetch VMs from a specific vCenter
  * 
  * Returns VMs and unique cluster names for filtering
+ * Uses pagination to fetch all VMs beyond the 1000 row limit
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -21,6 +22,9 @@ export interface VCenterVM {
   is_template?: boolean;
 }
 
+const BATCH_SIZE = 1000;
+const MAX_VMS = 50000; // Safety limit
+
 export function useVCenterVMs(vcenterId?: string) {
   const query = useQuery({
     queryKey: ['vcenter-vms', vcenterId],
@@ -32,21 +36,47 @@ export function useVCenterVMs(vcenterId?: string) {
       
       console.log('[useVCenterVMs] Fetching VMs for vCenter:', vcenterId);
       
-      const { data, error } = await supabase
-        .from('vcenter_vms')
-        .select('*')
-        .eq('source_vcenter_id', vcenterId)
-        .order('name')
-        .limit(10000);
-      
-      if (error) {
-        console.error('[useVCenterVMs] Error fetching VMs:', error);
-        throw error;
+      // Paginated fetch to get all VMs beyond 1000 limit
+      let allVMs: any[] = [];
+      let from = 0;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from('vcenter_vms')
+          .select('*')
+          .eq('source_vcenter_id', vcenterId)
+          .order('name')
+          .range(from, from + BATCH_SIZE - 1);
+        
+        if (error) {
+          console.error('[useVCenterVMs] Error fetching VMs:', error);
+          throw error;
+        }
+        
+        if (data && data.length > 0) {
+          allVMs = [...allVMs, ...data];
+          from += BATCH_SIZE;
+          console.log(`[useVCenterVMs] Fetched batch, total so far: ${allVMs.length}`);
+          
+          // If we got less than BATCH_SIZE, we've reached the end
+          if (data.length < BATCH_SIZE) {
+            hasMore = false;
+          }
+        } else {
+          hasMore = false;
+        }
+        
+        // Safety limit
+        if (from >= MAX_VMS) {
+          console.warn('[useVCenterVMs] Reached safety limit of 50,000 VMs');
+          hasMore = false;
+        }
       }
+
+      console.log(`[useVCenterVMs] Loaded ${allVMs.length} VMs for vCenter ${vcenterId}`);
       
-      console.log(`[useVCenterVMs] Loaded ${data?.length || 0} VMs for vCenter ${vcenterId}`);
-      
-      return (data || []).map(vm => ({
+      return allVMs.map(vm => ({
         id: vm.id,
         name: vm.name,
         power_state: vm.power_state,
