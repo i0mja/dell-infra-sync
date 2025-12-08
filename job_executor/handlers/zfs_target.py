@@ -71,6 +71,453 @@ class ZfsTargetHandler(BaseHandler):
         self.vcenter_conn = None
         self.ssh_client = None
     
+    def execute_validate_zfs_template(self, job: Dict):
+        """
+        Validate ZFS template prerequisites without deploying.
+        
+        Performs validation checks:
+        1. vCenter Connection
+        2. Template Exists
+        3. Template Power State
+        4. SSH Key Valid
+        5. SSH Connection Test (if template is on)
+        6. SSH Key Deployment (if auth fails and root password provided)
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        target_scope = job.get('target_scope', {}) or {}
+        
+        results = []
+        overall_success = True
+        
+        job_details = {
+            'validation_mode': True,
+            'results': [],
+            'console_log': []
+        }
+        
+        self._log_console(job_id, 'INFO', 'Starting ZFS template prerequisite validation', job_details)
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso(), details=job_details)
+        
+        try:
+            # Step 1: Fetch template
+            template_id = target_scope.get('template_id') or details.get('template_id')
+            if not template_id:
+                results.append({
+                    'step': 'template_fetch',
+                    'status': 'failed',
+                    'label': 'Template Configuration',
+                    'error': 'No template_id provided'
+                })
+                overall_success = False
+                return self._complete_validation(job_id, results, overall_success, job_details)
+            
+            template = self._fetch_template(template_id)
+            if not template:
+                results.append({
+                    'step': 'template_fetch',
+                    'status': 'failed',
+                    'label': 'Template Configuration',
+                    'error': f'Template not found: {template_id}'
+                })
+                overall_success = False
+                return self._complete_validation(job_id, results, overall_success, job_details)
+            
+            results.append({
+                'step': 'template_fetch',
+                'status': 'success',
+                'label': f'Template: {template.get("name", "Unknown")}'
+            })
+            self._log_console(job_id, 'INFO', f'Template loaded: {template.get("name")}', job_details)
+            
+            # Step 2: Test vCenter Connection
+            vcenter_id = template.get('vcenter_id')
+            if not vcenter_id:
+                results.append({
+                    'step': 'vcenter',
+                    'status': 'failed',
+                    'label': 'vCenter Connection',
+                    'error': 'No vCenter configured for template'
+                })
+                overall_success = False
+                return self._complete_validation(job_id, results, overall_success, job_details)
+            
+            try:
+                vc_settings = self._get_vcenter_settings(vcenter_id)
+                if not vc_settings:
+                    raise Exception('vCenter settings not found')
+                
+                self.vcenter_conn = self._connect_vcenter(
+                    vc_settings['host'],
+                    vc_settings['username'],
+                    vc_settings['password'],
+                    vc_settings.get('port', 443),
+                    vc_settings.get('verify_ssl', False)
+                )
+                
+                if not self.vcenter_conn:
+                    raise Exception('Connection returned None')
+                
+                results.append({
+                    'step': 'vcenter',
+                    'status': 'success',
+                    'label': f'vCenter: {vc_settings["host"]}'
+                })
+                self._log_console(job_id, 'INFO', f'vCenter connected: {vc_settings["host"]}', job_details)
+                
+            except Exception as e:
+                results.append({
+                    'step': 'vcenter',
+                    'status': 'failed',
+                    'label': 'vCenter Connection',
+                    'error': str(e)
+                })
+                overall_success = False
+                return self._complete_validation(job_id, results, overall_success, job_details)
+            
+            # Step 3: Verify template VM exists
+            template_moref = template.get('template_moref')
+            template_vm = None
+            
+            if not template_moref:
+                results.append({
+                    'step': 'template_vm',
+                    'status': 'failed',
+                    'label': 'Template VM',
+                    'error': 'No template_moref configured'
+                })
+                overall_success = False
+            else:
+                try:
+                    template_vm = self._find_vm_by_moref(self.vcenter_conn, template_moref)
+                    if template_vm:
+                        results.append({
+                            'step': 'template_vm',
+                            'status': 'success',
+                            'label': f'Template VM: {template_vm.name}'
+                        })
+                        self._log_console(job_id, 'INFO', f'Template VM found: {template_vm.name}', job_details)
+                    else:
+                        results.append({
+                            'step': 'template_vm',
+                            'status': 'failed',
+                            'label': 'Template VM',
+                            'error': f'VM not found: {template_moref}'
+                        })
+                        overall_success = False
+                except Exception as e:
+                    results.append({
+                        'step': 'template_vm',
+                        'status': 'failed',
+                        'label': 'Template VM',
+                        'error': str(e)
+                    })
+                    overall_success = False
+            
+            # Step 4: Check template power state
+            if template_vm:
+                power_state = str(template_vm.runtime.powerState)
+                if power_state == 'poweredOff':
+                    results.append({
+                        'step': 'power_state',
+                        'status': 'success',
+                        'label': 'Template is Powered Off'
+                    })
+                    self._log_console(job_id, 'INFO', 'Template is powered off (good for cloning)', job_details)
+                else:
+                    results.append({
+                        'step': 'power_state',
+                        'status': 'warning',
+                        'label': 'Template is Powered On',
+                        'warning': 'Template should be powered off for cloning'
+                    })
+                    self._log_console(job_id, 'WARN', 'Template is powered on - should be off for cloning', job_details)
+            
+            # Step 5: Validate SSH Key
+            ssh_key_id = template.get('ssh_key_id')
+            ssh_key_valid = False
+            private_key = None
+            
+            if not ssh_key_id:
+                results.append({
+                    'step': 'ssh_key',
+                    'status': 'failed',
+                    'label': 'SSH Key',
+                    'error': 'No SSH key configured for template'
+                })
+                overall_success = False
+            else:
+                try:
+                    key_data = self._get_ssh_key(ssh_key_id)
+                    if not key_data:
+                        raise Exception('SSH key not found in database')
+                    
+                    private_key = self._decrypt_ssh_key(key_data.get('private_key_encrypted'))
+                    if not private_key:
+                        raise Exception('Failed to decrypt SSH key')
+                    
+                    # Validate key format by attempting to parse it
+                    key_file = io.StringIO(private_key)
+                    pkey = None
+                    for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                        try:
+                            key_file.seek(0)
+                            pkey = key_class.from_private_key(key_file)
+                            break
+                        except:
+                            continue
+                    
+                    if not pkey:
+                        raise Exception('Unsupported key format')
+                    
+                    key_name = key_data.get('name', 'Unknown')
+                    results.append({
+                        'step': 'ssh_key',
+                        'status': 'success',
+                        'label': f'SSH Key: {key_name}'
+                    })
+                    ssh_key_valid = True
+                    self._log_console(job_id, 'INFO', f'SSH key validated: {key_name}', job_details)
+                    
+                except Exception as e:
+                    results.append({
+                        'step': 'ssh_key',
+                        'status': 'failed',
+                        'label': 'SSH Key',
+                        'error': str(e)
+                    })
+                    overall_success = False
+            
+            # Step 6: SSH Connection Test (only if template is powered on and we want to test)
+            test_ssh = details.get('test_ssh', False)
+            template_ip = None
+            ssh_auth_failed = False
+            
+            if template_vm and test_ssh:
+                power_state = str(template_vm.runtime.powerState)
+                
+                if power_state != 'poweredOn':
+                    results.append({
+                        'step': 'ssh_test',
+                        'status': 'skipped',
+                        'label': 'SSH Connection Test',
+                        'info': 'Template is powered off - SSH test skipped'
+                    })
+                    self._log_console(job_id, 'INFO', 'SSH test skipped (template powered off)', job_details)
+                else:
+                    # Get template IP
+                    template_ip = template_vm.guest.ipAddress
+                    
+                    if not template_ip or template_ip.startswith('169.254') or template_ip.startswith('127.'):
+                        results.append({
+                            'step': 'ssh_test',
+                            'status': 'skipped',
+                            'label': 'SSH Connection Test',
+                            'info': f'No valid IP address detected: {template_ip or "none"}'
+                        })
+                    elif not ssh_key_valid or not private_key:
+                        results.append({
+                            'step': 'ssh_test',
+                            'status': 'skipped',
+                            'label': 'SSH Connection Test',
+                            'info': 'SSH key not valid - cannot test connection'
+                        })
+                    else:
+                        # Attempt SSH connection
+                        ssh_username = template.get('default_ssh_username', 'root')
+                        try:
+                            self._log_console(job_id, 'INFO', f'Testing SSH to {template_ip} as {ssh_username}...', job_details)
+                            
+                            test_client = paramiko.SSHClient()
+                            test_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                            
+                            # Parse private key
+                            key_file = io.StringIO(private_key)
+                            pkey = None
+                            for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                                try:
+                                    key_file.seek(0)
+                                    pkey = key_class.from_private_key(key_file)
+                                    break
+                                except:
+                                    continue
+                            
+                            test_client.connect(
+                                hostname=template_ip,
+                                username=ssh_username,
+                                pkey=pkey,
+                                timeout=15,
+                                allow_agent=False,
+                                look_for_keys=False
+                            )
+                            
+                            # Test command
+                            stdin, stdout, stderr = test_client.exec_command('hostname')
+                            hostname = stdout.read().decode().strip()
+                            test_client.close()
+                            
+                            results.append({
+                                'step': 'ssh_test',
+                                'status': 'success',
+                                'label': f'SSH Connected: {hostname}'
+                            })
+                            self._log_console(job_id, 'INFO', f'SSH test successful: {hostname}', job_details)
+                            
+                        except paramiko.AuthenticationException as e:
+                            ssh_auth_failed = True
+                            results.append({
+                                'step': 'ssh_test',
+                                'status': 'failed',
+                                'label': 'SSH Authentication Failed',
+                                'error': f'Key not authorized for {ssh_username}@{template_ip}. Add public key to ~/.ssh/authorized_keys'
+                            })
+                            overall_success = False
+                            self._log_console(job_id, 'ERROR', f'SSH auth failed - key not in authorized_keys', job_details)
+                            
+                        except paramiko.SSHException as e:
+                            results.append({
+                                'step': 'ssh_test',
+                                'status': 'failed',
+                                'label': 'SSH Protocol Error',
+                                'error': str(e)
+                            })
+                            overall_success = False
+                            
+                        except Exception as e:
+                            error_type = type(e).__name__
+                            results.append({
+                                'step': 'ssh_test',
+                                'status': 'failed',
+                                'label': 'SSH Connection Failed',
+                                'error': f'{error_type}: {str(e)}'
+                            })
+                            overall_success = False
+            
+            # Step 7: SSH Key Deployment (if auth failed and root password provided)
+            deploy_ssh_key = details.get('deploy_ssh_key', False)
+            root_password = details.get('root_password')
+            
+            if ssh_auth_failed and deploy_ssh_key and root_password and template_ip:
+                try:
+                    ssh_username = template.get('default_ssh_username', 'root')
+                    public_key = self._get_ssh_public_key(ssh_key_id)
+                    
+                    if not public_key:
+                        raise Exception('Could not retrieve public key')
+                    
+                    self._log_console(job_id, 'INFO', f'Deploying SSH key to {template_ip} using root...', job_details)
+                    
+                    # Connect as root with password
+                    deploy_client = paramiko.SSHClient()
+                    deploy_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                    deploy_client.connect(
+                        hostname=template_ip,
+                        username='root',
+                        password=root_password,
+                        timeout=15,
+                        allow_agent=False,
+                        look_for_keys=False
+                    )
+                    
+                    # Deploy key
+                    home_dir = f'/home/{ssh_username}' if ssh_username != 'root' else '/root'
+                    commands = [
+                        f'mkdir -p {home_dir}/.ssh',
+                        f'echo "{public_key}" >> {home_dir}/.ssh/authorized_keys',
+                        f'chmod 700 {home_dir}/.ssh',
+                        f'chmod 600 {home_dir}/.ssh/authorized_keys',
+                        f'chown -R {ssh_username}:{ssh_username} {home_dir}/.ssh' if ssh_username != 'root' else 'true'
+                    ]
+                    
+                    for cmd in commands:
+                        stdin, stdout, stderr = deploy_client.exec_command(cmd)
+                        exit_code = stdout.channel.recv_exit_status()
+                        if exit_code != 0:
+                            err = stderr.read().decode().strip()
+                            raise Exception(f'Command failed: {cmd} - {err}')
+                    
+                    deploy_client.close()
+                    
+                    results.append({
+                        'step': 'ssh_deploy',
+                        'status': 'success',
+                        'label': f'SSH Key Deployed to {ssh_username}'
+                    })
+                    # SSH test that failed earlier is now fixed
+                    for r in results:
+                        if r['step'] == 'ssh_test' and r['status'] == 'failed':
+                            r['status'] = 'fixed'
+                            r['label'] = 'SSH Key Deployed Successfully'
+                            del r['error']
+                    overall_success = True
+                    self._log_console(job_id, 'INFO', 'SSH key deployed successfully', job_details)
+                    
+                except paramiko.AuthenticationException:
+                    results.append({
+                        'step': 'ssh_deploy',
+                        'status': 'failed',
+                        'label': 'SSH Key Deployment Failed',
+                        'error': 'Root password incorrect'
+                    })
+                    
+                except Exception as e:
+                    results.append({
+                        'step': 'ssh_deploy',
+                        'status': 'failed',
+                        'label': 'SSH Key Deployment Failed',
+                        'error': str(e)
+                    })
+            
+            return self._complete_validation(job_id, results, overall_success, job_details)
+            
+        except Exception as e:
+            self.log(f'Template validation failed: {e}', 'ERROR')
+            results.append({
+                'step': 'error',
+                'status': 'failed',
+                'label': 'Validation Error',
+                'error': str(e)
+            })
+            return self._complete_validation(job_id, results, False, job_details)
+        finally:
+            self._cleanup()
+    
+    def _complete_validation(self, job_id: str, results: list, success: bool, job_details: dict):
+        """Complete the validation job with results."""
+        job_details['results'] = results
+        job_details['success'] = success
+        job_details['current_phase'] = 'complete'
+        
+        status = 'completed' if success else 'failed'
+        self._log_console(job_id, 'INFO', f'Validation complete: {status}', job_details)
+        self.update_job_status(job_id, status, completed_at=utc_now_iso(), details=job_details)
+        
+        return results
+    
+    def _get_ssh_public_key(self, ssh_key_id: str) -> Optional[str]:
+        """Get public key for an SSH key."""
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+            }
+            
+            response = requests.get(
+                f'{DSM_URL}/rest/v1/ssh_keys?id=eq.{ssh_key_id}&select=public_key',
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.ok:
+                data = response.json()
+                if data:
+                    return data[0].get('public_key')
+            return None
+        except Exception as e:
+            self.log(f'Failed to get SSH public key: {e}', 'WARN')
+            return None
+
     def execute_deploy_zfs_target(self, job: Dict):
         """
         Main entry point for deploy_zfs_target job.

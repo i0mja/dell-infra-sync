@@ -298,6 +298,45 @@ export function useZfsTemplates() {
     }
   });
 
+  // Validate template prerequisites
+  const validateTemplateMutation = useMutation({
+    mutationFn: async (config: {
+      template_id: string;
+      test_ssh?: boolean;
+      deploy_ssh_key?: boolean;
+      root_password?: string;
+    }) => {
+      const { data: user } = await supabase.auth.getUser();
+      
+      const { data: job, error } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'validate_zfs_template' as const,
+          status: 'pending',
+          created_by: user?.user?.id,
+          target_scope: { template_id: config.template_id },
+          details: {
+            template_id: config.template_id,
+            test_ssh: config.test_ssh ?? false,
+            deploy_ssh_key: config.deploy_ssh_key ?? false,
+            root_password: config.root_password
+          }
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return job;
+    },
+    onSuccess: () => {
+      toast({ title: 'Validation started', description: 'Checking template prerequisites...' });
+      queryClient.invalidateQueries({ queryKey: ['jobs'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  });
+
   return {
     templates,
     loading,
@@ -308,7 +347,9 @@ export function useZfsTemplates() {
     deleteTemplate: deleteTemplateMutation.mutateAsync,
     toggleActive: toggleActiveMutation.mutateAsync,
     deployFromTemplate: deployFromTemplateMutation.mutateAsync,
+    validateTemplate: validateTemplateMutation.mutateAsync,
     isCreating: createTemplateMutation.isPending,
-    isDeploying: deployFromTemplateMutation.isPending
+    isDeploying: deployFromTemplateMutation.isPending,
+    isValidating: validateTemplateMutation.isPending
   };
 }
