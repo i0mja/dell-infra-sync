@@ -31,13 +31,20 @@ import {
   Server,
   ChevronRight,
   CheckCircle2,
-  HardDrive
+  HardDrive,
+  Pencil,
+  Pause,
+  PlayCircle,
+  AlertTriangle,
+  XCircle,
+  AlertCircle,
 } from "lucide-react";
-import { useProtectionGroups, useProtectedVMs } from "@/hooks/useReplication";
+import { useProtectionGroups, useProtectedVMs, ProtectionGroup } from "@/hooks/useReplication";
 import { useVCenters } from "@/hooks/useVCenters";
 import { useAccessibleDatastores } from "@/hooks/useAccessibleDatastores";
-import { formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow, differenceInDays } from "date-fns";
 import { ProtectedVMsTable } from "./ProtectedVMsTable";
+import { EditProtectionGroupDialog } from "./EditProtectionGroupDialog";
 
 function formatBytes(bytes: number | null): string {
   if (!bytes) return "N/A";
@@ -48,17 +55,83 @@ function formatBytes(bytes: number | null): string {
   return `${gb.toFixed(1)} GB`;
 }
 
+function StatusBadge({ group }: { group: ProtectionGroup }) {
+  const status = group.status || (group.is_enabled ? 'meeting_sla' : 'paused');
+  
+  switch (status) {
+    case 'meeting_sla':
+      return (
+        <Badge variant="outline" className="text-green-600 border-green-500/30">
+          <CheckCircle2 className="h-3 w-3 mr-1" />
+          Meeting SLA
+        </Badge>
+      );
+    case 'not_meeting_sla':
+      return (
+        <Badge variant="outline" className="text-amber-600 border-amber-500/30">
+          <AlertTriangle className="h-3 w-3 mr-1" />
+          Not Meeting SLA
+        </Badge>
+      );
+    case 'paused':
+      return (
+        <Badge variant="outline" className="text-muted-foreground">
+          <Pause className="h-3 w-3 mr-1" />
+          Paused
+        </Badge>
+      );
+    case 'error':
+      return (
+        <Badge variant="outline" className="text-red-600 border-red-500/30">
+          <XCircle className="h-3 w-3 mr-1" />
+          Error
+        </Badge>
+      );
+    case 'syncing':
+      return (
+        <Badge variant="outline" className="text-blue-600 border-blue-500/30">
+          <Play className="h-3 w-3 mr-1 animate-pulse" />
+          Syncing
+        </Badge>
+      );
+    default:
+      return (
+        <Badge variant="outline" className="text-muted-foreground">
+          {group.is_enabled ? 'Active' : 'Paused'}
+        </Badge>
+      );
+  }
+}
+
+function PriorityBadge({ priority }: { priority?: string }) {
+  switch (priority) {
+    case 'critical':
+      return <Badge className="bg-red-500 hover:bg-red-600">Critical</Badge>;
+    case 'high':
+      return <Badge className="bg-amber-500 hover:bg-amber-600">High</Badge>;
+    case 'medium':
+      return <Badge className="bg-blue-500 hover:bg-blue-600">Medium</Badge>;
+    case 'low':
+      return <Badge variant="secondary">Low</Badge>;
+    default:
+      return null;
+  }
+}
+
 export function ProtectionGroupsPanel() {
-  const { groups, loading, createGroup, deleteGroup, runReplicationNow, refetch } = useProtectionGroups();
+  const { groups, loading, createGroup, updateGroup, deleteGroup, pauseGroup, runReplicationNow, refetch } = useProtectionGroups();
   const { vcenters } = useVCenters();
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showEditDialog, setShowEditDialog] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
   const [newGroupDescription, setNewGroupDescription] = useState("");
   const [newGroupDatastore, setNewGroupDatastore] = useState("");
+  const [newGroupRpoMinutes, setNewGroupRpoMinutes] = useState(60);
   const [selectedVCenterId, setSelectedVCenterId] = useState("");
   const [creating, setCreating] = useState(false);
   const [runningReplication, setRunningReplication] = useState<string | null>(null);
+  const [pausingGroup, setPausingGroup] = useState<string | null>(null);
 
   const { data: datastores = [], isLoading: loadingDatastores } = useAccessibleDatastores(
     selectedVCenterId || undefined
@@ -70,6 +143,13 @@ export function ProtectionGroupsPanel() {
 
   const selectedGroup = groups.find(g => g.id === selectedGroupId);
 
+  // Check if test is overdue
+  const isTestOverdue = (group: ProtectionGroup): boolean => {
+    if (!group.test_reminder_days || !group.last_test_at) return false;
+    const daysSinceTest = differenceInDays(new Date(), new Date(group.last_test_at));
+    return daysSinceTest > group.test_reminder_days;
+  };
+
   const handleCreate = async () => {
     if (!newGroupName.trim() || !selectedVCenterId || !newGroupDatastore) return;
     
@@ -80,11 +160,13 @@ export function ProtectionGroupsPanel() {
         description: newGroupDescription,
         protection_datastore: newGroupDatastore,
         source_vcenter_id: selectedVCenterId,
+        rpo_minutes: newGroupRpoMinutes,
       });
       setShowCreateDialog(false);
       setNewGroupName("");
       setNewGroupDescription("");
       setNewGroupDatastore("");
+      setNewGroupRpoMinutes(60);
       setSelectedVCenterId("");
     } finally {
       setCreating(false);
@@ -101,12 +183,26 @@ export function ProtectionGroupsPanel() {
     }
   };
 
+  const handlePauseToggle = async (group: ProtectionGroup) => {
+    setPausingGroup(group.id);
+    try {
+      const isPaused = !!group.paused_at;
+      await pauseGroup({ id: group.id, paused: !isPaused });
+    } finally {
+      setPausingGroup(null);
+    }
+  };
+
   const handleDelete = async (groupId: string) => {
     if (!confirm('Delete this protection group? All protected VMs will be removed.')) return;
     await deleteGroup(groupId);
     if (selectedGroupId === groupId) {
       setSelectedGroupId(null);
     }
+  };
+
+  const handleSaveEdit = async (id: string, updates: Partial<ProtectionGroup>) => {
+    await updateGroup({ id, updates });
   };
 
   return (
@@ -156,6 +252,20 @@ export function ProtectionGroupsPanel() {
                       value={newGroupDescription}
                       onChange={(e) => setNewGroupDescription(e.target.value)}
                     />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="rpo">RPO Target (minutes)</Label>
+                    <Input
+                      id="rpo"
+                      type="number"
+                      min={1}
+                      max={1440}
+                      value={newGroupRpoMinutes}
+                      onChange={(e) => setNewGroupRpoMinutes(parseInt(e.target.value) || 60)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Maximum acceptable data loss in minutes
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="vcenter">Source vCenter</Label>
@@ -229,7 +339,7 @@ export function ProtectionGroupsPanel() {
           {loading ? (
             <div className="space-y-2">
               {[...Array(3)].map((_, i) => (
-                <Skeleton key={i} className="h-20 w-full" />
+                <Skeleton key={i} className="h-24 w-full" />
               ))}
             </div>
           ) : groups.length === 0 ? (
@@ -257,26 +367,23 @@ export function ProtectionGroupsPanel() {
                     </div>
                     <ChevronRight className="h-4 w-4 text-muted-foreground" />
                   </div>
-                  <div className="flex items-center gap-2 mt-2">
+                  <div className="flex items-center gap-2 mt-2 flex-wrap">
                     <Badge variant="secondary">
                       <Server className="h-3 w-3 mr-1" />
                       {group.vm_count || 0} VMs
                     </Badge>
-                    {group.is_enabled ? (
-                      <Badge variant="outline" className="text-green-600 border-green-500/30">
-                        <CheckCircle2 className="h-3 w-3 mr-1" />
-                        Active
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-muted-foreground">
-                        Paused
-                      </Badge>
-                    )}
+                    <StatusBadge group={group} />
+                    <PriorityBadge priority={group.priority} />
                   </div>
                   <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
                     <span className="flex items-center gap-1">
                       <Clock className="h-3 w-3" />
                       RPO: {group.rpo_minutes}m
+                      {group.current_rpo_seconds && (
+                        <span className="ml-1">
+                          (actual: {Math.round(group.current_rpo_seconds / 60)}m)
+                        </span>
+                      )}
                     </span>
                     {group.last_replication_at && (
                       <span>
@@ -284,6 +391,12 @@ export function ProtectionGroupsPanel() {
                       </span>
                     )}
                   </div>
+                  {isTestOverdue(group) && (
+                    <div className="flex items-center gap-1 mt-2 text-xs text-amber-600">
+                      <AlertCircle className="h-3 w-3" />
+                      Test overdue ({differenceInDays(new Date(), new Date(group.last_test_at!))} days)
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -311,8 +424,34 @@ export function ProtectionGroupsPanel() {
                 <Button
                   size="sm"
                   variant="outline"
+                  onClick={() => setShowEditDialog(true)}
+                >
+                  <Pencil className="h-4 w-4 mr-1" />
+                  Edit
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handlePauseToggle(selectedGroup)}
+                  disabled={pausingGroup === selectedGroup.id}
+                >
+                  {selectedGroup.paused_at ? (
+                    <>
+                      <PlayCircle className="h-4 w-4 mr-1" />
+                      Resume
+                    </>
+                  ) : (
+                    <>
+                      <Pause className="h-4 w-4 mr-1" />
+                      Pause
+                    </>
+                  )}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
                   onClick={() => handleRunNow(selectedGroup.id)}
-                  disabled={runningReplication === selectedGroup.id || vms.length === 0}
+                  disabled={runningReplication === selectedGroup.id || vms.length === 0 || !!selectedGroup.paused_at}
                 >
                   <Play className={`h-4 w-4 mr-1 ${runningReplication === selectedGroup.id ? 'animate-pulse' : ''}`} />
                   {runningReplication === selectedGroup.id ? 'Running...' : 'Run Now'}
@@ -348,6 +487,14 @@ export function ProtectionGroupsPanel() {
           )}
         </CardContent>
       </Card>
+
+      {/* Edit Dialog */}
+      <EditProtectionGroupDialog
+        group={selectedGroup || null}
+        open={showEditDialog}
+        onOpenChange={setShowEditDialog}
+        onSave={handleSaveEdit}
+      />
     </div>
   );
 }
