@@ -29,11 +29,11 @@ interface SyncPhase {
 
 const SYNC_PHASES: SyncPhase[] = [
   { key: 'clusters', label: 'Clusters', icon: <Layers className="h-4 w-4" /> },
+  { key: 'hosts', label: 'Hosts', icon: <Server className="h-4 w-4" /> },
   { key: 'datastores', label: 'Datastores', icon: <HardDrive className="h-4 w-4" /> },
   { key: 'networks', label: 'Networks', icon: <Network className="h-4 w-4" /> },
   { key: 'vms', label: 'VMs', icon: <Monitor className="h-4 w-4" /> },
   { key: 'alarms', label: 'Alarms', icon: <AlertTriangle className="h-4 w-4" /> },
-  { key: 'hosts', label: 'Hosts', icon: <Server className="h-4 w-4" /> },
 ];
 
 export const VCenterSyncProgress = ({ details, currentStep }: VCenterSyncProgressProps) => {
@@ -49,11 +49,11 @@ export const VCenterSyncProgress = ({ details, currentStep }: VCenterSyncProgres
     const stepLower = currentStep.toLowerCase();
     
     if (stepLower.includes('cluster')) return 0;
-    if (stepLower.includes('datastore')) return 1;
-    if (stepLower.includes('network')) return 2;
-    if (stepLower.includes('vm') || stepLower.includes('virtual machine')) return 3;
-    if (stepLower.includes('alarm')) return 4;
-    if (stepLower.includes('host')) return 5;
+    if (stepLower.includes('host')) return 1;
+    if (stepLower.includes('datastore')) return 2;
+    if (stepLower.includes('network')) return 3;
+    if (stepLower.includes('vm') || stepLower.includes('virtual machine')) return 4;
+    if (stepLower.includes('alarm')) return 5;
     
     // Check for completion
     if (stepLower.includes('complete') || stepLower.includes('finish')) return SYNC_PHASES.length;
