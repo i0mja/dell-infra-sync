@@ -933,7 +933,7 @@ export function OnboardZfsTargetWizard({
   
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-5xl max-h-[85vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <HardDrive className="h-5 w-5" />
@@ -1275,417 +1275,409 @@ export function OnboardZfsTargetWizard({
                 )}
               </div>
               
-              {/* Phase 5: Reorganized Configuration Sections */}
-              <div className="pt-4 border-t space-y-4">
-                {/* ZFS Configuration */}
-                <Collapsible defaultOpen className="space-y-2">
-                  <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
-                    <HardDrive className="h-4 w-4" />
-                    ZFS Configuration
-                    <ChevronDown className="h-4 w-4 ml-auto" />
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="space-y-3 pl-6">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label className="text-xs text-muted-foreground">Pool Name</Label>
-                        <Input
-                          value={zfsPoolName}
-                          onChange={(e) => setZfsPoolName(e.target.value)}
-                          placeholder="tank"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label className="text-xs text-muted-foreground">Compression</Label>
-                        <Select value={zfsCompression} onValueChange={(v) => setZfsCompression(v as 'lz4' | 'zstd' | 'off')}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="lz4">LZ4 (fast, default)</SelectItem>
-                            <SelectItem value="zstd">ZSTD (better compression)</SelectItem>
-                            <SelectItem value="off">Off (no compression)</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    
-                    {/* Disk Detection - only show after SSH test passes */}
-                    {sshTestResult === 'success' && (
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <Label className="text-xs text-muted-foreground">Target Disk</Label>
-                          {!diskDetectionDone && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={handleDetectDisks}
-                              disabled={detectingDisks}
-                              className="h-6 text-xs"
-                            >
-                              {detectingDisks ? (
-                                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                              ) : (
-                                <RefreshCw className="h-3 w-3 mr-1" />
+              {/* Phase 5: Reorganized Configuration Sections - Two Column Layout */}
+              <div className="pt-4 border-t">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Left Column: ZFS & NFS Configuration */}
+                  <div className="space-y-4">
+                    {/* ZFS Configuration */}
+                    <Collapsible defaultOpen className="space-y-2">
+                      <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
+                        <HardDrive className="h-4 w-4" />
+                        ZFS Configuration
+                        <ChevronDown className="h-4 w-4 ml-auto" />
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="space-y-3 pl-6">
+                        <div className="space-y-2">
+                          <Label className="text-xs text-muted-foreground">Pool Name</Label>
+                          <Input
+                            value={zfsPoolName}
+                            onChange={(e) => setZfsPoolName(e.target.value)}
+                            placeholder="tank"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs text-muted-foreground">Compression</Label>
+                          <Select value={zfsCompression} onValueChange={(v) => setZfsCompression(v as 'lz4' | 'zstd' | 'off')}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="lz4">LZ4 (fast, default)</SelectItem>
+                              <SelectItem value="zstd">ZSTD (better compression)</SelectItem>
+                              <SelectItem value="off">Off (no compression)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        
+                        {/* Disk Detection - only show after SSH test passes */}
+                        {sshTestResult === 'success' && (
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">Target Disk</Label>
+                              {!diskDetectionDone && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={handleDetectDisks}
+                                  disabled={detectingDisks}
+                                  className="h-6 text-xs"
+                                >
+                                  {detectingDisks ? (
+                                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                  ) : (
+                                    <RefreshCw className="h-3 w-3 mr-1" />
+                                  )}
+                                  Detect Disks
+                                </Button>
                               )}
-                              Detect Disks
-                            </Button>
+                            </div>
+                            
+                            {detectedDisks.length > 0 ? (
+                              <Select value={selectedDisk} onValueChange={setSelectedDisk}>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select disk" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {detectedDisks.map((disk) => (
+                                    <SelectItem key={disk.device} value={disk.device}>
+                                      <div className="flex items-center gap-2">
+                                        <HardDrive className="h-3 w-3" />
+                                        <span className="font-mono">{disk.device}</span>
+                                        <span className="text-muted-foreground">({disk.size})</span>
+                                      </div>
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            ) : diskDetectionDone ? (
+                              <p className="text-xs text-muted-foreground">
+                                No disks found. Will auto-detect during setup.
+                              </p>
+                            ) : (
+                              <p className="text-xs text-muted-foreground">
+                                Click "Detect Disks" to find available disks, or leave empty for auto-detection.
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </CollapsibleContent>
+                    </Collapsible>
+                    
+                    {/* NFS Configuration */}
+                    <Collapsible defaultOpen className="space-y-2">
+                      <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
+                        <Shield className="h-4 w-4" />
+                        NFS Configuration
+                        <ChevronDown className="h-4 w-4 ml-auto" />
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="space-y-3 pl-6">
+                        <div className="space-y-2">
+                          <Label className="text-xs text-muted-foreground">Allowed Network (CIDR)</Label>
+                          <Input
+                            value={nfsNetwork}
+                            onChange={(e) => setNfsNetwork(e.target.value)}
+                            placeholder="10.0.0.0/8"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Hosts in this network can mount the NFS share
+                          </p>
+                        </div>
+                      </CollapsibleContent>
+                    </Collapsible>
+                    
+                    {/* vCenter Integration */}
+                    <Collapsible defaultOpen className="space-y-2">
+                      <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
+                        <Server className="h-4 w-4" />
+                        vCenter Integration
+                        <ChevronDown className="h-4 w-4 ml-auto" />
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="space-y-3 pl-6">
+                        <div className="space-y-2">
+                          <Label className="text-xs text-muted-foreground">Datastore Name</Label>
+                          <Input
+                            value={datastoreName}
+                            onChange={(e) => setDatastoreName(e.target.value)}
+                            placeholder={`NFS-${targetName || 'target'}`}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            This name will appear in vCenter as an NFS datastore
+                          </p>
+                        </div>
+                      </CollapsibleContent>
+                    </Collapsible>
+                    
+                    {/* Advanced Options */}
+                    <Collapsible className="space-y-2">
+                      <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
+                        <Settings className="h-4 w-4" />
+                        Advanced Options
+                        <ChevronRight className="h-4 w-4 ml-auto" />
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="space-y-2 pl-6">
+                        <div className="flex items-center gap-2">
+                          <Checkbox 
+                            id="install-packages" 
+                            checked={installPackages} 
+                            onCheckedChange={(c) => setInstallPackages(!!c)} 
+                          />
+                          <Label htmlFor="install-packages" className="text-sm">Install ZFS & NFS packages</Label>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Checkbox 
+                            id="create-user" 
+                            checked={createUser} 
+                            onCheckedChange={(c) => setCreateUser(!!c)} 
+                          />
+                          <Label htmlFor="create-user" className="text-sm">Create zfsadmin user</Label>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Checkbox 
+                            id="reset-machine-id" 
+                            checked={resetMachineId} 
+                            onCheckedChange={(c) => setResetMachineId(!!c)} 
+                          />
+                          <Label htmlFor="reset-machine-id" className="text-sm">Reset machine-id (for clones)</Label>
+                        </div>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  </div>
+                  
+                  {/* Right Column: Replication & Protection */}
+                  <div className="space-y-4">
+                    {/* Phase 6: Replication & Protection */}
+                    <Collapsible defaultOpen className="space-y-2">
+                      <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
+                        <Layers className="h-4 w-4" />
+                        Replication & Protection
+                        <ChevronDown className="h-4 w-4 ml-auto" />
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="space-y-4 pl-6 pt-2">
+                        {/* Protection Group Options */}
+                        <div className="space-y-3">
+                          <Label className="text-xs text-muted-foreground">Protection Group</Label>
+                          <RadioGroup 
+                            value={protectionGroupOption} 
+                            onValueChange={(v) => setProtectionGroupOption(v as 'new' | 'existing' | 'skip')}
+                            className="space-y-2"
+                          >
+                            <div className="flex items-center space-x-2">
+                              <RadioGroupItem value="skip" id="pg-skip" />
+                              <Label htmlFor="pg-skip" className="text-sm cursor-pointer">Skip - configure later</Label>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <RadioGroupItem value="new" id="pg-new" />
+                              <Label htmlFor="pg-new" className="text-sm cursor-pointer">Create new protection group</Label>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <RadioGroupItem value="existing" id="pg-existing" />
+                              <Label htmlFor="pg-existing" className="text-sm cursor-pointer">Add to existing group</Label>
+                            </div>
+                          </RadioGroup>
+                          
+                          {/* New Protection Group Fields */}
+                          {protectionGroupOption === 'new' && (
+                            <div className="space-y-3 pt-2 border-t border-border/50">
+                              <div className="space-y-2">
+                                <Label className="text-xs text-muted-foreground">Group Name</Label>
+                                <Input
+                                  value={protectionGroupName}
+                                  onChange={(e) => setProtectionGroupName(e.target.value)}
+                                  placeholder={`${targetName}-protection`}
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label className="text-xs text-muted-foreground">Description (optional)</Label>
+                                <Textarea
+                                  value={protectionGroupDescription}
+                                  onChange={(e) => setProtectionGroupDescription(e.target.value)}
+                                  placeholder="Protection group for DR replication"
+                                  className="h-16 resize-none"
+                                />
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Existing Protection Group Selector */}
+                          {protectionGroupOption === 'existing' && (
+                            <div className="space-y-2 pt-2 border-t border-border/50">
+                              <Label className="text-xs text-muted-foreground">Select Existing Group</Label>
+                              <Select 
+                                value={existingProtectionGroupId} 
+                                onValueChange={setExistingProtectionGroupId}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder={groupsLoading ? "Loading..." : "Select protection group"} />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {existingProtectionGroups
+                                    .filter(g => !selectedVCenterId || g.source_vcenter_id === selectedVCenterId || !g.source_vcenter_id)
+                                    .map((group) => (
+                                      <SelectItem key={group.id} value={group.id}>
+                                        <div className="flex items-center gap-2">
+                                          <Shield className="h-3 w-3" />
+                                          <span>{group.name}</span>
+                                          {group.rpo_minutes && (
+                                            <span className="text-xs text-muted-foreground">
+                                              (RPO: {group.rpo_minutes}m)
+                                            </span>
+                                          )}
+                                        </div>
+                                      </SelectItem>
+                                    ))}
+                                  {existingProtectionGroups.length === 0 && (
+                                    <SelectItem value="_none" disabled>
+                                      No protection groups found
+                                    </SelectItem>
+                                  )}
+                                </SelectContent>
+                              </Select>
+                            </div>
                           )}
                         </div>
                         
-                        {detectedDisks.length > 0 ? (
-                          <Select value={selectedDisk} onValueChange={setSelectedDisk}>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select disk" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {detectedDisks.map((disk) => (
-                                <SelectItem key={disk.device} value={disk.device}>
-                                  <div className="flex items-center gap-2">
-                                    <HardDrive className="h-3 w-3" />
-                                    <span className="font-mono">{disk.device}</span>
-                                    <span className="text-muted-foreground">({disk.size})</span>
-                                  </div>
-                                </SelectItem>
+                        {/* Replication Schedule - only show if not skipping */}
+                        {protectionGroupOption !== 'skip' && (
+                          <div className="space-y-3 pt-3 border-t border-border/50">
+                            <Label className="text-xs text-muted-foreground">Replication Schedule</Label>
+                            <div className="flex flex-wrap gap-2">
+                              {(Object.keys(SCHEDULE_PRESETS) as SchedulePreset[]).map((preset) => (
+                                <Button
+                                  key={preset}
+                                  type="button"
+                                  variant={schedulePreset === preset ? 'default' : 'outline'}
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  onClick={() => setSchedulePreset(preset)}
+                                >
+                                  <Calendar className="h-3 w-3 mr-1" />
+                                  {SCHEDULE_PRESETS[preset].label}
+                                </Button>
                               ))}
-                            </SelectContent>
-                          </Select>
-                        ) : diskDetectionDone ? (
-                          <p className="text-xs text-muted-foreground">
-                            No disks found. Will auto-detect during setup.
-                          </p>
-                        ) : (
-                          <p className="text-xs text-muted-foreground">
-                            Click "Detect Disks" to find available disks, or leave empty for auto-detection.
-                          </p>
+                            </div>
+                            
+                            {schedulePreset === 'custom' && (
+                              <div className="space-y-2">
+                                <Label className="text-xs text-muted-foreground">Cron Expression</Label>
+                                <Input
+                                  value={customCron}
+                                  onChange={(e) => setCustomCron(e.target.value)}
+                                  placeholder="*/15 * * * *"
+                                  className="font-mono text-xs"
+                                />
+                              </div>
+                            )}
+                          </div>
                         )}
-                      </div>
-                    )}
-                  </CollapsibleContent>
-                </Collapsible>
-                
-                {/* NFS Configuration */}
-                <Collapsible defaultOpen className="space-y-2">
-                  <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
-                    <Shield className="h-4 w-4" />
-                    NFS Configuration
-                    <ChevronDown className="h-4 w-4 ml-auto" />
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="space-y-3 pl-6">
-                    <div className="space-y-2">
-                      <Label className="text-xs text-muted-foreground">Allowed Network (CIDR)</Label>
-                      <Input
-                        value={nfsNetwork}
-                        onChange={(e) => setNfsNetwork(e.target.value)}
-                        placeholder="10.0.0.0/8"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Hosts in this network can mount the NFS share
-                      </p>
-                    </div>
-                  </CollapsibleContent>
-                </Collapsible>
-                
-                {/* vCenter Integration */}
-                <Collapsible defaultOpen className="space-y-2">
-                  <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
-                    <Server className="h-4 w-4" />
-                    vCenter Integration
-                    <ChevronDown className="h-4 w-4 ml-auto" />
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="space-y-3 pl-6">
-                    <div className="space-y-2">
-                      <Label className="text-xs text-muted-foreground">Datastore Name</Label>
-                      <Input
-                        value={datastoreName}
-                        onChange={(e) => setDatastoreName(e.target.value)}
-                        placeholder={`NFS-${targetName || 'target'}`}
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        This name will appear in vCenter as an NFS datastore
-                      </p>
-                    </div>
-                  </CollapsibleContent>
-                </Collapsible>
-                
-                {/* Phase 6: Replication & Protection */}
-                <Collapsible className="space-y-2">
-                  <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
-                    <Layers className="h-4 w-4" />
-                    Replication & Protection
-                    <ChevronRight className="h-4 w-4 ml-auto" />
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="space-y-4 pl-6 pt-2">
-                    {/* Protection Group Options */}
-                    <div className="space-y-3">
-                      <Label className="text-xs text-muted-foreground">Protection Group</Label>
-                      <RadioGroup 
-                        value={protectionGroupOption} 
-                        onValueChange={(v) => setProtectionGroupOption(v as 'new' | 'existing' | 'skip')}
-                        className="space-y-2"
-                      >
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="skip" id="pg-skip" />
-                          <Label htmlFor="pg-skip" className="text-sm cursor-pointer">Skip - configure later</Label>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="new" id="pg-new" />
-                          <Label htmlFor="pg-new" className="text-sm cursor-pointer">Create new protection group</Label>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="existing" id="pg-existing" />
-                          <Label htmlFor="pg-existing" className="text-sm cursor-pointer">Add to existing group</Label>
-                        </div>
-                      </RadioGroup>
-                      
-                      {/* New Protection Group Fields */}
-                      {protectionGroupOption === 'new' && (
-                        <div className="space-y-3 pt-2 border-t border-border/50">
-                          <div className="space-y-2">
-                            <Label className="text-xs text-muted-foreground">Group Name</Label>
-                            <Input
-                              value={protectionGroupName}
-                              onChange={(e) => setProtectionGroupName(e.target.value)}
-                              placeholder={`${targetName}-protection`}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label className="text-xs text-muted-foreground">Description (optional)</Label>
-                            <Textarea
-                              value={protectionGroupDescription}
-                              onChange={(e) => setProtectionGroupDescription(e.target.value)}
-                              placeholder="Protection group for DR replication"
-                              className="h-16 resize-none"
-                            />
-                          </div>
-                        </div>
-                      )}
-                      
-                      {/* Existing Protection Group Selector */}
-                      {protectionGroupOption === 'existing' && (
-                        <div className="space-y-2 pt-2 border-t border-border/50">
-                          <Label className="text-xs text-muted-foreground">Select Existing Group</Label>
-                          <Select 
-                            value={existingProtectionGroupId} 
-                            onValueChange={setExistingProtectionGroupId}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder={groupsLoading ? "Loading..." : "Select protection group"} />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {existingProtectionGroups
-                                .filter(g => !selectedVCenterId || g.source_vcenter_id === selectedVCenterId || !g.source_vcenter_id)
-                                .map((group) => (
-                                  <SelectItem key={group.id} value={group.id}>
-                                    <div className="flex items-center gap-2">
-                                      <Shield className="h-3 w-3" />
-                                      <span>{group.name}</span>
-                                      {group.rpo_minutes && (
-                                        <span className="text-xs text-muted-foreground">
-                                          (RPO: {group.rpo_minutes}m)
-                                        </span>
-                                      )}
-                                    </div>
-                                  </SelectItem>
-                                ))}
-                              {existingProtectionGroups.length === 0 && (
-                                <SelectItem value="_none" disabled>
-                                  No protection groups found
-                                </SelectItem>
-                              )}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      )}
-                    </div>
-                    
-                    {/* VM Selection - only show if not skipping */}
-                    {protectionGroupOption !== 'skip' && vms.length > 0 && (
-                      <div className="space-y-3 pt-3 border-t border-border/50">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-xs text-muted-foreground">VMs to Protect</Label>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 text-xs"
-                            onClick={() => {
-                              if (vmsToProtect.length === vms.length) {
-                                setVmsToProtect([]);
-                              } else {
-                                setVmsToProtect(vms.map(v => v.id));
-                              }
-                            }}
-                          >
-                            {vmsToProtect.length === vms.length ? 'Deselect all' : 'Select all'}
-                          </Button>
-                        </div>
-                        <div className="max-h-32 overflow-y-auto space-y-1 rounded border border-border/50 p-2">
-                          {vms.slice(0, 20).map((vm) => (
-                            <div key={vm.id} className="flex items-center gap-2">
-                              <Checkbox
-                                id={`vm-${vm.id}`}
-                                checked={vmsToProtect.includes(vm.id)}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    setVmsToProtect([...vmsToProtect, vm.id]);
+                        
+                        {/* VM Selection - only show if not skipping */}
+                        {protectionGroupOption !== 'skip' && vms.length > 0 && (
+                          <div className="space-y-3 pt-3 border-t border-border/50">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-xs text-muted-foreground">VMs to Protect</Label>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 text-xs"
+                                onClick={() => {
+                                  if (vmsToProtect.length === vms.length) {
+                                    setVmsToProtect([]);
                                   } else {
-                                    setVmsToProtect(vmsToProtect.filter(id => id !== vm.id));
+                                    setVmsToProtect(vms.map(v => v.id));
                                   }
                                 }}
-                              />
-                              <Label htmlFor={`vm-${vm.id}`} className="text-xs cursor-pointer flex items-center gap-2">
-                                <span>{vm.name}</span>
-                                {vm.ip_address && (
-                                  <span className="text-muted-foreground font-mono">{vm.ip_address}</span>
-                                )}
-                              </Label>
+                              >
+                                {vmsToProtect.length === vms.length ? 'Deselect all' : 'Select all'}
+                              </Button>
                             </div>
-                          ))}
-                          {vms.length > 20 && (
-                            <p className="text-xs text-muted-foreground pt-1">
-                              +{vms.length - 20} more VMs (select after setup)
-                            </p>
-                          )}
-                        </div>
-                        {vmsToProtect.length > 0 && (
-                          <p className="text-xs text-muted-foreground">
-                            {vmsToProtect.length} VM(s) selected
-                          </p>
+                            <div className="max-h-32 overflow-y-auto space-y-1 rounded border border-border/50 p-2">
+                              {vms.slice(0, 20).map((vm) => (
+                                <div key={vm.id} className="flex items-center gap-2">
+                                  <Checkbox
+                                    id={`vm-${vm.id}`}
+                                    checked={vmsToProtect.includes(vm.id)}
+                                    onCheckedChange={(checked) => {
+                                      if (checked) {
+                                        setVmsToProtect([...vmsToProtect, vm.id]);
+                                      } else {
+                                        setVmsToProtect(vmsToProtect.filter(id => id !== vm.id));
+                                      }
+                                    }}
+                                  />
+                                  <Label htmlFor={`vm-${vm.id}`} className="text-xs cursor-pointer flex items-center gap-1">
+                                    {vm.power_state === 'poweredOn' ? (
+                                      <Power className="h-3 w-3 text-green-500" />
+                                    ) : (
+                                      <PowerOff className="h-3 w-3 text-muted-foreground" />
+                                    )}
+                                    {vm.name}
+                                  </Label>
+                                </div>
+                              ))}
+                              {vms.length > 20 && (
+                                <p className="text-xs text-muted-foreground pt-1 border-t">
+                                  + {vms.length - 20} more VMs (configure in protection group settings)
+                                </p>
+                              )}
+                            </div>
+                          </div>
                         )}
-                      </div>
-                    )}
+                      </CollapsibleContent>
+                    </Collapsible>
                     
-                    {/* Schedule Picker - only show if not skipping */}
-                    {protectionGroupOption !== 'skip' && (
-                      <div className="space-y-3 pt-3 border-t border-border/50">
-                        <Label className="text-xs text-muted-foreground">Replication Schedule</Label>
-                        <div className="flex flex-wrap gap-2">
-                          {(Object.keys(SCHEDULE_PRESETS) as SchedulePreset[]).map((preset) => (
-                            <Button
-                              key={preset}
-                              variant={schedulePreset === preset ? "default" : "outline"}
-                              size="sm"
-                              className="h-7 text-xs"
-                              onClick={() => setSchedulePreset(preset)}
-                            >
-                              <Calendar className="h-3 w-3 mr-1" />
-                              {SCHEDULE_PRESETS[preset].label}
-                            </Button>
-                          ))}
+                    {/* Summary Card - only show when required fields are filled */}
+                    {targetName && selectedVM && (
+                      <div className="p-3 rounded-lg border border-border bg-muted/30">
+                        <div className="flex items-center gap-2 mb-2">
+                          <CheckCircle2 className="h-4 w-4 text-primary" />
+                          <span className="text-sm font-medium">Setup Summary</span>
                         </div>
-                        
-                        {schedulePreset === 'custom' && (
-                          <div className="space-y-2">
-                            <Label className="text-xs text-muted-foreground">Cron Expression</Label>
-                            <Input
-                              value={customCron}
-                              onChange={(e) => setCustomCron(e.target.value)}
-                              placeholder="0 * * * *"
-                              className="font-mono text-xs"
-                            />
-                            <p className="text-xs text-muted-foreground">
-                              Example: 0 */2 * * * (every 2 hours)
-                            </p>
-                          </div>
-                        )}
-                        
-                        {schedulePreset !== 'custom' && (
-                          <div className="flex items-center gap-2 p-2 rounded bg-muted/50">
-                            <Clock className="h-3 w-3 text-muted-foreground" />
-                            <span className="text-xs">
-                              Target RPO: <strong>{SCHEDULE_PRESETS[schedulePreset].rpoMinutes} minutes</strong>
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </CollapsibleContent>
-                </Collapsible>
-                
-                {/* Advanced Options */}
-                <Collapsible className="space-y-2">
-                  <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
-                    <Settings className="h-4 w-4" />
-                    Advanced Options
-                    <ChevronRight className="h-4 w-4 ml-auto" />
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="space-y-2 pl-6">
-                    <div className="flex items-center gap-2">
-                      <Checkbox 
-                        id="install-packages" 
-                        checked={installPackages} 
-                        onCheckedChange={(c) => setInstallPackages(!!c)} 
-                      />
-                      <Label htmlFor="install-packages" className="text-sm">Install ZFS & NFS packages</Label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Checkbox 
-                        id="create-user" 
-                        checked={createUser} 
-                        onCheckedChange={(c) => setCreateUser(!!c)} 
-                      />
-                      <Label htmlFor="create-user" className="text-sm">Create zfsadmin user</Label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Checkbox 
-                        id="reset-machine-id" 
-                        checked={resetMachineId} 
-                        onCheckedChange={(c) => setResetMachineId(!!c)} 
-                      />
-                      <Label htmlFor="reset-machine-id" className="text-sm">Reset machine-id (for clones)</Label>
-                    </div>
-                  </CollapsibleContent>
-                </Collapsible>
-                
-                {/* Summary Card - only show when required fields are filled */}
-                {targetName && selectedVM && (
-                  <div className="mt-4 p-3 rounded-lg border border-border bg-muted/30">
-                    <div className="flex items-center gap-2 mb-2">
-                      <CheckCircle2 className="h-4 w-4 text-primary" />
-                      <span className="text-sm font-medium">Setup Summary</span>
-                    </div>
-                    <div className="space-y-1 text-xs">
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Target:</span>
-                        <span className="font-medium">{targetName}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">VM:</span>
-                        <span>{selectedVM.name} ({selectedVM.ip_address || 'No IP'})</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">ZFS Pool:</span>
-                        <span>{zfsPoolName} ({zfsCompression} compression)</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Datastore:</span>
-                        <span>{datastoreName || `NFS-${targetName}`}</span>
-                      </div>
-                      {protectionGroupOption !== 'skip' && (
-                        <>
-                          <div className="flex justify-between pt-1 border-t border-border/50 mt-1">
-                            <span className="text-muted-foreground">Protection:</span>
-                            <span>
-                              {protectionGroupOption === 'new' 
-                                ? (protectionGroupName || 'New group')
-                                : existingProtectionGroups.find(g => g.id === existingProtectionGroupId)?.name || 'Existing group'
-                              }
-                              {vmsToProtect.length > 0 && ` (${vmsToProtect.length} VMs)`}
-                            </span>
+                        <div className="space-y-1 text-xs">
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Target:</span>
+                            <span className="font-medium">{targetName}</span>
                           </div>
                           <div className="flex justify-between">
-                            <span className="text-muted-foreground">Schedule:</span>
-                            <span>
-                              {schedulePreset === 'custom' 
-                                ? `Custom (${customCron})`
-                                : `${SCHEDULE_PRESETS[schedulePreset].label} (RPO: ${SCHEDULE_PRESETS[schedulePreset].rpoMinutes}m)`
-                              }
-                            </span>
+                            <span className="text-muted-foreground">VM:</span>
+                            <span>{selectedVM.name} ({selectedVM.ip_address || 'No IP'})</span>
                           </div>
-                        </>
-                      )}
-                    </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">ZFS Pool:</span>
+                            <span>{zfsPoolName} ({zfsCompression} compression)</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Datastore:</span>
+                            <span>{datastoreName || `NFS-${targetName}`}</span>
+                          </div>
+                          {protectionGroupOption !== 'skip' && (
+                            <>
+                              <div className="flex justify-between pt-1 border-t border-border/50 mt-1">
+                                <span className="text-muted-foreground">Protection:</span>
+                                <span>
+                                  {protectionGroupOption === 'new' 
+                                    ? (protectionGroupName || 'New group')
+                                    : existingProtectionGroups.find(g => g.id === existingProtectionGroupId)?.name || 'Existing group'
+                                  }
+                                  {vmsToProtect.length > 0 && ` (${vmsToProtect.length} VMs)`}
+                                </span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Schedule:</span>
+                                <span>
+                                  {schedulePreset === 'custom' 
+                                    ? `Custom (${customCron})`
+                                    : `${SCHEDULE_PRESETS[schedulePreset].label} (RPO: ${SCHEDULE_PRESETS[schedulePreset].rpoMinutes}m)`
+                                  }
+                                </span>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
             </div>
           )}
