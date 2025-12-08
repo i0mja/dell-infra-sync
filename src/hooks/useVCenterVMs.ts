@@ -25,7 +25,12 @@ export function useVCenterVMs(vcenterId?: string) {
   const query = useQuery({
     queryKey: ['vcenter-vms', vcenterId],
     queryFn: async () => {
-      if (!vcenterId) return [];
+      if (!vcenterId) {
+        console.log('[useVCenterVMs] No vcenterId provided, returning empty');
+        return [];
+      }
+      
+      console.log('[useVCenterVMs] Fetching VMs for vCenter:', vcenterId);
       
       const { data, error } = await supabase
         .from('vcenter_vms')
@@ -34,7 +39,12 @@ export function useVCenterVMs(vcenterId?: string) {
         .order('name')
         .limit(10000);
       
-      if (error) throw error;
+      if (error) {
+        console.error('[useVCenterVMs] Error fetching VMs:', error);
+        throw error;
+      }
+      
+      console.log(`[useVCenterVMs] Loaded ${data?.length || 0} VMs for vCenter ${vcenterId}`);
       
       return (data || []).map(vm => ({
         id: vm.id,
@@ -49,7 +59,8 @@ export function useVCenterVMs(vcenterId?: string) {
         is_template: vm.is_template,
       })) as VCenterVM[];
     },
-    enabled: !!vcenterId
+    enabled: !!vcenterId,
+    staleTime: 5 * 60 * 1000, // 5 minute cache
   });
 
   // Extract unique cluster names from VMs
