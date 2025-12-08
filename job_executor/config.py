@@ -42,6 +42,10 @@ VERIFY_SSL = False
 # Optional Supabase URL override for backup storage
 SUPABASE_URL = os.getenv("SUPABASE_URL", DSM_URL)
 
+# PropertyCollector sync feature flags
+USE_PROPERTY_COLLECTOR_SYNC = os.getenv("USE_PROPERTY_COLLECTOR_SYNC", "true").lower() == "true"
+ENABLE_DEEP_RELATIONSHIPS = os.getenv("ENABLE_DEEP_RELATIONSHIPS", "false").lower() == "true"
+
 # Media Server Configuration (for virtual media and firmware)
 ISO_DIRECTORY = os.getenv("ISO_DIRECTORY", "/var/lib/idrac-manager/isos")
 FIRMWARE_DIRECTORY = os.getenv("FIRMWARE_DIRECTORY", "/var/lib/idrac-manager/firmware")
