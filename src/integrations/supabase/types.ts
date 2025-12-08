@@ -643,6 +643,81 @@ export type Database = {
           },
         ]
       }
+      failover_events: {
+        Row: {
+          checkpoint_time: string | null
+          commit_delay_minutes: number | null
+          commit_policy: string | null
+          committed_at: string | null
+          created_at: string | null
+          error_message: string | null
+          failover_type: string
+          id: string
+          initiated_by: string | null
+          protection_group_id: string
+          reverse_protection: boolean | null
+          rolled_back_at: string | null
+          shutdown_source_vms: string | null
+          started_at: string | null
+          status: string | null
+          test_network_id: string | null
+          vms_recovered: number | null
+        }
+        Insert: {
+          checkpoint_time?: string | null
+          commit_delay_minutes?: number | null
+          commit_policy?: string | null
+          committed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          failover_type: string
+          id?: string
+          initiated_by?: string | null
+          protection_group_id: string
+          reverse_protection?: boolean | null
+          rolled_back_at?: string | null
+          shutdown_source_vms?: string | null
+          started_at?: string | null
+          status?: string | null
+          test_network_id?: string | null
+          vms_recovered?: number | null
+        }
+        Update: {
+          checkpoint_time?: string | null
+          commit_delay_minutes?: number | null
+          commit_policy?: string | null
+          committed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          failover_type?: string
+          id?: string
+          initiated_by?: string | null
+          protection_group_id?: string
+          reverse_protection?: boolean | null
+          rolled_back_at?: string | null
+          shutdown_source_vms?: string | null
+          started_at?: string | null
+          status?: string | null
+          test_network_id?: string | null
+          vms_recovered?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "failover_events_initiated_by_fkey"
+            columns: ["initiated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "failover_events_protection_group_id_fkey"
+            columns: ["protection_group_id"]
+            isOneToOne: false
+            referencedRelation: "protection_groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       firmware_packages: {
         Row: {
           applicable_models: string[] | null
@@ -1853,57 +1928,94 @@ export type Database = {
       }
       protection_groups: {
         Row: {
+          boot_order: Json | null
           created_at: string | null
           created_by: string | null
+          current_rpo_seconds: number | null
           description: string | null
           id: string
           is_enabled: boolean | null
+          journal_history_hours: number | null
           last_replication_at: string | null
+          last_test_at: string | null
           name: string
           next_replication_at: string | null
+          pause_reason: string | null
+          paused_at: string | null
+          priority: string | null
           protection_datastore: string | null
+          replication_pair_id: string | null
           replication_schedule: string | null
           retention_policy: Json | null
           rpo_minutes: number | null
           source_vcenter_id: string | null
+          status: string | null
           target_id: string | null
+          test_reminder_days: number | null
           updated_at: string | null
         }
         Insert: {
+          boot_order?: Json | null
           created_at?: string | null
           created_by?: string | null
+          current_rpo_seconds?: number | null
           description?: string | null
           id?: string
           is_enabled?: boolean | null
+          journal_history_hours?: number | null
           last_replication_at?: string | null
+          last_test_at?: string | null
           name: string
           next_replication_at?: string | null
+          pause_reason?: string | null
+          paused_at?: string | null
+          priority?: string | null
           protection_datastore?: string | null
+          replication_pair_id?: string | null
           replication_schedule?: string | null
           retention_policy?: Json | null
           rpo_minutes?: number | null
           source_vcenter_id?: string | null
+          status?: string | null
           target_id?: string | null
+          test_reminder_days?: number | null
           updated_at?: string | null
         }
         Update: {
+          boot_order?: Json | null
           created_at?: string | null
           created_by?: string | null
+          current_rpo_seconds?: number | null
           description?: string | null
           id?: string
           is_enabled?: boolean | null
+          journal_history_hours?: number | null
           last_replication_at?: string | null
+          last_test_at?: string | null
           name?: string
           next_replication_at?: string | null
+          pause_reason?: string | null
+          paused_at?: string | null
+          priority?: string | null
           protection_datastore?: string | null
+          replication_pair_id?: string | null
           replication_schedule?: string | null
           retention_policy?: Json | null
           rpo_minutes?: number | null
           source_vcenter_id?: string | null
+          status?: string | null
           target_id?: string | null
+          test_reminder_days?: number | null
           updated_at?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "protection_groups_replication_pair_id_fkey"
+            columns: ["replication_pair_id"]
+            isOneToOne: false
+            referencedRelation: "replication_pairs"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "protection_groups_source_vcenter_id_fkey"
             columns: ["source_vcenter_id"]
@@ -1998,6 +2110,155 @@ export type Database = {
           },
         ]
       }
+      replication_metrics: {
+        Row: {
+          current_rpo_seconds: number | null
+          id: string
+          iops: number | null
+          journal_used_bytes: number | null
+          pending_bytes: number | null
+          protection_group_id: string
+          throughput_mbps: number | null
+          timestamp: string | null
+          wan_traffic_mbps: number | null
+        }
+        Insert: {
+          current_rpo_seconds?: number | null
+          id?: string
+          iops?: number | null
+          journal_used_bytes?: number | null
+          pending_bytes?: number | null
+          protection_group_id: string
+          throughput_mbps?: number | null
+          timestamp?: string | null
+          wan_traffic_mbps?: number | null
+        }
+        Update: {
+          current_rpo_seconds?: number | null
+          id?: string
+          iops?: number | null
+          journal_used_bytes?: number | null
+          pending_bytes?: number | null
+          protection_group_id?: string
+          throughput_mbps?: number | null
+          timestamp?: string | null
+          wan_traffic_mbps?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "replication_metrics_protection_group_id_fkey"
+            columns: ["protection_group_id"]
+            isOneToOne: false
+            referencedRelation: "protection_groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      replication_pairs: {
+        Row: {
+          bytes_transferred_total: number | null
+          connection_status: string | null
+          created_at: string | null
+          created_by: string | null
+          description: string | null
+          destination_dataset: string | null
+          destination_target_id: string | null
+          destination_vcenter_id: string | null
+          id: string
+          is_enabled: boolean | null
+          last_connection_error: string | null
+          last_connection_test: string | null
+          name: string
+          replication_method: string | null
+          source_dataset: string | null
+          source_target_id: string | null
+          source_vcenter_id: string | null
+          updated_at: string | null
+          use_compression: boolean | null
+          use_encryption: boolean | null
+        }
+        Insert: {
+          bytes_transferred_total?: number | null
+          connection_status?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          destination_dataset?: string | null
+          destination_target_id?: string | null
+          destination_vcenter_id?: string | null
+          id?: string
+          is_enabled?: boolean | null
+          last_connection_error?: string | null
+          last_connection_test?: string | null
+          name: string
+          replication_method?: string | null
+          source_dataset?: string | null
+          source_target_id?: string | null
+          source_vcenter_id?: string | null
+          updated_at?: string | null
+          use_compression?: boolean | null
+          use_encryption?: boolean | null
+        }
+        Update: {
+          bytes_transferred_total?: number | null
+          connection_status?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          destination_dataset?: string | null
+          destination_target_id?: string | null
+          destination_vcenter_id?: string | null
+          id?: string
+          is_enabled?: boolean | null
+          last_connection_error?: string | null
+          last_connection_test?: string | null
+          name?: string
+          replication_method?: string | null
+          source_dataset?: string | null
+          source_target_id?: string | null
+          source_vcenter_id?: string | null
+          updated_at?: string | null
+          use_compression?: boolean | null
+          use_encryption?: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "replication_pairs_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "replication_pairs_destination_target_id_fkey"
+            columns: ["destination_target_id"]
+            isOneToOne: false
+            referencedRelation: "replication_targets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "replication_pairs_destination_vcenter_id_fkey"
+            columns: ["destination_vcenter_id"]
+            isOneToOne: false
+            referencedRelation: "vcenters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "replication_pairs_source_target_id_fkey"
+            columns: ["source_target_id"]
+            isOneToOne: false
+            referencedRelation: "replication_targets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "replication_pairs_source_vcenter_id_fkey"
+            columns: ["source_vcenter_id"]
+            isOneToOne: false
+            referencedRelation: "vcenters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       replication_targets: {
         Row: {
           created_at: string | null
@@ -2014,6 +2275,8 @@ export type Database = {
           last_health_check: string | null
           name: string
           port: number | null
+          site_location: string | null
+          site_role: string | null
           source_template_id: string | null
           ssh_key_encrypted: string | null
           ssh_key_id: string | null
@@ -2038,6 +2301,8 @@ export type Database = {
           last_health_check?: string | null
           name: string
           port?: number | null
+          site_location?: string | null
+          site_role?: string | null
           source_template_id?: string | null
           ssh_key_encrypted?: string | null
           ssh_key_id?: string | null
@@ -2062,6 +2327,8 @@ export type Database = {
           last_health_check?: string | null
           name?: string
           port?: number | null
+          site_location?: string | null
+          site_role?: string | null
           source_template_id?: string | null
           ssh_key_encrypted?: string | null
           ssh_key_id?: string | null
@@ -4120,6 +4387,15 @@ export type Database = {
         | "ssh_key_rotate"
         | "ssh_key_health_check"
         | "validate_zfs_template"
+        | "test_replication_pair"
+        | "pause_protection_group"
+        | "resume_protection_group"
+        | "test_failover"
+        | "live_failover"
+        | "commit_failover"
+        | "rollback_failover"
+        | "collect_replication_metrics"
+        | "run_replication_sync"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -4310,6 +4586,15 @@ export const Constants = {
         "ssh_key_rotate",
         "ssh_key_health_check",
         "validate_zfs_template",
+        "test_replication_pair",
+        "pause_protection_group",
+        "resume_protection_group",
+        "test_failover",
+        "live_failover",
+        "commit_failover",
+        "rollback_failover",
+        "collect_replication_metrics",
+        "run_replication_sync",
       ],
       operation_type: [
         "idrac_api",
