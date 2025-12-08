@@ -102,6 +102,7 @@ from job_executor.utils import utc_now_iso
 from job_executor.mixins.database import DatabaseMixin
 from job_executor.mixins.credentials import CredentialsMixin
 from job_executor.mixins.vcenter_ops import VCenterMixin
+from job_executor.mixins.vcenter_db_upsert import VCenterDbUpsertMixin
 from job_executor.mixins.idrac_ops import IdracMixin
 from job_executor.utils import UNICODE_FALLBACKS, _normalize_unicode, _safe_json_parse, _safe_to_stdout
 from job_executor.dell_redfish.adapter import DellRedfishAdapter
@@ -141,7 +142,7 @@ except Exception:
 # Job Executor Class
 # ============================================================================
 
-class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, ConnectivityMixin, IdracMixin):
+class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsertMixin, ScpMixin, ConnectivityMixin, IdracMixin):
     def get_local_ip(self) -> str:
         """Get the local IP address of this machine"""
         import socket
