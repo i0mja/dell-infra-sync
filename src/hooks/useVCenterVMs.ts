@@ -31,7 +31,8 @@ export function useVCenterVMs(vcenterId?: string) {
         .from('vcenter_vms')
         .select('*')
         .eq('source_vcenter_id', vcenterId)
-        .order('name');
+        .order('name')
+        .limit(10000);
       
       if (error) throw error;
       
