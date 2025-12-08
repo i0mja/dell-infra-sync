@@ -1,6 +1,10 @@
 /**
  * ZFS Target Templates Hook
  * 
+ * @deprecated This hook is deprecated. Use OnboardZfsTargetWizard instead of template-based deployment.
+ * The template-based approach has been replaced with direct VM onboarding via the OnboardZfsTargetWizard.
+ * This file is kept for backward compatibility with existing data.
+ * 
  * CRUD operations for ZFS target templates used for automated deployment.
  */
 
