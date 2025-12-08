@@ -4119,6 +4119,7 @@ export type Database = {
         | "ssh_key_remove"
         | "ssh_key_rotate"
         | "ssh_key_health_check"
+        | "validate_zfs_template"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -4308,6 +4309,7 @@ export const Constants = {
         "ssh_key_remove",
         "ssh_key_rotate",
         "ssh_key_health_check",
+        "validate_zfs_template",
       ],
       operation_type: [
         "idrac_api",

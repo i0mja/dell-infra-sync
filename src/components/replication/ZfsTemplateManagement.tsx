@@ -18,7 +18,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Trash2, Edit, Server, HardDrive, Cpu, MemoryStick, Network, Key, CheckCircle2, XCircle, Search, KeyRound, Copy, Loader2, ChevronDown, Terminal, AlertCircle, Info, ArrowRightLeft, MoreHorizontal, Link2 } from 'lucide-react';
+import { Plus, Trash2, Edit, Server, HardDrive, Cpu, MemoryStick, Network, Key, CheckCircle2, XCircle, Search, KeyRound, Copy, Loader2, ChevronDown, Terminal, AlertCircle, Info, ArrowRightLeft, MoreHorizontal, Link2, Play, RefreshCw, AlertTriangle, SkipForward, Wrench } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { CopyTemplateDialog } from './CopyTemplateDialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -54,8 +54,18 @@ const initialFormData: ZfsTemplateFormData = {
   use_template_disk: false
 };
 
+// Validation result interface
+interface ValidationResult {
+  step: string;
+  status: 'success' | 'failed' | 'warning' | 'skipped' | 'fixed';
+  label: string;
+  error?: string;
+  warning?: string;
+  info?: string;
+}
+
 export function ZfsTemplateManagement() {
-  const { templates, loading, createTemplate, updateTemplate, deleteTemplate, toggleActive, isCreating } = useZfsTemplates();
+  const { templates, loading, createTemplate, updateTemplate, deleteTemplate, toggleActive, isCreating, validateTemplate, isValidating } = useZfsTemplates();
   const { sshKeys, generateKey, isLoading: sshKeysLoading } = useSshKeys();
   const [showDialog, setShowDialog] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -68,6 +78,14 @@ export function ZfsTemplateManagement() {
   const [templateToCopy, setTemplateToCopy] = useState<typeof templates[0] | null>(null);
   const [hasStoredSshKey, setHasStoredSshKey] = useState(false);
   const [sshKeyMode, setSshKeyMode] = useState<'select' | 'generate'>('select');
+  
+  // Validation state
+  const [validationJobId, setValidationJobId] = useState<string | null>(null);
+  const [validationResults, setValidationResults] = useState<ValidationResult[] | null>(null);
+  const [isPollingValidation, setIsPollingValidation] = useState(false);
+  const [showDeployKeyDialog, setShowDeployKeyDialog] = useState(false);
+  const [rootPassword, setRootPassword] = useState('');
+  
   const { toast } = useToast();
 
   // Filter active SSH keys for selection
@@ -245,6 +263,10 @@ export function ZfsTemplateManagement() {
     setGeneratedPublicKey('');
     setHasStoredSshKey(false);
     setSshKeyMode('select');
+    setValidationResults(null);
+    setValidationJobId(null);
+    setIsPollingValidation(false);
+    setRootPassword('');
   };
 
   // Handle generating a NEW key via centralized SSH key management
@@ -335,6 +357,121 @@ export function ZfsTemplateManagement() {
     setTemplateToCopy(template);
     setShowCopyDialog(true);
   };
+
+  // Handle test prerequisites - starts validation job and polls for results
+  const handleTestPrerequisites = async (testSsh: boolean = false) => {
+    if (!editingId && !formData.template_moref) {
+      toast({
+        title: 'Save template first',
+        description: 'Please save the template before testing prerequisites',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    // For new templates, we need the template_id from editing
+    const templateId = editingId;
+    if (!templateId) {
+      toast({
+        title: 'Template not saved',
+        description: 'Save the template first to test prerequisites',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    setValidationResults(null);
+    setIsPollingValidation(true);
+
+    try {
+      const job = await validateTemplate({
+        template_id: templateId,
+        test_ssh: testSsh
+      });
+
+      setValidationJobId(job.id);
+      
+      // Poll for job completion
+      pollValidationJob(job.id);
+    } catch (error) {
+      setIsPollingValidation(false);
+      console.error('Failed to start validation:', error);
+    }
+  };
+
+  // Poll validation job for results
+  const pollValidationJob = async (jobId: string) => {
+    const maxAttempts = 30;
+    let attempts = 0;
+
+    const poll = async () => {
+      attempts++;
+      
+      try {
+        const { data: job, error } = await supabase
+          .from('jobs')
+          .select('status, details')
+          .eq('id', jobId)
+          .single();
+
+        if (error) throw error;
+
+        if (job.status === 'completed' || job.status === 'failed') {
+          setIsPollingValidation(false);
+          const results = (job.details as any)?.results || [];
+          setValidationResults(results);
+          return;
+        }
+
+        if (attempts < maxAttempts) {
+          setTimeout(poll, 1000);
+        } else {
+          setIsPollingValidation(false);
+          toast({
+            title: 'Validation timeout',
+            description: 'Validation took too long. Check job status.',
+            variant: 'destructive'
+          });
+        }
+      } catch (err) {
+        setIsPollingValidation(false);
+        console.error('Error polling validation:', err);
+      }
+    };
+
+    poll();
+  };
+
+  // Handle SSH key deployment with root password
+  const handleDeploySshKey = async () => {
+    if (!editingId || !rootPassword) return;
+
+    setShowDeployKeyDialog(false);
+    setValidationResults(null);
+    setIsPollingValidation(true);
+
+    try {
+      const job = await validateTemplate({
+        template_id: editingId,
+        test_ssh: true,
+        deploy_ssh_key: true,
+        root_password: rootPassword
+      });
+
+      setValidationJobId(job.id);
+      setRootPassword('');
+      pollValidationJob(job.id);
+    } catch (error) {
+      setIsPollingValidation(false);
+      setRootPassword('');
+      console.error('Failed to deploy SSH key:', error);
+    }
+  };
+
+  // Check if SSH auth failed in results
+  const sshAuthFailed = validationResults?.some(
+    r => r.step === 'ssh_test' && r.status === 'failed' && r.error?.includes('authorized')
+  );
 
   if (loading) {
     return (
@@ -883,6 +1020,138 @@ export function ZfsTemplateManagement() {
                       </CollapsibleContent>
                     </Collapsible>
                   )}
+
+                  {/* Prerequisites Validation Section */}
+                  {editingId && (
+                    <div className="border rounded-lg p-4 space-y-4 bg-muted/20">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm font-medium flex items-center gap-2">
+                          <Play className="h-4 w-4" />
+                          Prerequisites Validation
+                        </Label>
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleTestPrerequisites(false)}
+                            disabled={isPollingValidation || isValidating}
+                          >
+                            {isPollingValidation ? (
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            ) : (
+                              <Play className="h-4 w-4 mr-2" />
+                            )}
+                            Quick Test
+                          </Button>
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleTestPrerequisites(true)}
+                                  disabled={isPollingValidation || isValidating}
+                                >
+                                  <Network className="h-4 w-4 mr-2" />
+                                  Test SSH
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>Also test SSH connection (template must be powered on)</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        </div>
+                      </div>
+
+                      {/* Validation Results */}
+                      {validationResults && (
+                        <div className="space-y-2">
+                          {validationResults.map((result, idx) => (
+                            <div 
+                              key={idx} 
+                              className={`flex items-start gap-2 p-2 rounded-md text-sm ${
+                                result.status === 'success' || result.status === 'fixed' 
+                                  ? 'bg-green-500/10 text-green-700 dark:text-green-400' 
+                                  : result.status === 'failed' 
+                                    ? 'bg-red-500/10 text-red-700 dark:text-red-400'
+                                    : result.status === 'warning'
+                                      ? 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-400'
+                                      : 'bg-muted text-muted-foreground'
+                              }`}
+                            >
+                              {result.status === 'success' && <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />}
+                              {result.status === 'fixed' && <Wrench className="h-4 w-4 mt-0.5 shrink-0" />}
+                              {result.status === 'failed' && <XCircle className="h-4 w-4 mt-0.5 shrink-0" />}
+                              {result.status === 'warning' && <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />}
+                              {result.status === 'skipped' && <SkipForward className="h-4 w-4 mt-0.5 shrink-0" />}
+                              <div className="flex-1 min-w-0">
+                                <span className="font-medium">{result.label}</span>
+                                {result.error && (
+                                  <p className="text-xs mt-0.5 opacity-80">{result.error}</p>
+                                )}
+                                {result.warning && (
+                                  <p className="text-xs mt-0.5 opacity-80">{result.warning}</p>
+                                )}
+                                {result.info && (
+                                  <p className="text-xs mt-0.5 opacity-80">{result.info}</p>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* SSH Key Deployment Prompt */}
+                      {sshAuthFailed && (
+                        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
+                          <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                            SSH key not authorized on template
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            The SSH key is not in the template's authorized_keys file. You can:
+                          </p>
+                          <div className="flex gap-2 flex-wrap">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setShowDeployKeyDialog(true)}
+                            >
+                              <Key className="h-3.5 w-3.5 mr-1.5" />
+                              Deploy Key with Root Password
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={handleCopyPublicKey}
+                              disabled={!generatedPublicKey}
+                            >
+                              <Copy className="h-3.5 w-3.5 mr-1.5" />
+                              Copy Public Key
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
+                      {isPollingValidation && (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Running prerequisite checks...
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {!editingId && (
+                    <div className="rounded-lg border border-dashed p-4 text-center text-muted-foreground text-sm">
+                      <Info className="h-5 w-5 mx-auto mb-2 opacity-50" />
+                      Save the template first to test prerequisites
+                    </div>
+                  )}
                 </div>
               </TabsContent>
             </Tabs>
@@ -896,6 +1165,54 @@ export function ZfsTemplateManagement() {
                 disabled={!formData.name || !formData.template_moref || !formData.template_name || isCreating}
               >
                 {isCreating ? 'Saving...' : (editingId ? 'Update Template' : 'Add Template')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* SSH Key Deployment Dialog */}
+        <Dialog open={showDeployKeyDialog} onOpenChange={setShowDeployKeyDialog}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Deploy SSH Key to Template</DialogTitle>
+              <DialogDescription>
+                Enter the root password for the template VM to automatically deploy the SSH key.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              {generatedPublicKey && (
+                <div className="space-y-2">
+                  <Label className="text-xs">Public key to deploy:</Label>
+                  <div className="rounded-md border p-2 bg-muted/50">
+                    <p className="text-xs font-mono break-all">{generatedPublicKey}</p>
+                  </div>
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label htmlFor="root_password">Root Password</Label>
+                <Input
+                  id="root_password"
+                  type="password"
+                  placeholder="Enter root password"
+                  value={rootPassword}
+                  onChange={(e) => setRootPassword(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Used once to add the public key to ~/.ssh/authorized_keys
+                </p>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => { setShowDeployKeyDialog(false); setRootPassword(''); }}>
+                Cancel
+              </Button>
+              <Button onClick={handleDeploySshKey} disabled={!rootPassword || isPollingValidation}>
+                {isPollingValidation ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Key className="h-4 w-4 mr-2" />
+                )}
+                Deploy Key
               </Button>
             </DialogFooter>
           </DialogContent>
