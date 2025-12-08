@@ -2323,3 +2323,182 @@ class VCenterMixin:
         except Exception as e:
             self.log(f"Failed to enable host monitoring: {e}", "ERROR")
             return {'success': False, 'error': str(e), 'now_monitoring': 'unknown'}
+
+    def sync_vcenter_alarms(self, content, source_vcenter_id: str, progress_callback=None, vcenter_name: str = "", job_id: str = None) -> Dict:
+        """
+        Sync triggered alarms from vCenter to the vcenter_alarms table.
+        
+        Args:
+            content: vCenter ServiceInstance content object
+            source_vcenter_id: The UUID of the vCenter in our database
+            progress_callback: Optional callback(pct, msg) for progress updates
+            vcenter_name: Name of the vCenter for logging
+            job_id: Optional job ID for cancellation checking
+            
+        Returns:
+            {'synced': int, 'cleared': int, 'errors': int}
+        """
+        result = {'synced': 0, 'cleared': 0, 'errors': 0}
+        
+        try:
+            # Collect triggered alarms from vCenter
+            root_folder = content.rootFolder
+            triggered_alarm_states = root_folder.triggeredAlarmState or []
+            
+            self.log(f"  Found {len(triggered_alarm_states)} triggered alarms in vCenter")
+            
+            if progress_callback:
+                progress_callback(5, f"Found {len(triggered_alarm_states)} triggered alarms")
+            
+            # Build alarm records
+            alarm_records = []
+            active_alarm_keys = set()
+            
+            for idx, alarm_state in enumerate(triggered_alarm_states):
+                # Check for cancellation every 50 alarms
+                if idx > 0 and idx % 50 == 0 and job_id:
+                    if self.check_job_cancelled(job_id):
+                        self.log(f"  Job cancelled during alarm sync at {idx}/{len(triggered_alarm_states)}")
+                        return result
+                
+                try:
+                    # Extract alarm details
+                    alarm_key = str(alarm_state.key) if hasattr(alarm_state, 'key') else None
+                    if not alarm_key:
+                        # Generate key from alarm + entity
+                        alarm_moref = str(alarm_state.alarm._moId) if alarm_state.alarm else 'unknown'
+                        entity_moref = str(alarm_state.entity._moId) if alarm_state.entity else 'unknown'
+                        alarm_key = f"{alarm_moref}.{entity_moref}"
+                    
+                    active_alarm_keys.add(alarm_key)
+                    
+                    # Entity info
+                    entity = alarm_state.entity
+                    entity_type = type(entity).__name__ if entity else 'Unknown'
+                    entity_name = entity.name if entity and hasattr(entity, 'name') else 'Unknown'
+                    entity_id = str(entity._moId) if entity else None
+                    
+                    # Alarm definition info
+                    alarm_def = alarm_state.alarm
+                    alarm_name = 'Unknown Alarm'
+                    alarm_description = None
+                    if alarm_def:
+                        try:
+                            alarm_info = alarm_def.info
+                            alarm_name = alarm_info.name if alarm_info else 'Unknown Alarm'
+                            alarm_description = alarm_info.description if alarm_info else None
+                        except:
+                            alarm_name = str(alarm_def._moId)
+                    
+                    # Status and timing
+                    overall_status = str(alarm_state.overallStatus) if hasattr(alarm_state, 'overallStatus') else 'gray'
+                    acknowledged = bool(alarm_state.acknowledged) if hasattr(alarm_state, 'acknowledged') else False
+                    triggered_time = alarm_state.time if hasattr(alarm_state, 'time') else None
+                    
+                    # Convert time to ISO format
+                    triggered_at = None
+                    if triggered_time:
+                        try:
+                            triggered_at = triggered_time.isoformat()
+                        except:
+                            triggered_at = str(triggered_time)
+                    
+                    alarm_record = {
+                        'alarm_key': alarm_key,
+                        'entity_type': entity_type,
+                        'entity_name': entity_name,
+                        'entity_id': entity_id,
+                        'alarm_name': alarm_name,
+                        'alarm_status': overall_status,
+                        'acknowledged': acknowledged,
+                        'triggered_at': triggered_at,
+                        'description': alarm_description,
+                        'source_vcenter_id': source_vcenter_id,
+                        'updated_at': utc_now_iso()
+                    }
+                    
+                    alarm_records.append(alarm_record)
+                    
+                except Exception as alarm_err:
+                    self.log(f"    Error processing alarm: {alarm_err}", "DEBUG")
+                    result['errors'] += 1
+                    continue
+            
+            # Upsert alarms to database
+            if alarm_records:
+                if progress_callback:
+                    progress_callback(50, f"Upserting {len(alarm_records)} alarms to database")
+                
+                # Use upsert with ON CONFLICT
+                headers = {
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'resolution=merge-duplicates'
+                }
+                
+                # Process in batches
+                batch_size = 100
+                for i in range(0, len(alarm_records), batch_size):
+                    batch = alarm_records[i:i + batch_size]
+                    
+                    response = requests.post(
+                        f"{DSM_URL}/rest/v1/vcenter_alarms",
+                        headers=headers,
+                        json=batch,
+                        verify=VERIFY_SSL,
+                        timeout=30
+                    )
+                    
+                    if response.status_code in [200, 201]:
+                        result['synced'] += len(batch)
+                    else:
+                        self.log(f"    Failed to upsert alarm batch: {response.status_code} - {response.text[:200]}", "WARN")
+                        result['errors'] += len(batch)
+            
+            # Clear stale alarms (alarms no longer active in vCenter)
+            if progress_callback:
+                progress_callback(80, "Clearing stale alarms")
+            
+            # Get existing alarms for this vCenter
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_alarms?source_vcenter_id=eq.{source_vcenter_id}&select=id,alarm_key",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                existing_alarms = _safe_json_parse(response) or []
+                stale_alarm_ids = []
+                
+                for existing in existing_alarms:
+                    if existing.get('alarm_key') not in active_alarm_keys:
+                        stale_alarm_ids.append(existing['id'])
+                
+                # Delete stale alarms
+                if stale_alarm_ids:
+                    for alarm_id in stale_alarm_ids:
+                        del_response = requests.delete(
+                            f"{DSM_URL}/rest/v1/vcenter_alarms?id=eq.{alarm_id}",
+                            headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                            verify=VERIFY_SSL,
+                            timeout=10
+                        )
+                        if del_response.status_code in [200, 204]:
+                            result['cleared'] += 1
+                    
+                    self.log(f"  Cleared {result['cleared']} stale alarms")
+            
+            if progress_callback:
+                progress_callback(100, f"Alarm sync complete: {result['synced']} synced, {result['cleared']} cleared")
+            
+            self.log(f"  Alarm sync complete: {result['synced']} synced, {result['cleared']} cleared, {result['errors']} errors")
+            
+        except Exception as e:
+            self.log(f"  Error syncing alarms: {e}", "ERROR")
+            import traceback
+            self.log(f"  Traceback: {traceback.format_exc()}", "DEBUG")
+            result['errors'] += 1
+        
+        return result
