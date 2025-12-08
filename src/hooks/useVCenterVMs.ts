@@ -28,7 +28,7 @@ export function useVCenterVMs(vcenterId?: string) {
       const { data, error } = await supabase
         .from('vcenter_vms')
         .select('*')
-        .eq('vcenter_id', vcenterId)
+        .eq('source_vcenter_id', vcenterId)
         .order('name');
       
       if (error) throw error;
