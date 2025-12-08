@@ -119,6 +119,7 @@ export function CommandsFilterToolbar({
             <SelectItem value="vcenter_api">vCenter API</SelectItem>
             <SelectItem value="openmanage_api">OpenManage API</SelectItem>
             <SelectItem value="ldap_api">IDM/LDAP</SelectItem>
+            <SelectItem value="ssh_command">SSH Command</SelectItem>
           </SelectContent>
         </Select>
 
