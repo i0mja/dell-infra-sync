@@ -2074,17 +2074,66 @@ class ZfsTargetHandler(BaseHandler):
         
         raise Exception(f"Task timed out after {timeout}s")
     
-    def _ssh_exec(self, command: str) -> Dict:
-        """Execute SSH command and return result."""
+    def _ssh_exec(self, command: str, job_id: str = None, log_command: bool = True) -> Dict:
+        """Execute SSH command, log it to idrac_commands, and return result."""
         if not self.ssh_client:
             raise Exception("SSH client not connected")
+        
+        start_time = time.time()
         
         stdin, stdout, stderr = self.ssh_client.exec_command(command, timeout=60)
         exit_code = stdout.channel.recv_exit_status()
         
+        stdout_text = stdout.read().decode('utf-8', errors='replace')
+        stderr_text = stderr.read().decode('utf-8', errors='replace')
+        
+        response_time_ms = int((time.time() - start_time) * 1000)
+        
+        # Log SSH command to idrac_commands if logging is enabled
+        if log_command and hasattr(self, 'executor') and self.executor:
+            try:
+                # Get target IP from SSH transport
+                target_ip = 'unknown'
+                try:
+                    transport = self.ssh_client.get_transport()
+                    if transport:
+                        peer = transport.getpeername()
+                        if peer:
+                            target_ip = peer[0]
+                except:
+                    pass
+                
+                # Truncate command if too long (keep first 200 chars)
+                command_display = command[:200] + '...' if len(command) > 200 else command
+                
+                # Truncate stdout/stderr for logging (keep first 500 chars)
+                stdout_log = stdout_text[:500] + '...' if len(stdout_text) > 500 else stdout_text
+                stderr_log = stderr_text[:500] + '...' if len(stderr_text) > 500 else stderr_text
+                
+                self.executor.log_idrac_command(
+                    server_id=None,
+                    job_id=job_id or getattr(self, 'current_job_id', None),
+                    task_id=None,
+                    command_type='SSH',
+                    endpoint=command_display,
+                    full_url=f'ssh://{target_ip}:22',
+                    request_headers={'user': 'root'},
+                    request_body={'command': command_display},
+                    status_code=0 if exit_code == 0 else exit_code,
+                    response_time_ms=response_time_ms,
+                    response_body={'stdout': stdout_log, 'stderr': stderr_log, 'exit_code': exit_code},
+                    success=(exit_code == 0),
+                    error_message=stderr_log if exit_code != 0 else None,
+                    operation_type='ssh_command',
+                    source='job_executor'
+                )
+            except Exception as log_err:
+                # Don't fail the command if logging fails
+                pass
+        
         return {
-            'stdout': stdout.read().decode('utf-8', errors='replace'),
-            'stderr': stderr.read().decode('utf-8', errors='replace'),
+            'stdout': stdout_text,
+            'stderr': stderr_text,
             'exit_code': exit_code
         }
     

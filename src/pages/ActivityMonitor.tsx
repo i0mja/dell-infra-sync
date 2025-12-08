@@ -40,7 +40,7 @@ interface IdracCommand {
   error_message: string | null;
   initiated_by: string | null;
   source: string;
-  operation_type: 'idrac_api' | 'vcenter_api' | 'openmanage_api' | 'ldap_api';
+  operation_type: 'idrac_api' | 'vcenter_api' | 'openmanage_api' | 'ldap_api' | 'ssh_command';
   servers?: { hostname: string | null; ip_address: string };
 }
 
@@ -213,7 +213,7 @@ export default function ActivityMonitor() {
         query = query.eq('success', commandStatusFilter === 'success');
       }
       if (operationTypeFilter !== 'all') {
-        query = query.eq('operation_type', operationTypeFilter as 'idrac_api' | 'vcenter_api' | 'openmanage_api');
+        query = query.eq('operation_type', operationTypeFilter as 'idrac_api' | 'vcenter_api' | 'openmanage_api' | 'ldap_api' | 'ssh_command');
       }
       
       if (commandSource === 'manual') {

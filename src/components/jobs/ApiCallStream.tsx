@@ -29,7 +29,16 @@ export const ApiCallStream = ({ jobId }: ApiCallStreamProps) => {
     return 'text-muted-foreground';
   };
 
-  const getMethodBadge = (method: string) => {
+  const getMethodBadge = (method: string, operationType?: string) => {
+    // For SSH commands, show special badge
+    if (operationType === 'ssh_command') {
+      return (
+        <Badge variant="outline" className="font-mono text-xs bg-amber-500/10 text-amber-500 border-amber-500/20">
+          SSH
+        </Badge>
+      );
+    }
+    
     const colors: Record<string, string> = {
       GET: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
       POST: 'bg-green-500/10 text-green-500 border-green-500/20',
@@ -154,7 +163,7 @@ export const ApiCallStream = ({ jobId }: ApiCallStreamProps) => {
                             {new Date(call.timestamp).toLocaleTimeString()}.
                             {new Date(call.timestamp).getMilliseconds().toString().padStart(3, '0')}
                           </span>
-                          {getMethodBadge(method)}
+                          {getMethodBadge(method, call.operation_type)}
                           <Badge 
                             variant="outline" 
                             className={cn('font-mono', getStatusColor(call.status_code, call.success))}

@@ -4403,6 +4403,7 @@ export type Database = {
         | "vcenter_api"
         | "openmanage_api"
         | "ldap_api"
+        | "ssh_command"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -4605,6 +4606,7 @@ export const Constants = {
         "vcenter_api",
         "openmanage_api",
         "ldap_api",
+        "ssh_command",
       ],
     },
   },
