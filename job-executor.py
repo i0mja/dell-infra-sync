@@ -927,6 +927,9 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             'ssh_key_health_check': self.ssh_key_handler.execute_ssh_key_health_check,
             'deploy_zfs_target': self.zfs_target_handler.execute_deploy_zfs_target,
             'validate_zfs_template': self.zfs_target_handler.execute_validate_zfs_template,
+            'onboard_zfs_target': self.zfs_target_handler.execute_onboard_zfs_target,
+            'detect_disks': self.zfs_target_handler.execute_detect_disks,
+            'test_ssh_connection': self.zfs_target_handler.execute_test_ssh_connection,
             # Replication handlers
             'test_replication_pair': self.replication_handler.execute_test_replication_pair,
             'run_replication_sync': self.replication_handler.execute_run_replication_sync,

@@ -2700,3 +2700,258 @@ class ZfsTargetHandler(BaseHandler):
             )
         except Exception as e:
             self.log(f'Failed to save SSH key: {e}', 'WARN')
+    
+    def execute_detect_disks(self, job: Dict) -> Dict:
+        """
+        Detect available disks on target VM via SSH.
+        
+        Returns list of unmounted disks suitable for ZFS pool creation.
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        
+        job_details = {
+            'detected_disks': [],
+            'console_log': []
+        }
+        
+        self._log_console(job_id, 'INFO', 'Starting disk detection...', job_details)
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso(), details=job_details)
+        
+        try:
+            # Get connection details
+            vm_ip = details.get('vm_ip')
+            if not vm_ip:
+                raise Exception('No vm_ip provided')
+            
+            auth_method = details.get('auth_method', 'password')
+            ssh_key_id = details.get('ssh_key_id')
+            root_password = details.get('root_password')
+            
+            # Connect via SSH
+            self.ssh_client = paramiko.SSHClient()
+            self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            if auth_method == 'existing_key' and ssh_key_id:
+                # Use SSH key
+                key_data = self._get_ssh_key(ssh_key_id)
+                if not key_data:
+                    raise Exception('SSH key not found')
+                
+                private_key = self._decrypt_ssh_key(key_data.get('private_key_encrypted'))
+                if not private_key:
+                    raise Exception('Failed to decrypt SSH key')
+                
+                key_file = io.StringIO(private_key)
+                pkey = None
+                for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                    try:
+                        key_file.seek(0)
+                        pkey = key_class.from_private_key(key_file)
+                        break
+                    except:
+                        continue
+                
+                if not pkey:
+                    raise Exception('Unsupported key format')
+                
+                self.ssh_client.connect(
+                    hostname=vm_ip,
+                    username='root',
+                    pkey=pkey,
+                    timeout=15,
+                    allow_agent=False,
+                    look_for_keys=False
+                )
+            else:
+                # Use password
+                if not root_password:
+                    raise Exception('No password provided')
+                
+                self.ssh_client.connect(
+                    hostname=vm_ip,
+                    username='root',
+                    password=root_password,
+                    timeout=15,
+                    allow_agent=False,
+                    look_for_keys=False
+                )
+            
+            self._log_console(job_id, 'INFO', f'SSH connected to {vm_ip}', job_details)
+            
+            # Run lsblk to get disk info
+            result = self._ssh_exec('lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT 2>/dev/null || lsblk -dno NAME,SIZE,TYPE', job_id)
+            
+            detected_disks = []
+            
+            if result['exit_code'] == 0:
+                output = result['stdout'].strip()
+                
+                # Try JSON format first
+                if output.startswith('{'):
+                    import json
+                    try:
+                        data = json.loads(output)
+                        for device in data.get('blockdevices', []):
+                            name = device.get('name', '')
+                            size = device.get('size', '')
+                            dtype = device.get('type', '')
+                            mountpoint = device.get('mountpoint')
+                            
+                            # Skip non-disk devices, mounted disks, and OS disk
+                            if dtype != 'disk':
+                                continue
+                            if mountpoint:
+                                continue
+                            if name in ['sda', 'vda', 'nvme0n1', 'xvda']:
+                                continue
+                            
+                            # Check if any partitions are mounted
+                            children = device.get('children', [])
+                            has_mounted_child = any(c.get('mountpoint') for c in children)
+                            if has_mounted_child:
+                                continue
+                            
+                            # Check if in use by ZFS
+                            zfs_check = self._ssh_exec(f'zpool status 2>/dev/null | grep -q "{name}"', job_id, log_command=False)
+                            if zfs_check['exit_code'] == 0:
+                                continue
+                            
+                            detected_disks.append({
+                                'device': f'/dev/{name}',
+                                'size': size,
+                                'type': dtype
+                            })
+                    except json.JSONDecodeError:
+                        pass
+                
+                # Fallback to plain text parsing
+                if not detected_disks:
+                    for line in output.split('\n'):
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            name, size, dtype = parts[0], parts[1], parts[2]
+                            if dtype == 'disk' and name not in ['sda', 'vda', 'nvme0n1', 'xvda']:
+                                detected_disks.append({
+                                    'device': f'/dev/{name}',
+                                    'size': size,
+                                    'type': dtype
+                                })
+            
+            self._log_console(job_id, 'INFO', f'Found {len(detected_disks)} available disk(s)', job_details)
+            
+            job_details['detected_disks'] = detected_disks
+            self.update_job_status(job_id, 'completed', completed_at=utc_now_iso(), details=job_details)
+            
+            return {'success': True, 'detected_disks': detected_disks}
+            
+        except Exception as e:
+            self._log_console(job_id, 'ERROR', f'Disk detection failed: {e}', job_details)
+            job_details['error'] = str(e)
+            self.update_job_status(job_id, 'failed', completed_at=utc_now_iso(), details=job_details)
+            return {'success': False, 'error': str(e)}
+        finally:
+            self._cleanup()
+    
+    def execute_test_ssh_connection(self, job: Dict) -> Dict:
+        """
+        Test SSH connection to a target VM.
+        
+        Used by the OnboardZfsTargetWizard to verify SSH connectivity
+        before starting the full onboarding process.
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        
+        job_details = {
+            'console_log': []
+        }
+        
+        self._log_console(job_id, 'INFO', 'Testing SSH connection...', job_details)
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso(), details=job_details)
+        
+        try:
+            # Get connection details
+            vm_ip = details.get('vm_ip')
+            if not vm_ip:
+                raise Exception('No vm_ip provided')
+            
+            auth_method = details.get('auth_method', 'password')
+            ssh_key_id = details.get('ssh_key_id')
+            root_password = details.get('root_password')
+            
+            # Connect via SSH
+            self.ssh_client = paramiko.SSHClient()
+            self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            if auth_method == 'existing_key' and ssh_key_id:
+                # Use SSH key
+                key_data = self._get_ssh_key(ssh_key_id)
+                if not key_data:
+                    raise Exception('SSH key not found')
+                
+                private_key = self._decrypt_ssh_key(key_data.get('private_key_encrypted'))
+                if not private_key:
+                    raise Exception('Failed to decrypt SSH key')
+                
+                key_file = io.StringIO(private_key)
+                pkey = None
+                for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                    try:
+                        key_file.seek(0)
+                        pkey = key_class.from_private_key(key_file)
+                        break
+                    except:
+                        continue
+                
+                if not pkey:
+                    raise Exception('Unsupported key format')
+                
+                self.ssh_client.connect(
+                    hostname=vm_ip,
+                    username='root',
+                    pkey=pkey,
+                    timeout=15,
+                    allow_agent=False,
+                    look_for_keys=False
+                )
+            else:
+                # Use password
+                if not root_password:
+                    raise Exception('No password provided')
+                
+                self.ssh_client.connect(
+                    hostname=vm_ip,
+                    username='root',
+                    password=root_password,
+                    timeout=15,
+                    allow_agent=False,
+                    look_for_keys=False
+                )
+            
+            self._log_console(job_id, 'INFO', f'SSH connected to {vm_ip}', job_details)
+            
+            # Run a simple command to verify
+            result = self._ssh_exec('hostname', job_id)
+            hostname = result['stdout'].strip() if result['exit_code'] == 0 else 'unknown'
+            
+            self._log_console(job_id, 'INFO', f'Remote hostname: {hostname}', job_details)
+            
+            job_details['hostname'] = hostname
+            job_details['success'] = True
+            self.update_job_status(job_id, 'completed', completed_at=utc_now_iso(), details=job_details)
+            
+            return {'success': True, 'hostname': hostname}
+            
+        except paramiko.AuthenticationException as e:
+            self._log_console(job_id, 'ERROR', f'SSH authentication failed: {e}', job_details)
+            job_details['error'] = 'Authentication failed - check credentials'
+            self.update_job_status(job_id, 'failed', completed_at=utc_now_iso(), details=job_details)
+            return {'success': False, 'error': 'Authentication failed'}
+        except Exception as e:
+            self._log_console(job_id, 'ERROR', f'SSH connection failed: {e}', job_details)
+            job_details['error'] = str(e)
+            self.update_job_status(job_id, 'failed', completed_at=utc_now_iso(), details=job_details)
+            return {'success': False, 'error': str(e)}
+        finally:
+            self._cleanup()
