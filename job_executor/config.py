@@ -43,7 +43,6 @@ VERIFY_SSL = False
 SUPABASE_URL = os.getenv("SUPABASE_URL", DSM_URL)
 
 # PropertyCollector sync feature flags
-USE_PROPERTY_COLLECTOR_SYNC = os.getenv("USE_PROPERTY_COLLECTOR_SYNC", "true").lower() == "true"
 ENABLE_DEEP_RELATIONSHIPS = os.getenv("ENABLE_DEEP_RELATIONSHIPS", "false").lower() == "true"
 
 # Media Server Configuration (for virtual media and firmware)
