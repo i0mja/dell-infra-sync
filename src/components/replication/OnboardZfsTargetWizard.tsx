@@ -8,7 +8,7 @@
  * 4. Finalization (register target, add datastore, protection group)
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Dialog,
   DialogContent,
@@ -54,11 +54,15 @@ import {
   HardDrive,
   Shield,
   RefreshCw,
+  Power,
+  PowerOff,
+  Copy,
 } from "lucide-react";
 import { useVCenters } from "@/hooks/useVCenters";
 import { useVCenterVMs } from "@/hooks/useVCenterVMs";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useQuery } from "@tanstack/react-query";
 
 interface OnboardZfsTargetWizardProps {
   open: boolean;
@@ -181,6 +185,40 @@ export function OnboardZfsTargetWizard({
   
   // Find selected VM details
   const selectedVM = vms.find(vm => vm.id === selectedVMId);
+  
+  // Phase 3: Check for duplicate targets
+  const { data: duplicateTargets = [] } = useQuery({
+    queryKey: ['duplicate-target-check', selectedVMId, selectedVM?.ip_address, selectedVM?.name],
+    queryFn: async () => {
+      if (!selectedVM) return [];
+      
+      // Build OR conditions for potential matches
+      const conditions: string[] = [];
+      if (selectedVM.ip_address) {
+        conditions.push(`hostname.eq.${selectedVM.ip_address}`);
+      }
+      if (selectedVM.name) {
+        conditions.push(`name.ilike.%${selectedVM.name}%`);
+      }
+      
+      if (conditions.length === 0) return [];
+      
+      const { data } = await supabase
+        .from('replication_targets')
+        .select('id, name, hostname, deployed_vm_moref')
+        .or(conditions.join(','));
+      
+      return data || [];
+    },
+    enabled: !!selectedVM,
+  });
+  
+  // Phase 3: Check OS compatibility (Debian/Ubuntu required)
+  const isOsCompatible = useMemo(() => {
+    if (!selectedVM?.guest_os) return null; // Unknown - don't show warning
+    const os = selectedVM.guest_os.toLowerCase();
+    return os.includes('debian') || os.includes('ubuntu') || os.includes('linux');
+  }, [selectedVM?.guest_os]);
   
   // Reset when dialog opens
   useEffect(() => {
@@ -474,20 +512,81 @@ export function OnboardZfsTargetWizard({
                 />
               </div>
               
+              {/* Enhanced VM Preview Card */}
               {selectedVM && (
-                <div className="p-3 rounded-lg bg-muted/50 space-y-1 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Guest OS:</span>
-                    <span>{selectedVM.guest_os || 'Unknown'}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">CPU/Memory:</span>
-                    <span>{selectedVM.cpu_count || '?'} vCPU / {selectedVM.memory_mb ? Math.round(selectedVM.memory_mb / 1024) : '?'} GB</span>
-                  </div>
-                  {selectedVM.ip_address && (
+                <div className="space-y-3">
+                  <div className="p-3 rounded-lg bg-muted/50 space-y-2 text-sm">
+                    {/* Header with power state and cluster */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        {selectedVM.is_template ? (
+                          <Badge variant="outline" className="text-xs">
+                            <Copy className="h-3 w-3 mr-1" />
+                            Template
+                          </Badge>
+                        ) : selectedVM.power_state === 'poweredOn' ? (
+                          <Badge variant="default" className="bg-green-500/10 text-green-600 border-green-500/30 text-xs">
+                            <Power className="h-3 w-3 mr-1" />
+                            Powered On
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary" className="text-xs">
+                            <PowerOff className="h-3 w-3 mr-1" />
+                            Powered Off
+                          </Badge>
+                        )}
+                      </div>
+                      {selectedVM.cluster_name && (
+                        <Badge variant="outline" className="text-xs">
+                          {selectedVM.cluster_name}
+                        </Badge>
+                      )}
+                    </div>
+                    
+                    {/* VM details */}
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">IP Address:</span>
-                      <span>{selectedVM.ip_address}</span>
+                      <span className="text-muted-foreground">Guest OS:</span>
+                      <span>{selectedVM.guest_os || 'Unknown'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">CPU/Memory:</span>
+                      <span>{selectedVM.cpu_count || '?'} vCPU / {selectedVM.memory_mb ? Math.round(selectedVM.memory_mb / 1024) : '?'} GB</span>
+                    </div>
+                    {selectedVM.ip_address && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">IP Address:</span>
+                        <span className="font-mono text-xs">{selectedVM.ip_address}</span>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Duplicate Warning */}
+                  {duplicateTargets.length > 0 && (
+                    <div className="p-3 rounded-lg border border-yellow-500/50 bg-yellow-500/5">
+                      <div className="flex items-start gap-2 text-yellow-600 dark:text-yellow-500">
+                        <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                        <div className="text-sm">
+                          <span className="font-medium">Possible duplicate detected</span>
+                          <p className="text-xs mt-0.5 opacity-80">
+                            This VM may already be registered as "{duplicateTargets[0].name}"
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* OS Compatibility Warning */}
+                  {isOsCompatible === false && (
+                    <div className="p-3 rounded-lg border border-orange-500/50 bg-orange-500/5">
+                      <div className="flex items-start gap-2 text-orange-600 dark:text-orange-500">
+                        <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                        <div className="text-sm">
+                          <span className="font-medium">OS compatibility warning</span>
+                          <p className="text-xs mt-0.5 opacity-80">
+                            This wizard requires Debian/Ubuntu. Detected: {selectedVM.guest_os}
+                          </p>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
