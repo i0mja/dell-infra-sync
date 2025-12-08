@@ -332,13 +332,20 @@ export const JobDetailDialog = ({
                   </CardContent>
                 </Card>}
 
-            {/* Error Alert for Failed Jobs */}
-            {job.status === 'failed' && job.details?.error && <Alert variant="destructive">
+            {/* Error Alert for Failed Jobs - including nested vcenter_results errors */}
+            {job.status === 'failed' && (
+              job.details?.error || 
+              job.details?.vcenter_results?.some((r: any) => r?.error)
+            ) && <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Job Failed</AlertTitle>
                 <AlertDescription className="mt-2">
                   <div className="font-mono text-sm whitespace-pre-wrap">
-                    {job.details.error}
+                    {job.details?.error || 
+                     job.details?.vcenter_results
+                       ?.filter((r: any) => r?.error)
+                       .map((r: any) => `${r.vcenter_name || r.vcenter_host || 'vCenter'}: ${r.error}`)
+                       .join('\n')}
                   </div>
                 </AlertDescription>
               </Alert>}
@@ -421,8 +428,8 @@ export const JobDetailDialog = ({
                 </AlertDescription>
               </Alert>}
 
-              {/* Job-Type-Specific Results - show for all statuses for jobs that have detailed progress */}
-              {(job.status === 'completed' || job.job_type === 'deploy_zfs_target') && <JobResultsCard job={job} />}
+              {/* Job-Type-Specific Results - show for completed AND failed jobs to display detailed error info */}
+              {(job.status === 'completed' || job.status === 'failed' || job.job_type === 'deploy_zfs_target') && <JobResultsCard job={job} />}
 
               {/* Sub-Jobs List (for full_server_update) */}
               {job.job_type === 'full_server_update' && subJobs.length > 0 && <Card>
