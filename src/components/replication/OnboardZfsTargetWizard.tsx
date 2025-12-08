@@ -29,6 +29,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { VMCombobox } from "./VMCombobox";
 import {
   Collapsible,
   CollapsibleContent,
@@ -176,7 +177,7 @@ export function OnboardZfsTargetWizard({
   const [needsRootPassword, setNeedsRootPassword] = useState(false);
   
   // Fetch VMs from selected vCenter
-  const { data: vms = [], isLoading: vmsLoading } = useVCenterVMs(selectedVCenterId || undefined);
+  const { data: vms = [], isLoading: vmsLoading, clusters = [] } = useVCenterVMs(selectedVCenterId || undefined);
   
   // Find selected VM details
   const selectedVM = vms.find(vm => vm.id === selectedVMId);
@@ -458,36 +459,19 @@ export function OnboardZfsTargetWizard({
               
               <div className="space-y-2">
                 <Label>VM or Template</Label>
-                <Select 
-                  value={selectedVMId} 
-                  onValueChange={setSelectedVMId}
-                  disabled={!selectedVCenterId || vmsLoading}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder={
-                      !selectedVCenterId 
-                        ? "Select vCenter first" 
-                        : vmsLoading 
-                          ? "Loading VMs..." 
-                          : "Select VM or Template"
-                    } />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {vms.map((vm) => (
-                      <SelectItem key={vm.id} value={vm.id}>
-                        <div className="flex items-center gap-2">
-                          <Server className="h-4 w-4 text-muted-foreground" />
-                          <span>{vm.name}</span>
-                          {vm.power_state && (
-                            <Badge variant={vm.power_state === 'poweredOn' ? 'default' : 'secondary'} className="text-xs">
-                              {vm.power_state === 'poweredOn' ? 'On' : 'Off'}
-                            </Badge>
-                          )}
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <VMCombobox
+                  vms={vms}
+                  clusters={clusters}
+                  selectedVmId={selectedVMId}
+                  onSelectVm={(vm) => setSelectedVMId(vm.id)}
+                  disabled={!selectedVCenterId}
+                  isLoading={vmsLoading}
+                  placeholder={
+                    !selectedVCenterId 
+                      ? "Select vCenter first" 
+                      : "Select VM or Template"
+                  }
+                />
               </div>
               
               {selectedVM && (

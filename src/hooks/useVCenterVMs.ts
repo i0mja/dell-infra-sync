@@ -1,14 +1,16 @@
 /**
  * Hook to fetch VMs from a specific vCenter
+ * 
+ * Returns VMs and unique cluster names for filtering
  */
 
 import { useQuery } from '@tanstack/react-query';
+import { useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
 export interface VCenterVM {
   id: string;
   name: string;
-  moref?: string;
   power_state?: string;
   guest_os?: string;
   cpu_count?: number;
@@ -20,7 +22,7 @@ export interface VCenterVM {
 }
 
 export function useVCenterVMs(vcenterId?: string) {
-  return useQuery({
+  const query = useQuery({
     queryKey: ['vcenter-vms', vcenterId],
     queryFn: async () => {
       if (!vcenterId) return [];
@@ -48,4 +50,20 @@ export function useVCenterVMs(vcenterId?: string) {
     },
     enabled: !!vcenterId
   });
+
+  // Extract unique cluster names from VMs
+  const clusters = useMemo(() => {
+    const clusterSet = new Set<string>();
+    (query.data || []).forEach(vm => {
+      if (vm.cluster_name) {
+        clusterSet.add(vm.cluster_name);
+      }
+    });
+    return Array.from(clusterSet).sort();
+  }, [query.data]);
+
+  return {
+    ...query,
+    clusters,
+  };
 }
