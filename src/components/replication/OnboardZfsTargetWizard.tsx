@@ -180,6 +180,14 @@ export function OnboardZfsTargetWizard({
   const [zfsPoolName, setZfsPoolName] = useState("tank");
   const [nfsNetwork, setNfsNetwork] = useState("10.0.0.0/8");
   
+  // Phase 5: Enhanced configuration
+  const [zfsCompression, setZfsCompression] = useState<'lz4' | 'zstd' | 'off'>('lz4');
+  const [datastoreName, setDatastoreName] = useState("");
+  const [detectedDisks, setDetectedDisks] = useState<Array<{ device: string; size: string; type: string }>>([]);
+  const [selectedDisk, setSelectedDisk] = useState("");
+  const [detectingDisks, setDetectingDisks] = useState(false);
+  const [diskDetectionDone, setDiskDetectionDone] = useState(false);
+  
   // Step 4: Finalization options
   const [createProtectionGroup, setCreateProtectionGroup] = useState(false);
   const [protectionGroupName, setProtectionGroupName] = useState("");
@@ -274,15 +282,31 @@ export function OnboardZfsTargetWizard({
       setVmState('');
       setVmIp('');
       setNeedsRootPassword(false);
+      // Phase 5 resets
+      setZfsCompression('lz4');
+      setDatastoreName("");
+      setDetectedDisks([]);
+      setSelectedDisk("");
+      setDetectingDisks(false);
+      setDiskDetectionDone(false);
     }
   }, [open, preselectedVCenterId, preselectedVMId]);
   
   // Auto-populate target name from VM
   useEffect(() => {
     if (selectedVM && !targetName) {
-      setTargetName(`zfs-${selectedVM.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`);
+      const generatedName = `zfs-${selectedVM.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+      setTargetName(generatedName);
+      setDatastoreName(`NFS-${generatedName}`);
     }
   }, [selectedVM, targetName]);
+  
+  // Auto-update datastore name when target name changes
+  useEffect(() => {
+    if (targetName && !datastoreName.startsWith('NFS-')) {
+      setDatastoreName(`NFS-${targetName}`);
+    }
+  }, [targetName, datastoreName]);
   
   // Poll job status
   const pollJobStatus = useCallback(async () => {
@@ -395,6 +419,11 @@ export function OnboardZfsTargetWizard({
             reset_nfs_config: resetNfsConfig,
             zfs_pool_name: zfsPoolName,
             nfs_network: nfsNetwork,
+            // Phase 5: Enhanced configuration
+            zfs_compression: zfsCompression,
+            zfs_disk: selectedDisk || undefined,
+            datastore_name: datastoreName,
+            // Phase 6: Finalization
             create_protection_group: createProtectionGroup,
             protection_group_name: protectionGroupName,
             start_initial_sync: startInitialSync,
@@ -583,6 +612,81 @@ export function OnboardZfsTargetWizard({
     setCopiedPublicKey(true);
     toast({ title: 'Public key copied' });
     setTimeout(() => setCopiedPublicKey(false), 2000);
+  };
+  
+  // Phase 5: Detect available disks
+  const handleDetectDisks = async () => {
+    if (!selectedVM?.ip_address) {
+      toast({ title: 'VM has no IP address', variant: 'destructive' });
+      return;
+    }
+    
+    setDetectingDisks(true);
+    setDetectedDisks([]);
+    
+    try {
+      const { data: user } = await supabase.auth.getUser();
+      
+      const { data: job, error } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'detect_disks' as unknown as 'onboard_zfs_target',
+          status: 'pending',
+          created_by: user?.user?.id,
+          details: {
+            vm_ip: selectedVM.ip_address,
+            auth_method: authMethod,
+            ssh_key_id: authMethod === 'existing_key' ? selectedSshKeyId : undefined,
+            root_password: authMethod === 'password' ? rootPassword : undefined,
+          }
+        })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      
+      // Poll for result (max 30 seconds)
+      let attempts = 0;
+      const pollInterval = setInterval(async () => {
+        attempts++;
+        const { data: jobResult } = await supabase
+          .from('jobs')
+          .select('status, details')
+          .eq('id', job.id)
+          .single();
+        
+        if (jobResult?.status === 'completed') {
+          clearInterval(pollInterval);
+          const details = jobResult.details as Record<string, unknown>;
+          const disks = (details?.detected_disks || []) as Array<{ device: string; size: string; type: string }>;
+          setDetectedDisks(disks);
+          setDiskDetectionDone(true);
+          setDetectingDisks(false);
+          if (disks.length > 0) {
+            setSelectedDisk(disks[0].device);
+            toast({ title: `Found ${disks.length} available disk(s)` });
+          } else {
+            toast({ title: 'No unmounted disks found', variant: 'destructive' });
+          }
+        } else if (jobResult?.status === 'failed' || attempts >= 15) {
+          clearInterval(pollInterval);
+          setDetectingDisks(false);
+          setDiskDetectionDone(true);
+          toast({ 
+            title: 'Disk detection failed', 
+            description: (jobResult?.details as Record<string, unknown>)?.error as string || 'Connection timeout',
+            variant: 'destructive' 
+          });
+        }
+      }, 2000);
+    } catch (err) {
+      setDetectingDisks(false);
+      toast({ 
+        title: 'Failed to detect disks', 
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive' 
+      });
+    }
   };
   
   // Validation for proceeding
@@ -939,53 +1043,172 @@ export function OnboardZfsTargetWizard({
                 )}
               </div>
               
-              <div className="pt-4 border-t space-y-3">
-                <Label className="text-sm font-medium">Configuration Options</Label>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label className="text-xs text-muted-foreground">ZFS Pool Name</Label>
-                    <Input
-                      value={zfsPoolName}
-                      onChange={(e) => setZfsPoolName(e.target.value)}
-                      placeholder="tank"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs text-muted-foreground">NFS Allowed Network</Label>
-                    <Input
-                      value={nfsNetwork}
-                      onChange={(e) => setNfsNetwork(e.target.value)}
-                      placeholder="10.0.0.0/8"
-                    />
-                  </div>
-                </div>
+              {/* Phase 5: Reorganized Configuration Sections */}
+              <div className="pt-4 border-t space-y-4">
+                {/* ZFS Configuration */}
+                <Collapsible defaultOpen className="space-y-2">
+                  <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
+                    <HardDrive className="h-4 w-4" />
+                    ZFS Configuration
+                    <ChevronDown className="h-4 w-4 ml-auto" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="space-y-3 pl-6">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label className="text-xs text-muted-foreground">Pool Name</Label>
+                        <Input
+                          value={zfsPoolName}
+                          onChange={(e) => setZfsPoolName(e.target.value)}
+                          placeholder="tank"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs text-muted-foreground">Compression</Label>
+                        <Select value={zfsCompression} onValueChange={(v) => setZfsCompression(v as 'lz4' | 'zstd' | 'off')}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="lz4">LZ4 (fast, default)</SelectItem>
+                            <SelectItem value="zstd">ZSTD (better compression)</SelectItem>
+                            <SelectItem value="off">Off (no compression)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    
+                    {/* Disk Detection - only show after SSH test passes */}
+                    {sshTestResult === 'success' && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Label className="text-xs text-muted-foreground">Target Disk</Label>
+                          {!diskDetectionDone && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={handleDetectDisks}
+                              disabled={detectingDisks}
+                              className="h-6 text-xs"
+                            >
+                              {detectingDisks ? (
+                                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                              ) : (
+                                <RefreshCw className="h-3 w-3 mr-1" />
+                              )}
+                              Detect Disks
+                            </Button>
+                          )}
+                        </div>
+                        
+                        {detectedDisks.length > 0 ? (
+                          <Select value={selectedDisk} onValueChange={setSelectedDisk}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select disk" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {detectedDisks.map((disk) => (
+                                <SelectItem key={disk.device} value={disk.device}>
+                                  <div className="flex items-center gap-2">
+                                    <HardDrive className="h-3 w-3" />
+                                    <span className="font-mono">{disk.device}</span>
+                                    <span className="text-muted-foreground">({disk.size})</span>
+                                  </div>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : diskDetectionDone ? (
+                          <p className="text-xs text-muted-foreground">
+                            No disks found. Will auto-detect during setup.
+                          </p>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            Click "Detect Disks" to find available disks, or leave empty for auto-detection.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </CollapsibleContent>
+                </Collapsible>
                 
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Checkbox 
-                      id="install-packages" 
-                      checked={installPackages} 
-                      onCheckedChange={(c) => setInstallPackages(!!c)} 
-                    />
-                    <Label htmlFor="install-packages" className="text-sm">Install ZFS & NFS packages (Debian 13)</Label>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Checkbox 
-                      id="create-user" 
-                      checked={createUser} 
-                      onCheckedChange={(c) => setCreateUser(!!c)} 
-                    />
-                    <Label htmlFor="create-user" className="text-sm">Create zfsadmin user</Label>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Checkbox 
-                      id="reset-machine-id" 
-                      checked={resetMachineId} 
-                      onCheckedChange={(c) => setResetMachineId(!!c)} 
-                    />
-                    <Label htmlFor="reset-machine-id" className="text-sm">Reset machine-id (recommended for clones)</Label>
-                  </div>
-                </div>
+                {/* NFS Configuration */}
+                <Collapsible defaultOpen className="space-y-2">
+                  <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
+                    <Shield className="h-4 w-4" />
+                    NFS Configuration
+                    <ChevronDown className="h-4 w-4 ml-auto" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="space-y-3 pl-6">
+                    <div className="space-y-2">
+                      <Label className="text-xs text-muted-foreground">Allowed Network (CIDR)</Label>
+                      <Input
+                        value={nfsNetwork}
+                        onChange={(e) => setNfsNetwork(e.target.value)}
+                        placeholder="10.0.0.0/8"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Hosts in this network can mount the NFS share
+                      </p>
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
+                
+                {/* vCenter Integration */}
+                <Collapsible defaultOpen className="space-y-2">
+                  <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
+                    <Server className="h-4 w-4" />
+                    vCenter Integration
+                    <ChevronDown className="h-4 w-4 ml-auto" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="space-y-3 pl-6">
+                    <div className="space-y-2">
+                      <Label className="text-xs text-muted-foreground">Datastore Name</Label>
+                      <Input
+                        value={datastoreName}
+                        onChange={(e) => setDatastoreName(e.target.value)}
+                        placeholder={`NFS-${targetName || 'target'}`}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        This name will appear in vCenter as an NFS datastore
+                      </p>
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
+                
+                {/* Advanced Options */}
+                <Collapsible className="space-y-2">
+                  <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
+                    <Settings className="h-4 w-4" />
+                    Advanced Options
+                    <ChevronRight className="h-4 w-4 ml-auto" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="space-y-2 pl-6">
+                    <div className="flex items-center gap-2">
+                      <Checkbox 
+                        id="install-packages" 
+                        checked={installPackages} 
+                        onCheckedChange={(c) => setInstallPackages(!!c)} 
+                      />
+                      <Label htmlFor="install-packages" className="text-sm">Install ZFS & NFS packages</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Checkbox 
+                        id="create-user" 
+                        checked={createUser} 
+                        onCheckedChange={(c) => setCreateUser(!!c)} 
+                      />
+                      <Label htmlFor="create-user" className="text-sm">Create zfsadmin user</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Checkbox 
+                        id="reset-machine-id" 
+                        checked={resetMachineId} 
+                        onCheckedChange={(c) => setResetMachineId(!!c)} 
+                      />
+                      <Label htmlFor="reset-machine-id" className="text-sm">Reset machine-id (for clones)</Label>
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
               </div>
             </div>
           )}
