@@ -14,7 +14,7 @@ from typing import Dict, List, Tuple, Any, Optional
 
 from pyVmomi import vim, vmodl
 
-from job_executor.config import ENABLE_DEEP_RELATIONSHIPS, USE_PROPERTY_COLLECTOR_SYNC
+from job_executor.config import ENABLE_DEEP_RELATIONSHIPS
 
 logger = logging.getLogger(__name__)
 
@@ -557,9 +557,6 @@ def sync_vcenter_fast(
         
     All values are JSON-serializable. No vim objects in return dict.
     """
-    if not USE_PROPERTY_COLLECTOR_SYNC:
-        raise RuntimeError("PropertyCollector sync disabled. Set USE_PROPERTY_COLLECTOR_SYNC=true")
-    
     # Stage A: Collect RAW inventory
     inventory = collect_vcenter_inventory(content, enable_deep)
     
