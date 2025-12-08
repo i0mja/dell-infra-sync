@@ -74,7 +74,7 @@ import { useSshKeys } from "@/hooks/useSshKeys";
 import { useProtectionGroups } from "@/hooks/useReplication";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 // Schedule presets with cron and RPO mappings
 const SCHEDULE_PRESETS = {
@@ -163,6 +163,7 @@ export function OnboardZfsTargetWizard({
   preselectedVMId,
 }: OnboardZfsTargetWizardProps) {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const { vcenters, loading: vcentersLoading } = useVCenters();
   
   // Wizard state
@@ -232,6 +233,14 @@ export function OnboardZfsTargetWizard({
   const [retryingStep, setRetryingStep] = useState<string | null>(null);
   const [rollingBack, setRollingBack] = useState(false);
   const [rollbackStatus, setRollbackStatus] = useState<'idle' | 'running' | 'success' | 'failed'>('idle');
+  
+  // Clear VM cache when vCenter changes to ensure fresh data
+  useEffect(() => {
+    if (selectedVCenterId) {
+      console.log('[OnboardZfsTargetWizard] vCenter changed, invalidating VM cache for:', selectedVCenterId);
+      queryClient.invalidateQueries({ queryKey: ['vcenter-vms', selectedVCenterId] });
+    }
+  }, [selectedVCenterId, queryClient]);
   
   // Fetch VMs from selected vCenter
   const { data: vms = [], isLoading: vmsLoading, clusters = [] } = useVCenterVMs(selectedVCenterId || undefined);
