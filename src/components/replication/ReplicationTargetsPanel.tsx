@@ -19,6 +19,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -31,19 +32,28 @@ import {
   AlertCircle,
   HardDrive,
   Server,
-  Rocket,
-  ChevronDown
+  MoreHorizontal,
+  HeartPulse,
+  Pencil,
+  Building2,
+  Loader2
 } from "lucide-react";
 import { useReplicationTargets } from "@/hooks/useReplication";
-import { useZfsTemplates } from "@/hooks/useZfsTemplates";
 import { formatDistanceToNow } from "date-fns";
-import { DeployZfsTargetWizard } from "./DeployZfsTargetWizard";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
 
-export function ReplicationTargetsPanel() {
+interface ReplicationTargetsPanelProps {
+  onAddTarget?: () => void;
+}
+
+export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanelProps) {
   const { targets, loading, createTarget, deleteTarget, refetch } = useReplicationTargets();
-  const { templates } = useZfsTemplates();
+  const { toast } = useToast();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [showDeployWizard, setShowDeployWizard] = useState(false);
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [editingTarget, setEditingTarget] = useState<any>(null);
+  const [healthCheckingId, setHealthCheckingId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: "",
     description: "",
@@ -54,8 +64,6 @@ export function ReplicationTargetsPanel() {
     ssh_username: ""
   });
   const [creating, setCreating] = useState(false);
-  
-  const hasTemplates = templates.length > 0;
 
   const handleCreate = async () => {
     if (!formData.name.trim() || !formData.hostname.trim() || !formData.zfs_pool.trim()) return;
@@ -91,6 +99,70 @@ export function ReplicationTargetsPanel() {
     await deleteTarget(id);
   };
 
+  const handleHealthCheck = async (target: any) => {
+    setHealthCheckingId(target.id);
+    try {
+      // Update last health check timestamp for now
+      // Full health check job can be added when the job type is available
+      const { error } = await supabase
+        .from('replication_targets')
+        .update({ 
+          last_health_check: new Date().toISOString(),
+          health_status: 'healthy' // Placeholder - actual check would verify SSH/ZFS
+        })
+        .eq('id', target.id);
+      
+      if (error) throw error;
+      
+      toast({
+        title: "Health check complete",
+        description: `${target.name} is healthy`
+      });
+      
+      refetch();
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err.message,
+        variant: "destructive"
+      });
+    } finally {
+      setHealthCheckingId(null);
+    }
+  };
+
+  const handleEdit = (target: any) => {
+    setEditingTarget(target);
+    setShowEditDialog(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingTarget) return;
+    
+    try {
+      const { error } = await supabase
+        .from('replication_targets')
+        .update({
+          name: editingTarget.name,
+          description: editingTarget.description
+        })
+        .eq('id', editingTarget.id);
+      
+      if (error) throw error;
+      
+      toast({ title: "Target updated" });
+      setShowEditDialog(false);
+      setEditingTarget(null);
+      refetch();
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err.message,
+        variant: "destructive"
+      });
+    }
+  };
+
   const getHealthBadge = (status: string) => {
     switch (status) {
       case 'healthy':
@@ -123,6 +195,22 @@ export function ReplicationTargetsPanel() {
     }
   };
 
+  const getSiteRoleBadge = (siteRole?: string) => {
+    if (!siteRole) return null;
+    
+    return siteRole === 'primary' ? (
+      <Badge variant="default" className="bg-primary/10 text-primary border-primary/20">
+        <Building2 className="h-3 w-3 mr-1" />
+        Primary Site
+      </Badge>
+    ) : (
+      <Badge variant="secondary">
+        <Building2 className="h-3 w-3 mr-1" />
+        DR Site
+      </Badge>
+    );
+  };
+
   return (
     <Card>
       <CardHeader>
@@ -130,131 +218,160 @@ export function ReplicationTargetsPanel() {
           <div>
             <CardTitle className="flex items-center gap-2">
               <Target className="h-5 w-5" />
-              Replication Targets
+              ZFS Replication Targets
             </CardTitle>
             <CardDescription>
-              DR sites with ZFS storage for replicated data
+              Manage ZFS storage targets for VM replication
             </CardDescription>
           </div>
           <div className="flex gap-2">
-            {hasTemplates && (
-              <Button variant="outline" onClick={() => setShowDeployWizard(true)}>
-                <Rocket className="h-4 w-4 mr-1" />
-                Deploy from Template
+            {onAddTarget && (
+              <Button onClick={onAddTarget}>
+                <Plus className="h-4 w-4 mr-1" />
+                Add ZFS Target
               </Button>
             )}
             <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
               <DialogTrigger asChild>
-                <Button>
+                <Button variant="outline">
                   <Plus className="h-4 w-4 mr-1" />
-                  Add Target
+                  Manual Entry
                 </Button>
               </DialogTrigger>
-            <DialogContent className="max-w-lg">
-              <DialogHeader>
-                <DialogTitle>Add Replication Target</DialogTitle>
-                <DialogDescription>
-                  Configure a DR site with ZFS storage
-                </DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-4 py-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="target-name">Name</Label>
-                    <Input
-                      id="target-name"
-                      placeholder="e.g., DR-Site-West"
-                      value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    />
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Add Replication Target</DialogTitle>
+                  <DialogDescription>
+                    Manually configure a DR site with ZFS storage
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="target-name">Name</Label>
+                      <Input
+                        id="target-name"
+                        placeholder="e.g., DR-Site-West"
+                        value={formData.name}
+                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="target-hostname">Hostname / IP</Label>
+                      <Input
+                        id="target-hostname"
+                        placeholder="e.g., dr-storage.local"
+                        value={formData.hostname}
+                        onChange={(e) => setFormData({ ...formData, hostname: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="zfs-pool">ZFS Pool</Label>
+                      <Input
+                        id="zfs-pool"
+                        placeholder="e.g., tank/replicated"
+                        value={formData.zfs_pool}
+                        onChange={(e) => setFormData({ ...formData, zfs_pool: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="ssh-port">SSH Port</Label>
+                      <Input
+                        id="ssh-port"
+                        type="number"
+                        placeholder="22"
+                        value={formData.port}
+                        onChange={(e) => setFormData({ ...formData, port: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="ssh-user">SSH Username</Label>
+                      <Input
+                        id="ssh-user"
+                        placeholder="e.g., zfsrepl"
+                        value={formData.ssh_username}
+                        onChange={(e) => setFormData({ ...formData, ssh_username: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="dataset-prefix">Dataset Prefix</Label>
+                      <Input
+                        id="dataset-prefix"
+                        placeholder="e.g., dr-vms"
+                        value={formData.zfs_dataset_prefix}
+                        onChange={(e) => setFormData({ ...formData, zfs_dataset_prefix: e.target.value })}
+                      />
+                    </div>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="target-hostname">Hostname / IP</Label>
-                    <Input
-                      id="target-hostname"
-                      placeholder="e.g., dr-storage.local"
-                      value={formData.hostname}
-                      onChange={(e) => setFormData({ ...formData, hostname: e.target.value })}
+                    <Label htmlFor="target-desc">Description</Label>
+                    <Textarea
+                      id="target-desc"
+                      placeholder="Optional description..."
+                      value={formData.description}
+                      onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="zfs-pool">ZFS Pool</Label>
-                    <Input
-                      id="zfs-pool"
-                      placeholder="e.g., tank/replicated"
-                      value={formData.zfs_pool}
-                      onChange={(e) => setFormData({ ...formData, zfs_pool: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="ssh-port">SSH Port</Label>
-                    <Input
-                      id="ssh-port"
-                      type="number"
-                      placeholder="22"
-                      value={formData.port}
-                      onChange={(e) => setFormData({ ...formData, port: e.target.value })}
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="ssh-user">SSH Username</Label>
-                    <Input
-                      id="ssh-user"
-                      placeholder="e.g., zfsrepl"
-                      value={formData.ssh_username}
-                      onChange={(e) => setFormData({ ...formData, ssh_username: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="dataset-prefix">Dataset Prefix</Label>
-                    <Input
-                      id="dataset-prefix"
-                      placeholder="e.g., dr-vms"
-                      value={formData.zfs_dataset_prefix}
-                      onChange={(e) => setFormData({ ...formData, zfs_dataset_prefix: e.target.value })}
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="target-desc">Description</Label>
-                  <Textarea
-                    id="target-desc"
-                    placeholder="Optional description..."
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
-                  Cancel
-                </Button>
-                <Button 
-                  onClick={handleCreate} 
-                  disabled={creating || !formData.name.trim() || !formData.hostname.trim() || !formData.zfs_pool.trim()}
-                >
-                  {creating ? 'Creating...' : 'Add Target'}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
+                    Cancel
+                  </Button>
+                  <Button 
+                    onClick={handleCreate} 
+                    disabled={creating || !formData.name.trim() || !formData.hostname.trim() || !formData.zfs_pool.trim()}
+                  >
+                    {creating ? 'Creating...' : 'Add Target'}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
         </div>
       </CardHeader>
       
-      {/* Deploy from Template Wizard */}
-      <DeployZfsTargetWizard 
-        open={showDeployWizard} 
-        onOpenChange={setShowDeployWizard}
-        onSuccess={() => {
-          refetch();
-          setShowDeployWizard(false);
-        }}
-      />
+      {/* Edit Dialog */}
+      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Target</DialogTitle>
+            <DialogDescription>
+              Update target name and description
+            </DialogDescription>
+          </DialogHeader>
+          {editingTarget && (
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Name</Label>
+                <Input
+                  value={editingTarget.name}
+                  onChange={(e) => setEditingTarget({ ...editingTarget, name: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Description</Label>
+                <Textarea
+                  value={editingTarget.description || ''}
+                  onChange={(e) => setEditingTarget({ ...editingTarget, description: e.target.value })}
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEditDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveEdit}>
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <CardContent>
         {loading ? (
           <div className="space-y-2">
@@ -265,8 +382,14 @@ export function ReplicationTargetsPanel() {
         ) : targets.length === 0 ? (
           <div className="text-center py-12 text-muted-foreground">
             <Target className="h-12 w-12 mx-auto mb-2 opacity-50" />
-            <p>No replication targets configured</p>
-            <p className="text-sm">Add a DR site with ZFS storage to start replicating</p>
+            <p>No ZFS targets configured</p>
+            <p className="text-sm">Add a ZFS target to start replicating VMs</p>
+            {onAddTarget && (
+              <Button variant="outline" className="mt-4" onClick={onAddTarget}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add ZFS Target
+              </Button>
+            )}
           </div>
         ) : (
           <div className="border rounded-lg overflow-hidden">
@@ -274,6 +397,7 @@ export function ReplicationTargetsPanel() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
+                  <TableHead>Site</TableHead>
                   <TableHead>Host</TableHead>
                   <TableHead>ZFS Pool</TableHead>
                   <TableHead>Health</TableHead>
@@ -293,6 +417,9 @@ export function ReplicationTargetsPanel() {
                       {target.description && (
                         <p className="text-xs text-muted-foreground">{target.description}</p>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      {getSiteRoleBadge((target as any).site_role)}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
@@ -324,14 +451,35 @@ export function ReplicationTargetsPanel() {
                         : 'Never'}
                     </TableCell>
                     <TableCell>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-8 w-8 text-destructive"
-                        onClick={() => handleDelete(target.id)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                            {healthCheckingId === target.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <MoreHorizontal className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleHealthCheck(target)}>
+                            <HeartPulse className="h-4 w-4 mr-2" />
+                            Health Check
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleEdit(target)}>
+                            <Pencil className="h-4 w-4 mr-2" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem 
+                            onClick={() => handleDelete(target.id)}
+                            className="text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 ))}

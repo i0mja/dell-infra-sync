@@ -2,8 +2,6 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Shield, Plus, Rocket, TestTube } from "lucide-react";
 import { useVCenters } from "@/hooks/useVCenters";
-import { useZfsTemplates } from "@/hooks/useZfsTemplates";
-import { DeployZfsTargetWizard } from "./DeployZfsTargetWizard";
 import { AddVMSelector } from "./AddVMSelector";
 import {
   Dialog,
@@ -48,11 +46,9 @@ interface DrQuickActionsProps {
 
 export function DrQuickActions({ onOpenOnboardWizard }: DrQuickActionsProps) {
   const { vcenters, loading: vcentersLoading } = useVCenters();
-  const { templates, loading: templatesLoading } = useZfsTemplates();
   const { groups, createGroup } = useProtectionGroups();
   const { vms: protectedVMs, addVM } = useProtectedVMs(groups?.[0]?.id);
   
-  const [showDeployWizard, setShowDeployWizard] = useState(false);
   const [showCreateGroupDialog, setShowCreateGroupDialog] = useState(false);
   const [showAddVMDialog, setShowAddVMDialog] = useState(false);
   const [selectedVCenterForProtection, setSelectedVCenterForProtection] = useState("");
@@ -66,8 +62,7 @@ export function DrQuickActions({ onOpenOnboardWizard }: DrQuickActionsProps) {
     selectedVCenterId || undefined
   );
 
-  const isLoading = vcentersLoading || templatesLoading;
-  const hasTemplates = templates.length > 0;
+  const isLoading = vcentersLoading;
   const hasVCenters = vcenters.length > 0;
   const existingVMIds = protectedVMs?.map(vm => vm.vm_id).filter(Boolean) as string[] || [];
 
@@ -191,12 +186,6 @@ export function DrQuickActions({ onOpenOnboardWizard }: DrQuickActionsProps) {
         </TooltipProvider>
 
       </div>
-
-      {/* Deploy ZFS Target Wizard */}
-      <DeployZfsTargetWizard
-        open={showDeployWizard}
-        onOpenChange={setShowDeployWizard}
-      />
 
       {/* Add VM to Protection Dialog */}
       <AddVMSelector
