@@ -65,6 +65,8 @@ import {
   Plug,
   Calendar,
   Layers,
+  Download,
+  Trash2,
 } from "lucide-react";
 import { useVCenters } from "@/hooks/useVCenters";
 import { useVCenterVMs } from "@/hooks/useVCenterVMs";
@@ -226,6 +228,11 @@ export function OnboardZfsTargetWizard({
   const [vmIp, setVmIp] = useState<string>('');
   const [needsRootPassword, setNeedsRootPassword] = useState(false);
   
+  // Phase 7: UX Polish - Recovery state
+  const [retryingStep, setRetryingStep] = useState<string | null>(null);
+  const [rollingBack, setRollingBack] = useState(false);
+  const [rollbackStatus, setRollbackStatus] = useState<'idle' | 'running' | 'success' | 'failed'>('idle');
+  
   // Fetch VMs from selected vCenter
   const { data: vms = [], isLoading: vmsLoading, clusters = [] } = useVCenterVMs(selectedVCenterId || undefined);
   
@@ -321,6 +328,10 @@ export function OnboardZfsTargetWizard({
       setVmsToProtect([]);
       setSchedulePreset('hourly');
       setCustomCron("0 * * * *");
+      // Phase 7 resets
+      setRetryingStep(null);
+      setRollingBack(false);
+      setRollbackStatus('idle');
     }
   }, [open, preselectedVCenterId, preselectedVMId]);
   
@@ -724,6 +735,186 @@ export function OnboardZfsTargetWizard({
       setDetectingDisks(false);
       toast({ 
         title: 'Failed to detect disks', 
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive' 
+      });
+    }
+  };
+  
+  // Phase 7: Export console log to file
+  const handleExportLog = useCallback(() => {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const content = [
+      `ZFS Target Onboarding Log`,
+      `========================`,
+      `Target: ${targetName}`,
+      `Job ID: ${jobId || 'N/A'}`,
+      `VM: ${selectedVM?.name || 'N/A'} (${selectedVM?.ip_address || 'No IP'})`,
+      `Status: ${jobStatus}`,
+      `Exported: ${new Date().toISOString()}`,
+      ``,
+      `Step Results:`,
+      `-------------`,
+      ...stepResults.map(r => `[${r.status.toUpperCase()}] ${STEP_LABELS[r.step] || r.step}: ${r.message}`),
+      ``,
+      `Console Log:`,
+      `------------`,
+      ...consoleLog
+    ].join('\n');
+    
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `zfs-onboard-${targetName || 'unknown'}-${timestamp}.log`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    toast({ title: 'Log exported', description: `Downloaded ${a.download}` });
+  }, [targetName, jobId, selectedVM, jobStatus, stepResults, consoleLog, toast]);
+  
+  // Phase 7: Retry a failed step
+  const handleRetryStep = async (stepName: string) => {
+    if (!jobId) return;
+    
+    setRetryingStep(stepName);
+    
+    try {
+      const { data: user } = await supabase.auth.getUser();
+      
+      const { data: retryJob, error } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'retry_onboard_step' as unknown as 'onboard_zfs_target',
+          status: 'pending',
+          created_by: user?.user?.id,
+          details: {
+            original_job_id: jobId,
+            from_step: stepName,
+            target_name: targetName,
+            vm_ip: vmIp || selectedVM?.ip_address,
+            auth_method: authMethod,
+            ssh_key_id: authMethod === 'existing_key' ? selectedSshKeyId : undefined,
+            root_password: authMethod === 'password' ? rootPassword : undefined,
+            zfs_pool_name: zfsPoolName,
+            nfs_network: nfsNetwork,
+            zfs_compression: zfsCompression,
+            zfs_disk: selectedDisk || undefined,
+            datastore_name: datastoreName,
+          }
+        })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      
+      toast({ title: 'Retrying step', description: `Re-running from ${STEP_LABELS[stepName] || stepName}...` });
+      
+      // Poll for result
+      let attempts = 0;
+      const pollInterval = setInterval(async () => {
+        attempts++;
+        const { data: jobResult } = await supabase
+          .from('jobs')
+          .select('status, details')
+          .eq('id', retryJob.id)
+          .single();
+        
+        if (jobResult?.status === 'completed') {
+          clearInterval(pollInterval);
+          setRetryingStep(null);
+          // Update step results to show success
+          setStepResults(prev => prev.map(r => 
+            r.step === stepName ? { ...r, status: 'success' as StepStatus, message: 'Retry successful' } : r
+          ));
+          toast({ title: 'Retry successful', description: `${STEP_LABELS[stepName] || stepName} completed` });
+        } else if (jobResult?.status === 'failed' || attempts >= 30) {
+          clearInterval(pollInterval);
+          setRetryingStep(null);
+          toast({ 
+            title: 'Retry failed', 
+            description: (jobResult?.details as Record<string, unknown>)?.error as string || 'Retry timeout',
+            variant: 'destructive' 
+          });
+        }
+      }, 2000);
+    } catch (err) {
+      setRetryingStep(null);
+      toast({ 
+        title: 'Failed to retry step', 
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive' 
+      });
+    }
+  };
+  
+  // Phase 7: Rollback/cleanup partial configuration
+  const handleRollback = async () => {
+    if (!jobId) return;
+    
+    setRollingBack(true);
+    setRollbackStatus('running');
+    
+    try {
+      const { data: user } = await supabase.auth.getUser();
+      
+      const { data: rollbackJob, error } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'rollback_zfs_onboard' as unknown as 'onboard_zfs_target',
+          status: 'pending',
+          created_by: user?.user?.id,
+          details: {
+            original_job_id: jobId,
+            target_name: targetName,
+            vm_ip: vmIp || selectedVM?.ip_address,
+            auth_method: authMethod,
+            ssh_key_id: authMethod === 'existing_key' ? selectedSshKeyId : undefined,
+            root_password: authMethod === 'password' ? rootPassword : undefined,
+            zfs_pool_name: zfsPoolName,
+            datastore_name: datastoreName,
+          }
+        })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      
+      toast({ title: 'Cleanup started', description: 'Removing partial configuration...' });
+      
+      // Poll for result
+      let attempts = 0;
+      const pollInterval = setInterval(async () => {
+        attempts++;
+        const { data: jobResult } = await supabase
+          .from('jobs')
+          .select('status, details')
+          .eq('id', rollbackJob.id)
+          .single();
+        
+        if (jobResult?.status === 'completed') {
+          clearInterval(pollInterval);
+          setRollingBack(false);
+          setRollbackStatus('success');
+          toast({ title: 'Cleanup complete', description: 'Partial configuration has been removed' });
+        } else if (jobResult?.status === 'failed' || attempts >= 30) {
+          clearInterval(pollInterval);
+          setRollingBack(false);
+          setRollbackStatus('failed');
+          toast({ 
+            title: 'Cleanup failed', 
+            description: (jobResult?.details as Record<string, unknown>)?.error as string || 'Cleanup timeout',
+            variant: 'destructive' 
+          });
+        }
+      }, 2000);
+    } catch (err) {
+      setRollingBack(false);
+      setRollbackStatus('failed');
+      toast({ 
+        title: 'Failed to start cleanup', 
         description: err instanceof Error ? err.message : 'Unknown error',
         variant: 'destructive' 
       });
@@ -1515,7 +1706,7 @@ export function OnboardZfsTargetWizard({
                 </div>
               )}
               
-              {/* Progress steps */}
+              {/* Progress steps with retry buttons */}
               <div className="space-y-2">
                 {stepResults.map((result, index) => (
                   <div key={index} className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/30">
@@ -1528,6 +1719,23 @@ export function OnboardZfsTargetWizard({
                     </span>
                     {result.status === 'fixed' && (
                       <Badge variant="outline" className="text-xs text-green-600">auto-fixed</Badge>
+                    )}
+                    {/* Phase 7: Retry button for failed steps */}
+                    {result.status === 'failed' && !isJobRunning && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleRetryStep(result.step)}
+                        disabled={retryingStep !== null}
+                        className="h-7 px-2"
+                      >
+                        {retryingStep === result.step ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3 w-3" />
+                        )}
+                        <span className="ml-1 text-xs">Retry</span>
+                      </Button>
                     )}
                   </div>
                 ))}
@@ -1593,7 +1801,7 @@ export function OnboardZfsTargetWizard({
                 </div>
               )}
               
-              {/* Progress steps */}
+              {/* Progress steps with retry buttons */}
               <div className="space-y-2">
                 {stepResults.map((result, index) => (
                   <div key={index} className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/30">
@@ -1609,6 +1817,23 @@ export function OnboardZfsTargetWizard({
                     )}
                     {result.status === 'warning' && (
                       <Badge variant="outline" className="text-xs text-yellow-600">warning</Badge>
+                    )}
+                    {/* Phase 7: Retry button for failed steps */}
+                    {result.status === 'failed' && !isJobRunning && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleRetryStep(result.step)}
+                        disabled={retryingStep !== null}
+                        className="h-7 px-2"
+                      >
+                        {retryingStep === result.step ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3 w-3" />
+                        )}
+                        <span className="ml-1 text-xs">Retry</span>
+                      </Button>
                     )}
                   </div>
                 ))}
@@ -1646,14 +1871,41 @@ export function OnboardZfsTargetWizard({
               )}
               
               {isJobFailed && (
-                <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20">
-                  <div className="flex items-center gap-2 text-destructive mb-2">
+                <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20 space-y-4">
+                  <div className="flex items-center gap-2 text-destructive">
                     <XCircle className="h-5 w-5" />
                     <span className="font-medium">Setup Failed</span>
                   </div>
                   <p className="text-sm text-muted-foreground">
-                    Check the console log for details.
+                    Check the console log for details. You can retry individual failed steps or clean up partial configuration.
                   </p>
+                  
+                  {/* Phase 7: Rollback/Cleanup option */}
+                  <div className="pt-3 border-t border-destructive/20">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium">Clean Up Partial Configuration?</p>
+                        <p className="text-xs text-muted-foreground">
+                          Remove any partially created ZFS pool, NFS exports, and datastore registration.
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleRollback}
+                        disabled={rollingBack || rollbackStatus === 'success'}
+                      >
+                        {rollingBack ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : rollbackStatus === 'success' ? (
+                          <Check className="h-4 w-4 mr-2 text-green-500" />
+                        ) : (
+                          <Trash2 className="h-4 w-4 mr-2" />
+                        )}
+                        {rollbackStatus === 'success' ? 'Cleaned Up' : 'Clean Up'}
+                      </Button>
+                    </div>
+                  </div>
                 </div>
               )}
               
@@ -1703,18 +1955,25 @@ export function OnboardZfsTargetWizard({
             </div>
           )}
           
-          {/* Console log */}
+          {/* Console log with Export button */}
           {consoleLog.length > 0 && (
             <Collapsible open={showConsole} onOpenChange={setShowConsole} className="mt-4">
-              <CollapsibleTrigger asChild>
-                <Button variant="ghost" size="sm" className="w-full justify-between">
-                  <span className="flex items-center gap-2">
-                    <Terminal className="h-4 w-4" />
-                    Console Log ({consoleLog.length} entries)
-                  </span>
-                  {showConsole ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              <div className="flex items-center gap-2">
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" size="sm" className="flex-1 justify-between">
+                    <span className="flex items-center gap-2">
+                      <Terminal className="h-4 w-4" />
+                      Console Log ({consoleLog.length} entries)
+                    </span>
+                    {showConsole ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                  </Button>
+                </CollapsibleTrigger>
+                {/* Phase 7: Export Log button */}
+                <Button variant="ghost" size="sm" onClick={handleExportLog} className="shrink-0">
+                  <Download className="h-4 w-4 mr-1" />
+                  Export
                 </Button>
-              </CollapsibleTrigger>
+              </div>
               <CollapsibleContent>
                 <div className="mt-2 p-3 rounded-lg bg-black text-green-400 font-mono text-xs max-h-48 overflow-y-auto">
                   {consoleLog.map((line, i) => (

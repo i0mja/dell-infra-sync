@@ -2955,3 +2955,314 @@ class ZfsTargetHandler(BaseHandler):
             return {'success': False, 'error': str(e)}
         finally:
             self._cleanup()
+    
+    def execute_retry_onboard_step(self, job: Dict) -> Dict:
+        """
+        Phase 7: Re-run onboarding from a specific failed step.
+        
+        Loads previous job state and continues from from_step.
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        
+        job_details = {
+            'console_log': [],
+            'step_results': []
+        }
+        
+        from_step = details.get('from_step', '')
+        self._log_console(job_id, 'INFO', f'Retrying from step: {from_step}', job_details)
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso(), details=job_details)
+        
+        try:
+            # Get connection details
+            vm_ip = details.get('vm_ip')
+            if not vm_ip:
+                raise Exception('No vm_ip provided')
+            
+            auth_method = details.get('auth_method', 'password')
+            ssh_key_id = details.get('ssh_key_id')
+            root_password = details.get('root_password')
+            
+            # Connect via SSH
+            self.ssh_client = paramiko.SSHClient()
+            self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            if auth_method == 'existing_key' and ssh_key_id:
+                key_data = self._get_ssh_key(ssh_key_id)
+                if not key_data:
+                    raise Exception('SSH key not found')
+                
+                private_key = self._decrypt_ssh_key(key_data.get('private_key_encrypted'))
+                if not private_key:
+                    raise Exception('Failed to decrypt SSH key')
+                
+                key_file = io.StringIO(private_key)
+                pkey = None
+                for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                    try:
+                        key_file.seek(0)
+                        pkey = key_class.from_private_key(key_file)
+                        break
+                    except:
+                        continue
+                
+                if not pkey:
+                    raise Exception('Unsupported key format')
+                
+                self.ssh_client.connect(
+                    hostname=vm_ip,
+                    username='root',
+                    pkey=pkey,
+                    timeout=15,
+                    allow_agent=False,
+                    look_for_keys=False
+                )
+            else:
+                if not root_password:
+                    raise Exception('No password provided')
+                
+                self.ssh_client.connect(
+                    hostname=vm_ip,
+                    username='root',
+                    password=root_password,
+                    timeout=15,
+                    allow_agent=False,
+                    look_for_keys=False
+                )
+            
+            self._log_console(job_id, 'INFO', f'SSH connected to {vm_ip}', job_details)
+            
+            # Execute the specific step
+            step_success = False
+            if from_step == 'zfs_packages':
+                result = self._ssh_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y zfsutils-linux', job_id)
+                step_success = result['exit_code'] == 0
+                job_details['step_results'].append({
+                    'step': 'zfs_packages',
+                    'status': 'success' if step_success else 'failed',
+                    'message': 'ZFS packages installed' if step_success else result['stderr'][:100]
+                })
+            elif from_step == 'nfs_packages':
+                result = self._ssh_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y nfs-kernel-server', job_id)
+                step_success = result['exit_code'] == 0
+                job_details['step_results'].append({
+                    'step': 'nfs_packages',
+                    'status': 'success' if step_success else 'failed',
+                    'message': 'NFS packages installed' if step_success else result['stderr'][:100]
+                })
+            elif from_step == 'zfs_pool':
+                pool_name = details.get('zfs_pool_name', 'tank')
+                zfs_disk = details.get('zfs_disk') or self._detect_zfs_disk()
+                if not zfs_disk:
+                    raise Exception('No disk available for ZFS pool')
+                compression = details.get('zfs_compression', 'lz4')
+                
+                # Create pool
+                result = self._ssh_exec(f'zpool create -f {pool_name} {zfs_disk}', job_id)
+                if result['exit_code'] != 0:
+                    raise Exception(f'Failed to create ZFS pool: {result["stderr"]}')
+                
+                # Set compression
+                self._ssh_exec(f'zfs set compression={compression} {pool_name}', job_id)
+                step_success = True
+                job_details['step_results'].append({
+                    'step': 'zfs_pool',
+                    'status': 'success',
+                    'message': f'Pool {pool_name} created on {zfs_disk}'
+                })
+            elif from_step == 'nfs_export':
+                pool_name = details.get('zfs_pool_name', 'tank')
+                nfs_network = details.get('nfs_network', '10.0.0.0/8')
+                
+                # Configure NFS export
+                export_line = f'/{pool_name} {nfs_network}(rw,sync,no_subtree_check,no_root_squash)'
+                result = self._ssh_exec(f'echo "{export_line}" >> /etc/exports && exportfs -ra', job_id)
+                step_success = result['exit_code'] == 0
+                job_details['step_results'].append({
+                    'step': 'nfs_export',
+                    'status': 'success' if step_success else 'failed',
+                    'message': f'NFS export configured for {nfs_network}' if step_success else result['stderr'][:100]
+                })
+            else:
+                self._log_console(job_id, 'WARN', f'Unknown step to retry: {from_step}', job_details)
+                step_success = False
+            
+            if step_success:
+                self._log_console(job_id, 'INFO', f'Step {from_step} completed successfully', job_details)
+                self.update_job_status(job_id, 'completed', completed_at=utc_now_iso(), details=job_details)
+                return {'success': True}
+            else:
+                raise Exception(f'Step {from_step} failed')
+            
+        except Exception as e:
+            self._log_console(job_id, 'ERROR', f'Retry failed: {e}', job_details)
+            job_details['error'] = str(e)
+            self.update_job_status(job_id, 'failed', completed_at=utc_now_iso(), details=job_details)
+            return {'success': False, 'error': str(e)}
+        finally:
+            self._cleanup()
+    
+    def execute_rollback_zfs_onboard(self, job: Dict) -> Dict:
+        """
+        Phase 7: Clean up partially created ZFS target.
+        
+        Steps:
+        1. Destroy ZFS pool (if exists)
+        2. Remove NFS exports (if configured)
+        3. Unregister datastore from vCenter (if registered)
+        4. Delete replication_target record (if created)
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        
+        job_details = {
+            'console_log': [],
+            'cleanup_results': []
+        }
+        
+        self._log_console(job_id, 'INFO', 'Starting cleanup of partial ZFS configuration...', job_details)
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso(), details=job_details)
+        
+        try:
+            vm_ip = details.get('vm_ip')
+            pool_name = details.get('zfs_pool_name', 'tank')
+            target_name = details.get('target_name')
+            datastore_name = details.get('datastore_name')
+            
+            ssh_connected = False
+            
+            # Try to connect via SSH for cleanup
+            if vm_ip:
+                try:
+                    auth_method = details.get('auth_method', 'password')
+                    ssh_key_id = details.get('ssh_key_id')
+                    root_password = details.get('root_password')
+                    
+                    self.ssh_client = paramiko.SSHClient()
+                    self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                    
+                    if auth_method == 'existing_key' and ssh_key_id:
+                        key_data = self._get_ssh_key(ssh_key_id)
+                        if key_data:
+                            private_key = self._decrypt_ssh_key(key_data.get('private_key_encrypted'))
+                            if private_key:
+                                key_file = io.StringIO(private_key)
+                                pkey = None
+                                for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                                    try:
+                                        key_file.seek(0)
+                                        pkey = key_class.from_private_key(key_file)
+                                        break
+                                    except:
+                                        continue
+                                
+                                if pkey:
+                                    self.ssh_client.connect(
+                                        hostname=vm_ip,
+                                        username='root',
+                                        pkey=pkey,
+                                        timeout=15,
+                                        allow_agent=False,
+                                        look_for_keys=False
+                                    )
+                                    ssh_connected = True
+                    elif root_password:
+                        self.ssh_client.connect(
+                            hostname=vm_ip,
+                            username='root',
+                            password=root_password,
+                            timeout=15,
+                            allow_agent=False,
+                            look_for_keys=False
+                        )
+                        ssh_connected = True
+                    
+                    if ssh_connected:
+                        self._log_console(job_id, 'INFO', f'SSH connected to {vm_ip}', job_details)
+                except Exception as ssh_err:
+                    self._log_console(job_id, 'WARN', f'SSH connection failed: {ssh_err}', job_details)
+            
+            # Step 1: Remove NFS exports
+            if ssh_connected:
+                try:
+                    # Remove export from /etc/exports
+                    result = self._ssh_exec(f'sed -i "/{pool_name}/d" /etc/exports 2>/dev/null; exportfs -ra', job_id)
+                    job_details['cleanup_results'].append({
+                        'step': 'nfs_export',
+                        'status': 'success' if result['exit_code'] == 0 else 'skipped',
+                        'message': 'NFS exports cleaned'
+                    })
+                    self._log_console(job_id, 'INFO', 'NFS exports cleaned', job_details)
+                except Exception as e:
+                    self._log_console(job_id, 'WARN', f'Failed to clean NFS exports: {e}', job_details)
+            
+            # Step 2: Destroy ZFS pool
+            if ssh_connected:
+                try:
+                    # Check if pool exists
+                    check = self._ssh_exec(f'zpool list {pool_name} 2>/dev/null', job_id, log_command=False)
+                    if check['exit_code'] == 0:
+                        # Pool exists - destroy it
+                        result = self._ssh_exec(f'zpool destroy -f {pool_name}', job_id)
+                        job_details['cleanup_results'].append({
+                            'step': 'zfs_pool',
+                            'status': 'success' if result['exit_code'] == 0 else 'failed',
+                            'message': f'Pool {pool_name} destroyed' if result['exit_code'] == 0 else result['stderr'][:50]
+                        })
+                        self._log_console(job_id, 'INFO', f'ZFS pool {pool_name} destroyed', job_details)
+                    else:
+                        job_details['cleanup_results'].append({
+                            'step': 'zfs_pool',
+                            'status': 'skipped',
+                            'message': 'Pool does not exist'
+                        })
+                except Exception as e:
+                    self._log_console(job_id, 'WARN', f'Failed to destroy ZFS pool: {e}', job_details)
+            
+            # Step 3: Delete replication_target record
+            if target_name:
+                try:
+                    headers = {
+                        'apikey': SERVICE_ROLE_KEY,
+                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                    }
+                    
+                    response = requests.delete(
+                        f'{DSM_URL}/rest/v1/replication_targets',
+                        params={'name': f'eq.{target_name}'},
+                        headers=headers,
+                        verify=VERIFY_SSL,
+                        timeout=10
+                    )
+                    
+                    job_details['cleanup_results'].append({
+                        'step': 'replication_target',
+                        'status': 'success' if response.ok else 'skipped',
+                        'message': 'Target record deleted' if response.ok else 'No record found'
+                    })
+                    self._log_console(job_id, 'INFO', 'Replication target record cleanup attempted', job_details)
+                except Exception as e:
+                    self._log_console(job_id, 'WARN', f'Failed to delete target record: {e}', job_details)
+            
+            # Note: Datastore unregistration would require vCenter connection
+            # For safety, we skip automatic datastore removal - user should do this manually if needed
+            if datastore_name:
+                job_details['cleanup_results'].append({
+                    'step': 'datastore',
+                    'status': 'skipped',
+                    'message': 'Manual removal required in vCenter'
+                })
+                self._log_console(job_id, 'INFO', f'Datastore {datastore_name} should be removed manually from vCenter if needed', job_details)
+            
+            self._log_console(job_id, 'INFO', 'Cleanup completed', job_details)
+            self.update_job_status(job_id, 'completed', completed_at=utc_now_iso(), details=job_details)
+            return {'success': True, 'cleanup_results': job_details['cleanup_results']}
+            
+        except Exception as e:
+            self._log_console(job_id, 'ERROR', f'Cleanup failed: {e}', job_details)
+            job_details['error'] = str(e)
+            self.update_job_status(job_id, 'failed', completed_at=utc_now_iso(), details=job_details)
+            return {'success': False, 'error': str(e)}
+        finally:
+            self._cleanup()

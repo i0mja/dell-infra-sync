@@ -930,6 +930,8 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, ScpMixin, Conne
             'onboard_zfs_target': self.zfs_target_handler.execute_onboard_zfs_target,
             'detect_disks': self.zfs_target_handler.execute_detect_disks,
             'test_ssh_connection': self.zfs_target_handler.execute_test_ssh_connection,
+            'retry_onboard_step': self.zfs_target_handler.execute_retry_onboard_step,
+            'rollback_zfs_onboard': self.zfs_target_handler.execute_rollback_zfs_onboard,
             # Replication handlers
             'test_replication_pair': self.replication_handler.execute_test_replication_pair,
             'run_replication_sync': self.replication_handler.execute_run_replication_sync,
