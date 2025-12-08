@@ -66,54 +66,177 @@ New module encapsulating PropertyCollector logic.
 """
 VMware PropertyCollector-based inventory fetching.
 Replaces multiple ContainerView iterations with a single batch fetch.
+
+CRITICAL IMPLEMENTATION NOTES:
+1. Always use vim.PropertyCollector.* for spec classes (not vim.PropertySpec)
+2. Always use vim.view.ContainerView as explicit type (never dynamic)
+3. Handle pagination with maxObjects and ContinueRetrievePropertiesEx
+4. Catch errors per-object, never fail entire sync on one error
 """
 from pyVmomi import vim, vmodl
 from typing import Dict, List, Tuple, Any, Optional
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
 
-def collect_vcenter_inventory(content) -> Dict[str, List[Tuple[Any, Dict]]]:
+def collect_vcenter_inventory(
+    content,
+    enable_deep_relationships: bool = False
+) -> Dict[str, Any]:
     """
     Fetch ALL vCenter inventory in ONE PropertyCollector call.
     
     Args:
         content: vCenter ServiceInstance content object
+        enable_deep_relationships: If True, include heavy properties like
+                                   datastore.host, datastore.vm, network.host, network.vm
+                                   WARNING: This significantly increases payload size!
         
     Returns:
         {
-            'vms': [(vm_obj, props_dict), ...],
-            'hosts': [(host_obj, props_dict), ...],
-            'clusters': [(cluster_obj, props_dict), ...],
-            'datastores': [(ds_obj, props_dict), ...],
-            'networks': [(net_obj, props_dict), ...],
-            'dvportgroups': [(dvpg_obj, props_dict), ...],
-            'dvswitches': [(dvs_obj, props_dict), ...],
+            "clusters": [{"moref": str, "name": str, ...}, ...],
+            "hosts": [{"moref": str, "name": str, "cluster": str, ...}, ...],
+            "vms": [{"moref": str, "name": str, "host": str, ...}, ...],
+            "datastores": [{"moref": str, "name": str, ...}, ...],
+            "networks": [{"moref": str, "name": str, ...}, ...],
+            "dvpgs": [{"moref": str, "name": str, "dvs": str, ...}, ...],
+            "dvswitches": [{"moref": str, "name": str, ...}, ...],
+            "fetch_time_ms": int,
+            "process_time_ms": int,
+            "total_objects": int,
+            "errors": []  # List of error dicts
         }
     """
+    pass  # Implementation follows
     
-def _build_property_specs() -> List[vim.PropertySpec]:
-    """Build property specifications for each object type."""
+
+def _build_property_specs(enable_deep_relationships: bool = False) -> List[vim.PropertyCollector.PropertySpec]:
+    """
+    Build property specifications for each object type.
     
-def _build_traversal_spec(view_ref) -> vim.TraversalSpec:
-    """Build traversal spec from ContainerView to objects."""
+    CRITICAL: Always use vim.PropertyCollector.PropertySpec, never vim.PropertySpec
+    """
+    pass
+
+
+def _build_traversal_spec(view_ref) -> vim.PropertyCollector.TraversalSpec:
+    """
+    Build traversal spec from ContainerView to objects.
     
+    CRITICAL: Always use explicit type=vim.view.ContainerView
+    Never use type=view_ref.__class__ or other dynamic type inference!
+    """
+    # CORRECT - Always use explicit type
+    return vim.PropertyCollector.TraversalSpec(
+        name="viewTraversal",
+        type=vim.view.ContainerView,  # ALWAYS explicit, never dynamic
+        path="view",
+        skip=False
+    )
+
+
 def _parse_object_content(obj_content) -> Tuple[Any, Dict]:
     """Parse ObjectContent into (object, properties_dict)."""
+    pass
 ```
 
-### Property Specifications
+---
 
-| Object Type | Properties to Fetch | Maps to DB Table |
-|-------------|---------------------|------------------|
-| `vim.VirtualMachine` | `name`, `config.uuid`, `config.hardware.numCPU`, `config.hardware.memoryMB`, `config.template`, `runtime.powerState`, `runtime.host`, `guest.ipAddress`, `guest.toolsStatus`, `guest.toolsVersionStatus`, `summary.config.guestFullName`, `summary.storage.uncommitted` | `vcenter_vms` |
-| `vim.HostSystem` | `name`, `parent`, `hardware.systemInfo.serialNumber`, `hardware.systemInfo.otherIdentifyingInfo`, `config.product.version`, `config.product.build`, `runtime.connectionState`, `runtime.inMaintenanceMode` | `vcenter_hosts` |
-| `vim.ClusterComputeResource` | `name`, `summary.totalCpu`, `summary.effectiveCpu`, `summary.totalMemory`, `summary.effectiveMemory`, `summary.numHosts`, `summary.numEffectiveHosts`, `summary.overallStatus`, `configuration.dasConfig.enabled`, `configuration.drsConfig.enabled`, `configuration.drsConfig.defaultVmBehavior` | `vcenter_clusters` |
-| `vim.Datastore` | `name`, `summary.capacity`, `summary.freeSpace`, `summary.type`, `summary.accessible`, `summary.maintenanceMode`, `host`, `vm` | `vcenter_datastores` |
-| `vim.Network` | `name`, `host`, `vm` | `vcenter_networks` |
-| `vim.dvs.DistributedVirtualPortgroup` | `name`, `config.distributedVirtualSwitch`, `config.uplink`, `config.defaultPortConfig.vlan` | `vcenter_networks` |
-| `vim.DistributedVirtualSwitch` | `name` | (lookup only) |
+### Required Property Sets (Unambiguous Reference Table)
+
+> **CRITICAL**: Use ONLY these property names. Do not hallucinate or guess properties.
+
+| Object Type | Required Properties |
+|-------------|---------------------|
+| `vim.VirtualMachine` | `name`, `config.uuid`, `runtime.powerState`, `summary.config.vmPathName`, `summary.runtime.host`, `summary.runtime.connectionState` |
+| `vim.HostSystem` | `name`, `summary.hardware.vendor`, `hardware.systemInfo.serialNumber`, `summary.runtime.powerState`, `summary.runtime.connectionState`, `parent` |
+| `vim.ClusterComputeResource` | `name`, `summary.totalCpu`, `summary.totalMemory`, `summary.numHosts`, `summary.numEffectiveHosts` |
+| `vim.Datastore` | `name`, `summary.capacity`, `summary.freeSpace`, `summary.type` |
+| `vim.Network` | `name`, `[host]` *(optional)*, `[vm]` *(optional)* |
+| `vim.dvs.DistributedVirtualPortgroup` | `name`, `parent`, `[host]` *(optional)*, `[vm]` *(optional)* |
+| `vim.DistributedVirtualSwitch` | `name`, `uuid` |
+
+> **Note**: Properties in `[brackets]` are **optional** and controlled by `ENABLE_DEEP_RELATIONSHIPS` flag. These properties significantly increase payload size and should only be enabled when needed.
+
+---
+
+### Optional "Heavy" Properties (Performance Warning)
+
+The following properties can significantly increase payload size and are **disabled by default**:
+
+| Object Type | Heavy Properties | Impact |
+|-------------|-----------------|--------|
+| `vim.Datastore` | `host`, `vm` | Lists ALL hosts/VMs attached to each datastore |
+| `vim.Network` | `host`, `vm` | Lists ALL hosts/VMs using each network |
+| `vim.dvs.DistributedVirtualPortgroup` | `host`, `vm` | Lists ALL hosts/VMs using each portgroup |
+
+**Config Flag:**
+```python
+# In job_executor/config.py
+ENABLE_DEEP_RELATIONSHIPS = os.getenv('ENABLE_DEEP_RELATIONSHIPS', 'false').lower() == 'true'
+```
+
+**Implementation:**
+```python
+def _build_property_specs(enable_deep_relationships: bool = False) -> List[vim.PropertyCollector.PropertySpec]:
+    """Build property specifications, conditionally including heavy properties."""
+    
+    # Base datastore properties (always included)
+    datastore_props = ["name", "summary.capacity", "summary.freeSpace", "summary.type"]
+    
+    # Conditionally add heavy properties
+    if enable_deep_relationships:
+        datastore_props.extend(["host", "vm"])
+    
+    # ... same pattern for Network, DVPG
+```
+
+---
+
+### Pagination Requirements (MANDATORY)
+
+> **CRITICAL**: Always use pagination to prevent incomplete inventory retrieval.
+
+```python
+def _fetch_with_pagination(pc, filter_spec) -> List:
+    """
+    Fetch all objects using pagination.
+    
+    MANDATORY: Set maxObjects and handle continuation token.
+    """
+    # REQUIRED: Set maxObjects to prevent oversized responses
+    options = vim.PropertyCollector.RetrieveOptions(maxObjects=1000)
+    
+    result = pc.RetrievePropertiesEx(specSet=[filter_spec], options=options)
+    
+    # REQUIRED: Handle pagination token
+    objects = result.objects or []
+    token = result.token
+    
+    while token:
+        result = pc.ContinueRetrievePropertiesEx(token)
+        objects.extend(result.objects or [])
+        token = result.token
+    
+    return objects
+```
+
+---
+
+### PropertyCollector Type Names (CRITICAL)
+
+> **ALWAYS** use fully qualified `vim.PropertyCollector.*` class names. LLMs frequently hallucinate short names.
+
+| Correct | INCORRECT (do not use) |
+|---------|----------------------|
+| `vim.PropertyCollector.PropertySpec` | `vim.PropertySpec` |
+| `vim.PropertyCollector.TraversalSpec` | `vim.TraversalSpec` |
+| `vim.PropertyCollector.ObjectSpec` | `vim.ObjectSpec` |
+| `vim.PropertyCollector.FilterSpec` | `vim.FilterSpec` |
+| `vim.PropertyCollector.RetrieveOptions` | `vim.RetrieveOptions` |
+| `vim.view.ContainerView` | `view_ref.__class__` |
 
 ---
 
@@ -155,14 +278,21 @@ def sync_vcenter_fast(
         
     Returns:
         {
-            'clusters': {'new': X, 'updated': Y},
-            'vms': {'new': X, 'updated': Y},
-            'hosts': {'new': X, 'updated': Y, 'auto_linked': Z},
-            'datastores': {'new': X, 'updated': Y},
-            'networks': {'new': X, 'updated': Y},
-            'fetch_time_ms': 1234,
-            'process_time_ms': 5678,
+            "clusters": [{"id": ..., "name": ...}, ...],
+            "hosts": [{"id": ..., "name": ..., "cluster": ...}, ...],
+            "vms": [{"id": ..., "name": ..., "host": ...}, ...],
+            "datastores": [{"id": ..., "name": ...}, ...],
+            "networks": [{"id": ..., "name": ...}, ...],
+            "dvpgs": [{"id": ..., "name": ...}, ...],
+            "dvswitches": [{"id": ..., "name": ...}, ...],
+            "fetch_time_ms": int,
+            "process_time_ms": int,
+            "total_objects": int,
+            "errors": []  # List of error dicts, optional
         }
+        
+    CRITICAL: This function MUST return the exact structure above.
+    Do not return inconsistent shapes.
     """
 ```
 
@@ -170,7 +300,7 @@ def sync_vcenter_fast(
 
 | Method | Reason |
 |--------|--------|
-| `sync_vcenter_alarms()` | Uses AlarmManager API, not compatible with PropertyCollector |
+| `sync_vcenter_alarms()` | Uses AlarmManager API, kept separate for architectural clarity |
 | `_upsert_vm_batch()` | Reused by `sync_vcenter_fast()` |
 | `_extract_serial_from_host()` | Reused for auto-linking logic |
 | `connect_to_vcenter()` | Connection logic unchanged |
@@ -258,6 +388,10 @@ sync_phases = [
 ```python
 # PropertyCollector sync feature flag (for rollback capability)
 USE_PROPERTY_COLLECTOR_SYNC = os.getenv('USE_PROPERTY_COLLECTOR_SYNC', 'true').lower() == 'true'
+
+# Deep relationships flag - enables heavy properties like datastore.host, datastore.vm
+# WARNING: Significantly increases payload size!
+ENABLE_DEEP_RELATIONSHIPS = os.getenv('ENABLE_DEEP_RELATIONSHIPS', 'false').lower() == 'true'
 ```
 
 ---
@@ -288,23 +422,57 @@ Since we fetch ALL objects at once, build lookup maps for relationship resolutio
 
 ```python
 def _build_moref_lookups(self, inventory: Dict) -> Dict:
-    """Build MoRef → data maps for relationship resolution."""
+    """
+    Build MoRef → data maps for relationship resolution.
+    
+    REQUIRED LOOKUP MAPS (must be generated after PropertyCollector fetch):
+    - host_moref_to_cluster: str(host.parent._moId) → cluster_name
+    - host_moref_to_name: str(host._moId) → host_name  
+    - cluster_moref_to_name: str(cluster._moId) → cluster_name
+    - dvs_moref_to_name: str(dvs._moId) → dvs_name
+    - dvpg_moref_to_dvs: str(dvpg._moId) → dvs_name
+    
+    BUILD ORDER (dependency order):
+    1. clusters → 2. DVS → 3. hosts → 4. VMs
+    """
     lookups = {
         'host_moref_to_cluster': {},   # str(host.parent._moId) → cluster_name
-        'cluster_moref_to_name': {},   # str(cluster._moId) → cluster_name
         'host_moref_to_name': {},      # str(host._moId) → host_name
+        'cluster_moref_to_name': {},   # str(cluster._moId) → cluster_name
         'dvs_moref_to_name': {},       # str(dvs._moId) → dvs_name
+        'dvpg_moref_to_dvs': {},       # str(dvpg._moId) → dvs_name (via parent)
     }
     
-    # Build cluster lookup
+    # Step 1: Build cluster lookup FIRST
     for cluster_obj, props in inventory.get('clusters', []):
         moref = str(cluster_obj._moId)
         lookups['cluster_moref_to_name'][moref] = props.get('name', '')
     
-    # Build DVS lookup
+    # Step 2: Build DVS lookup
     for dvs_obj, props in inventory.get('dvswitches', []):
         moref = str(dvs_obj._moId)
         lookups['dvs_moref_to_name'][moref] = props.get('name', '')
+    
+    # Step 3: Build host lookup (depends on cluster lookup)
+    for host_obj, props in inventory.get('hosts', []):
+        moref = str(host_obj._moId)
+        lookups['host_moref_to_name'][moref] = props.get('name', '')
+        
+        # Resolve host → cluster relationship
+        parent = props.get('parent')
+        if parent:
+            parent_moref = str(parent._moId)
+            cluster_name = lookups['cluster_moref_to_name'].get(parent_moref, '')
+            lookups['host_moref_to_cluster'][moref] = cluster_name
+    
+    # Step 4: Build DVPG → DVS lookup
+    for dvpg_obj, props in inventory.get('dvportgroups', []):
+        moref = str(dvpg_obj._moId)
+        parent = props.get('parent')
+        if parent:
+            parent_moref = str(parent._moId)
+            dvs_name = lookups['dvs_moref_to_name'].get(parent_moref, '')
+            lookups['dvpg_moref_to_dvs'][moref] = dvs_name
     
     return lookups
 ```
@@ -323,7 +491,7 @@ if host_parent:
 
 ```python
 # PropertyCollector returns vm.runtime.host as MoRef
-vm_host = props.get('runtime.host')
+vm_host = props.get('runtime.host') or props.get('summary.runtime.host')
 if vm_host:
     host_moref = str(vm_host._moId)
     host_name = lookups['host_moref_to_name'].get(host_moref, '')
@@ -353,19 +521,112 @@ def _extract_serial_from_host(self, props: Dict) -> Optional[str]:
 
 ### Alarms (Separate Handling)
 
-Alarms require the `AlarmManager` API and cannot be batched via PropertyCollector:
+> **Note**: `triggeredAlarmState` CAN be retrieved via PropertyCollector. However, we **intentionally** keep alarms in a separate function for architectural clarity and to allow independent refresh of alarm state without full inventory sync.
 
 ```python
-# This stays as-is
+# This stays as-is, separate from inventory sync
 def sync_vcenter_alarms(self, content, source_vcenter_id, vcenter_name="", job_id=None):
-    """Sync triggered alarms from vCenter - uses AlarmManager API."""
+    """
+    Sync triggered alarms from vCenter.
+    
+    Uses AlarmManager API. Kept separate from PropertyCollector inventory sync
+    for architectural clarity:
+    - Allows independent alarm refresh without full inventory sync
+    - Alarm state changes more frequently than inventory
+    - Cleaner error handling and logging
+    """
     alarm_manager = content.alarmManager
     # ... existing implementation
 ```
 
 ---
 
-## 6. Performance Logging
+## 6. Error Handling Requirements
+
+> **CRITICAL**: The collector MUST NOT fail the entire sync when one object fails.
+
+### Rules
+
+1. Catch `vmodl.fault.*` and generic `Exception` per-object
+2. Append errors to `errors[]` list in result
+3. Continue processing remaining objects
+4. Never let one failed object abort the entire sync
+
+### Implementation
+
+```python
+def _process_inventory(objects: List) -> Tuple[Dict, List]:
+    """
+    Process PropertyCollector results with per-object error handling.
+    
+    Returns:
+        (processed_data, errors_list)
+    """
+    results = {
+        'clusters': [],
+        'hosts': [],
+        'vms': [],
+        'datastores': [],
+        'networks': [],
+        'dvpgs': [],
+        'dvswitches': [],
+    }
+    errors = []
+    
+    for obj_content in objects:
+        try:
+            obj, props = _parse_object_content(obj_content)
+            obj_type = type(obj).__name__
+            
+            # Route to appropriate list based on type
+            if isinstance(obj, vim.VirtualMachine):
+                results['vms'].append(_process_vm(obj, props))
+            elif isinstance(obj, vim.HostSystem):
+                results['hosts'].append(_process_host(obj, props))
+            # ... etc
+            
+        except vmodl.fault.ManagedObjectNotFound as e:
+            # Object was deleted during fetch - common, not critical
+            errors.append({
+                "type": "ManagedObjectNotFound",
+                "moref": str(obj_content.obj) if obj_content else "unknown",
+                "message": "Object was deleted during fetch",
+                "severity": "warning"
+            })
+        except vmodl.fault.SystemError as e:
+            errors.append({
+                "type": "SystemError", 
+                "moref": str(obj_content.obj) if obj_content else "unknown",
+                "message": str(e.msg) if hasattr(e, 'msg') else str(e),
+                "severity": "error"
+            })
+        except Exception as e:
+            # Catch-all for unexpected errors
+            errors.append({
+                "type": type(e).__name__,
+                "moref": str(obj_content.obj) if obj_content else "unknown",
+                "message": str(e),
+                "severity": "error"
+            })
+            logger.warning(f"Error processing object: {e}")
+    
+    return results, errors
+```
+
+### Error Structure
+
+```python
+{
+    "type": str,       # Exception class name
+    "moref": str,      # ManagedObject reference ID
+    "message": str,    # Human-readable error message  
+    "severity": str    # "warning" | "error"
+}
+```
+
+---
+
+## 7. Performance Logging
 
 ### Timing Logs
 
@@ -380,7 +641,7 @@ start_process = time.time()
 # ... process and upsert
 process_time = time.time() - start_process
 
-total_objects = sum(len(v) for v in inventory.values())
+total_objects = sum(len(v) for v in inventory.values() if isinstance(v, list))
 self.log(f"PropertyCollector: fetched {total_objects} objects in {fetch_time:.2f}s")
 self.log(f"Database upserts completed in {process_time:.2f}s")
 self.log(f"Total fast sync: {fetch_time + process_time:.2f}s")
@@ -402,7 +663,8 @@ self.log_vcenter_activity(
         "datastores": len(inventory.get('datastores', [])),
         "networks": len(inventory.get('networks', [])),
         "clusters": len(inventory.get('clusters', [])),
-        "dvportgroups": len(inventory.get('dvportgroups', [])),
+        "dvportgroups": len(inventory.get('dvpgs', [])),
+        "errors": len(inventory.get('errors', [])),
     },
     job_id=job_id
 )
@@ -410,7 +672,7 @@ self.log_vcenter_activity(
 
 ---
 
-## 7. Feature Flag for Rollback
+## 8. Feature Flag for Rollback
 
 Add environment variable to toggle between old and new sync:
 
@@ -441,28 +703,30 @@ else:
 
 ---
 
-## 8. Implementation Checklist
+## 9. Implementation Checklist
 
 ### Phase 1: Documentation
 - [x] Create `docs/vmware_sync_remaster_1.md` with this plan
 
 ### Phase 2: PropertyCollector Module
 - [ ] Create `job_executor/mixins/vcenter_property_collector.py`
-- [ ] Implement `collect_vcenter_inventory(content)`
-- [ ] Implement `_build_property_specs()` for all 7 object types
-- [ ] Implement `_build_traversal_spec(view_ref)`
+- [ ] Implement `collect_vcenter_inventory(content, enable_deep_relationships)`
+- [ ] Implement `_build_property_specs(enable_deep_relationships)` using exact property table
+- [ ] Implement `_build_traversal_spec(view_ref)` with explicit `vim.view.ContainerView`
 - [ ] Implement `_parse_object_content(obj_content)`
-- [ ] Handle pagination with `ContinueRetrievePropertiesEx`
-- [ ] Add comprehensive error handling
+- [ ] Implement `_fetch_with_pagination(pc, filter_spec)` with `maxObjects=1000`
+- [ ] Add per-object error handling (never fail entire sync)
+- [ ] Return structured output matching exact schema
 - [ ] Add debug logging
 
 ### Phase 3: VCenter Ops Integration
 - [ ] Add `sync_vcenter_fast()` to `VCenterMixin` in `vcenter_ops.py`
-- [ ] Implement `_build_moref_lookups()` helper
+- [ ] Implement `_build_moref_lookups()` with all 5 required maps
 - [ ] Implement `_process_clusters()`, `_process_hosts()`, etc.
 - [ ] Reuse existing `_upsert_vm_batch()` and similar methods
 - [ ] Add performance timing and logging
 - [ ] Add `USE_PROPERTY_COLLECTOR_SYNC` to `config.py`
+- [ ] Add `ENABLE_DEEP_RELATIONSHIPS` to `config.py`
 
 ### Phase 4: Handler Update
 - [ ] Update `_sync_single_vcenter()` in `vcenter_handlers.py`
@@ -490,10 +754,11 @@ else:
 - [ ] Verify auto-linking still works (serial numbers)
 - [ ] Verify datastore-host relationships
 - [ ] Verify network VLAN information
+- [ ] Verify errors[] populated correctly for failed objects
 
 ---
 
-## 9. Expected Outcomes
+## 10. Expected Outcomes
 
 | Metric | Before | After | Improvement |
 |--------|--------|-------|-------------|
@@ -505,20 +770,21 @@ else:
 
 ---
 
-## 10. Risks & Mitigations
+## 11. Risks & Mitigations
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | PropertyCollector returns different data format | Data mismatch | Extensive property mapping tests |
 | Some properties unavailable via PropertyCollector | Missing data | Fallback to individual fetch if needed |
-| Large result sets cause memory issues | OOM errors | Pagination handles this automatically |
+| Large result sets cause memory issues | OOM errors | Pagination with maxObjects=1000 |
 | Network timeout on large fetch | Sync failure | Add timeout handling, retry logic |
 | Breaking existing functionality | Data loss | Feature flag for instant rollback |
-| MoRef resolution failures | Missing relationships | Build comprehensive lookup maps first |
+| MoRef resolution failures | Missing relationships | Build comprehensive lookup maps in dependency order |
+| Single object failure aborts sync | Incomplete data | Per-object error handling, continue on failure |
 
 ---
 
-## 11. References
+## 12. References
 
 - [VMware vSphere API Reference - PropertyCollector](https://developer.vmware.com/apis/1355/)
 - [pyvmomi PropertyCollector samples](https://github.com/vmware/pyvmomi-community-samples/tree/master/samples)
