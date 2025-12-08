@@ -4397,6 +4397,7 @@ export type Database = {
         | "collect_replication_metrics"
         | "run_replication_sync"
         | "prepare_zfs_template"
+        | "onboard_zfs_target"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -4597,6 +4598,7 @@ export const Constants = {
         "collect_replication_metrics",
         "run_replication_sync",
         "prepare_zfs_template",
+        "onboard_zfs_target",
       ],
       operation_type: [
         "idrac_api",

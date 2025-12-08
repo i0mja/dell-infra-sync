@@ -42,7 +42,11 @@ function formatBytes(bytes: number | null): string {
   return `${gb.toFixed(1)} GB`;
 }
 
-export function DrQuickActions() {
+interface DrQuickActionsProps {
+  onOpenOnboardWizard?: () => void;
+}
+
+export function DrQuickActions({ onOpenOnboardWizard }: DrQuickActionsProps) {
   const { vcenters, loading: vcentersLoading } = useVCenters();
   const { templates, loading: templatesLoading } = useZfsTemplates();
   const { groups, createGroup } = useProtectionGroups();
@@ -153,20 +157,16 @@ export function DrQuickActions() {
               <Button 
                 variant="outline" 
                 size="sm"
-                onClick={() => setShowDeployWizard(true)}
-                disabled={isLoading || !hasTemplates || !hasVCenters}
+                onClick={onOpenOnboardWizard}
+                disabled={isLoading || !hasVCenters}
               >
                 <Rocket className="h-4 w-4 mr-2" />
-                Deploy ZFS Target
+                Add ZFS Target
               </Button>
             </TooltipTrigger>
-            {(!hasTemplates || !hasVCenters) && !isLoading && (
+            {!hasVCenters && !isLoading && (
               <TooltipContent>
-                <p>
-                  {!hasVCenters 
-                    ? "Configure a vCenter first" 
-                    : "Create a ZFS template first in Settings → Infrastructure"}
-                </p>
+                <p>Configure a vCenter first</p>
               </TooltipContent>
             )}
           </Tooltip>

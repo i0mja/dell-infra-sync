@@ -27,7 +27,11 @@ interface SetupStep {
   actionLabel?: string;
 }
 
-export function DrOnboarding() {
+interface DrOnboardingProps {
+  onOpenOnboardWizard?: () => void;
+}
+
+export function DrOnboarding({ onOpenOnboardWizard }: DrOnboardingProps) {
   const navigate = useNavigate();
   const { vcenters } = useVCenters();
   const { templates } = useZfsTemplates();
@@ -60,12 +64,12 @@ export function DrOnboarding() {
     },
     {
       id: 'target',
-      title: 'Deploy DR Target',
-      description: 'Deploy a ZFS replication target from template or add an existing one',
+      title: 'Add ZFS Target',
+      description: 'Set up an existing VM or template as a ZFS replication target',
       icon: Target,
       completed: hasTarget,
-      action: hasTemplate ? () => setShowDeployWizard(true) : undefined,
-      actionLabel: hasTarget ? 'View Targets' : 'Deploy Target'
+      action: onOpenOnboardWizard || (() => setShowDeployWizard(true)),
+      actionLabel: hasTarget ? 'View Targets' : 'Add Target'
     },
     {
       id: 'protect',
