@@ -1,11 +1,13 @@
 /**
  * Unified ZFS Target Onboarding Wizard
  * 
- * Single wizard that handles the entire flow from VM selection to syncing data:
- * 1. Select VM/Template from vCenter
- * 2. SSH Authentication (test/deploy keys)
- * 3. Configuration (packages, ZFS, NFS setup)
- * 4. Finalization (register target, add datastore, protection group)
+ * 6-Page wizard that handles the entire flow from VM selection to syncing data:
+ * Page 1: Select Target (vCenter, VM, name)
+ * Page 2: SSH Authentication (key/password, test connection)
+ * Page 3: Storage Configuration (ZFS pool, compression, disk, NFS)
+ * Page 4: vCenter Integration (datastore name, advanced options)
+ * Page 5: Protection (optional - protection group, schedule, VMs)
+ * Page 6: Review & Deploy (summary, start setup, progress)
  */
 
 import { useState, useEffect, useCallback, useMemo } from "react";
@@ -15,13 +17,13 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
@@ -50,7 +52,6 @@ import {
   XCircle,
   Clock,
   AlertTriangle,
-  Wrench,
   SkipForward,
   Terminal,
   HardDrive,
@@ -64,9 +65,10 @@ import {
   Fingerprint,
   Plug,
   Calendar,
-  Layers,
   Download,
   Trash2,
+  ArrowLeft,
+  ArrowRight,
 } from "lucide-react";
 import { useVCenters } from "@/hooks/useVCenters";
 import { useVCenterVMs } from "@/hooks/useVCenterVMs";
@@ -104,11 +106,14 @@ interface StepResult {
   error?: string;
 }
 
-const WIZARD_STEPS = [
-  { id: 1, label: 'Select', icon: Server },
-  { id: 2, label: 'Auth', icon: Key },
-  { id: 3, label: 'Setup', icon: Settings },
-  { id: 4, label: 'Finish', icon: CheckCircle2 },
+// 6-page wizard structure
+const WIZARD_PAGES = [
+  { id: 1, label: 'Target', icon: Server },
+  { id: 2, label: 'SSH', icon: Key },
+  { id: 3, label: 'Storage', icon: HardDrive },
+  { id: 4, label: 'vCenter', icon: Plug },
+  { id: 5, label: 'Protect', icon: Shield },
+  { id: 6, label: 'Deploy', icon: CheckCircle2 },
 ];
 
 const STEP_LABELS: Record<string, string> = {
@@ -166,16 +171,16 @@ export function OnboardZfsTargetWizard({
   const queryClient = useQueryClient();
   const { vcenters, loading: vcentersLoading } = useVCenters();
   
-  // Wizard state
-  const [currentStep, setCurrentStep] = useState(1);
+  // Wizard state - 6 pages
+  const [currentPage, setCurrentPage] = useState(1);
   const [jobId, setJobId] = useState<string | null>(null);
   
-  // Step 1: Selection
+  // Page 1: Selection
   const [selectedVCenterId, setSelectedVCenterId] = useState(preselectedVCenterId || "");
   const [selectedVMId, setSelectedVMId] = useState(preselectedVMId || "");
   const [targetName, setTargetName] = useState("");
   
-  // Step 2: Authentication
+  // Page 2: Authentication
   const [authMethod, setAuthMethod] = useState<'existing_key' | 'generate_key' | 'password'>('existing_key');
   const [selectedSshKeyId, setSelectedSshKeyId] = useState("");
   const [rootPassword, setRootPassword] = useState("");
@@ -185,41 +190,31 @@ export function OnboardZfsTargetWizard({
   const [generatingKey, setGeneratingKey] = useState(false);
   const [newGeneratedKeyId, setNewGeneratedKeyId] = useState<string | null>(null);
   
-  // Legacy for backward compat
-  const generateNewKey = authMethod === 'generate_key';
-  
-  // Step 3: Configuration options
-  const [installPackages, setInstallPackages] = useState(true);
-  const [createUser, setCreateUser] = useState(true);
-  const [resetMachineId, setResetMachineId] = useState(true);
-  const [resetSshHostKeys, setResetSshHostKeys] = useState(true);
-  const [resetNfsConfig, setResetNfsConfig] = useState(true);
+  // Page 3: Storage Configuration
   const [zfsPoolName, setZfsPoolName] = useState("tank");
-  const [nfsNetwork, setNfsNetwork] = useState("10.0.0.0/8");
-  
-  // Phase 5: Enhanced configuration
   const [zfsCompression, setZfsCompression] = useState<'lz4' | 'zstd' | 'off'>('lz4');
-  const [datastoreName, setDatastoreName] = useState("");
+  const [nfsNetwork, setNfsNetwork] = useState("10.0.0.0/8");
   const [detectedDisks, setDetectedDisks] = useState<Array<{ device: string; size: string; type: string }>>([]);
   const [selectedDisk, setSelectedDisk] = useState("");
   const [detectingDisks, setDetectingDisks] = useState(false);
   const [diskDetectionDone, setDiskDetectionDone] = useState(false);
   
-  // Phase 6: Enhanced Finalization options
+  // Page 4: vCenter Integration
+  const [datastoreName, setDatastoreName] = useState("");
+  const [installPackages, setInstallPackages] = useState(true);
+  const [createUser, setCreateUser] = useState(true);
+  const [resetMachineId, setResetMachineId] = useState(false);
+  
+  // Page 5: Protection
   const [protectionGroupOption, setProtectionGroupOption] = useState<'new' | 'existing' | 'skip'>('skip');
+  const [protectionGroupName, setProtectionGroupName] = useState("");
   const [existingProtectionGroupId, setExistingProtectionGroupId] = useState("");
   const [protectionGroupDescription, setProtectionGroupDescription] = useState("");
   const [vmsToProtect, setVmsToProtect] = useState<string[]>([]);
   const [schedulePreset, setSchedulePreset] = useState<SchedulePreset>('hourly');
   const [customCron, setCustomCron] = useState("0 * * * *");
   
-  // Legacy state - kept for backward compatibility
-  const [createProtectionGroup, setCreateProtectionGroup] = useState(false);
-  const [protectionGroupName, setProtectionGroupName] = useState("");
-  const [startInitialSync, setStartInitialSync] = useState(false);
-  const [convertBackToTemplate, setConvertBackToTemplate] = useState(false);
-  
-  // Job status
+  // Page 6: Job execution state
   const [jobStatus, setJobStatus] = useState<string>('');
   const [stepResults, setStepResults] = useState<StepResult[]>([]);
   const [progressPercent, setProgressPercent] = useState(0);
@@ -229,15 +224,14 @@ export function OnboardZfsTargetWizard({
   const [vmIp, setVmIp] = useState<string>('');
   const [needsRootPassword, setNeedsRootPassword] = useState(false);
   
-  // Phase 7: UX Polish - Recovery state
+  // Recovery state
   const [retryingStep, setRetryingStep] = useState<string | null>(null);
   const [rollingBack, setRollingBack] = useState(false);
   const [rollbackStatus, setRollbackStatus] = useState<'idle' | 'running' | 'success' | 'failed'>('idle');
   
-  // Clear VM cache when vCenter changes to ensure fresh data
+  // Clear VM cache when vCenter changes
   useEffect(() => {
     if (selectedVCenterId) {
-      console.log('[OnboardZfsTargetWizard] vCenter changed, invalidating VM cache for:', selectedVCenterId);
       queryClient.invalidateQueries({ queryKey: ['vcenter-vms', selectedVCenterId] });
     }
   }, [selectedVCenterId, queryClient]);
@@ -251,7 +245,7 @@ export function OnboardZfsTargetWizard({
   // Fetch existing protection groups
   const { groups: existingProtectionGroups = [], loading: groupsLoading } = useProtectionGroups();
   
-  // Filter active SSH keys for picker
+  // Filter active SSH keys
   const activeSshKeys = useMemo(() => 
     sshKeys.filter(k => k.status === 'active'), 
     [sshKeys]
@@ -266,13 +260,12 @@ export function OnboardZfsTargetWizard({
   // Find selected VM details
   const selectedVM = vms.find(vm => vm.id === selectedVMId);
   
-  // Phase 3: Check for duplicate targets
+  // Check for duplicate targets
   const { data: duplicateTargets = [] } = useQuery({
     queryKey: ['duplicate-target-check', selectedVMId, selectedVM?.ip_address, selectedVM?.name],
     queryFn: async () => {
       if (!selectedVM) return [];
       
-      // Build OR conditions for potential matches
       const conditions: string[] = [];
       if (selectedVM.ip_address) {
         conditions.push(`hostname.eq.${selectedVM.ip_address}`);
@@ -293,9 +286,9 @@ export function OnboardZfsTargetWizard({
     enabled: !!selectedVM,
   });
   
-  // Phase 3: Check OS compatibility (Debian/Ubuntu required)
+  // Check OS compatibility
   const isOsCompatible = useMemo(() => {
-    if (!selectedVM?.guest_os) return null; // Unknown - don't show warning
+    if (!selectedVM?.guest_os) return null;
     const os = selectedVM.guest_os.toLowerCase();
     return os.includes('debian') || os.includes('ubuntu') || os.includes('linux');
   }, [selectedVM?.guest_os]);
@@ -303,7 +296,7 @@ export function OnboardZfsTargetWizard({
   // Reset when dialog opens
   useEffect(() => {
     if (open) {
-      setCurrentStep(1);
+      setCurrentPage(1);
       setJobId(null);
       setSelectedVCenterId(preselectedVCenterId || "");
       setSelectedVMId(preselectedVMId || "");
@@ -323,21 +316,24 @@ export function OnboardZfsTargetWizard({
       setVmState('');
       setVmIp('');
       setNeedsRootPassword(false);
-      // Phase 5 resets
       setZfsCompression('lz4');
+      setZfsPoolName("tank");
+      setNfsNetwork("10.0.0.0/8");
       setDatastoreName("");
       setDetectedDisks([]);
       setSelectedDisk("");
       setDetectingDisks(false);
       setDiskDetectionDone(false);
-      // Phase 6 resets
+      setInstallPackages(true);
+      setCreateUser(true);
+      setResetMachineId(false);
       setProtectionGroupOption('skip');
+      setProtectionGroupName("");
       setExistingProtectionGroupId("");
       setProtectionGroupDescription("");
       setVmsToProtect([]);
       setSchedulePreset('hourly');
       setCustomCron("0 * * * *");
-      // Phase 7 resets
       setRetryingStep(null);
       setRollingBack(false);
       setRollbackStatus('idle');
@@ -355,7 +351,7 @@ export function OnboardZfsTargetWizard({
   
   // Auto-update datastore name when target name changes
   useEffect(() => {
-    if (targetName && !datastoreName.startsWith('NFS-')) {
+    if (targetName && !datastoreName) {
       setDatastoreName(`NFS-${targetName}`);
     }
   }, [targetName, datastoreName]);
@@ -391,35 +387,15 @@ export function OnboardZfsTargetWizard({
       if (details.vm_ip) {
         setVmIp(details.vm_ip as string);
       }
-      // Check if we need root password
       const results = details.step_results as StepResult[] | undefined;
       if (results) {
         const needsPwd = results.some(r => r.needs_root_password);
         setNeedsRootPassword(needsPwd);
-        if (needsPwd && !rootPassword) {
-          // Stay on auth step if password needed
-          setCurrentStep(2);
-        }
       }
-    }
-    
-    // Move to next step based on progress
-    if (job.status === 'running') {
-      if (progressPercent < 35) {
-        setCurrentStep(2);
-      } else if (progressPercent < 90) {
-        setCurrentStep(3);
-      } else {
-        setCurrentStep(4);
-      }
-    }
-    
-    if (job.status === 'completed') {
-      setCurrentStep(4);
     }
     
     return job.status;
-  }, [jobId, rootPassword, progressPercent]);
+  }, [jobId]);
   
   // Polling effect
   useEffect(() => {
@@ -432,7 +408,6 @@ export function OnboardZfsTargetWizard({
       }
     }, 2000);
     
-    // Initial poll
     pollJobStatus();
     
     return () => clearInterval(interval);
@@ -467,15 +442,11 @@ export function OnboardZfsTargetWizard({
             install_packages: installPackages,
             create_user: createUser,
             reset_machine_id: resetMachineId,
-            reset_ssh_host_keys: resetSshHostKeys,
-            reset_nfs_config: resetNfsConfig,
             zfs_pool_name: zfsPoolName,
             nfs_network: nfsNetwork,
-            // Phase 5: Enhanced configuration
             zfs_compression: zfsCompression,
             zfs_disk: selectedDisk || undefined,
             datastore_name: datastoreName,
-            // Phase 6: Enhanced Finalization
             protection_group_option: protectionGroupOption,
             existing_protection_group_id: protectionGroupOption === 'existing' ? existingProtectionGroupId : undefined,
             protection_group_name: protectionGroupOption === 'new' ? protectionGroupName : undefined,
@@ -487,8 +458,6 @@ export function OnboardZfsTargetWizard({
             rpo_minutes: protectionGroupOption !== 'skip' 
               ? (schedulePreset === 'custom' ? 60 : SCHEDULE_PRESETS[schedulePreset].rpoMinutes)
               : undefined,
-            start_initial_sync: startInitialSync,
-            convert_back_to_template: convertBackToTemplate,
           }
         })
         .select()
@@ -497,7 +466,6 @@ export function OnboardZfsTargetWizard({
       if (error) throw error;
       
       setJobId(job.id);
-      setCurrentStep(2);
       toast({ title: 'Onboarding started', description: 'Setting up your ZFS target...' });
     } catch (err) {
       toast({ 
@@ -508,21 +476,11 @@ export function OnboardZfsTargetWizard({
     }
   };
   
-  // Update job with root password
+  // Submit root password
   const submitRootPassword = async () => {
     if (!jobId || !rootPassword) return;
     
     try {
-      const { error } = await supabase
-        .from('jobs')
-        .update({
-          details: supabase.rpc ? undefined : {
-            root_password: rootPassword,
-          }
-        })
-        .eq('id', jobId);
-      
-      // Actually we need to update the job details properly
       const { data: job } = await supabase
         .from('jobs')
         .select('details')
@@ -568,8 +526,6 @@ export function OnboardZfsTargetWizard({
         description: `Auto-generated for ZFS target: ${targetName}` 
       });
       
-      // The key was generated - need to fetch the latest key
-      // We'll do a quick query to find the newest key
       const { data: newKey } = await supabase
         .from('ssh_keys')
         .select('id')
@@ -612,7 +568,6 @@ export function OnboardZfsTargetWizard({
       const { data: job, error } = await supabase
         .from('jobs')
         .insert({
-          // Cast as any since test_ssh_connection may be added to job_type enum later
           job_type: 'test_ssh_connection' as unknown as 'onboard_zfs_target',
           status: 'pending',
           created_by: user?.user?.id,
@@ -628,7 +583,6 @@ export function OnboardZfsTargetWizard({
       
       if (error) throw error;
       
-      // Poll for result (max 30 seconds)
       let attempts = 0;
       const pollInterval = setInterval(async () => {
         attempts++;
@@ -665,7 +619,7 @@ export function OnboardZfsTargetWizard({
     }
   };
   
-  // Copy public key to clipboard
+  // Copy public key
   const handleCopyPublicKey = async () => {
     if (!selectedSshKey?.public_key) return;
     
@@ -675,7 +629,7 @@ export function OnboardZfsTargetWizard({
     setTimeout(() => setCopiedPublicKey(false), 2000);
   };
   
-  // Phase 5: Detect available disks
+  // Detect disks
   const handleDetectDisks = async () => {
     if (!selectedVM?.ip_address) {
       toast({ title: 'VM has no IP address', variant: 'destructive' });
@@ -706,7 +660,6 @@ export function OnboardZfsTargetWizard({
       
       if (error) throw error;
       
-      // Poll for result (max 30 seconds)
       let attempts = 0;
       const pollInterval = setInterval(async () => {
         attempts++;
@@ -750,7 +703,7 @@ export function OnboardZfsTargetWizard({
     }
   };
   
-  // Phase 7: Export console log to file
+  // Export log
   const handleExportLog = useCallback(() => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const content = [
@@ -784,7 +737,7 @@ export function OnboardZfsTargetWizard({
     toast({ title: 'Log exported', description: `Downloaded ${a.download}` });
   }, [targetName, jobId, selectedVM, jobStatus, stepResults, consoleLog, toast]);
   
-  // Phase 7: Retry a failed step
+  // Retry step
   const handleRetryStep = async (stepName: string) => {
     if (!jobId) return;
     
@@ -821,7 +774,6 @@ export function OnboardZfsTargetWizard({
       
       toast({ title: 'Retrying step', description: `Re-running from ${STEP_LABELS[stepName] || stepName}...` });
       
-      // Poll for result
       let attempts = 0;
       const pollInterval = setInterval(async () => {
         attempts++;
@@ -834,7 +786,6 @@ export function OnboardZfsTargetWizard({
         if (jobResult?.status === 'completed') {
           clearInterval(pollInterval);
           setRetryingStep(null);
-          // Update step results to show success
           setStepResults(prev => prev.map(r => 
             r.step === stepName ? { ...r, status: 'success' as StepStatus, message: 'Retry successful' } : r
           ));
@@ -859,7 +810,7 @@ export function OnboardZfsTargetWizard({
     }
   };
   
-  // Phase 7: Rollback/cleanup partial configuration
+  // Rollback
   const handleRollback = async () => {
     if (!jobId) return;
     
@@ -893,7 +844,6 @@ export function OnboardZfsTargetWizard({
       
       toast({ title: 'Cleanup started', description: 'Removing partial configuration...' });
       
-      // Poll for result
       let attempts = 0;
       const pollInterval = setInterval(async () => {
         attempts++;
@@ -930,19 +880,49 @@ export function OnboardZfsTargetWizard({
     }
   };
   
-  // Validation for proceeding
-  const canProceedStep1 = selectedVCenterId && selectedVMId && targetName && (
-    authMethod === 'password' ? !!rootPassword : 
-    authMethod === 'existing_key' ? !!selectedSshKeyId : 
-    authMethod === 'generate_key' ? true : false
-  );
+  // Page validation
+  const canProceedFromPage = (page: number): boolean => {
+    switch (page) {
+      case 1: 
+        return !!selectedVCenterId && !!selectedVMId && !!targetName;
+      case 2: 
+        return authMethod === 'password' ? !!rootPassword : 
+               authMethod === 'existing_key' ? !!selectedSshKeyId : 
+               authMethod === 'generate_key' ? (!!newGeneratedKeyId || !!selectedSshKeyId) : false;
+      case 3: 
+        return !!zfsPoolName && !!nfsNetwork;
+      case 4: 
+        return !!datastoreName;
+      case 5: 
+        return true; // Optional page - can always proceed
+      case 6: 
+        return !isJobRunning;
+      default: 
+        return false;
+    }
+  };
+  
   const isJobRunning = jobStatus === 'running' || jobStatus === 'pending';
   const isJobComplete = jobStatus === 'completed';
   const isJobFailed = jobStatus === 'failed';
+  const hasStartedJob = !!jobId;
+  
+  // Navigation handlers
+  const handleNext = () => {
+    if (currentPage < 6 && canProceedFromPage(currentPage)) {
+      setCurrentPage(currentPage + 1);
+    }
+  };
+  
+  const handleBack = () => {
+    if (currentPage > 1 && !hasStartedJob) {
+      setCurrentPage(currentPage - 1);
+    }
+  };
   
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl max-h-[85vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-3xl max-h-[80vh] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <HardDrive className="h-5 w-5" />
@@ -953,16 +933,16 @@ export function OnboardZfsTargetWizard({
           </DialogDescription>
         </DialogHeader>
         
-        {/* Step indicator */}
-        <div className="flex items-center justify-center gap-2 py-4 border-b">
-          {WIZARD_STEPS.map((step, index) => {
-            const Icon = step.icon;
-            const isActive = currentStep === step.id;
-            const isComplete = currentStep > step.id || (isJobComplete && step.id <= 4);
+        {/* Page indicator */}
+        <div className="flex items-center justify-center gap-1 py-3 border-b shrink-0">
+          {WIZARD_PAGES.map((page, index) => {
+            const Icon = page.icon;
+            const isActive = currentPage === page.id;
+            const isComplete = currentPage > page.id || (isJobComplete && page.id <= 6);
             
             return (
-              <div key={step.id} className="flex items-center">
-                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+              <div key={page.id} className="flex items-center">
+                <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium transition-colors ${
                   isActive 
                     ? 'bg-primary text-primary-foreground' 
                     : isComplete 
@@ -970,15 +950,15 @@ export function OnboardZfsTargetWizard({
                       : 'bg-muted text-muted-foreground'
                 }`}>
                   {isComplete && !isActive ? (
-                    <CheckCircle2 className="h-4 w-4" />
+                    <CheckCircle2 className="h-3 w-3" />
                   ) : (
-                    <Icon className="h-4 w-4" />
+                    <Icon className="h-3 w-3" />
                   )}
-                  <span className="hidden sm:inline">{step.label}</span>
+                  <span className="hidden sm:inline">{page.label}</span>
                 </div>
-                {index < WIZARD_STEPS.length - 1 && (
-                  <div className={`w-8 h-0.5 mx-1 ${
-                    currentStep > step.id ? 'bg-green-500' : 'bg-border'
+                {index < WIZARD_PAGES.length - 1 && (
+                  <div className={`w-4 h-0.5 mx-0.5 ${
+                    currentPage > page.id ? 'bg-green-500' : 'bg-border'
                   }`} />
                 )}
               </div>
@@ -986,10 +966,11 @@ export function OnboardZfsTargetWizard({
           })}
         </div>
         
-        <ScrollArea className="flex-1 px-1">
-          {/* Step 1: Select VM */}
-          {currentStep === 1 && (
-            <div className="space-y-4 py-4">
+        {/* Page content - scrollable */}
+        <div className="flex-1 overflow-y-auto px-1 py-4">
+          {/* Page 1: Select Target */}
+          {currentPage === 1 && (
+            <div className="space-y-4">
               <div className="space-y-2">
                 <Label>vCenter</Label>
                 <Select value={selectedVCenterId} onValueChange={setSelectedVCenterId}>
@@ -1023,83 +1004,77 @@ export function OnboardZfsTargetWizard({
                 />
               </div>
               
-              {/* Enhanced VM Preview Card */}
+              {/* VM Preview Card */}
               {selectedVM && (
-                <div className="space-y-3">
-                  <div className="p-3 rounded-lg bg-muted/50 space-y-2 text-sm">
-                    {/* Header with power state and cluster */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        {selectedVM.is_template ? (
-                          <Badge variant="outline" className="text-xs">
-                            <Copy className="h-3 w-3 mr-1" />
-                            Template
-                          </Badge>
-                        ) : selectedVM.power_state === 'poweredOn' ? (
-                          <Badge variant="default" className="bg-green-500/10 text-green-600 border-green-500/30 text-xs">
-                            <Power className="h-3 w-3 mr-1" />
-                            Powered On
-                          </Badge>
-                        ) : (
-                          <Badge variant="secondary" className="text-xs">
-                            <PowerOff className="h-3 w-3 mr-1" />
-                            Powered Off
-                          </Badge>
-                        )}
-                      </div>
-                      {selectedVM.cluster_name && (
+                <div className="p-3 rounded-lg bg-muted/50 space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      {selectedVM.is_template ? (
                         <Badge variant="outline" className="text-xs">
-                          {selectedVM.cluster_name}
+                          <Copy className="h-3 w-3 mr-1" />
+                          Template
+                        </Badge>
+                      ) : selectedVM.power_state === 'poweredOn' ? (
+                        <Badge variant="default" className="bg-green-500/10 text-green-600 border-green-500/30 text-xs">
+                          <Power className="h-3 w-3 mr-1" />
+                          Powered On
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary" className="text-xs">
+                          <PowerOff className="h-3 w-3 mr-1" />
+                          Powered Off
                         </Badge>
                       )}
                     </div>
-                    
-                    {/* VM details */}
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Guest OS:</span>
-                      <span>{selectedVM.guest_os || 'Unknown'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">CPU/Memory:</span>
-                      <span>{selectedVM.cpu_count || '?'} vCPU / {selectedVM.memory_mb ? Math.round(selectedVM.memory_mb / 1024) : '?'} GB</span>
-                    </div>
-                    {selectedVM.ip_address && (
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">IP Address:</span>
-                        <span className="font-mono text-xs">{selectedVM.ip_address}</span>
-                      </div>
+                    {selectedVM.cluster_name && (
+                      <Badge variant="outline" className="text-xs">
+                        {selectedVM.cluster_name}
+                      </Badge>
                     )}
                   </div>
-                  
-                  {/* Duplicate Warning */}
-                  {duplicateTargets.length > 0 && (
-                    <div className="p-3 rounded-lg border border-yellow-500/50 bg-yellow-500/5">
-                      <div className="flex items-start gap-2 text-yellow-600 dark:text-yellow-500">
-                        <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                        <div className="text-sm">
-                          <span className="font-medium">Possible duplicate detected</span>
-                          <p className="text-xs mt-0.5 opacity-80">
-                            This VM may already be registered as "{duplicateTargets[0].name}"
-                          </p>
-                        </div>
-                      </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Guest OS:</span>
+                    <span>{selectedVM.guest_os || 'Unknown'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">CPU/Memory:</span>
+                    <span>{selectedVM.cpu_count || '?'} vCPU / {selectedVM.memory_mb ? Math.round(selectedVM.memory_mb / 1024) : '?'} GB</span>
+                  </div>
+                  {selectedVM.ip_address && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">IP Address:</span>
+                      <span className="font-mono text-xs">{selectedVM.ip_address}</span>
                     </div>
                   )}
-                  
-                  {/* OS Compatibility Warning */}
-                  {isOsCompatible === false && (
-                    <div className="p-3 rounded-lg border border-orange-500/50 bg-orange-500/5">
-                      <div className="flex items-start gap-2 text-orange-600 dark:text-orange-500">
-                        <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                        <div className="text-sm">
-                          <span className="font-medium">OS compatibility warning</span>
-                          <p className="text-xs mt-0.5 opacity-80">
-                            This wizard requires Debian/Ubuntu. Detected: {selectedVM.guest_os}
-                          </p>
-                        </div>
-                      </div>
+                </div>
+              )}
+              
+              {/* Warnings */}
+              {duplicateTargets.length > 0 && (
+                <div className="p-3 rounded-lg border border-yellow-500/50 bg-yellow-500/5">
+                  <div className="flex items-start gap-2 text-yellow-600 dark:text-yellow-500">
+                    <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                    <div className="text-sm">
+                      <span className="font-medium">Possible duplicate detected</span>
+                      <p className="text-xs mt-0.5 opacity-80">
+                        This VM may already be registered as "{duplicateTargets[0].name}"
+                      </p>
                     </div>
-                  )}
+                  </div>
+                </div>
+              )}
+              
+              {isOsCompatible === false && (
+                <div className="p-3 rounded-lg border border-orange-500/50 bg-orange-500/5">
+                  <div className="flex items-start gap-2 text-orange-600 dark:text-orange-500">
+                    <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                    <div className="text-sm">
+                      <span className="font-medium">OS compatibility warning</span>
+                      <p className="text-xs mt-0.5 opacity-80">
+                        This wizard requires Debian/Ubuntu. Detected: {selectedVM?.guest_os}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               )}
               
@@ -1114,100 +1089,94 @@ export function OnboardZfsTargetWizard({
                   This name will be used for the replication target and datastore
                 </p>
               </div>
+            </div>
+          )}
+          
+          {/* Page 2: SSH Authentication */}
+          {currentPage === 2 && (
+            <div className="space-y-4">
+              <Label className="text-sm font-medium">SSH Authentication Method</Label>
               
-              <div className="pt-4 border-t space-y-4">
-                <Label className="text-sm font-medium">SSH Authentication</Label>
-                
-                <RadioGroup 
-                  value={authMethod} 
-                  onValueChange={(v) => setAuthMethod(v as 'existing_key' | 'generate_key' | 'password')}
-                  className="space-y-3"
-                >
-                  {/* Existing SSH Key */}
-                  <div className="flex items-start space-x-3">
-                    <RadioGroupItem value="existing_key" id="auth-existing" className="mt-1" />
-                    <div className="flex-1 space-y-2">
-                      <Label htmlFor="auth-existing" className="text-sm cursor-pointer">
-                        Use existing SSH key
-                      </Label>
-                      
-                      {authMethod === 'existing_key' && (
-                        <div className="space-y-3">
-                          <Select 
-                            value={selectedSshKeyId} 
-                            onValueChange={setSelectedSshKeyId}
-                          >
-                            <SelectTrigger className="w-full">
-                              <SelectValue placeholder={sshKeysLoading ? "Loading keys..." : "Select SSH key"} />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {activeSshKeys.map((key) => (
-                                <SelectItem key={key.id} value={key.id}>
-                                  <div className="flex items-center gap-2">
-                                    <Key className="h-3 w-3" />
-                                    <span>{key.name}</span>
-                                    {key.public_key_fingerprint && (
-                                      <span className="text-xs text-muted-foreground font-mono">
-                                        {key.public_key_fingerprint.slice(0, 16)}...
-                                      </span>
-                                    )}
-                                  </div>
-                                </SelectItem>
-                              ))}
-                              {activeSshKeys.length === 0 && (
-                                <SelectItem value="_none" disabled>
-                                  No active SSH keys found
-                                </SelectItem>
-                              )}
-                            </SelectContent>
-                          </Select>
-                          
-                          {/* Public key display */}
-                          {selectedSshKey && (
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between">
-                                <span className="text-xs text-muted-foreground flex items-center gap-1">
-                                  <Fingerprint className="h-3 w-3" />
-                                  {selectedSshKey.public_key_fingerprint}
-                                </span>
-                                <Button 
-                                  variant="ghost" 
-                                  size="sm" 
-                                  onClick={handleCopyPublicKey}
-                                  className="h-6 px-2"
-                                >
-                                  {copiedPublicKey ? (
-                                    <Check className="h-3 w-3 text-green-500" />
-                                  ) : (
-                                    <Copy className="h-3 w-3" />
-                                  )}
-                                </Button>
-                              </div>
-                              <Textarea
-                                value={selectedSshKey.public_key}
-                                readOnly
-                                className="font-mono text-xs h-16 resize-none"
-                              />
+              <RadioGroup 
+                value={authMethod} 
+                onValueChange={(v) => setAuthMethod(v as 'existing_key' | 'generate_key' | 'password')}
+                className="space-y-3"
+              >
+                {/* Existing SSH Key */}
+                <div className="flex items-start space-x-3 p-3 rounded-lg border bg-card">
+                  <RadioGroupItem value="existing_key" id="auth-existing" className="mt-1" />
+                  <div className="flex-1 space-y-2">
+                    <Label htmlFor="auth-existing" className="text-sm cursor-pointer font-medium">
+                      Use existing SSH key
+                    </Label>
+                    
+                    {authMethod === 'existing_key' && (
+                      <div className="space-y-3">
+                        <Select 
+                          value={selectedSshKeyId} 
+                          onValueChange={setSelectedSshKeyId}
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder={sshKeysLoading ? "Loading keys..." : "Select SSH key"} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {activeSshKeys.map((key) => (
+                              <SelectItem key={key.id} value={key.id}>
+                                <div className="flex items-center gap-2">
+                                  <Key className="h-3 w-3" />
+                                  <span>{key.name}</span>
+                                </div>
+                              </SelectItem>
+                            ))}
+                            {activeSshKeys.length === 0 && (
+                              <SelectItem value="_none" disabled>
+                                No active SSH keys found
+                              </SelectItem>
+                            )}
+                          </SelectContent>
+                        </Select>
+                        
+                        {selectedSshKey && (
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                <Fingerprint className="h-3 w-3" />
+                                {selectedSshKey.public_key_fingerprint}
+                              </span>
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                onClick={handleCopyPublicKey}
+                                className="h-6 px-2"
+                              >
+                                {copiedPublicKey ? (
+                                  <Check className="h-3 w-3 text-green-500" />
+                                ) : (
+                                  <Copy className="h-3 w-3" />
+                                )}
+                              </Button>
                             </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  
-                  {/* Generate New Key */}
-                  <div className="flex items-start space-x-3">
-                    <RadioGroupItem value="generate_key" id="auth-generate" className="mt-1" />
-                    <div className="flex-1 space-y-2">
-                      <Label htmlFor="auth-generate" className="text-sm cursor-pointer">
-                        Generate new SSH key
-                      </Label>
-                      
-                      {authMethod === 'generate_key' && (
-                        <div className="space-y-2">
-                          <p className="text-xs text-muted-foreground">
-                            A new keypair will be generated and saved. The public key will be deployed to the target.
-                          </p>
+                </div>
+                
+                {/* Generate New Key */}
+                <div className="flex items-start space-x-3 p-3 rounded-lg border bg-card">
+                  <RadioGroupItem value="generate_key" id="auth-generate" className="mt-1" />
+                  <div className="flex-1 space-y-2">
+                    <Label htmlFor="auth-generate" className="text-sm cursor-pointer font-medium">
+                      Generate new SSH key
+                    </Label>
+                    
+                    {authMethod === 'generate_key' && (
+                      <div className="space-y-2">
+                        <p className="text-xs text-muted-foreground">
+                          A new keypair will be generated and saved.
+                        </p>
+                        <div className="flex items-center gap-2">
                           <Button
                             variant="outline"
                             size="sm"
@@ -1228,782 +1197,661 @@ export function OnboardZfsTargetWizard({
                             </Badge>
                           )}
                         </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                
+                {/* Password Auth */}
+                <div className="flex items-start space-x-3 p-3 rounded-lg border bg-card">
+                  <RadioGroupItem value="password" id="auth-password" className="mt-1" />
+                  <div className="flex-1 space-y-2">
+                    <Label htmlFor="auth-password" className="text-sm cursor-pointer font-medium">
+                      Use password
+                    </Label>
+                    
+                    {authMethod === 'password' && (
+                      <Input
+                        type="password"
+                        value={rootPassword}
+                        onChange={(e) => setRootPassword(e.target.value)}
+                        placeholder="Root password"
+                      />
+                    )}
+                  </div>
+                </div>
+              </RadioGroup>
+              
+              {/* Test SSH Connection */}
+              {selectedVM?.ip_address && (authMethod === 'existing_key' && selectedSshKeyId || authMethod === 'password' && rootPassword) && (
+                <div className="flex items-center gap-2 pt-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleTestSshConnection}
+                    disabled={testingSsh}
+                  >
+                    {testingSsh ? (
+                      <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                    ) : (
+                      <Plug className="h-3 w-3 mr-2" />
+                    )}
+                    Test SSH Connection
+                  </Button>
+                  {sshTestResult === 'success' && (
+                    <Badge variant="outline" className="text-green-600">
+                      <Check className="h-3 w-3 mr-1" />
+                      Connected
+                    </Badge>
+                  )}
+                  {sshTestResult === 'failed' && (
+                    <Badge variant="outline" className="text-destructive">
+                      <XCircle className="h-3 w-3 mr-1" />
+                      Failed
+                    </Badge>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+          
+          {/* Page 3: Storage Configuration */}
+          {currentPage === 3 && (
+            <div className="space-y-4">
+              <div className="space-y-4 p-4 rounded-lg border bg-card">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <HardDrive className="h-4 w-4" />
+                  ZFS Configuration
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-xs text-muted-foreground">Pool Name</Label>
+                    <Input
+                      value={zfsPoolName}
+                      onChange={(e) => setZfsPoolName(e.target.value)}
+                      placeholder="tank"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs text-muted-foreground">Compression</Label>
+                    <Select value={zfsCompression} onValueChange={(v) => setZfsCompression(v as 'lz4' | 'zstd' | 'off')}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="lz4">LZ4 (fast, default)</SelectItem>
+                        <SelectItem value="zstd">ZSTD (better compression)</SelectItem>
+                        <SelectItem value="off">Off (no compression)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                
+                {/* Disk Detection */}
+                {sshTestResult === 'success' && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Label className="text-xs text-muted-foreground">Target Disk</Label>
+                      {!diskDetectionDone && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleDetectDisks}
+                          disabled={detectingDisks}
+                          className="h-6 text-xs"
+                        >
+                          {detectingDisks ? (
+                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-3 w-3 mr-1" />
+                          )}
+                          Detect Disks
+                        </Button>
                       )}
                     </div>
+                    
+                    {detectedDisks.length > 0 ? (
+                      <Select value={selectedDisk} onValueChange={setSelectedDisk}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select disk" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {detectedDisks.map((disk) => (
+                            <SelectItem key={disk.device} value={disk.device}>
+                              {disk.device} - {disk.size} ({disk.type})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : diskDetectionDone ? (
+                      <p className="text-xs text-muted-foreground">
+                        No available disks detected. Pool will be created on detected disks.
+                      </p>
+                    ) : null}
+                  </div>
+                )}
+                
+                {sshTestResult !== 'success' && (
+                  <p className="text-xs text-muted-foreground">
+                    Test SSH connection first to detect available disks.
+                  </p>
+                )}
+              </div>
+              
+              <div className="space-y-4 p-4 rounded-lg border bg-card">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Server className="h-4 w-4" />
+                  NFS Configuration
+                </div>
+                
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">Allowed Network (CIDR)</Label>
+                  <Input
+                    value={nfsNetwork}
+                    onChange={(e) => setNfsNetwork(e.target.value)}
+                    placeholder="10.0.0.0/8"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    ESXi hosts in this network will have access to the NFS export
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {/* Page 4: vCenter Integration */}
+          {currentPage === 4 && (
+            <div className="space-y-4">
+              <div className="space-y-4 p-4 rounded-lg border bg-card">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Plug className="h-4 w-4" />
+                  Datastore Configuration
+                </div>
+                
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">Datastore Name</Label>
+                  <Input
+                    value={datastoreName}
+                    onChange={(e) => setDatastoreName(e.target.value)}
+                    placeholder={`NFS-${targetName}`}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    This NFS datastore will be added to your vCenter
+                  </p>
+                </div>
+              </div>
+              
+              <div className="space-y-4 p-4 rounded-lg border bg-card">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Settings className="h-4 w-4" />
+                  Advanced Options
+                </div>
+                
+                <div className="space-y-3">
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="install-packages"
+                      checked={installPackages}
+                      onCheckedChange={(c) => setInstallPackages(!!c)}
+                    />
+                    <Label htmlFor="install-packages" className="text-sm cursor-pointer">
+                      Install ZFS & NFS packages
+                    </Label>
                   </div>
                   
-                  {/* Password Auth */}
-                  <div className="flex items-start space-x-3">
-                    <RadioGroupItem value="password" id="auth-password" className="mt-1" />
-                    <div className="flex-1 space-y-2">
-                      <Label htmlFor="auth-password" className="text-sm cursor-pointer">
-                        Use password
-                      </Label>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="create-user"
+                      checked={createUser}
+                      onCheckedChange={(c) => setCreateUser(!!c)}
+                    />
+                    <Label htmlFor="create-user" className="text-sm cursor-pointer">
+                      Create zfsadmin user
+                    </Label>
+                  </div>
+                  
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="reset-machine-id"
+                      checked={resetMachineId}
+                      onCheckedChange={(c) => setResetMachineId(!!c)}
+                    />
+                    <Label htmlFor="reset-machine-id" className="text-sm cursor-pointer">
+                      Reset machine-id (for cloned VMs)
+                    </Label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {/* Page 5: Protection (Optional) */}
+          {currentPage === 5 && (
+            <div className="space-y-4">
+              <div className="space-y-4 p-4 rounded-lg border bg-card">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Shield className="h-4 w-4" />
+                  Protection Group
+                </div>
+                
+                <RadioGroup 
+                  value={protectionGroupOption} 
+                  onValueChange={(v) => setProtectionGroupOption(v as 'new' | 'existing' | 'skip')}
+                  className="space-y-2"
+                >
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="skip" id="pg-skip" />
+                    <Label htmlFor="pg-skip" className="text-sm cursor-pointer">
+                      Skip for now (configure later)
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="new" id="pg-new" />
+                    <Label htmlFor="pg-new" className="text-sm cursor-pointer">
+                      Create new protection group
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="existing" id="pg-existing" />
+                    <Label htmlFor="pg-existing" className="text-sm cursor-pointer">
+                      Add to existing protection group
+                    </Label>
+                  </div>
+                </RadioGroup>
+                
+                {protectionGroupOption === 'new' && (
+                  <div className="space-y-3 pt-3 border-t">
+                    <div className="space-y-2">
+                      <Label className="text-xs text-muted-foreground">Group Name</Label>
+                      <Input
+                        value={protectionGroupName}
+                        onChange={(e) => setProtectionGroupName(e.target.value)}
+                        placeholder="e.g., prod-web-servers"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs text-muted-foreground">Description (optional)</Label>
+                      <Textarea
+                        value={protectionGroupDescription}
+                        onChange={(e) => setProtectionGroupDescription(e.target.value)}
+                        placeholder="Protection group for DR replication"
+                        className="h-16 resize-none"
+                      />
+                    </div>
+                  </div>
+                )}
+                
+                {protectionGroupOption === 'existing' && (
+                  <div className="space-y-2 pt-3 border-t">
+                    <Label className="text-xs text-muted-foreground">Select Existing Group</Label>
+                    <Select 
+                      value={existingProtectionGroupId} 
+                      onValueChange={setExistingProtectionGroupId}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={groupsLoading ? "Loading..." : "Select protection group"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {existingProtectionGroups
+                          .filter(g => !selectedVCenterId || g.source_vcenter_id === selectedVCenterId || !g.source_vcenter_id)
+                          .map((group) => (
+                            <SelectItem key={group.id} value={group.id}>
+                              <div className="flex items-center gap-2">
+                                <Shield className="h-3 w-3" />
+                                <span>{group.name}</span>
+                              </div>
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+              
+              {/* Replication Schedule */}
+              {protectionGroupOption !== 'skip' && (
+                <div className="space-y-4 p-4 rounded-lg border bg-card">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Calendar className="h-4 w-4" />
+                    Replication Schedule
+                  </div>
+                  
+                  <div className="flex flex-wrap gap-2">
+                    {(Object.keys(SCHEDULE_PRESETS) as SchedulePreset[]).map((preset) => (
+                      <Button
+                        key={preset}
+                        type="button"
+                        variant={schedulePreset === preset ? 'default' : 'outline'}
+                        size="sm"
+                        className="h-8"
+                        onClick={() => setSchedulePreset(preset)}
+                      >
+                        {SCHEDULE_PRESETS[preset].label}
+                      </Button>
+                    ))}
+                  </div>
+                  
+                  {schedulePreset === 'custom' && (
+                    <div className="space-y-2">
+                      <Label className="text-xs text-muted-foreground">Cron Expression</Label>
+                      <Input
+                        value={customCron}
+                        onChange={(e) => setCustomCron(e.target.value)}
+                        placeholder="*/15 * * * *"
+                        className="font-mono text-sm"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              {/* VM Selection */}
+              {protectionGroupOption !== 'skip' && vms.length > 0 && (
+                <div className="space-y-3 p-4 rounded-lg border bg-card">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">VMs to Protect</Label>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 text-xs"
+                      onClick={() => {
+                        if (vmsToProtect.length === Math.min(vms.length, 20)) {
+                          setVmsToProtect([]);
+                        } else {
+                          setVmsToProtect(vms.slice(0, 20).map(v => v.id));
+                        }
+                      }}
+                    >
+                      {vmsToProtect.length === Math.min(vms.length, 20) ? 'Deselect all' : 'Select all'}
+                    </Button>
+                  </div>
+                  <div className="max-h-40 overflow-y-auto space-y-1 rounded border p-2">
+                    {vms.slice(0, 20).map((vm) => (
+                      <div key={vm.id} className="flex items-center gap-2">
+                        <Checkbox
+                          id={`vm-${vm.id}`}
+                          checked={vmsToProtect.includes(vm.id)}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setVmsToProtect([...vmsToProtect, vm.id]);
+                            } else {
+                              setVmsToProtect(vmsToProtect.filter(id => id !== vm.id));
+                            }
+                          }}
+                        />
+                        <Label htmlFor={`vm-${vm.id}`} className="text-xs cursor-pointer flex items-center gap-1">
+                          {vm.power_state === 'poweredOn' ? (
+                            <Power className="h-3 w-3 text-green-500" />
+                          ) : (
+                            <PowerOff className="h-3 w-3 text-muted-foreground" />
+                          )}
+                          {vm.name}
+                        </Label>
+                      </div>
+                    ))}
+                    {vms.length > 20 && (
+                      <p className="text-xs text-muted-foreground pt-1 border-t">
+                        + {vms.length - 20} more VMs (configure in protection group settings)
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          
+          {/* Page 6: Review & Deploy */}
+          {currentPage === 6 && (
+            <div className="space-y-4">
+              {/* Summary Card */}
+              {!hasStartedJob && (
+                <div className="p-4 rounded-lg border bg-card">
+                  <div className="flex items-center gap-2 mb-3">
+                    <CheckCircle2 className="h-4 w-4 text-primary" />
+                    <span className="text-sm font-medium">Configuration Summary</span>
+                  </div>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Target:</span>
+                      <span className="font-medium">{targetName}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">VM:</span>
+                      <span>{selectedVM?.name} ({selectedVM?.ip_address || 'No IP'})</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">vCenter:</span>
+                      <span>{vcenters.find(v => v.id === selectedVCenterId)?.name}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">ZFS Pool:</span>
+                      <span>{zfsPoolName} ({zfsCompression})</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Datastore:</span>
+                      <span>{datastoreName}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">NFS Network:</span>
+                      <span>{nfsNetwork}</span>
+                    </div>
+                    {protectionGroupOption !== 'skip' && (
+                      <div className="flex justify-between pt-2 border-t mt-2">
+                        <span className="text-muted-foreground">Protection:</span>
+                        <span>
+                          {protectionGroupOption === 'new' 
+                            ? (protectionGroupName || 'New group')
+                            : existingProtectionGroups.find(g => g.id === existingProtectionGroupId)?.name || 'Existing group'
+                          }
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              
+              {/* Job Status */}
+              {hasStartedJob && (
+                <>
+                  {vmState && (
+                    <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/50">
+                      <Server className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm">VM State: <strong>{vmState}</strong></span>
+                      {vmIp && (
+                        <>
+                          <span className="text-muted-foreground">|</span>
+                          <span className="text-sm">IP: <strong>{vmIp}</strong></span>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  
+                  {isJobComplete && (
+                    <div className="p-4 rounded-lg bg-green-500/10 border border-green-500/20">
+                      <div className="flex items-center gap-2 text-green-600 mb-2">
+                        <CheckCircle2 className="h-5 w-5" />
+                        <span className="font-medium">ZFS Target Ready!</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        Your ZFS replication target has been configured successfully.
+                      </p>
+                    </div>
+                  )}
+                  
+                  {isJobFailed && (
+                    <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20 space-y-4">
+                      <div className="flex items-center gap-2 text-destructive">
+                        <XCircle className="h-5 w-5" />
+                        <span className="font-medium">Setup Failed</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        Check the console log for details.
+                      </p>
                       
-                      {authMethod === 'password' && (
+                      <div className="pt-3 border-t border-destructive/20">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-medium">Clean Up Partial Configuration?</p>
+                            <p className="text-xs text-muted-foreground">
+                              Remove any partially created ZFS pool and NFS exports.
+                            </p>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleRollback}
+                            disabled={rollingBack || rollbackStatus === 'success'}
+                          >
+                            {rollingBack ? (
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            ) : rollbackStatus === 'success' ? (
+                              <Check className="h-4 w-4 mr-2 text-green-500" />
+                            ) : (
+                              <Trash2 className="h-4 w-4 mr-2" />
+                            )}
+                            {rollbackStatus === 'success' ? 'Cleaned Up' : 'Clean Up'}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Root password prompt */}
+                  {needsRootPassword && (
+                    <div className="p-4 rounded-lg border border-yellow-500/50 bg-yellow-500/5 space-y-3">
+                      <div className="flex items-center gap-2 text-yellow-600">
+                        <AlertTriangle className="h-4 w-4" />
+                        <span className="font-medium">SSH Key Not Authorized</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        Enter the root password to deploy the SSH key automatically.
+                      </p>
+                      <div className="flex gap-2">
                         <Input
                           type="password"
                           value={rootPassword}
                           onChange={(e) => setRootPassword(e.target.value)}
                           placeholder="Root password"
+                          className="flex-1"
                         />
-                      )}
-                    </div>
-                  </div>
-                </RadioGroup>
-                
-                {/* Test SSH Connection Button */}
-                {selectedVM?.ip_address && (authMethod === 'existing_key' && selectedSshKeyId || authMethod === 'password' && rootPassword) && (
-                  <div className="flex items-center gap-2 pt-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleTestSshConnection}
-                      disabled={testingSsh}
-                    >
-                      {testingSsh ? (
-                        <Loader2 className="h-3 w-3 mr-2 animate-spin" />
-                      ) : (
-                        <Plug className="h-3 w-3 mr-2" />
-                      )}
-                      Test SSH Connection
-                    </Button>
-                    {sshTestResult === 'success' && (
-                      <Badge variant="outline" className="text-green-600">
-                        <Check className="h-3 w-3 mr-1" />
-                        Connected
-                      </Badge>
-                    )}
-                    {sshTestResult === 'failed' && (
-                      <Badge variant="outline" className="text-destructive">
-                        <XCircle className="h-3 w-3 mr-1" />
-                        Failed
-                      </Badge>
-                    )}
-                  </div>
-                )}
-              </div>
-              
-              {/* Phase 5: Reorganized Configuration Sections - Two Column Layout */}
-              <div className="pt-4 border-t">
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Left Column: ZFS & NFS Configuration */}
-                  <div className="space-y-4">
-                    {/* ZFS Configuration */}
-                    <Collapsible defaultOpen className="space-y-2">
-                      <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
-                        <HardDrive className="h-4 w-4" />
-                        ZFS Configuration
-                        <ChevronDown className="h-4 w-4 ml-auto" />
-                      </CollapsibleTrigger>
-                      <CollapsibleContent className="space-y-3 pl-6">
-                        <div className="space-y-2">
-                          <Label className="text-xs text-muted-foreground">Pool Name</Label>
-                          <Input
-                            value={zfsPoolName}
-                            onChange={(e) => setZfsPoolName(e.target.value)}
-                            placeholder="tank"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label className="text-xs text-muted-foreground">Compression</Label>
-                          <Select value={zfsCompression} onValueChange={(v) => setZfsCompression(v as 'lz4' | 'zstd' | 'off')}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="lz4">LZ4 (fast, default)</SelectItem>
-                              <SelectItem value="zstd">ZSTD (better compression)</SelectItem>
-                              <SelectItem value="off">Off (no compression)</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        
-                        {/* Disk Detection - only show after SSH test passes */}
-                        {sshTestResult === 'success' && (
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-2">
-                              <Label className="text-xs text-muted-foreground">Target Disk</Label>
-                              {!diskDetectionDone && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={handleDetectDisks}
-                                  disabled={detectingDisks}
-                                  className="h-6 text-xs"
-                                >
-                                  {detectingDisks ? (
-                                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                                  ) : (
-                                    <RefreshCw className="h-3 w-3 mr-1" />
-                                  )}
-                                  Detect Disks
-                                </Button>
-                              )}
-                            </div>
-                            
-                            {detectedDisks.length > 0 ? (
-                              <Select value={selectedDisk} onValueChange={setSelectedDisk}>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Select disk" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {detectedDisks.map((disk) => (
-                                    <SelectItem key={disk.device} value={disk.device}>
-                                      <div className="flex items-center gap-2">
-                                        <HardDrive className="h-3 w-3" />
-                                        <span className="font-mono">{disk.device}</span>
-                                        <span className="text-muted-foreground">({disk.size})</span>
-                                      </div>
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            ) : diskDetectionDone ? (
-                              <p className="text-xs text-muted-foreground">
-                                No disks found. Will auto-detect during setup.
-                              </p>
-                            ) : (
-                              <p className="text-xs text-muted-foreground">
-                                Click "Detect Disks" to find available disks, or leave empty for auto-detection.
-                              </p>
-                            )}
-                          </div>
-                        )}
-                      </CollapsibleContent>
-                    </Collapsible>
-                    
-                    {/* NFS Configuration */}
-                    <Collapsible defaultOpen className="space-y-2">
-                      <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
-                        <Shield className="h-4 w-4" />
-                        NFS Configuration
-                        <ChevronDown className="h-4 w-4 ml-auto" />
-                      </CollapsibleTrigger>
-                      <CollapsibleContent className="space-y-3 pl-6">
-                        <div className="space-y-2">
-                          <Label className="text-xs text-muted-foreground">Allowed Network (CIDR)</Label>
-                          <Input
-                            value={nfsNetwork}
-                            onChange={(e) => setNfsNetwork(e.target.value)}
-                            placeholder="10.0.0.0/8"
-                          />
-                          <p className="text-xs text-muted-foreground">
-                            Hosts in this network can mount the NFS share
-                          </p>
-                        </div>
-                      </CollapsibleContent>
-                    </Collapsible>
-                    
-                    {/* vCenter Integration */}
-                    <Collapsible defaultOpen className="space-y-2">
-                      <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
-                        <Server className="h-4 w-4" />
-                        vCenter Integration
-                        <ChevronDown className="h-4 w-4 ml-auto" />
-                      </CollapsibleTrigger>
-                      <CollapsibleContent className="space-y-3 pl-6">
-                        <div className="space-y-2">
-                          <Label className="text-xs text-muted-foreground">Datastore Name</Label>
-                          <Input
-                            value={datastoreName}
-                            onChange={(e) => setDatastoreName(e.target.value)}
-                            placeholder={`NFS-${targetName || 'target'}`}
-                          />
-                          <p className="text-xs text-muted-foreground">
-                            This name will appear in vCenter as an NFS datastore
-                          </p>
-                        </div>
-                      </CollapsibleContent>
-                    </Collapsible>
-                    
-                    {/* Advanced Options */}
-                    <Collapsible className="space-y-2">
-                      <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
-                        <Settings className="h-4 w-4" />
-                        Advanced Options
-                        <ChevronRight className="h-4 w-4 ml-auto" />
-                      </CollapsibleTrigger>
-                      <CollapsibleContent className="space-y-2 pl-6">
-                        <div className="flex items-center gap-2">
-                          <Checkbox 
-                            id="install-packages" 
-                            checked={installPackages} 
-                            onCheckedChange={(c) => setInstallPackages(!!c)} 
-                          />
-                          <Label htmlFor="install-packages" className="text-sm">Install ZFS & NFS packages</Label>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Checkbox 
-                            id="create-user" 
-                            checked={createUser} 
-                            onCheckedChange={(c) => setCreateUser(!!c)} 
-                          />
-                          <Label htmlFor="create-user" className="text-sm">Create zfsadmin user</Label>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Checkbox 
-                            id="reset-machine-id" 
-                            checked={resetMachineId} 
-                            onCheckedChange={(c) => setResetMachineId(!!c)} 
-                          />
-                          <Label htmlFor="reset-machine-id" className="text-sm">Reset machine-id (for clones)</Label>
-                        </div>
-                      </CollapsibleContent>
-                    </Collapsible>
-                  </div>
-                  
-                  {/* Right Column: Replication & Protection */}
-                  <div className="space-y-4">
-                    {/* Phase 6: Replication & Protection */}
-                    <Collapsible defaultOpen className="space-y-2">
-                      <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
-                        <Layers className="h-4 w-4" />
-                        Replication & Protection
-                        <ChevronDown className="h-4 w-4 ml-auto" />
-                      </CollapsibleTrigger>
-                      <CollapsibleContent className="space-y-4 pl-6 pt-2">
-                        {/* Protection Group Options */}
-                        <div className="space-y-3">
-                          <Label className="text-xs text-muted-foreground">Protection Group</Label>
-                          <RadioGroup 
-                            value={protectionGroupOption} 
-                            onValueChange={(v) => setProtectionGroupOption(v as 'new' | 'existing' | 'skip')}
-                            className="space-y-2"
-                          >
-                            <div className="flex items-center space-x-2">
-                              <RadioGroupItem value="skip" id="pg-skip" />
-                              <Label htmlFor="pg-skip" className="text-sm cursor-pointer">Skip - configure later</Label>
-                            </div>
-                            <div className="flex items-center space-x-2">
-                              <RadioGroupItem value="new" id="pg-new" />
-                              <Label htmlFor="pg-new" className="text-sm cursor-pointer">Create new protection group</Label>
-                            </div>
-                            <div className="flex items-center space-x-2">
-                              <RadioGroupItem value="existing" id="pg-existing" />
-                              <Label htmlFor="pg-existing" className="text-sm cursor-pointer">Add to existing group</Label>
-                            </div>
-                          </RadioGroup>
-                          
-                          {/* New Protection Group Fields */}
-                          {protectionGroupOption === 'new' && (
-                            <div className="space-y-3 pt-2 border-t border-border/50">
-                              <div className="space-y-2">
-                                <Label className="text-xs text-muted-foreground">Group Name</Label>
-                                <Input
-                                  value={protectionGroupName}
-                                  onChange={(e) => setProtectionGroupName(e.target.value)}
-                                  placeholder={`${targetName}-protection`}
-                                />
-                              </div>
-                              <div className="space-y-2">
-                                <Label className="text-xs text-muted-foreground">Description (optional)</Label>
-                                <Textarea
-                                  value={protectionGroupDescription}
-                                  onChange={(e) => setProtectionGroupDescription(e.target.value)}
-                                  placeholder="Protection group for DR replication"
-                                  className="h-16 resize-none"
-                                />
-                              </div>
-                            </div>
-                          )}
-                          
-                          {/* Existing Protection Group Selector */}
-                          {protectionGroupOption === 'existing' && (
-                            <div className="space-y-2 pt-2 border-t border-border/50">
-                              <Label className="text-xs text-muted-foreground">Select Existing Group</Label>
-                              <Select 
-                                value={existingProtectionGroupId} 
-                                onValueChange={setExistingProtectionGroupId}
-                              >
-                                <SelectTrigger>
-                                  <SelectValue placeholder={groupsLoading ? "Loading..." : "Select protection group"} />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {existingProtectionGroups
-                                    .filter(g => !selectedVCenterId || g.source_vcenter_id === selectedVCenterId || !g.source_vcenter_id)
-                                    .map((group) => (
-                                      <SelectItem key={group.id} value={group.id}>
-                                        <div className="flex items-center gap-2">
-                                          <Shield className="h-3 w-3" />
-                                          <span>{group.name}</span>
-                                          {group.rpo_minutes && (
-                                            <span className="text-xs text-muted-foreground">
-                                              (RPO: {group.rpo_minutes}m)
-                                            </span>
-                                          )}
-                                        </div>
-                                      </SelectItem>
-                                    ))}
-                                  {existingProtectionGroups.length === 0 && (
-                                    <SelectItem value="_none" disabled>
-                                      No protection groups found
-                                    </SelectItem>
-                                  )}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          )}
-                        </div>
-                        
-                        {/* Replication Schedule - only show if not skipping */}
-                        {protectionGroupOption !== 'skip' && (
-                          <div className="space-y-3 pt-3 border-t border-border/50">
-                            <Label className="text-xs text-muted-foreground">Replication Schedule</Label>
-                            <div className="flex flex-wrap gap-2">
-                              {(Object.keys(SCHEDULE_PRESETS) as SchedulePreset[]).map((preset) => (
-                                <Button
-                                  key={preset}
-                                  type="button"
-                                  variant={schedulePreset === preset ? 'default' : 'outline'}
-                                  size="sm"
-                                  className="h-7 text-xs"
-                                  onClick={() => setSchedulePreset(preset)}
-                                >
-                                  <Calendar className="h-3 w-3 mr-1" />
-                                  {SCHEDULE_PRESETS[preset].label}
-                                </Button>
-                              ))}
-                            </div>
-                            
-                            {schedulePreset === 'custom' && (
-                              <div className="space-y-2">
-                                <Label className="text-xs text-muted-foreground">Cron Expression</Label>
-                                <Input
-                                  value={customCron}
-                                  onChange={(e) => setCustomCron(e.target.value)}
-                                  placeholder="*/15 * * * *"
-                                  className="font-mono text-xs"
-                                />
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        
-                        {/* VM Selection - only show if not skipping */}
-                        {protectionGroupOption !== 'skip' && vms.length > 0 && (
-                          <div className="space-y-3 pt-3 border-t border-border/50">
-                            <div className="flex items-center justify-between">
-                              <Label className="text-xs text-muted-foreground">VMs to Protect</Label>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-6 text-xs"
-                                onClick={() => {
-                                  if (vmsToProtect.length === vms.length) {
-                                    setVmsToProtect([]);
-                                  } else {
-                                    setVmsToProtect(vms.map(v => v.id));
-                                  }
-                                }}
-                              >
-                                {vmsToProtect.length === vms.length ? 'Deselect all' : 'Select all'}
-                              </Button>
-                            </div>
-                            <div className="max-h-32 overflow-y-auto space-y-1 rounded border border-border/50 p-2">
-                              {vms.slice(0, 20).map((vm) => (
-                                <div key={vm.id} className="flex items-center gap-2">
-                                  <Checkbox
-                                    id={`vm-${vm.id}`}
-                                    checked={vmsToProtect.includes(vm.id)}
-                                    onCheckedChange={(checked) => {
-                                      if (checked) {
-                                        setVmsToProtect([...vmsToProtect, vm.id]);
-                                      } else {
-                                        setVmsToProtect(vmsToProtect.filter(id => id !== vm.id));
-                                      }
-                                    }}
-                                  />
-                                  <Label htmlFor={`vm-${vm.id}`} className="text-xs cursor-pointer flex items-center gap-1">
-                                    {vm.power_state === 'poweredOn' ? (
-                                      <Power className="h-3 w-3 text-green-500" />
-                                    ) : (
-                                      <PowerOff className="h-3 w-3 text-muted-foreground" />
-                                    )}
-                                    {vm.name}
-                                  </Label>
-                                </div>
-                              ))}
-                              {vms.length > 20 && (
-                                <p className="text-xs text-muted-foreground pt-1 border-t">
-                                  + {vms.length - 20} more VMs (configure in protection group settings)
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </CollapsibleContent>
-                    </Collapsible>
-                    
-                    {/* Summary Card - only show when required fields are filled */}
-                    {targetName && selectedVM && (
-                      <div className="p-3 rounded-lg border border-border bg-muted/30">
-                        <div className="flex items-center gap-2 mb-2">
-                          <CheckCircle2 className="h-4 w-4 text-primary" />
-                          <span className="text-sm font-medium">Setup Summary</span>
-                        </div>
-                        <div className="space-y-1 text-xs">
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">Target:</span>
-                            <span className="font-medium">{targetName}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">VM:</span>
-                            <span>{selectedVM.name} ({selectedVM.ip_address || 'No IP'})</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">ZFS Pool:</span>
-                            <span>{zfsPoolName} ({zfsCompression} compression)</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">Datastore:</span>
-                            <span>{datastoreName || `NFS-${targetName}`}</span>
-                          </div>
-                          {protectionGroupOption !== 'skip' && (
-                            <>
-                              <div className="flex justify-between pt-1 border-t border-border/50 mt-1">
-                                <span className="text-muted-foreground">Protection:</span>
-                                <span>
-                                  {protectionGroupOption === 'new' 
-                                    ? (protectionGroupName || 'New group')
-                                    : existingProtectionGroups.find(g => g.id === existingProtectionGroupId)?.name || 'Existing group'
-                                  }
-                                  {vmsToProtect.length > 0 && ` (${vmsToProtect.length} VMs)`}
-                                </span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-muted-foreground">Schedule:</span>
-                                <span>
-                                  {schedulePreset === 'custom' 
-                                    ? `Custom (${customCron})`
-                                    : `${SCHEDULE_PRESETS[schedulePreset].label} (RPO: ${SCHEDULE_PRESETS[schedulePreset].rpoMinutes}m)`
-                                  }
-                                </span>
-                              </div>
-                            </>
-                          )}
-                        </div>
+                        <Button onClick={submitRootPassword} disabled={!rootPassword}>
+                          <Key className="h-4 w-4 mr-2" />
+                          Deploy Key
+                        </Button>
                       </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-          
-          {/* Step 2: Authentication */}
-          {currentStep === 2 && (
-            <div className="space-y-4 py-4">
-              {vmState && (
-                <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/50">
-                  <Server className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm">VM State: <strong>{vmState}</strong></span>
-                  {vmIp && (
-                    <>
-                      <span className="text-muted-foreground">|</span>
-                      <span className="text-sm">IP: <strong>{vmIp}</strong></span>
-                    </>
+                    </div>
                   )}
-                </div>
+                  
+                  {/* Progress */}
+                  {isJobRunning && (
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Progress</span>
+                        <span>{progressPercent}%</span>
+                      </div>
+                      <div className="h-2 bg-muted rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-primary transition-all duration-500"
+                          style={{ width: `${progressPercent}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Step Results */}
+                  {stepResults.length > 0 && (
+                    <div className="space-y-1">
+                      {stepResults.map((result, index) => (
+                        <div key={index} className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/30">
+                          {getStatusIcon(result.status)}
+                          <span className="flex-1 text-sm">
+                            {STEP_LABELS[result.step] || result.step}
+                          </span>
+                          <span className="text-xs text-muted-foreground truncate max-w-[150px]">
+                            {result.message}
+                          </span>
+                          {result.status === 'failed' && !isJobRunning && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleRetryStep(result.step)}
+                              disabled={retryingStep !== null}
+                              className="h-6 px-2"
+                            >
+                              {retryingStep === result.step ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <RefreshCw className="h-3 w-3" />
+                              )}
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
               
-              {/* Progress steps with retry buttons */}
-              <div className="space-y-2">
-                {stepResults.map((result, index) => (
-                  <div key={index} className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/30">
-                    {getStatusIcon(result.status)}
-                    <span className="flex-1 text-sm">
-                      {STEP_LABELS[result.step] || result.step}
-                    </span>
-                    <span className="text-sm text-muted-foreground">
-                      {result.message}
-                    </span>
-                    {result.status === 'fixed' && (
-                      <Badge variant="outline" className="text-xs text-green-600">auto-fixed</Badge>
-                    )}
-                    {/* Phase 7: Retry button for failed steps */}
-                    {result.status === 'failed' && !isJobRunning && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleRetryStep(result.step)}
-                        disabled={retryingStep !== null}
-                        className="h-7 px-2"
-                      >
-                        {retryingStep === result.step ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <RefreshCw className="h-3 w-3" />
-                        )}
-                        <span className="ml-1 text-xs">Retry</span>
+              {/* Console log */}
+              {consoleLog.length > 0 && (
+                <Collapsible open={showConsole} onOpenChange={setShowConsole}>
+                  <div className="flex items-center gap-2">
+                    <CollapsibleTrigger asChild>
+                      <Button variant="ghost" size="sm" className="flex-1 justify-between">
+                        <span className="flex items-center gap-2">
+                          <Terminal className="h-4 w-4" />
+                          Console Log ({consoleLog.length})
+                        </span>
+                        {showConsole ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                       </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
-              
-              {/* Root password prompt */}
-              {needsRootPassword && (
-                <div className="p-4 rounded-lg border border-yellow-500/50 bg-yellow-500/5 space-y-3">
-                  <div className="flex items-center gap-2 text-yellow-600">
-                    <AlertTriangle className="h-4 w-4" />
-                    <span className="font-medium">SSH Key Not Authorized</span>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    Enter the root password to deploy the SSH key automatically.
-                  </p>
-                  <div className="flex gap-2">
-                    <Input
-                      type="password"
-                      value={rootPassword}
-                      onChange={(e) => setRootPassword(e.target.value)}
-                      placeholder="Root password"
-                      className="flex-1"
-                    />
-                    <Button onClick={submitRootPassword} disabled={!rootPassword}>
-                      <Key className="h-4 w-4 mr-2" />
-                      Deploy Key
+                    </CollapsibleTrigger>
+                    <Button variant="ghost" size="sm" onClick={handleExportLog} className="shrink-0">
+                      <Download className="h-4 w-4 mr-1" />
+                      Export
                     </Button>
                   </div>
-                </div>
-              )}
-              
-              {/* Progress bar */}
-              {isJobRunning && (
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Progress</span>
-                    <span>{progressPercent}%</span>
-                  </div>
-                  <div className="h-2 bg-muted rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-primary transition-all duration-500"
-                      style={{ width: `${progressPercent}%` }}
-                    />
-                  </div>
-                </div>
+                  <CollapsibleContent>
+                    <div className="mt-2 p-3 rounded-lg bg-black text-green-400 font-mono text-xs max-h-32 overflow-y-auto">
+                      {consoleLog.map((line, i) => (
+                        <div key={i}>{line}</div>
+                      ))}
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
               )}
             </div>
           )}
-          
-          {/* Step 3: Setup & Configuration */}
-          {currentStep === 3 && (
-            <div className="space-y-4 py-4">
-              {vmState && (
-                <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/50">
-                  <Server className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm">VM State: <strong>{vmState}</strong></span>
-                  {vmIp && (
-                    <>
-                      <span className="text-muted-foreground">|</span>
-                      <span className="text-sm">IP: <strong>{vmIp}</strong></span>
-                    </>
-                  )}
-                </div>
-              )}
-              
-              {/* Progress steps with retry buttons */}
-              <div className="space-y-2">
-                {stepResults.map((result, index) => (
-                  <div key={index} className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/30">
-                    {getStatusIcon(result.status)}
-                    <span className="flex-1 text-sm">
-                      {STEP_LABELS[result.step] || result.step}
-                    </span>
-                    <span className="text-sm text-muted-foreground truncate max-w-[200px]">
-                      {result.message}
-                    </span>
-                    {result.status === 'fixed' && (
-                      <Badge variant="outline" className="text-xs text-green-600">auto-fixed</Badge>
-                    )}
-                    {result.status === 'warning' && (
-                      <Badge variant="outline" className="text-xs text-yellow-600">warning</Badge>
-                    )}
-                    {/* Phase 7: Retry button for failed steps */}
-                    {result.status === 'failed' && !isJobRunning && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleRetryStep(result.step)}
-                        disabled={retryingStep !== null}
-                        className="h-7 px-2"
-                      >
-                        {retryingStep === result.step ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <RefreshCw className="h-3 w-3" />
-                        )}
-                        <span className="ml-1 text-xs">Retry</span>
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
-              
-              {/* Progress bar */}
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Progress</span>
-                  <span>{progressPercent}%</span>
-                </div>
-                <div className="h-2 bg-muted rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-primary transition-all duration-500"
-                    style={{ width: `${progressPercent}%` }}
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-          
-          {/* Step 4: Finalization */}
-          {currentStep === 4 && (
-            <div className="space-y-4 py-4">
-              {isJobComplete && (
-                <div className="p-4 rounded-lg bg-green-500/10 border border-green-500/20">
-                  <div className="flex items-center gap-2 text-green-600 mb-2">
-                    <CheckCircle2 className="h-5 w-5" />
-                    <span className="font-medium">ZFS Target Ready!</span>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    Your ZFS replication target has been configured successfully.
-                  </p>
-                </div>
-              )}
-              
-              {isJobFailed && (
-                <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20 space-y-4">
-                  <div className="flex items-center gap-2 text-destructive">
-                    <XCircle className="h-5 w-5" />
-                    <span className="font-medium">Setup Failed</span>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    Check the console log for details. You can retry individual failed steps or clean up partial configuration.
-                  </p>
-                  
-                  {/* Phase 7: Rollback/Cleanup option */}
-                  <div className="pt-3 border-t border-destructive/20">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium">Clean Up Partial Configuration?</p>
-                        <p className="text-xs text-muted-foreground">
-                          Remove any partially created ZFS pool, NFS exports, and datastore registration.
-                        </p>
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleRollback}
-                        disabled={rollingBack || rollbackStatus === 'success'}
-                      >
-                        {rollingBack ? (
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        ) : rollbackStatus === 'success' ? (
-                          <Check className="h-4 w-4 mr-2 text-green-500" />
-                        ) : (
-                          <Trash2 className="h-4 w-4 mr-2" />
-                        )}
-                        {rollbackStatus === 'success' ? 'Cleaned Up' : 'Clean Up'}
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              )}
-              
-              {/* Summary */}
-              <div className="space-y-2">
-                {stepResults.filter(r => r.status === 'success' || r.status === 'fixed').map((result, index) => (
-                  <div key={index} className="flex items-center gap-3 p-2">
-                    <CheckCircle2 className="h-4 w-4 text-green-500" />
-                    <span className="flex-1 text-sm">{STEP_LABELS[result.step] || result.step}</span>
-                    <span className="text-sm text-muted-foreground">{result.message}</span>
-                  </div>
-                ))}
-              </div>
-              
-              {/* Post-setup options */}
-              {isJobComplete && (
-                <div className="pt-4 border-t space-y-3">
-                  <Label className="text-sm font-medium">Next Steps</Label>
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Checkbox 
-                        id="create-group" 
-                        checked={createProtectionGroup} 
-                        onCheckedChange={(c) => setCreateProtectionGroup(!!c)} 
-                      />
-                      <Label htmlFor="create-group" className="text-sm">Create protection group</Label>
-                    </div>
-                    {createProtectionGroup && (
-                      <Input
-                        value={protectionGroupName}
-                        onChange={(e) => setProtectionGroupName(e.target.value)}
-                        placeholder="Protection group name"
-                        className="ml-6"
-                      />
-                    )}
-                    <div className="flex items-center gap-2">
-                      <Checkbox 
-                        id="start-sync" 
-                        checked={startInitialSync} 
-                        onCheckedChange={(c) => setStartInitialSync(!!c)} 
-                      />
-                      <Label htmlFor="start-sync" className="text-sm">Start initial sync now</Label>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-          
-          {/* Console log with Export button */}
-          {consoleLog.length > 0 && (
-            <Collapsible open={showConsole} onOpenChange={setShowConsole} className="mt-4">
-              <div className="flex items-center gap-2">
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" size="sm" className="flex-1 justify-between">
-                    <span className="flex items-center gap-2">
-                      <Terminal className="h-4 w-4" />
-                      Console Log ({consoleLog.length} entries)
-                    </span>
-                    {showConsole ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                  </Button>
-                </CollapsibleTrigger>
-                {/* Phase 7: Export Log button */}
-                <Button variant="ghost" size="sm" onClick={handleExportLog} className="shrink-0">
-                  <Download className="h-4 w-4 mr-1" />
-                  Export
-                </Button>
-              </div>
-              <CollapsibleContent>
-                <div className="mt-2 p-3 rounded-lg bg-black text-green-400 font-mono text-xs max-h-48 overflow-y-auto">
-                  {consoleLog.map((line, i) => (
-                    <div key={i}>{line}</div>
-                  ))}
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-          )}
-        </ScrollArea>
+        </div>
         
-        {/* Footer actions */}
-        <div className="flex justify-between pt-4 border-t">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {isJobComplete ? 'Close' : 'Cancel'}
+        {/* Footer with navigation */}
+        <DialogFooter className="flex justify-between items-center border-t pt-4 shrink-0">
+          <Button 
+            variant="outline" 
+            onClick={handleBack} 
+            disabled={currentPage === 1 || hasStartedJob}
+            className={currentPage === 1 || hasStartedJob ? 'invisible' : ''}
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back
           </Button>
           
           <div className="flex gap-2">
-            {currentStep === 1 && (
-              <Button onClick={startOnboarding} disabled={!canProceedStep1}>
-                <Play className="h-4 w-4 mr-2" />
-                Start Setup
+            <Button variant="ghost" onClick={() => onOpenChange(false)}>
+              {isJobComplete ? 'Close' : 'Cancel'}
+            </Button>
+            
+            {currentPage < 6 && !hasStartedJob && (
+              <Button onClick={handleNext} disabled={!canProceedFromPage(currentPage)}>
+                Next
+                <ArrowRight className="h-4 w-4 ml-2" />
               </Button>
             )}
             
-            {isJobComplete && currentStep === 4 && (
-              <Button onClick={() => onOpenChange(false)}>
-                <CheckCircle2 className="h-4 w-4 mr-2" />
-                Done
+            {currentPage === 6 && !hasStartedJob && (
+              <Button onClick={startOnboarding} disabled={!canProceedFromPage(1) || !canProceedFromPage(2)}>
+                <Play className="h-4 w-4 mr-2" />
+                Start Setup
               </Button>
             )}
             
@@ -2013,8 +1861,15 @@ export function OnboardZfsTargetWizard({
                 Setting up...
               </Button>
             )}
+            
+            {isJobComplete && (
+              <Button onClick={() => onOpenChange(false)}>
+                <CheckCircle2 className="h-4 w-4 mr-2" />
+                Done
+              </Button>
+            )}
           </div>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
