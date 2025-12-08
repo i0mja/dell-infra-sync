@@ -1055,11 +1055,11 @@ export function ZfsTemplateManagement() {
                                   disabled={isPollingValidation || isValidating}
                                 >
                                   <Network className="h-4 w-4 mr-2" />
-                                  Test SSH
+                                  Full Test
                                 </Button>
                               </TooltipTrigger>
-                              <TooltipContent>
-                                <p>Also test SSH connection (template must be powered on)</p>
+                              <TooltipContent className="max-w-xs">
+                                <p>Includes SSH test. Note: VMware templates cannot be powered on - SSH testing only works if this is a regular VM that's running.</p>
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
@@ -1096,11 +1096,27 @@ export function ZfsTemplateManagement() {
                                   <p className="text-xs mt-0.5 opacity-80">{result.warning}</p>
                                 )}
                                 {result.info && (
-                                  <p className="text-xs mt-0.5 opacity-80">{result.info}</p>
+                                  <p className="text-xs mt-0.5 opacity-80 flex items-start gap-1">
+                                    <Info className="h-3 w-3 mt-0.5 shrink-0" />
+                                    {result.info}
+                                  </p>
                                 )}
                               </div>
                             </div>
                           ))}
+                          
+                          {/* Info note about VMware templates */}
+                          {validationResults.some(r => r.step === 'template_type' && r.label.includes('VMware Template')) && (
+                            <div className="flex items-start gap-2 p-2 rounded-md bg-blue-500/10 text-blue-700 dark:text-blue-400 text-xs mt-2">
+                              <Info className="h-4 w-4 mt-0.5 shrink-0" />
+                              <div>
+                                <span className="font-medium">VMware Template Detected:</span>{' '}
+                                Templates cannot be powered on or tested for SSH. Ensure the public key is pre-installed 
+                                in <code className="px-1 bg-blue-500/20 rounded">~/.ssh/authorized_keys</code> before converting to template. 
+                                SSH connectivity will be validated during the first deployment.
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
 

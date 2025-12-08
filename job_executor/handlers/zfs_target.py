@@ -214,24 +214,41 @@ class ZfsTargetHandler(BaseHandler):
                     })
                     overall_success = False
             
-            # Step 4: Check template power state
+            # Step 4: Check if it's a template or VM
+            is_vmware_template = False
             if template_vm:
-                power_state = str(template_vm.runtime.powerState)
-                if power_state == 'poweredOff':
+                # Check if this is a VMware template (not a regular VM)
+                try:
+                    is_vmware_template = hasattr(template_vm.config, 'template') and template_vm.config.template
+                except:
+                    is_vmware_template = False
+                
+                if is_vmware_template:
                     results.append({
-                        'step': 'power_state',
+                        'step': 'template_type',
                         'status': 'success',
-                        'label': 'Template is Powered Off'
+                        'label': 'VMware Template (ready for cloning)'
                     })
-                    self._log_console(job_id, 'INFO', 'Template is powered off (good for cloning)', job_details)
+                    self._log_console(job_id, 'INFO', 'Object is a VMware template - ready for cloning', job_details)
                 else:
-                    results.append({
-                        'step': 'power_state',
-                        'status': 'warning',
-                        'label': 'Template is Powered On',
-                        'warning': 'Template should be powered off for cloning'
-                    })
-                    self._log_console(job_id, 'WARN', 'Template is powered on - should be off for cloning', job_details)
+                    # It's a VM, not a template - check power state
+                    power_state = str(template_vm.runtime.powerState)
+                    if power_state == 'poweredOff':
+                        results.append({
+                            'step': 'template_type',
+                            'status': 'warning',
+                            'label': 'Object is a VM (not template)',
+                            'warning': 'Consider converting to template for better protection. VM is powered off (OK for cloning).'
+                        })
+                        self._log_console(job_id, 'WARN', 'Object is a VM, not template - but powered off', job_details)
+                    else:
+                        results.append({
+                            'step': 'template_type',
+                            'status': 'warning',
+                            'label': 'VM is Powered On',
+                            'warning': 'Object is a VM (not template) and is powered on. Power off before cloning.'
+                        })
+                        self._log_console(job_id, 'WARN', 'VM is powered on - should be off for cloning', job_details)
             
             # Step 5: Validate SSH Key
             ssh_key_id = template.get('ssh_key_id')
@@ -288,25 +305,38 @@ class ZfsTargetHandler(BaseHandler):
                     })
                     overall_success = False
             
-            # Step 6: SSH Connection Test (only if template is powered on and we want to test)
+            # Step 6: SSH Connection Test
+            # IMPORTANT: VMware templates CANNOT be powered on or SSH'd into!
+            # SSH testing is only possible if this is a regular VM that's running
             test_ssh = details.get('test_ssh', False)
             template_ip = None
             ssh_auth_failed = False
             
             if template_vm and test_ssh:
-                power_state = str(template_vm.runtime.powerState)
-                
-                if power_state != 'poweredOn':
+                if is_vmware_template:
+                    # Templates cannot run - SSH test is impossible
                     results.append({
                         'step': 'ssh_test',
                         'status': 'skipped',
                         'label': 'SSH Connection Test',
-                        'info': 'Template is powered off - SSH test skipped'
+                        'info': 'VMware templates cannot be powered on. SSH will be validated on first deployment. Ensure the public key is pre-installed in the template.'
                     })
-                    self._log_console(job_id, 'INFO', 'SSH test skipped (template powered off)', job_details)
+                    self._log_console(job_id, 'INFO', 'SSH test skipped - VMware templates cannot be powered on', job_details)
                 else:
-                    # Get template IP
-                    template_ip = template_vm.guest.ipAddress
+                    # It's a VM - check if it's running
+                    power_state = str(template_vm.runtime.powerState)
+                    
+                    if power_state != 'poweredOn':
+                        results.append({
+                            'step': 'ssh_test',
+                            'status': 'skipped',
+                            'label': 'SSH Connection Test',
+                            'info': 'VM is powered off. Power on the VM to test SSH connection.'
+                        })
+                        self._log_console(job_id, 'INFO', 'SSH test skipped (VM powered off)', job_details)
+                    else:
+                        # Get VM IP
+                        template_ip = template_vm.guest.ipAddress
                     
                     if not template_ip or template_ip.startswith('169.254') or template_ip.startswith('127.'):
                         results.append({
