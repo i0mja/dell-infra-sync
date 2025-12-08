@@ -63,13 +63,27 @@ import {
   Plus,
   Fingerprint,
   Plug,
+  Calendar,
+  Layers,
 } from "lucide-react";
 import { useVCenters } from "@/hooks/useVCenters";
 import { useVCenterVMs } from "@/hooks/useVCenterVMs";
 import { useSshKeys } from "@/hooks/useSshKeys";
+import { useProtectionGroups } from "@/hooks/useReplication";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
+
+// Schedule presets with cron and RPO mappings
+const SCHEDULE_PRESETS = {
+  every_15m: { label: '15 min', cron: '*/15 * * * *', rpoMinutes: 15 },
+  hourly: { label: '1 hour', cron: '0 * * * *', rpoMinutes: 60 },
+  every_4h: { label: '4 hours', cron: '0 */4 * * *', rpoMinutes: 240 },
+  daily: { label: 'Daily', cron: '0 0 * * *', rpoMinutes: 1440 },
+  custom: { label: 'Custom', cron: '', rpoMinutes: 0 },
+} as const;
+
+type SchedulePreset = keyof typeof SCHEDULE_PRESETS;
 
 interface OnboardZfsTargetWizardProps {
   open: boolean;
@@ -188,7 +202,15 @@ export function OnboardZfsTargetWizard({
   const [detectingDisks, setDetectingDisks] = useState(false);
   const [diskDetectionDone, setDiskDetectionDone] = useState(false);
   
-  // Step 4: Finalization options
+  // Phase 6: Enhanced Finalization options
+  const [protectionGroupOption, setProtectionGroupOption] = useState<'new' | 'existing' | 'skip'>('skip');
+  const [existingProtectionGroupId, setExistingProtectionGroupId] = useState("");
+  const [protectionGroupDescription, setProtectionGroupDescription] = useState("");
+  const [vmsToProtect, setVmsToProtect] = useState<string[]>([]);
+  const [schedulePreset, setSchedulePreset] = useState<SchedulePreset>('hourly');
+  const [customCron, setCustomCron] = useState("0 * * * *");
+  
+  // Legacy state - kept for backward compatibility
   const [createProtectionGroup, setCreateProtectionGroup] = useState(false);
   const [protectionGroupName, setProtectionGroupName] = useState("");
   const [startInitialSync, setStartInitialSync] = useState(false);
@@ -209,6 +231,9 @@ export function OnboardZfsTargetWizard({
   
   // Fetch SSH keys
   const { sshKeys = [], isLoading: sshKeysLoading, generateKey } = useSshKeys();
+  
+  // Fetch existing protection groups
+  const { groups: existingProtectionGroups = [], loading: groupsLoading } = useProtectionGroups();
   
   // Filter active SSH keys for picker
   const activeSshKeys = useMemo(() => 
@@ -289,6 +314,13 @@ export function OnboardZfsTargetWizard({
       setSelectedDisk("");
       setDetectingDisks(false);
       setDiskDetectionDone(false);
+      // Phase 6 resets
+      setProtectionGroupOption('skip');
+      setExistingProtectionGroupId("");
+      setProtectionGroupDescription("");
+      setVmsToProtect([]);
+      setSchedulePreset('hourly');
+      setCustomCron("0 * * * *");
     }
   }, [open, preselectedVCenterId, preselectedVMId]);
   
@@ -423,9 +455,18 @@ export function OnboardZfsTargetWizard({
             zfs_compression: zfsCompression,
             zfs_disk: selectedDisk || undefined,
             datastore_name: datastoreName,
-            // Phase 6: Finalization
-            create_protection_group: createProtectionGroup,
-            protection_group_name: protectionGroupName,
+            // Phase 6: Enhanced Finalization
+            protection_group_option: protectionGroupOption,
+            existing_protection_group_id: protectionGroupOption === 'existing' ? existingProtectionGroupId : undefined,
+            protection_group_name: protectionGroupOption === 'new' ? protectionGroupName : undefined,
+            protection_group_description: protectionGroupOption === 'new' ? protectionGroupDescription : undefined,
+            vms_to_protect: protectionGroupOption !== 'skip' ? vmsToProtect : undefined,
+            replication_schedule: protectionGroupOption !== 'skip' 
+              ? (schedulePreset === 'custom' ? customCron : SCHEDULE_PRESETS[schedulePreset].cron)
+              : undefined,
+            rpo_minutes: protectionGroupOption !== 'skip' 
+              ? (schedulePreset === 'custom' ? 60 : SCHEDULE_PRESETS[schedulePreset].rpoMinutes)
+              : undefined,
             start_initial_sync: startInitialSync,
             convert_back_to_template: convertBackToTemplate,
           }
@@ -1175,6 +1216,200 @@ export function OnboardZfsTargetWizard({
                   </CollapsibleContent>
                 </Collapsible>
                 
+                {/* Phase 6: Replication & Protection */}
+                <Collapsible className="space-y-2">
+                  <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
+                    <Layers className="h-4 w-4" />
+                    Replication & Protection
+                    <ChevronRight className="h-4 w-4 ml-auto" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="space-y-4 pl-6 pt-2">
+                    {/* Protection Group Options */}
+                    <div className="space-y-3">
+                      <Label className="text-xs text-muted-foreground">Protection Group</Label>
+                      <RadioGroup 
+                        value={protectionGroupOption} 
+                        onValueChange={(v) => setProtectionGroupOption(v as 'new' | 'existing' | 'skip')}
+                        className="space-y-2"
+                      >
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="skip" id="pg-skip" />
+                          <Label htmlFor="pg-skip" className="text-sm cursor-pointer">Skip - configure later</Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="new" id="pg-new" />
+                          <Label htmlFor="pg-new" className="text-sm cursor-pointer">Create new protection group</Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="existing" id="pg-existing" />
+                          <Label htmlFor="pg-existing" className="text-sm cursor-pointer">Add to existing group</Label>
+                        </div>
+                      </RadioGroup>
+                      
+                      {/* New Protection Group Fields */}
+                      {protectionGroupOption === 'new' && (
+                        <div className="space-y-3 pt-2 border-t border-border/50">
+                          <div className="space-y-2">
+                            <Label className="text-xs text-muted-foreground">Group Name</Label>
+                            <Input
+                              value={protectionGroupName}
+                              onChange={(e) => setProtectionGroupName(e.target.value)}
+                              placeholder={`${targetName}-protection`}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-xs text-muted-foreground">Description (optional)</Label>
+                            <Textarea
+                              value={protectionGroupDescription}
+                              onChange={(e) => setProtectionGroupDescription(e.target.value)}
+                              placeholder="Protection group for DR replication"
+                              className="h-16 resize-none"
+                            />
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Existing Protection Group Selector */}
+                      {protectionGroupOption === 'existing' && (
+                        <div className="space-y-2 pt-2 border-t border-border/50">
+                          <Label className="text-xs text-muted-foreground">Select Existing Group</Label>
+                          <Select 
+                            value={existingProtectionGroupId} 
+                            onValueChange={setExistingProtectionGroupId}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder={groupsLoading ? "Loading..." : "Select protection group"} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {existingProtectionGroups
+                                .filter(g => !selectedVCenterId || g.source_vcenter_id === selectedVCenterId || !g.source_vcenter_id)
+                                .map((group) => (
+                                  <SelectItem key={group.id} value={group.id}>
+                                    <div className="flex items-center gap-2">
+                                      <Shield className="h-3 w-3" />
+                                      <span>{group.name}</span>
+                                      {group.rpo_minutes && (
+                                        <span className="text-xs text-muted-foreground">
+                                          (RPO: {group.rpo_minutes}m)
+                                        </span>
+                                      )}
+                                    </div>
+                                  </SelectItem>
+                                ))}
+                              {existingProtectionGroups.length === 0 && (
+                                <SelectItem value="_none" disabled>
+                                  No protection groups found
+                                </SelectItem>
+                              )}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* VM Selection - only show if not skipping */}
+                    {protectionGroupOption !== 'skip' && vms.length > 0 && (
+                      <div className="space-y-3 pt-3 border-t border-border/50">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs text-muted-foreground">VMs to Protect</Label>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 text-xs"
+                            onClick={() => {
+                              if (vmsToProtect.length === vms.length) {
+                                setVmsToProtect([]);
+                              } else {
+                                setVmsToProtect(vms.map(v => v.id));
+                              }
+                            }}
+                          >
+                            {vmsToProtect.length === vms.length ? 'Deselect all' : 'Select all'}
+                          </Button>
+                        </div>
+                        <div className="max-h-32 overflow-y-auto space-y-1 rounded border border-border/50 p-2">
+                          {vms.slice(0, 20).map((vm) => (
+                            <div key={vm.id} className="flex items-center gap-2">
+                              <Checkbox
+                                id={`vm-${vm.id}`}
+                                checked={vmsToProtect.includes(vm.id)}
+                                onCheckedChange={(checked) => {
+                                  if (checked) {
+                                    setVmsToProtect([...vmsToProtect, vm.id]);
+                                  } else {
+                                    setVmsToProtect(vmsToProtect.filter(id => id !== vm.id));
+                                  }
+                                }}
+                              />
+                              <Label htmlFor={`vm-${vm.id}`} className="text-xs cursor-pointer flex items-center gap-2">
+                                <span>{vm.name}</span>
+                                {vm.ip_address && (
+                                  <span className="text-muted-foreground font-mono">{vm.ip_address}</span>
+                                )}
+                              </Label>
+                            </div>
+                          ))}
+                          {vms.length > 20 && (
+                            <p className="text-xs text-muted-foreground pt-1">
+                              +{vms.length - 20} more VMs (select after setup)
+                            </p>
+                          )}
+                        </div>
+                        {vmsToProtect.length > 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            {vmsToProtect.length} VM(s) selected
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* Schedule Picker - only show if not skipping */}
+                    {protectionGroupOption !== 'skip' && (
+                      <div className="space-y-3 pt-3 border-t border-border/50">
+                        <Label className="text-xs text-muted-foreground">Replication Schedule</Label>
+                        <div className="flex flex-wrap gap-2">
+                          {(Object.keys(SCHEDULE_PRESETS) as SchedulePreset[]).map((preset) => (
+                            <Button
+                              key={preset}
+                              variant={schedulePreset === preset ? "default" : "outline"}
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => setSchedulePreset(preset)}
+                            >
+                              <Calendar className="h-3 w-3 mr-1" />
+                              {SCHEDULE_PRESETS[preset].label}
+                            </Button>
+                          ))}
+                        </div>
+                        
+                        {schedulePreset === 'custom' && (
+                          <div className="space-y-2">
+                            <Label className="text-xs text-muted-foreground">Cron Expression</Label>
+                            <Input
+                              value={customCron}
+                              onChange={(e) => setCustomCron(e.target.value)}
+                              placeholder="0 * * * *"
+                              className="font-mono text-xs"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Example: 0 */2 * * * (every 2 hours)
+                            </p>
+                          </div>
+                        )}
+                        
+                        {schedulePreset !== 'custom' && (
+                          <div className="flex items-center gap-2 p-2 rounded bg-muted/50">
+                            <Clock className="h-3 w-3 text-muted-foreground" />
+                            <span className="text-xs">
+                              Target RPO: <strong>{SCHEDULE_PRESETS[schedulePreset].rpoMinutes} minutes</strong>
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </CollapsibleContent>
+                </Collapsible>
+                
                 {/* Advanced Options */}
                 <Collapsible className="space-y-2">
                   <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors w-full">
@@ -1209,6 +1444,57 @@ export function OnboardZfsTargetWizard({
                     </div>
                   </CollapsibleContent>
                 </Collapsible>
+                
+                {/* Summary Card - only show when required fields are filled */}
+                {targetName && selectedVM && (
+                  <div className="mt-4 p-3 rounded-lg border border-border bg-muted/30">
+                    <div className="flex items-center gap-2 mb-2">
+                      <CheckCircle2 className="h-4 w-4 text-primary" />
+                      <span className="text-sm font-medium">Setup Summary</span>
+                    </div>
+                    <div className="space-y-1 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Target:</span>
+                        <span className="font-medium">{targetName}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">VM:</span>
+                        <span>{selectedVM.name} ({selectedVM.ip_address || 'No IP'})</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">ZFS Pool:</span>
+                        <span>{zfsPoolName} ({zfsCompression} compression)</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Datastore:</span>
+                        <span>{datastoreName || `NFS-${targetName}`}</span>
+                      </div>
+                      {protectionGroupOption !== 'skip' && (
+                        <>
+                          <div className="flex justify-between pt-1 border-t border-border/50 mt-1">
+                            <span className="text-muted-foreground">Protection:</span>
+                            <span>
+                              {protectionGroupOption === 'new' 
+                                ? (protectionGroupName || 'New group')
+                                : existingProtectionGroups.find(g => g.id === existingProtectionGroupId)?.name || 'Existing group'
+                              }
+                              {vmsToProtect.length > 0 && ` (${vmsToProtect.length} VMs)`}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Schedule:</span>
+                            <span>
+                              {schedulePreset === 'custom' 
+                                ? `Custom (${customCron})`
+                                : `${SCHEDULE_PRESETS[schedulePreset].label} (RPO: ${SCHEDULE_PRESETS[schedulePreset].rpoMinutes}m)`
+                              }
+                            </span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
