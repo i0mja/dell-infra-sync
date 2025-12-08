@@ -34,6 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { VMCombobox } from "./VMCombobox";
+import { VMMultiSelectList } from "./VMMultiSelectList";
 import {
   Collapsible,
   CollapsibleContent,
@@ -1548,54 +1549,15 @@ export function OnboardZfsTargetWizard({
               
               {/* VM Selection */}
               {protectionGroupOption !== 'skip' && vms.length > 0 && (
-                <div className="space-y-3 p-4 rounded-lg border bg-card">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-sm font-medium">VMs to Protect</Label>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 text-xs"
-                      onClick={() => {
-                        if (vmsToProtect.length === Math.min(vms.length, 20)) {
-                          setVmsToProtect([]);
-                        } else {
-                          setVmsToProtect(vms.slice(0, 20).map(v => v.id));
-                        }
-                      }}
-                    >
-                      {vmsToProtect.length === Math.min(vms.length, 20) ? 'Deselect all' : 'Select all'}
-                    </Button>
-                  </div>
-                  <div className="max-h-40 overflow-y-auto space-y-1 rounded border p-2">
-                    {vms.slice(0, 20).map((vm) => (
-                      <div key={vm.id} className="flex items-center gap-2">
-                        <Checkbox
-                          id={`vm-${vm.id}`}
-                          checked={vmsToProtect.includes(vm.id)}
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              setVmsToProtect([...vmsToProtect, vm.id]);
-                            } else {
-                              setVmsToProtect(vmsToProtect.filter(id => id !== vm.id));
-                            }
-                          }}
-                        />
-                        <Label htmlFor={`vm-${vm.id}`} className="text-xs cursor-pointer flex items-center gap-1">
-                          {vm.power_state === 'poweredOn' ? (
-                            <Power className="h-3 w-3 text-green-500" />
-                          ) : (
-                            <PowerOff className="h-3 w-3 text-muted-foreground" />
-                          )}
-                          {vm.name}
-                        </Label>
-                      </div>
-                    ))}
-                    {vms.length > 20 && (
-                      <p className="text-xs text-muted-foreground pt-1 border-t">
-                        + {vms.length - 20} more VMs (configure in protection group settings)
-                      </p>
-                    )}
-                  </div>
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">VMs to Protect</Label>
+                  <VMMultiSelectList
+                    vms={vms}
+                    clusters={clusters}
+                    selectedVmIds={vmsToProtect}
+                    onSelectionChange={setVmsToProtect}
+                    maxHeight="h-64"
+                  />
                 </div>
               )}
             </div>
