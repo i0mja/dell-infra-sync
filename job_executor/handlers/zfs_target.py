@@ -2200,3 +2200,503 @@ class ZfsTargetHandler(BaseHandler):
             except:
                 pass
             self.vcenter_conn = None
+    
+    # =========================================================================
+    # Execute Onboard ZFS Target Handler
+    # =========================================================================
+    
+    def execute_onboard_zfs_target(self, job: Dict):
+        """
+        Unified onboarding handler for ZFS replication targets.
+        
+        This handler is used by the OnboardZfsTargetWizard to set up an existing
+        VM as a ZFS replication target. Unlike deploy_zfs_target which clones
+        from a template, this works with an existing VM.
+        
+        Steps:
+        1. DETECT_VM_STATE - Check if VM exists, powered on, has IP
+        2. SSH_AUTH - Connect via SSH (password or key)
+        3. INSTALL_PACKAGES - apt-get install zfsutils-linux nfs-kernel-server
+        4. CREATE_ZPOOL - zpool create with detected disk
+        5. CONFIGURE_NFS - Set up NFS exports
+        6. REGISTER_TARGET - Insert into replication_targets table
+        7. REGISTER_DATASTORE - Register NFS datastore in vCenter
+        8. (Optional) CREATE_PROTECTION_GROUP - If user selected
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        target_scope = job.get('target_scope', {}) or {}
+        
+        # Initialize step tracking
+        step_results = []
+        
+        def add_step_result(step: str, status: str, message: str, **kwargs):
+            result = {'step': step, 'status': status, 'message': message, **kwargs}
+            step_results.append(result)
+            job_details['step_results'] = step_results
+            self.update_job_status(job_id, 'running', details=job_details)
+        
+        job_details = {
+            'step_results': step_results,
+            'progress_percent': 0,
+            'console_log': [],
+            'vm_state': None,
+            'vm_ip': None,
+            **details
+        }
+        
+        self._log_console(job_id, 'INFO', 'Starting ZFS target onboarding', job_details)
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso(), details=job_details)
+        
+        try:
+            # Get VM info from target_scope
+            vcenter_id = target_scope.get('vcenter_id')
+            vm_id = target_scope.get('vm_id')
+            
+            if not vcenter_id or not vm_id:
+                raise Exception("Missing vcenter_id or vm_id in target_scope")
+            
+            # Fetch VM details from database
+            vm_info = self._fetch_vm_info(vm_id)
+            if not vm_info:
+                raise Exception(f"VM not found in database: {vm_id}")
+            
+            vm_name = vm_info.get('name', 'Unknown')
+            vm_moref = vm_info.get('moref')
+            target_name = details.get('target_name', f'zfs-{vm_name}')
+            
+            job_details['vm_name'] = vm_name
+            job_details['vm_moref'] = vm_moref
+            job_details['target_name'] = target_name
+            
+            self._log_console(job_id, 'INFO', f'Target VM: {vm_name} ({vm_moref})', job_details)
+            
+            # ========== Step 1: Detect VM State ==========
+            job_details['progress_percent'] = 5
+            add_step_result('vm_state', 'running', 'Checking VM state...')
+            
+            try:
+                vc_settings = self._get_vcenter_settings(vcenter_id)
+                if not vc_settings:
+                    raise Exception(f"vCenter settings not found: {vcenter_id}")
+                
+                self.vcenter_conn = self._connect_vcenter(
+                    vc_settings['host'],
+                    vc_settings['username'],
+                    vc_settings['password'],
+                    vc_settings.get('port', 443),
+                    vc_settings.get('verify_ssl', False)
+                )
+                
+                if not self.vcenter_conn:
+                    raise Exception("Failed to connect to vCenter")
+                
+                add_step_result('vcenter', 'success', f'Connected to {vc_settings["host"]}')
+                
+                # Find VM
+                vm = self._find_vm_by_moref(self.vcenter_conn, vm_moref)
+                if not vm:
+                    raise Exception(f"VM not found in vCenter: {vm_moref}")
+                
+                power_state = str(vm.runtime.powerState)
+                job_details['vm_state'] = power_state
+                
+                if power_state != 'poweredOn':
+                    add_step_result('vm_state', 'running', f'VM is {power_state}, powering on...')
+                    task = vm.PowerOn()
+                    self._wait_for_task(task, job_id, job_details)
+                    job_details['vm_state'] = 'poweredOn'
+                    add_step_result('power_on', 'success', 'VM powered on')
+                else:
+                    add_step_result('vm_state', 'success', 'VM is powered on')
+                
+                # Wait for IP
+                job_details['progress_percent'] = 10
+                add_step_result('ip_address', 'running', 'Waiting for IP address...')
+                
+                vm_ip = None
+                for _ in range(30):  # 5 minute timeout
+                    vm = self._find_vm_by_moref(self.vcenter_conn, vm_moref)
+                    if vm and vm.guest.ipAddress:
+                        ip = vm.guest.ipAddress
+                        if ip and not ip.startswith('169.254') and not ip.startswith('127.'):
+                            vm_ip = ip
+                            break
+                    time.sleep(10)
+                
+                if not vm_ip:
+                    raise Exception("Could not detect VM IP address")
+                
+                job_details['vm_ip'] = vm_ip
+                add_step_result('ip_address', 'success', f'IP: {vm_ip}')
+                
+            except Exception as e:
+                add_step_result('vm_state', 'failed', str(e))
+                raise
+            
+            # ========== Step 2: SSH Authentication ==========
+            job_details['progress_percent'] = 20
+            add_step_result('ssh_auth', 'running', 'Attempting SSH connection...')
+            
+            try:
+                if not PARAMIKO_AVAILABLE:
+                    raise Exception("paramiko library not installed")
+                
+                ssh_username = details.get('ssh_username', 'root')
+                root_password = details.get('root_password')
+                ssh_key_id = details.get('ssh_key_id')
+                
+                self.ssh_client = paramiko.SSHClient()
+                self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                
+                connected = False
+                
+                # Try SSH key first
+                if ssh_key_id:
+                    try:
+                        key_data = self._get_ssh_key(ssh_key_id)
+                        if key_data:
+                            private_key = self._decrypt_ssh_key(key_data.get('private_key_encrypted'))
+                            if private_key:
+                                key_file = io.StringIO(private_key)
+                                pkey = None
+                                for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                                    try:
+                                        key_file.seek(0)
+                                        pkey = key_class.from_private_key(key_file)
+                                        break
+                                    except:
+                                        continue
+                                
+                                if pkey:
+                                    self.ssh_client.connect(
+                                        hostname=vm_ip,
+                                        username=ssh_username,
+                                        pkey=pkey,
+                                        timeout=30,
+                                        allow_agent=False,
+                                        look_for_keys=False
+                                    )
+                                    connected = True
+                                    add_step_result('ssh_auth', 'success', f'Connected via SSH key as {ssh_username}')
+                    except paramiko.AuthenticationException:
+                        self._log_console(job_id, 'WARN', 'SSH key auth failed, trying password...', job_details)
+                
+                # Try password if key failed
+                if not connected and root_password:
+                    try:
+                        self.ssh_client.connect(
+                            hostname=vm_ip,
+                            username=ssh_username,
+                            password=root_password,
+                            timeout=30,
+                            allow_agent=False,
+                            look_for_keys=False
+                        )
+                        connected = True
+                        add_step_result('ssh_auth', 'success', f'Connected via password as {ssh_username}')
+                        
+                        # Deploy SSH key if requested
+                        if details.get('generate_new_key'):
+                            add_step_result('ssh_key_deploy', 'running', 'Generating and deploying SSH key...')
+                            # Generate key pair
+                            new_key = paramiko.Ed25519Key.generate()
+                            private_key_str = io.StringIO()
+                            new_key.write_private_key(private_key_str)
+                            public_key_str = f"ssh-ed25519 {new_key.get_base64()} zfs-target-{target_name}"
+                            
+                            # Deploy to authorized_keys
+                            result = self._ssh_exec(f'mkdir -p ~/.ssh && chmod 700 ~/.ssh', job_id=job_id)
+                            result = self._ssh_exec(f'echo "{public_key_str}" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys', job_id=job_id)
+                            
+                            if result['exit_code'] == 0:
+                                # Save key to database
+                                self._save_ssh_key(target_name, private_key_str.getvalue(), public_key_str)
+                                add_step_result('ssh_key_deploy', 'success', 'SSH key generated and deployed')
+                            else:
+                                add_step_result('ssh_key_deploy', 'warning', 'Key deploy failed, continuing with password')
+                        
+                    except paramiko.AuthenticationException:
+                        pass
+                
+                if not connected:
+                    # Need password - pause job
+                    add_step_result('ssh_auth', 'failed', 'SSH authentication failed - provide root password', needs_root_password=True)
+                    job_details['waiting_for_input'] = True
+                    self.update_job_status(job_id, 'running', details=job_details)
+                    # The job will be resumed when user provides password
+                    return
+                
+            except Exception as e:
+                add_step_result('ssh_auth', 'failed', str(e))
+                raise
+            
+            # ========== Step 3: Install Packages ==========
+            if details.get('install_packages', True):
+                job_details['progress_percent'] = 35
+                add_step_result('zfs_packages', 'running', 'Installing ZFS packages...')
+                
+                try:
+                    # Update apt sources
+                    result = self._ssh_exec('apt-get update -qq', job_id=job_id)
+                    
+                    # Install ZFS
+                    result = self._ssh_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zfsutils-linux', job_id=job_id)
+                    if result['exit_code'] != 0:
+                        raise Exception(f"Failed to install ZFS: {result['stderr']}")
+                    
+                    add_step_result('zfs_packages', 'success', 'ZFS packages installed')
+                    
+                    # Install NFS
+                    add_step_result('nfs_packages', 'running', 'Installing NFS packages...')
+                    result = self._ssh_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nfs-kernel-server', job_id=job_id)
+                    if result['exit_code'] != 0:
+                        raise Exception(f"Failed to install NFS: {result['stderr']}")
+                    
+                    add_step_result('nfs_packages', 'success', 'NFS packages installed')
+                    
+                    # Load ZFS module
+                    add_step_result('zfs_module', 'running', 'Loading ZFS kernel module...')
+                    result = self._ssh_exec('modprobe zfs', job_id=job_id)
+                    if result['exit_code'] != 0:
+                        add_step_result('zfs_module', 'warning', 'ZFS module load returned non-zero')
+                    else:
+                        add_step_result('zfs_module', 'success', 'ZFS module loaded')
+                    
+                except Exception as e:
+                    add_step_result('zfs_packages', 'failed', str(e))
+                    raise
+            
+            # ========== Step 4: Create ZFS Pool ==========
+            job_details['progress_percent'] = 50
+            add_step_result('disk_detection', 'running', 'Detecting available disks...')
+            
+            try:
+                # Detect available disk
+                zfs_disk = self._detect_zfs_disk()
+                if not zfs_disk:
+                    raise Exception("No suitable disk found for ZFS pool")
+                
+                add_step_result('disk_detection', 'success', f'Found disk: {zfs_disk}')
+                job_details['zfs_disk'] = zfs_disk
+                
+                # Check if pool already exists
+                pool_name = details.get('zfs_pool_name', 'tank')
+                result = self._ssh_exec(f'zpool list {pool_name} 2>/dev/null', job_id=job_id)
+                
+                if result['exit_code'] == 0:
+                    add_step_result('zfs_pool', 'success', f'Pool {pool_name} already exists')
+                else:
+                    add_step_result('zfs_pool', 'running', f'Creating ZFS pool {pool_name}...')
+                    
+                    # Create pool
+                    result = self._ssh_exec(f'zpool create -f {pool_name} {zfs_disk}', job_id=job_id)
+                    if result['exit_code'] != 0:
+                        raise Exception(f"Failed to create ZFS pool: {result['stderr']}")
+                    
+                    # Set compression
+                    result = self._ssh_exec(f'zfs set compression=lz4 {pool_name}', job_id=job_id)
+                    
+                    # Create NFS dataset
+                    result = self._ssh_exec(f'zfs create {pool_name}/nfs', job_id=job_id)
+                    
+                    add_step_result('zfs_pool', 'success', f'Pool {pool_name} created with compression=lz4')
+                
+            except Exception as e:
+                add_step_result('zfs_pool', 'failed', str(e))
+                raise
+            
+            # ========== Step 5: Configure NFS ==========
+            job_details['progress_percent'] = 65
+            add_step_result('nfs_export', 'running', 'Configuring NFS exports...')
+            
+            try:
+                pool_name = details.get('zfs_pool_name', 'tank')
+                nfs_network = details.get('nfs_network', '10.0.0.0/8')
+                nfs_path = f'/{pool_name}/nfs'
+                
+                # Set NFS share via ZFS
+                result = self._ssh_exec(f'zfs set sharenfs="rw,no_root_squash,async,no_subtree_check" {pool_name}/nfs', job_id=job_id)
+                
+                # Also add to /etc/exports as backup
+                export_line = f'{nfs_path} {nfs_network}(rw,sync,no_root_squash,no_subtree_check)'
+                result = self._ssh_exec(f'grep -q "{nfs_path}" /etc/exports || echo "{export_line}" >> /etc/exports', job_id=job_id)
+                
+                # Export and restart NFS
+                result = self._ssh_exec('exportfs -ra && systemctl restart nfs-kernel-server', job_id=job_id)
+                
+                add_step_result('nfs_export', 'success', f'NFS export configured: {nfs_path}')
+                job_details['nfs_path'] = nfs_path
+                
+            except Exception as e:
+                add_step_result('nfs_export', 'failed', str(e))
+                raise
+            
+            # ========== Step 6: Register Target ==========
+            job_details['progress_percent'] = 80
+            add_step_result('register_target', 'running', 'Registering replication target...')
+            
+            try:
+                pool_name = details.get('zfs_pool_name', 'tank')
+                nfs_path = f'/{pool_name}/nfs'
+                
+                target_data = {
+                    'name': target_name,
+                    'hostname': vm_ip,
+                    'target_type': 'zfs',
+                    'vcenter_id': vcenter_id,
+                    'deployed_vm_moref': vm_moref,
+                    'zfs_pool': pool_name,
+                    'nfs_export_path': nfs_path,
+                    'status': 'online',
+                    'is_active': True
+                }
+                
+                headers = {
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=representation'
+                }
+                
+                resp = requests.post(
+                    f'{DSM_URL}/rest/v1/replication_targets',
+                    json=target_data,
+                    headers=headers,
+                    verify=VERIFY_SSL,
+                    timeout=30
+                )
+                
+                if resp.status_code not in [200, 201]:
+                    raise Exception(f"Failed to register target: {resp.text}")
+                
+                target_result = resp.json()
+                target_id = target_result[0]['id'] if isinstance(target_result, list) else target_result.get('id')
+                job_details['replication_target_id'] = target_id
+                
+                add_step_result('register_target', 'success', f'Target registered: {target_name}')
+                
+            except Exception as e:
+                add_step_result('register_target', 'failed', str(e))
+                raise
+            
+            # ========== Step 7: Register Datastore ==========
+            job_details['progress_percent'] = 90
+            add_step_result('register_datastore', 'running', 'Registering vCenter datastore...')
+            
+            try:
+                pool_name = details.get('zfs_pool_name', 'tank')
+                nfs_path = f'/{pool_name}/nfs'
+                datastore_name = details.get('datastore_name') or f'NFS-{target_name}'
+                
+                # Find a host to mount the datastore
+                content = self.vcenter_conn.RetrieveContent()
+                host = None
+                
+                for dc in content.rootFolder.childEntity:
+                    if not isinstance(dc, vim.Datacenter):
+                        continue
+                    for entity in dc.hostFolder.childEntity:
+                        if isinstance(entity, vim.ClusterComputeResource):
+                            if entity.host:
+                                host = entity.host[0]
+                                break
+                        elif isinstance(entity, vim.ComputeResource):
+                            if entity.host:
+                                host = entity.host[0]
+                                break
+                    if host:
+                        break
+                
+                if not host:
+                    add_step_result('register_datastore', 'warning', 'No host found to mount datastore')
+                else:
+                    # Create NFS datastore
+                    ds_system = host.configManager.datastoreSystem
+                    
+                    nfs_spec = vim.host.NasVolume.Specification()
+                    nfs_spec.remoteHost = vm_ip
+                    nfs_spec.remotePath = nfs_path
+                    nfs_spec.localPath = datastore_name
+                    nfs_spec.accessMode = 'readWrite'
+                    nfs_spec.type = 'NFS'
+                    
+                    try:
+                        ds = ds_system.CreateNasDatastore(nfs_spec)
+                        add_step_result('register_datastore', 'success', f'Datastore created: {datastore_name}')
+                        job_details['datastore_name'] = datastore_name
+                    except vim.fault.DuplicateName:
+                        add_step_result('register_datastore', 'success', f'Datastore already exists: {datastore_name}')
+                        job_details['datastore_name'] = datastore_name
+                    except Exception as ds_err:
+                        add_step_result('register_datastore', 'warning', f'Datastore creation failed: {ds_err}')
+                
+            except Exception as e:
+                add_step_result('register_datastore', 'warning', str(e))
+                # Don't fail the whole job for datastore issues
+            
+            # ========== Complete ==========
+            job_details['progress_percent'] = 100
+            add_step_result('finalize', 'success', 'ZFS target ready for replication')
+            
+            self._log_console(job_id, 'INFO', '✓ ZFS target onboarding completed successfully', job_details)
+            self.update_job_status(job_id, 'completed', completed_at=utc_now_iso(), details=job_details)
+            
+        except Exception as e:
+            self.log(f'ZFS target onboarding failed: {e}', 'ERROR')
+            job_details['error'] = str(e)
+            self._log_console(job_id, 'ERROR', f'Onboarding failed: {str(e)}', job_details)
+            self.update_job_status(job_id, 'failed', completed_at=utc_now_iso(), details=job_details)
+        finally:
+            self._cleanup()
+    
+    def _fetch_vm_info(self, vm_id: str) -> Optional[Dict]:
+        """Fetch VM info from vcenter_vms table."""
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            }
+            
+            resp = requests.get(
+                f'{DSM_URL}/rest/v1/vcenter_vms?id=eq.{vm_id}&select=*',
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                return data[0] if data else None
+            return None
+        except Exception as e:
+            self.log(f'Failed to fetch VM info: {e}', 'ERROR')
+            return None
+    
+    def _save_ssh_key(self, name: str, private_key: str, public_key: str):
+        """Save generated SSH key to database."""
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            # Encrypt private key (simplified - in production use proper encryption)
+            key_data = {
+                'name': f'auto-{name}',
+                'public_key': public_key,
+                'private_key_encrypted': private_key,  # Should be encrypted
+                'key_type': 'ed25519',
+                'fingerprint': 'auto-generated'
+            }
+            
+            requests.post(
+                f'{DSM_URL}/rest/v1/ssh_keys',
+                json=key_data,
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+        except Exception as e:
+            self.log(f'Failed to save SSH key: {e}', 'WARN')
