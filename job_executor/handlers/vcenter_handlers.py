@@ -6,6 +6,7 @@ import time
 import requests
 from .base import BaseHandler
 from job_executor.utils import utc_now_iso
+from job_executor.config import USE_PROPERTY_COLLECTOR_SYNC
 
 
 class VCenterHandlers(BaseHandler):
@@ -177,16 +178,26 @@ class VCenterHandlers(BaseHandler):
         )
         
         # Create tasks for each sync phase (prefixed with vCenter name if multi)
+        # With PropertyCollector, we consolidate to 3 phases: connect, inventory, alarms
         phase_prefix = f"[{vcenter_name}] " if total_vcenters > 1 else ""
-        sync_phases = [
-            {'name': 'connect', 'label': f'{phase_prefix}Connecting to vCenter'},
-            {'name': 'clusters', 'label': f'{phase_prefix}Syncing clusters'},
-            {'name': 'datastores', 'label': f'{phase_prefix}Syncing datastores'},
-            {'name': 'networks', 'label': f'{phase_prefix}Syncing networks'},
-            {'name': 'vms', 'label': f'{phase_prefix}Syncing VMs'},
-            {'name': 'alarms', 'label': f'{phase_prefix}Syncing alarms'},
-            {'name': 'hosts', 'label': f'{phase_prefix}Syncing ESXi hosts'}
-        ]
+        
+        if USE_PROPERTY_COLLECTOR_SYNC:
+            sync_phases = [
+                {'name': 'connect', 'label': f'{phase_prefix}Connecting to vCenter'},
+                {'name': 'inventory', 'label': f'{phase_prefix}Syncing inventory (PropertyCollector)'},
+                {'name': 'alarms', 'label': f'{phase_prefix}Syncing alarms'}
+            ]
+        else:
+            # Legacy mode - keep old phases for rollback
+            sync_phases = [
+                {'name': 'connect', 'label': f'{phase_prefix}Connecting to vCenter'},
+                {'name': 'clusters', 'label': f'{phase_prefix}Syncing clusters'},
+                {'name': 'datastores', 'label': f'{phase_prefix}Syncing datastores'},
+                {'name': 'networks', 'label': f'{phase_prefix}Syncing networks'},
+                {'name': 'vms', 'label': f'{phase_prefix}Syncing VMs'},
+                {'name': 'alarms', 'label': f'{phase_prefix}Syncing alarms'},
+                {'name': 'hosts', 'label': f'{phase_prefix}Syncing ESXi hosts'}
+            ]
         
         phase_tasks = {}
         for phase in sync_phases:
@@ -240,152 +251,287 @@ class VCenterHandlers(BaseHandler):
             if check_cancelled():
                 return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
             
-            # Sync clusters
-            self.log("📊 Syncing clusters...")
-            if 'clusters' in phase_tasks:
-                self.update_task_status(phase_tasks['clusters'], 'running', log=f'{phase_prefix}Syncing clusters...', progress=0)
-            
-            self.update_job_status(job['id'], 'running', details={
-                'current_step': f'Syncing clusters from {vcenter_name}',
-                'total_vcenters': total_vcenters,
-                'current_vcenter_index': vcenter_index,
-                'current_vcenter_name': vcenter_name
-            })
-            
-            if not self.executor.check_vcenter_connection(content):
-                raise Exception("vCenter connection lost before cluster sync")
-            
-            clusters_result = self.executor.sync_vcenter_clusters(content, source_vcenter_id, vcenter_name=vcenter_name, job_id=job['id'])
-            self.log(f"✓ Clusters synced: {clusters_result.get('synced', 0)}")
-            
-            if 'clusters' in phase_tasks:
-                self.update_task_status(
-                    phase_tasks['clusters'],
-                    'completed',
-                    log=f'✓ Synced {clusters_result.get("synced", 0)} clusters',
-                    progress=100
+            # =====================================================================
+            # PropertyCollector-based FAST sync (single ContainerView, batch upsert)
+            # =====================================================================
+            if USE_PROPERTY_COLLECTOR_SYNC:
+                self.log("🚀 Using PropertyCollector for fast inventory sync...")
+                
+                if 'inventory' in phase_tasks:
+                    self.update_task_status(phase_tasks['inventory'], 'running', 
+                        log=f'{phase_prefix}Fetching inventory via PropertyCollector...', progress=0)
+                
+                self.update_job_status(job['id'], 'running', details={
+                    'current_step': f'PropertyCollector inventory fetch from {vcenter_name}',
+                    'total_vcenters': total_vcenters,
+                    'current_vcenter_index': vcenter_index,
+                    'current_vcenter_name': vcenter_name,
+                    'sync_mode': 'property_collector'
+                })
+                
+                # Import PropertyCollector module
+                from job_executor.mixins.vcenter_property_collector import sync_vcenter_fast
+                
+                # Single call fetches ALL inventory (clusters, hosts, vms, datastores, networks)
+                inventory_start = time.time()
+                inventory_result = sync_vcenter_fast(content, source_vcenter_id)
+                fetch_time = int((time.time() - inventory_start) * 1000)
+                
+                self.log(f"✓ PropertyCollector fetched {inventory_result.get('total_objects', 0)} objects in {fetch_time}ms")
+                
+                if 'inventory' in phase_tasks:
+                    self.update_task_status(phase_tasks['inventory'], 'running',
+                        log=f'{phase_prefix}Upserting {inventory_result.get("total_objects", 0)} objects to database...',
+                        progress=50)
+                
+                # Check for cancellation before database upsert
+                if check_cancelled():
+                    return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
+                
+                # Batch upsert all inventory to database
+                def inventory_progress(pct, msg):
+                    if 'inventory' in phase_tasks:
+                        # Scale progress from 50-100% for upsert phase
+                        scaled_pct = 50 + int(pct * 0.5)
+                        self.update_task_status(phase_tasks['inventory'], 'running', log=msg, progress=scaled_pct)
+                    self.update_job_status(job['id'], 'running', details={
+                        'current_step': msg,
+                        'total_vcenters': total_vcenters,
+                        'current_vcenter_index': vcenter_index,
+                        'current_vcenter_name': vcenter_name
+                    })
+                
+                upsert_result = self.executor.upsert_inventory_fast(
+                    inventory_result,
+                    source_vcenter_id,
+                    vcenter_name=vcenter_name,
+                    job_id=job['id'],
+                    progress_callback=inventory_progress
                 )
+                
+                # Map results to legacy format for compatibility
+                clusters_result = upsert_result.get('clusters', {})
+                datastores_result = upsert_result.get('datastores', {})
+                networks_result = upsert_result.get('networks', {})
+                vms_result = upsert_result.get('vms', {})
+                hosts_result = upsert_result.get('hosts', {})
+                
+                self.log(f"✓ Inventory upsert complete: "
+                    f"{clusters_result.get('synced', 0)} clusters, "
+                    f"{hosts_result.get('synced', 0)} hosts, "
+                    f"{datastores_result.get('synced', 0)} datastores, "
+                    f"{networks_result.get('synced', 0)} networks, "
+                    f"{vms_result.get('synced', 0)} VMs")
+                
+                if 'inventory' in phase_tasks:
+                    self.update_task_status(
+                        phase_tasks['inventory'],
+                        'completed',
+                        log=f'✓ Synced {inventory_result.get("total_objects", 0)} objects '
+                            f'(fetch: {inventory_result.get("fetch_time_ms", 0)}ms, '
+                            f'process: {inventory_result.get("process_time_ms", 0)}ms)',
+                        progress=100
+                    )
+                
+                # Collect any PropertyCollector errors
+                if inventory_result.get('errors'):
+                    for err in inventory_result['errors']:
+                        sync_errors.append(f"{err.get('object', 'unknown')}: {err.get('message', '')}")
             
-            # Check before datastores phase
-            if check_cancelled():
-                return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
-            
-            # Sync datastores
-            self.log("📦 Syncing datastores...")
-            if 'datastores' in phase_tasks:
-                self.update_task_status(phase_tasks['datastores'], 'running', log=f'{phase_prefix}Syncing datastores...', progress=0)
-            
-            self.update_job_status(job['id'], 'running', details={
-                'current_step': f'Syncing datastores from {vcenter_name}',
-                'total_vcenters': total_vcenters,
-                'current_vcenter_index': vcenter_index,
-                'current_vcenter_name': vcenter_name
-            })
-            
-            if not self.executor.check_vcenter_connection(content):
-                raise Exception("vCenter connection lost before datastore sync")
-            
-            def datastore_progress(pct, msg):
+            else:
+                # =====================================================================
+                # Legacy sync path (6 sequential ContainerViews) - kept for rollback
+                # =====================================================================
+                self.log("📋 Using legacy sync mode (6 sequential phases)...")
+                
+                # Sync clusters
+                self.log("📊 Syncing clusters...")
+                if 'clusters' in phase_tasks:
+                    self.update_task_status(phase_tasks['clusters'], 'running', log=f'{phase_prefix}Syncing clusters...', progress=0)
+                
+                self.update_job_status(job['id'], 'running', details={
+                    'current_step': f'Syncing clusters from {vcenter_name}',
+                    'total_vcenters': total_vcenters,
+                    'current_vcenter_index': vcenter_index,
+                    'current_vcenter_name': vcenter_name
+                })
+                
+                if not self.executor.check_vcenter_connection(content):
+                    raise Exception("vCenter connection lost before cluster sync")
+                
+                clusters_result = self.executor.sync_vcenter_clusters(content, source_vcenter_id, vcenter_name=vcenter_name, job_id=job['id'])
+                self.log(f"✓ Clusters synced: {clusters_result.get('synced', 0)}")
+                
+                if 'clusters' in phase_tasks:
+                    self.update_task_status(
+                        phase_tasks['clusters'],
+                        'completed',
+                        log=f'✓ Synced {clusters_result.get("synced", 0)} clusters',
+                        progress=100
+                    )
+                
+                # Check before datastores phase
+                if check_cancelled():
+                    return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
+                
+                # Sync datastores
+                self.log("📦 Syncing datastores...")
                 if 'datastores' in phase_tasks:
-                    self.update_task_status(phase_tasks['datastores'], 'running', log=msg, progress=pct)
+                    self.update_task_status(phase_tasks['datastores'], 'running', log=f'{phase_prefix}Syncing datastores...', progress=0)
+                
                 self.update_job_status(job['id'], 'running', details={
-                    'current_step': msg,
+                    'current_step': f'Syncing datastores from {vcenter_name}',
                     'total_vcenters': total_vcenters,
                     'current_vcenter_index': vcenter_index,
                     'current_vcenter_name': vcenter_name
                 })
-            
-            datastores_result = self.executor.sync_vcenter_datastores(content, source_vcenter_id, progress_callback=datastore_progress, vcenter_name=vcenter_name, job_id=job['id'])
-            self.log(f"✓ Datastores synced: {datastores_result.get('synced', 0)}")
-            
-            if 'datastores' in phase_tasks:
-                self.update_task_status(
-                    phase_tasks['datastores'],
-                    'completed',
-                    log=f'✓ Synced {datastores_result.get("synced", 0)} datastores',
-                    progress=100
-                )
-            
-            # Check before networks phase
-            if check_cancelled():
-                return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
-            
-            # Sync networks
-            self.log("🌐 Syncing networks...")
-            if 'networks' in phase_tasks:
-                self.update_task_status(phase_tasks['networks'], 'running', log=f'{phase_prefix}Syncing networks...', progress=0)
-            
-            self.update_job_status(job['id'], 'running', details={
-                'current_step': f'Syncing networks from {vcenter_name}',
-                'total_vcenters': total_vcenters,
-                'current_vcenter_index': vcenter_index,
-                'current_vcenter_name': vcenter_name
-            })
-            
-            if not self.executor.check_vcenter_connection(content):
-                raise Exception("vCenter connection lost before network sync")
-            
-            def network_progress(pct, msg):
+                
+                if not self.executor.check_vcenter_connection(content):
+                    raise Exception("vCenter connection lost before datastore sync")
+                
+                def datastore_progress(pct, msg):
+                    if 'datastores' in phase_tasks:
+                        self.update_task_status(phase_tasks['datastores'], 'running', log=msg, progress=pct)
+                    self.update_job_status(job['id'], 'running', details={
+                        'current_step': msg,
+                        'total_vcenters': total_vcenters,
+                        'current_vcenter_index': vcenter_index,
+                        'current_vcenter_name': vcenter_name
+                    })
+                
+                datastores_result = self.executor.sync_vcenter_datastores(content, source_vcenter_id, progress_callback=datastore_progress, vcenter_name=vcenter_name, job_id=job['id'])
+                self.log(f"✓ Datastores synced: {datastores_result.get('synced', 0)}")
+                
+                if 'datastores' in phase_tasks:
+                    self.update_task_status(
+                        phase_tasks['datastores'],
+                        'completed',
+                        log=f'✓ Synced {datastores_result.get("synced", 0)} datastores',
+                        progress=100
+                    )
+                
+                # Check before networks phase
+                if check_cancelled():
+                    return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
+                
+                # Sync networks
+                self.log("🌐 Syncing networks...")
                 if 'networks' in phase_tasks:
-                    self.update_task_status(phase_tasks['networks'], 'running', log=msg, progress=pct)
+                    self.update_task_status(phase_tasks['networks'], 'running', log=f'{phase_prefix}Syncing networks...', progress=0)
+                
                 self.update_job_status(job['id'], 'running', details={
-                    'current_step': msg,
+                    'current_step': f'Syncing networks from {vcenter_name}',
                     'total_vcenters': total_vcenters,
                     'current_vcenter_index': vcenter_index,
                     'current_vcenter_name': vcenter_name
                 })
-            
-            networks_result = self.executor.sync_vcenter_networks(content, source_vcenter_id, progress_callback=network_progress, vcenter_name=vcenter_name, job_id=job['id'])
-            self.log(f"✓ Networks synced: {networks_result.get('synced', 0)}")
-            
-            if 'networks' in phase_tasks:
-                self.update_task_status(
-                    phase_tasks['networks'],
-                    'completed',
-                    log=f'✓ Synced {networks_result.get("synced", 0)} networks',
-                    progress=100
-                )
-            
-            # Check before VMs phase
-            if check_cancelled():
-                return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
-            
-            # Sync VMs
-            self.log("🖥️ Syncing VMs...")
-            if 'vms' in phase_tasks:
-                self.update_task_status(phase_tasks['vms'], 'running', log=f'{phase_prefix}Syncing VMs...', progress=0)
-            
-            self.update_job_status(job['id'], 'running', details={
-                'current_step': f'Syncing VMs from {vcenter_name}',
-                'total_vcenters': total_vcenters,
-                'current_vcenter_index': vcenter_index,
-                'current_vcenter_name': vcenter_name
-            })
-            
-            if not self.executor.check_vcenter_connection(content):
-                raise Exception("vCenter connection lost before VM sync")
-            
-            vms_task_id = phase_tasks.get('vms')
-            vms_result = self.executor.sync_vcenter_vms(content, source_vcenter_id, job['id'], vcenter_name=vcenter_name, task_id=vms_task_id)
-            
-            # Check if VM sync was cancelled mid-way
-            if vms_result.get('cancelled'):
-                self.log("VM sync was cancelled by user")
+                
+                if not self.executor.check_vcenter_connection(content):
+                    raise Exception("vCenter connection lost before network sync")
+                
+                def network_progress(pct, msg):
+                    if 'networks' in phase_tasks:
+                        self.update_task_status(phase_tasks['networks'], 'running', log=msg, progress=pct)
+                    self.update_job_status(job['id'], 'running', details={
+                        'current_step': msg,
+                        'total_vcenters': total_vcenters,
+                        'current_vcenter_index': vcenter_index,
+                        'current_vcenter_name': vcenter_name
+                    })
+                
+                networks_result = self.executor.sync_vcenter_networks(content, source_vcenter_id, progress_callback=network_progress, vcenter_name=vcenter_name, job_id=job['id'])
+                self.log(f"✓ Networks synced: {networks_result.get('synced', 0)}")
+                
+                if 'networks' in phase_tasks:
+                    self.update_task_status(
+                        phase_tasks['networks'],
+                        'completed',
+                        log=f'✓ Synced {networks_result.get("synced", 0)} networks',
+                        progress=100
+                    )
+                
+                # Check before VMs phase
+                if check_cancelled():
+                    return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
+                
+                # Sync VMs
+                self.log("🖥️ Syncing VMs...")
                 if 'vms' in phase_tasks:
-                    self.update_task_status(phase_tasks['vms'], 'cancelled', log='Cancelled by user', progress=0)
-                return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
+                    self.update_task_status(phase_tasks['vms'], 'running', log=f'{phase_prefix}Syncing VMs...', progress=0)
+                
+                self.update_job_status(job['id'], 'running', details={
+                    'current_step': f'Syncing VMs from {vcenter_name}',
+                    'total_vcenters': total_vcenters,
+                    'current_vcenter_index': vcenter_index,
+                    'current_vcenter_name': vcenter_name
+                })
+                
+                if not self.executor.check_vcenter_connection(content):
+                    raise Exception("vCenter connection lost before VM sync")
+                
+                vms_task_id = phase_tasks.get('vms')
+                vms_result = self.executor.sync_vcenter_vms(content, source_vcenter_id, job['id'], vcenter_name=vcenter_name, task_id=vms_task_id)
+                
+                # Check if VM sync was cancelled mid-way
+                if vms_result.get('cancelled'):
+                    self.log("VM sync was cancelled by user")
+                    if 'vms' in phase_tasks:
+                        self.update_task_status(phase_tasks['vms'], 'cancelled', log='Cancelled by user', progress=0)
+                    return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
+                
+                self.log(f"✓ VMs synced: {vms_result.get('synced', 0)}")
+                
+                if 'vms' in phase_tasks:
+                    self.update_task_status(
+                        phase_tasks['vms'],
+                        'completed',
+                        log=f'✓ Synced {vms_result.get("synced", 0)} VMs',
+                        progress=100
+                    )
+                
+                # Check before hosts phase
+                if check_cancelled():
+                    return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
+                
+                # Sync ESXi hosts
+                self.log("🖥️ Syncing ESXi hosts...")
+                if 'hosts' in phase_tasks:
+                    self.update_task_status(phase_tasks['hosts'], 'running', log=f'{phase_prefix}Syncing hosts...', progress=0)
+                
+                self.update_job_status(job['id'], 'running', details={
+                    'current_step': f'Syncing hosts from {vcenter_name}',
+                    'total_vcenters': total_vcenters,
+                    'current_vcenter_index': vcenter_index,
+                    'current_vcenter_name': vcenter_name
+                })
+                
+                if not self.executor.check_vcenter_connection(content):
+                    raise Exception("vCenter connection lost before host sync")
+                
+                def host_progress(pct, msg):
+                    if 'hosts' in phase_tasks:
+                        self.update_task_status(phase_tasks['hosts'], 'running', log=msg, progress=pct)
+                    self.update_job_status(job['id'], 'running', details={
+                        'current_step': msg,
+                        'total_vcenters': total_vcenters,
+                        'current_vcenter_index': vcenter_index,
+                        'current_vcenter_name': vcenter_name
+                    })
+                
+                hosts_result = self.executor.sync_vcenter_hosts(content, source_vcenter_id, progress_callback=host_progress, vcenter_name=vcenter_name, job_id=job['id'])
+                self.log(f"✓ Hosts synced: {hosts_result.get('synced', 0)}, auto-linked: {hosts_result.get('auto_linked', 0)}")
+                
+                if 'hosts' in phase_tasks:
+                    self.update_task_status(
+                        phase_tasks['hosts'],
+                        'completed',
+                        log=f'✓ Synced {hosts_result.get("synced", 0)} hosts, auto-linked {hosts_result.get("auto_linked", 0)}',
+                        progress=100
+                    )
             
-            self.log(f"✓ VMs synced: {vms_result.get('synced', 0)}")
-            
-            if 'vms' in phase_tasks:
-                self.update_task_status(
-                    phase_tasks['vms'],
-                    'completed',
-                    log=f'✓ Synced {vms_result.get("synced", 0)} VMs',
-                    progress=100
-                )
-            
-            # Check before alarms phase
+            # =====================================================================
+            # Alarms sync (always uses AlarmManager API - separate per spec)
+            # =====================================================================
             if check_cancelled():
                 return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
             
@@ -424,38 +570,6 @@ class VCenterHandlers(BaseHandler):
                     log=f'✓ Synced {alarms_result.get("synced", 0)} alarms',
                     progress=100
                 )
-            
-            # Check before hosts phase
-            if check_cancelled():
-                return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
-            
-            # Sync ESXi hosts
-            self.log("🖥️ Syncing ESXi hosts...")
-            if 'hosts' in phase_tasks:
-                self.update_task_status(phase_tasks['hosts'], 'running', log=f'{phase_prefix}Syncing hosts...', progress=0)
-            
-            self.update_job_status(job['id'], 'running', details={
-                'current_step': f'Syncing hosts from {vcenter_name}',
-                'total_vcenters': total_vcenters,
-                'current_vcenter_index': vcenter_index,
-                'current_vcenter_name': vcenter_name
-            })
-            
-            if not self.executor.check_vcenter_connection(content):
-                raise Exception("vCenter connection lost before host sync")
-            
-            def host_progress(pct, msg):
-                if 'hosts' in phase_tasks:
-                    self.update_task_status(phase_tasks['hosts'], 'running', log=msg, progress=pct)
-                self.update_job_status(job['id'], 'running', details={
-                    'current_step': msg,
-                    'total_vcenters': total_vcenters,
-                    'current_vcenter_index': vcenter_index,
-                    'current_vcenter_name': vcenter_name
-                })
-            
-            hosts_result = self.executor.sync_vcenter_hosts(content, source_vcenter_id, progress_callback=host_progress, vcenter_name=vcenter_name, job_id=job['id'])
-            self.log(f"✓ Hosts synced: {hosts_result.get('synced', 0)}, auto-linked: {hosts_result.get('auto_linked', 0)}")
             
             if 'hosts' in phase_tasks:
                 self.update_task_status(
