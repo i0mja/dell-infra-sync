@@ -22,6 +22,8 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Textarea } from "@/components/ui/textarea";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Select,
   SelectContent,
@@ -57,9 +59,14 @@ import {
   Power,
   PowerOff,
   Copy,
+  Check,
+  Plus,
+  Fingerprint,
+  Plug,
 } from "lucide-react";
 import { useVCenters } from "@/hooks/useVCenters";
 import { useVCenterVMs } from "@/hooks/useVCenterVMs";
+import { useSshKeys } from "@/hooks/useSshKeys";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
@@ -152,8 +159,17 @@ export function OnboardZfsTargetWizard({
   const [targetName, setTargetName] = useState("");
   
   // Step 2: Authentication
+  const [authMethod, setAuthMethod] = useState<'existing_key' | 'generate_key' | 'password'>('existing_key');
+  const [selectedSshKeyId, setSelectedSshKeyId] = useState("");
   const [rootPassword, setRootPassword] = useState("");
-  const [generateNewKey, setGenerateNewKey] = useState(true);
+  const [testingSsh, setTestingSsh] = useState(false);
+  const [sshTestResult, setSshTestResult] = useState<'success' | 'failed' | null>(null);
+  const [copiedPublicKey, setCopiedPublicKey] = useState(false);
+  const [generatingKey, setGeneratingKey] = useState(false);
+  const [newGeneratedKeyId, setNewGeneratedKeyId] = useState<string | null>(null);
+  
+  // Legacy for backward compat
+  const generateNewKey = authMethod === 'generate_key';
   
   // Step 3: Configuration options
   const [installPackages, setInstallPackages] = useState(true);
@@ -182,6 +198,21 @@ export function OnboardZfsTargetWizard({
   
   // Fetch VMs from selected vCenter
   const { data: vms = [], isLoading: vmsLoading, clusters = [] } = useVCenterVMs(selectedVCenterId || undefined);
+  
+  // Fetch SSH keys
+  const { sshKeys = [], isLoading: sshKeysLoading, generateKey } = useSshKeys();
+  
+  // Filter active SSH keys for picker
+  const activeSshKeys = useMemo(() => 
+    sshKeys.filter(k => k.status === 'active'), 
+    [sshKeys]
+  );
+  
+  // Get selected SSH key details
+  const selectedSshKey = useMemo(() => 
+    sshKeys.find(k => k.id === selectedSshKeyId),
+    [sshKeys, selectedSshKeyId]
+  );
   
   // Find selected VM details
   const selectedVM = vms.find(vm => vm.id === selectedVMId);
@@ -229,6 +260,13 @@ export function OnboardZfsTargetWizard({
       setSelectedVMId(preselectedVMId || "");
       setTargetName("");
       setRootPassword("");
+      setAuthMethod('existing_key');
+      setSelectedSshKeyId("");
+      setSshTestResult(null);
+      setTestingSsh(false);
+      setCopiedPublicKey(false);
+      setGeneratingKey(false);
+      setNewGeneratedKeyId(null);
       setStepResults([]);
       setProgressPercent(0);
       setConsoleLog([]);
@@ -346,8 +384,10 @@ export function OnboardZfsTargetWizard({
           },
           details: {
             target_name: targetName,
-            root_password: rootPassword || undefined,
-            generate_new_key: generateNewKey,
+            auth_method: authMethod,
+            ssh_key_id: authMethod === 'existing_key' ? selectedSshKeyId : undefined,
+            root_password: authMethod === 'password' ? rootPassword : undefined,
+            generate_new_key: authMethod === 'generate_key',
             install_packages: installPackages,
             create_user: createUser,
             reset_machine_id: resetMachineId,
@@ -424,7 +464,133 @@ export function OnboardZfsTargetWizard({
     }
   };
   
-  const canProceedStep1 = selectedVCenterId && selectedVMId && targetName;
+  // Generate a new SSH key
+  const handleGenerateKey = async () => {
+    if (!targetName) {
+      toast({ title: 'Enter a target name first', variant: 'destructive' });
+      return;
+    }
+    
+    setGeneratingKey(true);
+    try {
+      await generateKey({ 
+        name: `${targetName}-key`, 
+        description: `Auto-generated for ZFS target: ${targetName}` 
+      });
+      
+      // The key was generated - need to fetch the latest key
+      // We'll do a quick query to find the newest key
+      const { data: newKey } = await supabase
+        .from('ssh_keys')
+        .select('id')
+        .eq('name', `${targetName}-key`)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+      
+      if (newKey) {
+        setNewGeneratedKeyId(newKey.id);
+        setSelectedSshKeyId(newKey.id);
+        setAuthMethod('existing_key');
+      }
+      
+      toast({ title: 'SSH key generated', description: 'Key is ready for deployment' });
+    } catch (err) {
+      toast({ 
+        title: 'Failed to generate key', 
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive' 
+      });
+    } finally {
+      setGeneratingKey(false);
+    }
+  };
+  
+  // Test SSH connection
+  const handleTestSshConnection = async () => {
+    if (!selectedVM?.ip_address) {
+      toast({ title: 'VM has no IP address', variant: 'destructive' });
+      return;
+    }
+    
+    setTestingSsh(true);
+    setSshTestResult(null);
+    
+    try {
+      const { data: user } = await supabase.auth.getUser();
+      
+      const { data: job, error } = await supabase
+        .from('jobs')
+        .insert({
+          // Cast as any since test_ssh_connection may be added to job_type enum later
+          job_type: 'test_ssh_connection' as unknown as 'onboard_zfs_target',
+          status: 'pending',
+          created_by: user?.user?.id,
+          details: {
+            vm_ip: selectedVM.ip_address,
+            auth_method: authMethod,
+            ssh_key_id: authMethod === 'existing_key' ? selectedSshKeyId : undefined,
+            root_password: authMethod === 'password' ? rootPassword : undefined,
+          }
+        })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      
+      // Poll for result (max 30 seconds)
+      let attempts = 0;
+      const pollInterval = setInterval(async () => {
+        attempts++;
+        const { data: jobResult } = await supabase
+          .from('jobs')
+          .select('status, details')
+          .eq('id', job.id)
+          .single();
+        
+        if (jobResult?.status === 'completed') {
+          clearInterval(pollInterval);
+          setSshTestResult('success');
+          setTestingSsh(false);
+          toast({ title: 'SSH connection successful' });
+        } else if (jobResult?.status === 'failed' || attempts >= 15) {
+          clearInterval(pollInterval);
+          setSshTestResult('failed');
+          setTestingSsh(false);
+          toast({ 
+            title: 'SSH connection failed', 
+            description: (jobResult?.details as Record<string, unknown>)?.error as string || 'Connection timeout',
+            variant: 'destructive' 
+          });
+        }
+      }, 2000);
+    } catch (err) {
+      setTestingSsh(false);
+      setSshTestResult('failed');
+      toast({ 
+        title: 'Failed to test connection', 
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive' 
+      });
+    }
+  };
+  
+  // Copy public key to clipboard
+  const handleCopyPublicKey = async () => {
+    if (!selectedSshKey?.public_key) return;
+    
+    await navigator.clipboard.writeText(selectedSshKey.public_key);
+    setCopiedPublicKey(true);
+    toast({ title: 'Public key copied' });
+    setTimeout(() => setCopiedPublicKey(false), 2000);
+  };
+  
+  // Validation for proceeding
+  const canProceedStep1 = selectedVCenterId && selectedVMId && targetName && (
+    authMethod === 'password' ? !!rootPassword : 
+    authMethod === 'existing_key' ? !!selectedSshKeyId : 
+    authMethod === 'generate_key' ? true : false
+  );
   const isJobRunning = jobStatus === 'running' || jobStatus === 'pending';
   const isJobComplete = jobStatus === 'completed';
   const isJobFailed = jobStatus === 'failed';
@@ -604,6 +770,175 @@ export function OnboardZfsTargetWizard({
                 </p>
               </div>
               
+              <div className="pt-4 border-t space-y-4">
+                <Label className="text-sm font-medium">SSH Authentication</Label>
+                
+                <RadioGroup 
+                  value={authMethod} 
+                  onValueChange={(v) => setAuthMethod(v as 'existing_key' | 'generate_key' | 'password')}
+                  className="space-y-3"
+                >
+                  {/* Existing SSH Key */}
+                  <div className="flex items-start space-x-3">
+                    <RadioGroupItem value="existing_key" id="auth-existing" className="mt-1" />
+                    <div className="flex-1 space-y-2">
+                      <Label htmlFor="auth-existing" className="text-sm cursor-pointer">
+                        Use existing SSH key
+                      </Label>
+                      
+                      {authMethod === 'existing_key' && (
+                        <div className="space-y-3">
+                          <Select 
+                            value={selectedSshKeyId} 
+                            onValueChange={setSelectedSshKeyId}
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue placeholder={sshKeysLoading ? "Loading keys..." : "Select SSH key"} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {activeSshKeys.map((key) => (
+                                <SelectItem key={key.id} value={key.id}>
+                                  <div className="flex items-center gap-2">
+                                    <Key className="h-3 w-3" />
+                                    <span>{key.name}</span>
+                                    {key.public_key_fingerprint && (
+                                      <span className="text-xs text-muted-foreground font-mono">
+                                        {key.public_key_fingerprint.slice(0, 16)}...
+                                      </span>
+                                    )}
+                                  </div>
+                                </SelectItem>
+                              ))}
+                              {activeSshKeys.length === 0 && (
+                                <SelectItem value="_none" disabled>
+                                  No active SSH keys found
+                                </SelectItem>
+                              )}
+                            </SelectContent>
+                          </Select>
+                          
+                          {/* Public key display */}
+                          {selectedSshKey && (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                  <Fingerprint className="h-3 w-3" />
+                                  {selectedSshKey.public_key_fingerprint}
+                                </span>
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm" 
+                                  onClick={handleCopyPublicKey}
+                                  className="h-6 px-2"
+                                >
+                                  {copiedPublicKey ? (
+                                    <Check className="h-3 w-3 text-green-500" />
+                                  ) : (
+                                    <Copy className="h-3 w-3" />
+                                  )}
+                                </Button>
+                              </div>
+                              <Textarea
+                                value={selectedSshKey.public_key}
+                                readOnly
+                                className="font-mono text-xs h-16 resize-none"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Generate New Key */}
+                  <div className="flex items-start space-x-3">
+                    <RadioGroupItem value="generate_key" id="auth-generate" className="mt-1" />
+                    <div className="flex-1 space-y-2">
+                      <Label htmlFor="auth-generate" className="text-sm cursor-pointer">
+                        Generate new SSH key
+                      </Label>
+                      
+                      {authMethod === 'generate_key' && (
+                        <div className="space-y-2">
+                          <p className="text-xs text-muted-foreground">
+                            A new keypair will be generated and saved. The public key will be deployed to the target.
+                          </p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleGenerateKey}
+                            disabled={generatingKey || !targetName}
+                          >
+                            {generatingKey ? (
+                              <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                            ) : (
+                              <Plus className="h-3 w-3 mr-2" />
+                            )}
+                            Generate Now
+                          </Button>
+                          {newGeneratedKeyId && (
+                            <Badge variant="outline" className="text-xs text-green-600">
+                              <Check className="h-3 w-3 mr-1" />
+                              Key generated
+                            </Badge>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Password Auth */}
+                  <div className="flex items-start space-x-3">
+                    <RadioGroupItem value="password" id="auth-password" className="mt-1" />
+                    <div className="flex-1 space-y-2">
+                      <Label htmlFor="auth-password" className="text-sm cursor-pointer">
+                        Use password
+                      </Label>
+                      
+                      {authMethod === 'password' && (
+                        <Input
+                          type="password"
+                          value={rootPassword}
+                          onChange={(e) => setRootPassword(e.target.value)}
+                          placeholder="Root password"
+                        />
+                      )}
+                    </div>
+                  </div>
+                </RadioGroup>
+                
+                {/* Test SSH Connection Button */}
+                {selectedVM?.ip_address && (authMethod === 'existing_key' && selectedSshKeyId || authMethod === 'password' && rootPassword) && (
+                  <div className="flex items-center gap-2 pt-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleTestSshConnection}
+                      disabled={testingSsh}
+                    >
+                      {testingSsh ? (
+                        <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                      ) : (
+                        <Plug className="h-3 w-3 mr-2" />
+                      )}
+                      Test SSH Connection
+                    </Button>
+                    {sshTestResult === 'success' && (
+                      <Badge variant="outline" className="text-green-600">
+                        <Check className="h-3 w-3 mr-1" />
+                        Connected
+                      </Badge>
+                    )}
+                    {sshTestResult === 'failed' && (
+                      <Badge variant="outline" className="text-destructive">
+                        <XCircle className="h-3 w-3 mr-1" />
+                        Failed
+                      </Badge>
+                    )}
+                  </div>
+                )}
+              </div>
+              
               <div className="pt-4 border-t space-y-3">
                 <Label className="text-sm font-medium">Configuration Options</Label>
                 <div className="grid grid-cols-2 gap-4">
@@ -649,14 +984,6 @@ export function OnboardZfsTargetWizard({
                       onCheckedChange={(c) => setResetMachineId(!!c)} 
                     />
                     <Label htmlFor="reset-machine-id" className="text-sm">Reset machine-id (recommended for clones)</Label>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Checkbox 
-                      id="generate-key" 
-                      checked={generateNewKey} 
-                      onCheckedChange={(c) => setGenerateNewKey(!!c)} 
-                    />
-                    <Label htmlFor="generate-key" className="text-sm">Generate & save new SSH keypair</Label>
                   </div>
                 </div>
               </div>
