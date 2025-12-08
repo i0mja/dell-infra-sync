@@ -160,8 +160,6 @@ export function useReplicationPairs() {
       // In production, this would call the Job Executor to test the connection
       // For now, just return success after updating the timestamp
       return { id, status: 'test_started' };
-        .select()
-        .single();
     },
     onSuccess: () => {
       toast({ title: 'Connection test started' });
