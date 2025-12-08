@@ -4396,6 +4396,7 @@ export type Database = {
         | "rollback_failover"
         | "collect_replication_metrics"
         | "run_replication_sync"
+        | "prepare_zfs_template"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -4595,6 +4596,7 @@ export const Constants = {
         "rollback_failover",
         "collect_replication_metrics",
         "run_replication_sync",
+        "prepare_zfs_template",
       ],
       operation_type: [
         "idrac_api",

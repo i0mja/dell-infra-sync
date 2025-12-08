@@ -548,6 +548,575 @@ class ZfsTargetHandler(BaseHandler):
             self.log(f'Failed to get SSH public key: {e}', 'WARN')
             return None
 
+    def execute_prepare_zfs_template(self, job: Dict):
+        """
+        Template Readiness Wizard handler - Prepares a ZFS template for deployment.
+        
+        This job handles:
+        1. VM state detection (template vs VM, power state)
+        2. Convert template to VM if needed
+        3. Power on VM
+        4. Wait for VMware Tools and IP
+        5. SSH key deployment (if auth fails)
+        6. APT sources configuration (add contrib for Debian 13)
+        7. ZFS/NFS package installation
+        8. zfsadmin user creation
+        9. Stale config cleanup (machine-id, SSH host keys, NFS exports)
+        10. Optionally convert back to template
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        target_scope = job.get('target_scope', {}) or {}
+        
+        # Options from job details
+        root_password = details.get('root_password')
+        install_packages = details.get('install_packages', True)
+        create_user = details.get('create_user', True)
+        reset_machine_id = details.get('reset_machine_id', True)
+        reset_ssh_host_keys = details.get('reset_ssh_host_keys', True)
+        reset_nfs_config = details.get('reset_nfs_config', True)
+        convert_back_to_template = details.get('convert_back_to_template', True)
+        
+        # Track what we did for cleanup
+        we_converted_from_template = False
+        we_powered_on = False
+        
+        step_results = []
+        job_details = {
+            'progress_percent': 0,
+            'console_log': [],
+            'step_results': step_results,
+            'vm_state': None
+        }
+        
+        self._log_console(job_id, 'INFO', 'Starting Template Readiness Wizard', job_details)
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso(), details=job_details)
+        
+        try:
+            # Step 1: Fetch template
+            template_id = target_scope.get('template_id') or details.get('template_id')
+            if not template_id:
+                raise Exception('No template_id provided')
+            
+            template = self._fetch_template(template_id)
+            if not template:
+                raise Exception(f'Template not found: {template_id}')
+            
+            step_results.append({'step': 'vcenter', 'status': 'running', 'message': 'Connecting...'})
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            # Step 2: Connect to vCenter
+            vcenter_id = template.get('vcenter_id')
+            if not vcenter_id:
+                step_results[-1] = {'step': 'vcenter', 'status': 'failed', 'message': 'No vCenter configured'}
+                raise Exception('No vCenter configured for template')
+            
+            vc_settings = self._get_vcenter_settings(vcenter_id)
+            if not vc_settings:
+                step_results[-1] = {'step': 'vcenter', 'status': 'failed', 'message': 'vCenter settings not found'}
+                raise Exception('vCenter settings not found')
+            
+            self.vcenter_conn = self._connect_vcenter(
+                vc_settings['host'],
+                vc_settings['username'],
+                vc_settings['password'],
+                vc_settings.get('port', 443),
+                vc_settings.get('verify_ssl', False)
+            )
+            
+            if not self.vcenter_conn:
+                step_results[-1] = {'step': 'vcenter', 'status': 'failed', 'message': 'Connection failed'}
+                raise Exception('Failed to connect to vCenter')
+            
+            step_results[-1] = {'step': 'vcenter', 'status': 'success', 'message': f'Connected to {vc_settings["host"]}'}
+            job_details['progress_percent'] = 5
+            self._log_console(job_id, 'INFO', f'Connected to vCenter: {vc_settings["host"]}', job_details)
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            # Step 3: Find VM and detect state
+            step_results.append({'step': 'vm_state', 'status': 'running', 'message': 'Detecting VM state...'})
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            template_moref = template.get('template_moref')
+            if not template_moref:
+                step_results[-1] = {'step': 'vm_state', 'status': 'failed', 'message': 'No template_moref'}
+                raise Exception('No template_moref configured')
+            
+            vm = self._find_vm_by_moref(self.vcenter_conn, template_moref)
+            if not vm:
+                step_results[-1] = {'step': 'vm_state', 'status': 'failed', 'message': 'VM not found'}
+                raise Exception(f'VM not found: {template_moref}')
+            
+            # Detect if template or VM
+            is_template = hasattr(vm.config, 'template') and vm.config.template
+            power_state = str(vm.runtime.powerState)
+            
+            if is_template:
+                job_details['vm_state'] = 'VMware Template'
+                step_results[-1] = {'step': 'vm_state', 'status': 'success', 'message': 'VMware Template detected'}
+            elif power_state == 'poweredOn':
+                job_details['vm_state'] = 'VM (Powered On)'
+                step_results[-1] = {'step': 'vm_state', 'status': 'success', 'message': 'VM is already powered on'}
+            else:
+                job_details['vm_state'] = 'VM (Powered Off)'
+                step_results[-1] = {'step': 'vm_state', 'status': 'success', 'message': 'VM is powered off'}
+            
+            job_details['progress_percent'] = 10
+            self._log_console(job_id, 'INFO', f'VM state: {job_details["vm_state"]}', job_details)
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            # Step 4: Convert template to VM if needed
+            if is_template:
+                step_results.append({'step': 'convert_to_vm', 'status': 'running', 'message': 'Converting to VM...'})
+                self.update_job_status(job_id, 'running', details=job_details)
+                
+                try:
+                    # Find resource pool for the VM
+                    cluster_name = template.get('default_cluster')
+                    resource_pool = self._find_resource_pool(self.vcenter_conn, cluster_name)
+                    if not resource_pool:
+                        raise Exception('No resource pool found')
+                    
+                    vm.MarkAsVirtualMachine(pool=resource_pool)
+                    we_converted_from_template = True
+                    step_results[-1] = {'step': 'convert_to_vm', 'status': 'success', 'message': 'Converted to VM'}
+                    self._log_console(job_id, 'INFO', 'Converted template to VM', job_details)
+                except Exception as e:
+                    step_results[-1] = {'step': 'convert_to_vm', 'status': 'failed', 'message': str(e)}
+                    raise
+            else:
+                step_results.append({'step': 'convert_to_vm', 'status': 'skipped', 'message': 'Already a VM'})
+            
+            job_details['progress_percent'] = 15
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            # Step 5: Power on VM if needed
+            power_state = str(vm.runtime.powerState)
+            if power_state != 'poweredOn':
+                step_results.append({'step': 'power_on', 'status': 'running', 'message': 'Powering on...'})
+                self.update_job_status(job_id, 'running', details=job_details)
+                
+                try:
+                    task = vm.PowerOn()
+                    self._wait_for_task(task, timeout=120)
+                    we_powered_on = True
+                    step_results[-1] = {'step': 'power_on', 'status': 'success', 'message': 'VM powered on'}
+                    self._log_console(job_id, 'INFO', 'VM powered on', job_details)
+                except Exception as e:
+                    step_results[-1] = {'step': 'power_on', 'status': 'failed', 'message': str(e)}
+                    raise
+            else:
+                step_results.append({'step': 'power_on', 'status': 'skipped', 'message': 'Already powered on'})
+            
+            job_details['progress_percent'] = 20
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            # Step 6: Wait for VMware Tools
+            step_results.append({'step': 'vmware_tools', 'status': 'running', 'message': 'Waiting for VMware Tools...'})
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            tools_timeout = 180
+            tools_start = time.time()
+            while time.time() - tools_start < tools_timeout:
+                vm_view = self._find_vm_by_moref(self.vcenter_conn, template_moref)
+                tools_status = vm_view.guest.toolsRunningStatus if vm_view.guest else None
+                if tools_status == 'guestToolsRunning':
+                    break
+                time.sleep(5)
+            else:
+                step_results[-1] = {'step': 'vmware_tools', 'status': 'warning', 'message': 'VMware Tools not running - may need manual install'}
+                self._log_console(job_id, 'WARN', 'VMware Tools timeout', job_details)
+            
+            if tools_status == 'guestToolsRunning':
+                step_results[-1] = {'step': 'vmware_tools', 'status': 'success', 'message': 'VMware Tools running'}
+            
+            job_details['progress_percent'] = 25
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            # Step 7: Wait for IP address
+            step_results.append({'step': 'ip_address', 'status': 'running', 'message': 'Waiting for IP...'})
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            ip_timeout = 120
+            ip_start = time.time()
+            vm_ip = None
+            while time.time() - ip_start < ip_timeout:
+                vm_view = self._find_vm_by_moref(self.vcenter_conn, template_moref)
+                vm_ip = vm_view.guest.ipAddress if vm_view.guest else None
+                if vm_ip and not vm_ip.startswith('169.254') and not vm_ip.startswith('127.'):
+                    break
+                time.sleep(5)
+            else:
+                step_results[-1] = {'step': 'ip_address', 'status': 'failed', 'message': 'No IP address detected'}
+                raise Exception('Failed to get IP address')
+            
+            step_results[-1] = {'step': 'ip_address', 'status': 'success', 'message': vm_ip}
+            job_details['vm_ip'] = vm_ip
+            job_details['progress_percent'] = 30
+            self._log_console(job_id, 'INFO', f'IP address: {vm_ip}', job_details)
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            # Step 8: Test SSH port
+            step_results.append({'step': 'ssh_port', 'status': 'running', 'message': 'Testing SSH port...'})
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            import socket
+            ssh_open = False
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(10)
+                result = sock.connect_ex((vm_ip, 22))
+                ssh_open = (result == 0)
+                sock.close()
+            except:
+                pass
+            
+            if ssh_open:
+                step_results[-1] = {'step': 'ssh_port', 'status': 'success', 'message': 'Port 22 open'}
+            else:
+                step_results[-1] = {'step': 'ssh_port', 'status': 'failed', 'message': 'Port 22 not reachable'}
+                raise Exception('SSH port 22 not reachable')
+            
+            job_details['progress_percent'] = 35
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            # Step 9: SSH Authentication
+            step_results.append({'step': 'ssh_auth', 'status': 'running', 'message': 'Testing SSH key...'})
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            ssh_key_id = template.get('ssh_key_id')
+            ssh_username = template.get('default_ssh_username', 'root')
+            ssh_connected = False
+            
+            if ssh_key_id:
+                try:
+                    key_data = self._get_ssh_key(ssh_key_id)
+                    if key_data:
+                        private_key = self._decrypt_ssh_key(key_data.get('private_key_encrypted'))
+                        if private_key:
+                            # Try to connect with key
+                            key_file = io.StringIO(private_key)
+                            pkey = None
+                            for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                                try:
+                                    key_file.seek(0)
+                                    pkey = key_class.from_private_key(key_file)
+                                    break
+                                except:
+                                    continue
+                            
+                            if pkey:
+                                self.ssh_client = paramiko.SSHClient()
+                                self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                                self.ssh_client.connect(
+                                    hostname=vm_ip,
+                                    username=ssh_username,
+                                    pkey=pkey,
+                                    timeout=15,
+                                    allow_agent=False,
+                                    look_for_keys=False
+                                )
+                                ssh_connected = True
+                                step_results[-1] = {'step': 'ssh_auth', 'status': 'success', 'message': f'Connected as {ssh_username}'}
+                                self._log_console(job_id, 'INFO', f'SSH connected as {ssh_username}', job_details)
+                except paramiko.AuthenticationException:
+                    self._log_console(job_id, 'WARN', 'SSH key not authorized', job_details)
+                except Exception as e:
+                    self._log_console(job_id, 'WARN', f'SSH key error: {e}', job_details)
+            
+            # If SSH key failed and we have root password, deploy the key
+            if not ssh_connected and root_password:
+                step_results[-1] = {'step': 'ssh_auth', 'status': 'fixing', 'message': 'Deploying SSH key...'}
+                self.update_job_status(job_id, 'running', details=job_details)
+                
+                try:
+                    # Connect as root with password
+                    self.ssh_client = paramiko.SSHClient()
+                    self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                    self.ssh_client.connect(
+                        hostname=vm_ip,
+                        username='root',
+                        password=root_password,
+                        timeout=15,
+                        allow_agent=False,
+                        look_for_keys=False
+                    )
+                    
+                    # Deploy the SSH key
+                    if ssh_key_id:
+                        public_key = self._get_ssh_public_key(ssh_key_id)
+                        if public_key:
+                            home_dir = f'/home/{ssh_username}' if ssh_username != 'root' else '/root'
+                            commands = [
+                                f'mkdir -p {home_dir}/.ssh',
+                                f'grep -qxF "{public_key}" {home_dir}/.ssh/authorized_keys 2>/dev/null || echo "{public_key}" >> {home_dir}/.ssh/authorized_keys',
+                                f'chmod 700 {home_dir}/.ssh',
+                                f'chmod 600 {home_dir}/.ssh/authorized_keys',
+                            ]
+                            if ssh_username != 'root':
+                                commands.append(f'chown -R {ssh_username}:{ssh_username} {home_dir}/.ssh')
+                            
+                            for cmd in commands:
+                                stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
+                                stdout.channel.recv_exit_status()
+                            
+                            self._log_console(job_id, 'INFO', 'SSH key deployed', job_details)
+                    
+                    ssh_connected = True
+                    step_results[-1] = {'step': 'ssh_auth', 'status': 'fixed', 'message': 'SSH key deployed'}
+                    
+                except paramiko.AuthenticationException:
+                    step_results[-1] = {'step': 'ssh_auth', 'status': 'failed', 'message': 'Root password incorrect'}
+                    raise Exception('Root password incorrect')
+                except Exception as e:
+                    step_results[-1] = {'step': 'ssh_auth', 'status': 'failed', 'message': str(e)}
+                    raise
+            
+            elif not ssh_connected:
+                # Need password but don't have it
+                step_results[-1] = {'step': 'ssh_auth', 'status': 'failed', 'message': 'SSH key not authorized - provide root password'}
+                job_details['needs_root_password'] = True
+                self.update_job_status(job_id, 'running', details=job_details)
+                raise Exception('SSH key not authorized and no root password provided')
+            
+            job_details['progress_percent'] = 40
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            # From here on, we have SSH access
+            # Step 10-16: Package installation and configuration (require root password for apt)
+            if install_packages and root_password:
+                # Step 10: Check/add contrib to APT sources (Debian 13)
+                step_results.append({'step': 'apt_sources', 'status': 'running', 'message': 'Checking APT sources...'})
+                self.update_job_status(job_id, 'running', details=job_details)
+                
+                result = self._ssh_exec('grep -E "^deb.*contrib" /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null | head -1')
+                if result['exit_code'] != 0 or not result['stdout'].strip():
+                    # Add contrib to sources
+                    self._log_console(job_id, 'INFO', 'Adding contrib to APT sources', job_details)
+                    self._ssh_exec('sed -i "s/main$/main contrib/" /etc/apt/sources.list')
+                    step_results[-1] = {'step': 'apt_sources', 'status': 'fixed', 'message': 'Added contrib repository'}
+                else:
+                    step_results[-1] = {'step': 'apt_sources', 'status': 'success', 'message': 'contrib already enabled'}
+                
+                job_details['progress_percent'] = 45
+                self.update_job_status(job_id, 'running', details=job_details)
+                
+                # Step 11: Install ZFS packages
+                step_results.append({'step': 'zfs_packages', 'status': 'running', 'message': 'Installing ZFS packages...'})
+                self.update_job_status(job_id, 'running', details=job_details)
+                
+                # Check if already installed
+                result = self._ssh_exec('dpkg -l zfsutils-linux 2>/dev/null | grep -q "^ii"')
+                if result['exit_code'] != 0:
+                    self._log_console(job_id, 'INFO', 'Installing zfs-dkms and zfsutils-linux...', job_details)
+                    result = self._ssh_exec('DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y zfs-dkms zfsutils-linux')
+                    if result['exit_code'] != 0:
+                        step_results[-1] = {'step': 'zfs_packages', 'status': 'failed', 'message': 'Install failed: ' + result['stderr'][:100]}
+                        self._log_console(job_id, 'ERROR', f'ZFS install failed: {result["stderr"]}', job_details)
+                    else:
+                        step_results[-1] = {'step': 'zfs_packages', 'status': 'fixed', 'message': 'ZFS packages installed'}
+                        self._log_console(job_id, 'INFO', 'ZFS packages installed', job_details)
+                else:
+                    step_results[-1] = {'step': 'zfs_packages', 'status': 'success', 'message': 'Already installed'}
+                
+                job_details['progress_percent'] = 55
+                self.update_job_status(job_id, 'running', details=job_details)
+                
+                # Step 12: Install NFS packages
+                step_results.append({'step': 'nfs_packages', 'status': 'running', 'message': 'Installing NFS packages...'})
+                self.update_job_status(job_id, 'running', details=job_details)
+                
+                result = self._ssh_exec('dpkg -l nfs-kernel-server 2>/dev/null | grep -q "^ii"')
+                if result['exit_code'] != 0:
+                    self._log_console(job_id, 'INFO', 'Installing nfs-kernel-server...', job_details)
+                    result = self._ssh_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y nfs-kernel-server')
+                    if result['exit_code'] != 0:
+                        step_results[-1] = {'step': 'nfs_packages', 'status': 'failed', 'message': 'Install failed'}
+                    else:
+                        step_results[-1] = {'step': 'nfs_packages', 'status': 'fixed', 'message': 'NFS packages installed'}
+                else:
+                    step_results[-1] = {'step': 'nfs_packages', 'status': 'success', 'message': 'Already installed'}
+                
+                job_details['progress_percent'] = 60
+                self.update_job_status(job_id, 'running', details=job_details)
+                
+                # Step 13: Load ZFS module
+                step_results.append({'step': 'zfs_module', 'status': 'running', 'message': 'Loading ZFS module...'})
+                self.update_job_status(job_id, 'running', details=job_details)
+                
+                result = self._ssh_exec('lsmod | grep -q zfs')
+                if result['exit_code'] != 0:
+                    self._ssh_exec('modprobe zfs')
+                    result = self._ssh_exec('lsmod | grep -q zfs')
+                    if result['exit_code'] == 0:
+                        step_results[-1] = {'step': 'zfs_module', 'status': 'fixed', 'message': 'ZFS module loaded'}
+                    else:
+                        step_results[-1] = {'step': 'zfs_module', 'status': 'warning', 'message': 'ZFS module not loaded - may need reboot'}
+                else:
+                    step_results[-1] = {'step': 'zfs_module', 'status': 'success', 'message': 'ZFS module loaded'}
+                
+                job_details['progress_percent'] = 65
+                self.update_job_status(job_id, 'running', details=job_details)
+            else:
+                # Skip package installation steps
+                for step_id in ['apt_sources', 'zfs_packages', 'nfs_packages', 'zfs_module']:
+                    step_results.append({'step': step_id, 'status': 'skipped', 'message': 'Skipped (no root password or disabled)'})
+                job_details['progress_percent'] = 65
+                self.update_job_status(job_id, 'running', details=job_details)
+            
+            # Step 14: Create zfsadmin user
+            if create_user and root_password:
+                step_results.append({'step': 'user_account', 'status': 'running', 'message': 'Creating zfsadmin user...'})
+                self.update_job_status(job_id, 'running', details=job_details)
+                
+                result = self._ssh_exec('id zfsadmin 2>/dev/null')
+                if result['exit_code'] != 0:
+                    self._log_console(job_id, 'INFO', 'Creating zfsadmin user with sudo...', job_details)
+                    self._ssh_exec('useradd -m -s /bin/bash zfsadmin')
+                    self._ssh_exec('echo "zfsadmin ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/zfsadmin')
+                    self._ssh_exec('chmod 440 /etc/sudoers.d/zfsadmin')
+                    
+                    # Copy SSH key to zfsadmin if it exists
+                    if ssh_key_id:
+                        public_key = self._get_ssh_public_key(ssh_key_id)
+                        if public_key:
+                            self._ssh_exec('mkdir -p /home/zfsadmin/.ssh')
+                            self._ssh_exec(f'echo "{public_key}" >> /home/zfsadmin/.ssh/authorized_keys')
+                            self._ssh_exec('chmod 700 /home/zfsadmin/.ssh')
+                            self._ssh_exec('chmod 600 /home/zfsadmin/.ssh/authorized_keys')
+                            self._ssh_exec('chown -R zfsadmin:zfsadmin /home/zfsadmin/.ssh')
+                    
+                    step_results[-1] = {'step': 'user_account', 'status': 'fixed', 'message': 'User created with sudo'}
+                else:
+                    step_results[-1] = {'step': 'user_account', 'status': 'success', 'message': 'User already exists'}
+            else:
+                step_results.append({'step': 'user_account', 'status': 'skipped', 'message': 'Skipped'})
+            
+            job_details['progress_percent'] = 70
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            # Step 15: Detect secondary disk
+            step_results.append({'step': 'disk_detection', 'status': 'running', 'message': 'Detecting disks...'})
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            zfs_disk = self._detect_zfs_disk()
+            if zfs_disk:
+                step_results[-1] = {'step': 'disk_detection', 'status': 'success', 'message': f'Found: {zfs_disk}'}
+                self._log_console(job_id, 'INFO', f'Secondary disk detected: {zfs_disk}', job_details)
+            else:
+                step_results[-1] = {'step': 'disk_detection', 'status': 'warning', 'message': 'No secondary disk found - add before deployment'}
+            
+            job_details['progress_percent'] = 75
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            # Step 16: Cleanup stale configuration
+            if root_password:
+                step_results.append({'step': 'stale_config', 'status': 'running', 'message': 'Cleaning stale config...'})
+                self.update_job_status(job_id, 'running', details=job_details)
+                
+                cleanup_actions = []
+                
+                if reset_machine_id:
+                    self._ssh_exec('rm -f /etc/machine-id && systemd-machine-id-setup')
+                    cleanup_actions.append('machine-id')
+                    self._log_console(job_id, 'INFO', 'Regenerated machine-id', job_details)
+                
+                if reset_ssh_host_keys:
+                    self._ssh_exec('rm -f /etc/ssh/ssh_host_* && dpkg-reconfigure openssh-server')
+                    cleanup_actions.append('SSH host keys')
+                    self._log_console(job_id, 'INFO', 'Regenerated SSH host keys', job_details)
+                
+                if reset_nfs_config:
+                    self._ssh_exec('truncate -s 0 /etc/exports && exportfs -ra 2>/dev/null || true')
+                    cleanup_actions.append('NFS exports')
+                    self._log_console(job_id, 'INFO', 'Reset NFS exports', job_details)
+                
+                # Check for existing ZFS pools (warning only)
+                result = self._ssh_exec('zpool list -H 2>/dev/null')
+                if result['exit_code'] == 0 and result['stdout'].strip():
+                    pools = result['stdout'].strip().split('\n')
+                    self._log_console(job_id, 'WARN', f'Existing ZFS pools detected: {pools}', job_details)
+                    cleanup_actions.append(f'ZFS pools warning: {len(pools)} pool(s)')
+                
+                if cleanup_actions:
+                    step_results[-1] = {'step': 'stale_config', 'status': 'fixed', 'message': ', '.join(cleanup_actions)}
+                else:
+                    step_results[-1] = {'step': 'stale_config', 'status': 'skipped', 'message': 'No cleanup needed'}
+            else:
+                step_results.append({'step': 'stale_config', 'status': 'skipped', 'message': 'Skipped (no root password)'})
+            
+            job_details['progress_percent'] = 85
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            # Step 17: Finalize - power off and optionally convert to template
+            step_results.append({'step': 'finalize', 'status': 'running', 'message': 'Finalizing...'})
+            self.update_job_status(job_id, 'running', details=job_details)
+            
+            # Close SSH before power off
+            if self.ssh_client:
+                self.ssh_client.close()
+                self.ssh_client = None
+            
+            # Power off
+            vm = self._find_vm_by_moref(self.vcenter_conn, template_moref)
+            if vm and str(vm.runtime.powerState) == 'poweredOn':
+                self._log_console(job_id, 'INFO', 'Powering off VM...', job_details)
+                task = vm.PowerOff()
+                self._wait_for_task(task, timeout=120)
+            
+            # Convert back to template if requested and we converted it
+            if convert_back_to_template and we_converted_from_template:
+                self._log_console(job_id, 'INFO', 'Converting back to template...', job_details)
+                vm = self._find_vm_by_moref(self.vcenter_conn, template_moref)
+                if vm:
+                    vm.MarkAsTemplate()
+                    step_results[-1] = {'step': 'finalize', 'status': 'success', 'message': 'Converted back to template'}
+                    job_details['vm_state'] = 'VMware Template'
+            elif we_powered_on:
+                step_results[-1] = {'step': 'finalize', 'status': 'success', 'message': 'VM powered off'}
+                job_details['vm_state'] = 'VM (Powered Off)'
+            else:
+                step_results[-1] = {'step': 'finalize', 'status': 'success', 'message': 'Complete'}
+            
+            job_details['progress_percent'] = 100
+            job_details['success'] = True
+            self._log_console(job_id, 'INFO', 'Template preparation complete', job_details)
+            self.update_job_status(job_id, 'completed', completed_at=utc_now_iso(), details=job_details)
+            
+        except Exception as e:
+            self.log(f'Template preparation failed: {e}', 'ERROR')
+            job_details['error'] = str(e)
+            self._log_console(job_id, 'ERROR', f'Failed: {str(e)}', job_details)
+            self.update_job_status(job_id, 'failed', completed_at=utc_now_iso(), details=job_details)
+        finally:
+            self._cleanup()
+    
+    def _find_resource_pool(self, si, cluster_name: str = None):
+        """Find a resource pool, preferring the specified cluster."""
+        content = si.RetrieveContent()
+        container = content.viewManager.CreateContainerView(
+            content.rootFolder, [vim.ResourcePool], True
+        )
+        
+        pools = list(container.view)
+        container.Destroy()
+        
+        if not pools:
+            return None
+        
+        # If cluster specified, try to find pool in that cluster
+        if cluster_name:
+            for pool in pools:
+                try:
+                    if hasattr(pool, 'owner') and hasattr(pool.owner, 'name'):
+                        if pool.owner.name == cluster_name:
+                            return pool
+                except:
+                    pass
+        
+        # Return first available pool
+        return pools[0] if pools else None
+
     def execute_deploy_zfs_target(self, job: Dict):
         """
         Main entry point for deploy_zfs_target job.

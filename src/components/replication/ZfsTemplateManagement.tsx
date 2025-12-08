@@ -30,6 +30,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { formatDistanceToNow } from 'date-fns';
 import { VmTemplateSelector } from './VmTemplateSelector';
+import { TemplateReadinessWizard } from './TemplateReadinessWizard';
 
 const initialFormData: ZfsTemplateFormData = {
   name: '',
@@ -85,6 +86,11 @@ export function ZfsTemplateManagement() {
   const [isPollingValidation, setIsPollingValidation] = useState(false);
   const [showDeployKeyDialog, setShowDeployKeyDialog] = useState(false);
   const [rootPassword, setRootPassword] = useState('');
+  
+  // Template Readiness Wizard state
+  const [showReadinessWizard, setShowReadinessWizard] = useState(false);
+  const [wizardTemplateId, setWizardTemplateId] = useState<string | null>(null);
+  const [wizardTemplateName, setWizardTemplateName] = useState('');
   
   const { toast } = useToast();
 
@@ -1329,6 +1335,14 @@ export function ZfsTemplateManagement() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => {
+                              setWizardTemplateId(template.id);
+                              setWizardTemplateName(template.name);
+                              setShowReadinessWizard(true);
+                            }}>
+                              <Wrench className="h-4 w-4 mr-2" />
+                              Prepare Template
+                            </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleCopyTemplate(template)}>
                               <ArrowRightLeft className="h-4 w-4 mr-2" />
                               Copy to vCenter
@@ -1368,6 +1382,16 @@ export function ZfsTemplateManagement() {
         template={templateToCopy}
         sourceVCenterName={templateToCopy ? (vcenters.find(vc => vc.id === templateToCopy.vcenter_id)?.name || 'Unknown') : ''}
       />
+
+      {/* Template Readiness Wizard */}
+      {wizardTemplateId && (
+        <TemplateReadinessWizard
+          open={showReadinessWizard}
+          onOpenChange={setShowReadinessWizard}
+          templateId={wizardTemplateId}
+          templateName={wizardTemplateName}
+        />
+      )}
     </Card>
   );
 }
