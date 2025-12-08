@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ProtectionGroupsPanel } from "./ProtectionGroupsPanel";
 import { ReplicationJobsPanel } from "./ReplicationJobsPanel";
+import { ReplicationPairsPanel } from "./ReplicationPairsPanel";
 import { DrStatsBar } from "./DrStatsBar";
 import { DrQuickActions } from "./DrQuickActions";
 import { DrOnboarding } from "./DrOnboarding";
@@ -26,10 +27,14 @@ export function DrReplicationTab() {
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList>
             <TabsTrigger value="groups">Protection Groups</TabsTrigger>
+            <TabsTrigger value="pairs">Replication Pairs</TabsTrigger>
             <TabsTrigger value="jobs">Replication Jobs</TabsTrigger>
           </TabsList>
           <TabsContent value="groups" className="mt-4">
             <ProtectionGroupsPanel />
+          </TabsContent>
+          <TabsContent value="pairs" className="mt-4">
+            <ReplicationPairsPanel />
           </TabsContent>
           <TabsContent value="jobs" className="mt-4">
             <ReplicationJobsPanel />

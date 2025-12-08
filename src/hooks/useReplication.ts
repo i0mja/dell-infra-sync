@@ -72,6 +72,17 @@ export interface ProtectionGroup {
   next_replication_at?: string;
   vm_count?: number;
   created_at: string;
+  // Phase 1 new fields
+  replication_pair_id?: string;
+  status?: string;
+  priority?: string;
+  boot_order?: unknown;
+  current_rpo_seconds?: number;
+  journal_history_hours?: number;
+  test_reminder_days?: number;
+  last_test_at?: string;
+  paused_at?: string;
+  pause_reason?: string;
 }
 
 export interface ProtectedVM {
@@ -295,13 +306,74 @@ export function useProtectionGroups() {
     }
   };
 
+  const updateGroupMutation = useMutation({
+    mutationFn: async ({ id, updates }: { id: string; updates: Partial<ProtectionGroup> }) => {
+      const { data, error } = await supabase
+        .from('protection_groups')
+        .update({
+          name: updates.name,
+          description: updates.description,
+          rpo_minutes: updates.rpo_minutes,
+          priority: updates.priority,
+          replication_schedule: updates.replication_schedule,
+          retention_policy: updates.retention_policy,
+          is_enabled: updates.is_enabled,
+          journal_history_hours: updates.journal_history_hours,
+          test_reminder_days: updates.test_reminder_days,
+          paused_at: updates.paused_at,
+          pause_reason: updates.pause_reason,
+        })
+        .eq('id', id)
+        .select()
+        .single();
+      if (error) throw error;
+      return {
+        ...data,
+        retention_policy: (data.retention_policy as { daily: number; weekly: number; monthly: number }) || { daily: 7, weekly: 4, monthly: 12 }
+      } as ProtectionGroup;
+    },
+    onSuccess: () => {
+      toast({ title: 'Protection group updated' });
+      queryClient.invalidateQueries({ queryKey: ['protection-groups'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  });
+
+  const pauseGroupMutation = useMutation({
+    mutationFn: async ({ id, paused, reason }: { id: string; paused: boolean; reason?: string }) => {
+      const { data, error } = await supabase
+        .from('protection_groups')
+        .update({
+          paused_at: paused ? new Date().toISOString() : null,
+          pause_reason: paused ? reason || 'Manually paused' : null,
+          status: paused ? 'paused' : 'meeting_sla',
+        })
+        .eq('id', id)
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (_, variables) => {
+      toast({ title: variables.paused ? 'Protection group paused' : 'Protection group resumed' });
+      queryClient.invalidateQueries({ queryKey: ['protection-groups'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  });
+
   return { 
     groups, 
     loading, 
     error: error?.message || null, 
     refetch, 
     createGroup: createGroupMutation.mutateAsync, 
+    updateGroup: updateGroupMutation.mutateAsync,
     deleteGroup: deleteGroupMutation.mutateAsync, 
+    pauseGroup: pauseGroupMutation.mutateAsync,
     runReplicationNow 
   };
 }
