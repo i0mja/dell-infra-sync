@@ -337,6 +337,53 @@ export function useZfsTemplates() {
     }
   });
 
+  // Prepare template (Template Readiness Wizard)
+  const prepareTemplateMutation = useMutation({
+    mutationFn: async (config: {
+      template_id: string;
+      root_password?: string;
+      install_packages?: boolean;
+      create_user?: boolean;
+      reset_machine_id?: boolean;
+      reset_ssh_host_keys?: boolean;
+      reset_nfs_config?: boolean;
+      convert_back_to_template?: boolean;
+    }) => {
+      const { data: user } = await supabase.auth.getUser();
+      
+      const { data: job, error } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'prepare_zfs_template' as const,
+          status: 'pending',
+          created_by: user?.user?.id,
+          target_scope: { template_id: config.template_id },
+          details: {
+            template_id: config.template_id,
+            root_password: config.root_password,
+            install_packages: config.install_packages ?? true,
+            create_user: config.create_user ?? true,
+            reset_machine_id: config.reset_machine_id ?? true,
+            reset_ssh_host_keys: config.reset_ssh_host_keys ?? true,
+            reset_nfs_config: config.reset_nfs_config ?? true,
+            convert_back_to_template: config.convert_back_to_template ?? true
+          }
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return job;
+    },
+    onSuccess: () => {
+      toast({ title: 'Preparation started', description: 'Template readiness wizard is running...' });
+      queryClient.invalidateQueries({ queryKey: ['jobs'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  });
+
   return {
     templates,
     loading,
@@ -348,8 +395,10 @@ export function useZfsTemplates() {
     toggleActive: toggleActiveMutation.mutateAsync,
     deployFromTemplate: deployFromTemplateMutation.mutateAsync,
     validateTemplate: validateTemplateMutation.mutateAsync,
+    prepareTemplate: prepareTemplateMutation.mutateAsync,
     isCreating: createTemplateMutation.isPending,
     isDeploying: deployFromTemplateMutation.isPending,
-    isValidating: validateTemplateMutation.isPending
+    isValidating: validateTemplateMutation.isPending,
+    isPreparing: prepareTemplateMutation.isPending
   };
 }
