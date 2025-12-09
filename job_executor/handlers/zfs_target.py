@@ -2450,7 +2450,7 @@ class ZfsTargetHandler(BaseHandler):
                     kernel_version = result['stdout'].strip() if result['exit_code'] == 0 else None
                     
                     if kernel_version:
-                        self._log(f"Installing kernel headers for {kernel_version}", job_id=job_id)
+                        self.log(f"Installing kernel headers for {kernel_version}")
                         self._ssh_exec(f'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq linux-headers-{kernel_version}', job_id=job_id)
                     
                     # Install ZFS
@@ -2474,7 +2474,7 @@ class ZfsTargetHandler(BaseHandler):
                     
                     # If modprobe failed, try rebuilding DKMS modules
                     if result['exit_code'] != 0:
-                        self._log("modprobe zfs failed, attempting DKMS rebuild...", job_id=job_id)
+                        self.log("modprobe zfs failed, attempting DKMS rebuild...")
                         add_step_result('zfs_module', 'running', 'Rebuilding ZFS DKMS module...')
                         self._ssh_exec('dkms autoinstall', job_id=job_id)
                         result = self._ssh_exec('modprobe zfs', job_id=job_id)
