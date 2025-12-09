@@ -2350,7 +2350,7 @@ export type Database = {
             foreignKeyName: "replication_targets_dr_vcenter_id_fkey"
             columns: ["dr_vcenter_id"]
             isOneToOne: false
-            referencedRelation: "vcenter_settings"
+            referencedRelation: "vcenters"
             referencedColumns: ["id"]
           },
           {
