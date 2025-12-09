@@ -569,7 +569,7 @@ export function OnboardZfsTargetWizard({
       const { data: job, error } = await supabase
         .from('jobs')
         .insert({
-          job_type: 'test_ssh_connection' as unknown as 'onboard_zfs_target',
+          job_type: 'test_ssh_connection',
           status: 'pending',
           created_by: user?.user?.id,
           details: {
@@ -646,7 +646,7 @@ export function OnboardZfsTargetWizard({
       const { data: job, error } = await supabase
         .from('jobs')
         .insert({
-          job_type: 'detect_disks' as unknown as 'onboard_zfs_target',
+          job_type: 'detect_disks',
           status: 'pending',
           created_by: user?.user?.id,
           details: {

@@ -4474,6 +4474,10 @@ export type Database = {
         | "run_replication_sync"
         | "prepare_zfs_template"
         | "onboard_zfs_target"
+        | "test_ssh_connection"
+        | "detect_disks"
+        | "retry_onboard_step"
+        | "rollback_zfs_onboard"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -4676,6 +4680,10 @@ export const Constants = {
         "run_replication_sync",
         "prepare_zfs_template",
         "onboard_zfs_target",
+        "test_ssh_connection",
+        "detect_disks",
+        "retry_onboard_step",
+        "rollback_zfs_onboard",
       ],
       operation_type: [
         "idrac_api",
