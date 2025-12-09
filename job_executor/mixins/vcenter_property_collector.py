@@ -58,6 +58,10 @@ def _get_cluster_properties() -> List[str]:
         "summary.totalCpu",
         "summary.totalMemory",
         "datastore",  # Phase 2: List[vim.Datastore] for cluster_moref_to_datastores
+        # Phase 4: HA/DRS configuration
+        "configuration.dasConfig",  # HA config (enabled, admissionControlEnabled, etc.)
+        "configuration.drsConfig",  # DRS config (enabled, defaultVmBehavior, etc.)
+        "overallStatus",            # Cluster health: green/yellow/red/gray
     ]
 
 
@@ -467,6 +471,20 @@ def _build_moref_lookups(inventory: Dict[str, Any]) -> Dict[str, Any]:
             if cluster_moref and cluster_moref in cluster_moref_to_vm_count:
                 cluster_moref_to_vm_count[cluster_moref] += 1
     
+    # 7. Phase 4: Aggregate used CPU/Memory per cluster from host quickstats
+    cluster_moref_to_used_resources: Dict[str, Dict[str, int]] = {}
+    for cluster_moref in cluster_moref_to_name.keys():
+        cluster_moref_to_used_resources[cluster_moref] = {
+            "used_cpu_mhz": 0,
+            "used_memory_mb": 0,
+        }
+    
+    for host_moref, quickstats in host_moref_to_quickstats.items():
+        cluster_moref = host_moref_to_cluster.get(host_moref)
+        if cluster_moref and cluster_moref in cluster_moref_to_used_resources:
+            cluster_moref_to_used_resources[cluster_moref]["used_cpu_mhz"] += quickstats.get("overallCpuUsage", 0) or 0
+            cluster_moref_to_used_resources[cluster_moref]["used_memory_mb"] += quickstats.get("overallMemoryUsage", 0) or 0
+    
     return {
         # Existing lookups
         "cluster_moref_to_name": cluster_moref_to_name,
@@ -480,6 +498,8 @@ def _build_moref_lookups(inventory: Dict[str, Any]) -> Dict[str, Any]:
         "datastore_moref_to_summary": datastore_moref_to_summary,
         "host_moref_to_quickstats": host_moref_to_quickstats,
         "cluster_moref_to_vm_count": cluster_moref_to_vm_count,
+        # Phase 4 lookup
+        "cluster_moref_to_used_resources": cluster_moref_to_used_resources,
     }
 
 
@@ -487,15 +507,100 @@ def _build_moref_lookups(inventory: Dict[str, Any]) -> Dict[str, Any]:
 # Stage B: sync_vcenter_fast() - JSON-Serializable Output
 # =============================================================================
 
-def _process_cluster(obj, props: Dict) -> Dict[str, Any]:
-    """Transform cluster to JSON-serializable dict."""
+def _cluster_to_dict(obj, props: Dict[str, Any], lookups: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Transform cluster to JSON-serializable dict with computed metrics.
+    
+    Phase 4 implementation per docs/vcenter_sync_final_plan.md:
+    - Computes total/used CPU, memory, storage from lookups
+    - Extracts HA/DRS config
+    - All values JSON-safe
+    
+    Args:
+        obj: vim.ClusterComputeResource object
+        props: Dict of properties from PropertyCollector
+        lookups: Dict of MoRef lookup maps
+        
+    Returns:
+        Dict with cluster fields for database upsert
+    """
+    moref = str(obj._moId)
+    
+    # Get used resources from aggregated host quickstats (Phase 4 lookup)
+    used_resources = lookups.get("cluster_moref_to_used_resources", {}).get(moref, {})
+    used_cpu_mhz = used_resources.get("used_cpu_mhz", 0)
+    used_memory_mb = used_resources.get("used_memory_mb", 0)
+    
+    # Compute storage totals from cluster's datastores
+    total_storage_bytes = 0
+    used_storage_bytes = 0
+    datastore_morefs = lookups.get("cluster_moref_to_datastores", {}).get(moref, [])
+    datastore_summaries = lookups.get("datastore_moref_to_summary", {})
+    
+    for ds_moref in datastore_morefs:
+        ds_summary = datastore_summaries.get(ds_moref, {})
+        capacity = ds_summary.get("capacity", 0) or 0
+        free_space = ds_summary.get("freeSpace", 0) or 0
+        total_storage_bytes += capacity
+        used_storage_bytes += (capacity - free_space)
+    
+    # Get VM count from lookup
+    vm_count = lookups.get("cluster_moref_to_vm_count", {}).get(moref, 0)
+    
+    # Extract HA config (dasConfig = Data Availability Services)
+    das_config = props.get("configuration.dasConfig")
+    ha_enabled = False
+    if das_config:
+        ha_enabled = getattr(das_config, "enabled", False) or False
+    
+    # Extract DRS config
+    drs_config = props.get("configuration.drsConfig")
+    drs_enabled = False
+    drs_automation_level = ""
+    if drs_config:
+        drs_enabled = getattr(drs_config, "enabled", False) or False
+        vm_behavior = getattr(drs_config, "defaultVmBehavior", None)
+        if vm_behavior is not None:
+            drs_automation_level = str(vm_behavior)
+    
+    # Extract overall status (convert vim enum to string)
+    overall_status = props.get("overallStatus")
+    if overall_status is not None:
+        overall_status = str(overall_status)
+    else:
+        overall_status = ""
+    
     return {
-        "id": str(obj._moId),
+        # Core identifiers
+        "id": moref,
         "name": props.get("name", ""),
-        "num_hosts": props.get("summary.numHosts", 0),
-        "num_effective_hosts": props.get("summary.numEffectiveHosts", 0),
-        "total_cpu": props.get("summary.totalCpu", 0),
-        "total_memory": props.get("summary.totalMemory", 0),
+        
+        # Host counts
+        "num_hosts": props.get("summary.numHosts", 0) or 0,
+        "num_effective_hosts": props.get("summary.numEffectiveHosts", 0) or 0,
+        
+        # CPU metrics (MHz)
+        "total_cpu_mhz": props.get("summary.totalCpu", 0) or 0,
+        "used_cpu_mhz": used_cpu_mhz,
+        
+        # Memory metrics
+        "total_memory_bytes": props.get("summary.totalMemory", 0) or 0,
+        "used_memory_bytes": used_memory_mb * 1024 * 1024,  # Convert MB to bytes
+        
+        # Storage metrics (bytes)
+        "total_storage_bytes": total_storage_bytes,
+        "used_storage_bytes": used_storage_bytes,
+        
+        # VM count
+        "vm_count": vm_count,
+        
+        # HA/DRS configuration
+        "ha_enabled": ha_enabled,
+        "drs_enabled": drs_enabled,
+        "drs_automation_level": drs_automation_level,
+        
+        # Status
+        "overall_status": overall_status,
     }
 
 
@@ -685,7 +790,7 @@ def sync_vcenter_fast(
     # Process clusters
     for obj, props in inventory["clusters"]:
         try:
-            clusters.append(_process_cluster(obj, props))
+            clusters.append(_cluster_to_dict(obj, props, lookups))
         except Exception as e:
             errors.append({
                 "object": str(obj._moId) if obj else "unknown",
