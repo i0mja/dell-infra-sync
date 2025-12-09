@@ -529,21 +529,67 @@ def _safe_cpu_info(cpu_info) -> Dict[str, Any]:
         return {}
 
 
-def _process_vm(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
-    """Transform VM to JSON-serializable dict."""
+def _vm_to_dict(obj, props: Dict[str, Any], lookups: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Transform VM to JSON-serializable dict with cluster resolution.
+    
+    Phase 3 implementation per docs/vcenter_sync_final_plan.md:
+    - All fields JSON-safe (no vim objects)
+    - Cluster resolved via host->cluster lookup chain
+    
+    Args:
+        obj: vim.VirtualMachine object
+        props: Dict of properties from PropertyCollector
+        lookups: Dict of MoRef lookup maps from Phase 2
+        
+    Returns:
+        Dict with VM fields for database upsert
+    """
+    moref = str(obj._moId)
+    
+    # Resolve host MoRef and name
     host_ref = props.get("summary.runtime.host")
+    host_moref = ""
     host_name = ""
+    cluster_name = ""
+    
     if host_ref and hasattr(host_ref, "_moId"):
-        host_name = lookups["host_moref_to_name"].get(str(host_ref._moId), "")
+        host_moref = str(host_ref._moId)
+        host_name = lookups.get("host_moref_to_name", {}).get(host_moref, "")
+        # Resolve cluster via host->cluster lookup (Phase 2)
+        cluster_name = lookups.get("host_moref_to_cluster_name", {}).get(host_moref, "")
+    
+    # Extract power state safely (convert vim enum to string)
+    power_state = props.get("runtime.powerState")
+    if power_state is not None:
+        power_state = str(power_state)
+    else:
+        power_state = ""
+    
+    # Extract connection state safely
+    connection_state = props.get("summary.runtime.connectionState")
+    if connection_state is not None:
+        connection_state = str(connection_state)
+    else:
+        connection_state = ""
     
     return {
-        "id": str(obj._moId),
-        "name": props.get("name", ""),
-        "uuid": props.get("config.uuid", ""),
-        "power_state": str(props.get("runtime.powerState", "")),
-        "vm_path_name": props.get("summary.config.vmPathName", ""),
-        "host": host_name,
-        "connection_state": str(props.get("summary.runtime.connectionState", "")),
+        # Core identifiers
+        "id": moref,                                    # MoRef as string
+        "name": props.get("name", ""),                  # VM name
+        "uuid": props.get("config.uuid", ""),           # VMware UUID
+        
+        # Relationship resolution
+        "host_moref": host_moref,                       # Host MoRef for FK lookup
+        "host_name": host_name,                         # Host name (display)
+        "cluster_name": cluster_name,                   # Cluster name (Phase 3 key deliverable)
+        
+        # State
+        "power_state": power_state,                     # poweredOn/poweredOff/suspended
+        "connection_state": connection_state,           # connected/disconnected/orphaned
+        
+        # Storage path
+        "vm_path_name": props.get("summary.config.vmPathName", ""),  # [datastore] path/to/vm.vmx
     }
 
 
@@ -661,7 +707,7 @@ def sync_vcenter_fast(
     # Process VMs
     for obj, props in inventory["vms"]:
         try:
-            vms.append(_process_vm(obj, props, lookups))
+            vms.append(_vm_to_dict(obj, props, lookups))
         except Exception as e:
             errors.append({
                 "object": str(obj._moId) if obj else "unknown",
