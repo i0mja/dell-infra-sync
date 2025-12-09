@@ -80,7 +80,10 @@ def _get_datastore_properties(enable_deep: bool = False) -> List[str]:
 
 def _get_network_properties(enable_deep: bool = False) -> List[str]:
     """Network properties - Required + optional deep relationships."""
-    props = ["name"]
+    props = [
+        "name",
+        "summary.accessible",  # Network accessibility
+    ]
     if enable_deep:
         props.extend(["host", "vm"])
     return props
@@ -88,7 +91,12 @@ def _get_network_properties(enable_deep: bool = False) -> List[str]:
 
 def _get_dvpg_properties(enable_deep: bool = False) -> List[str]:
     """DVPG properties - Required + optional deep relationships."""
-    props = ["name", "parent"]
+    props = [
+        "name",
+        "parent",                              # DVS parent reference
+        "config.defaultPortConfig",            # VLAN config container
+        "summary.accessible",                  # Accessibility status
+    ]
     if enable_deep:
         props.extend(["host", "vm"])
     return props
@@ -96,7 +104,11 @@ def _get_dvpg_properties(enable_deep: bool = False) -> List[str]:
 
 def _get_dvs_properties() -> List[str]:
     """DVS properties - Required set from spec."""
-    return ["name", "uuid"]
+    return [
+        "name",
+        "uuid",
+        "summary.numPorts",    # Total port count
+    ]
 
 
 # =============================================================================
@@ -709,29 +721,230 @@ def _process_datastore(obj, props: Dict) -> Dict[str, Any]:
     }
 
 
-def _process_network(obj, props: Dict) -> Dict[str, Any]:
-    """Transform network to JSON-serializable dict."""
-    return {
-        "id": str(obj._moId),
-        "name": props.get("name", ""),
+def _extract_vlan_info(default_port_config) -> Dict[str, Any]:
+    """
+    Extract VLAN configuration from DVPG defaultPortConfig.
+    
+    VMware VLAN types:
+    - vim.dvs.VmwareDistributedVirtualSwitch.VlanIdSpec - Single VLAN ID
+    - vim.dvs.VmwareDistributedVirtualSwitch.TrunkVlanSpec - VLAN trunk ranges
+    - vim.dvs.VmwareDistributedVirtualSwitch.PvlanSpec - Private VLAN
+    
+    Returns:
+        {
+            "vlan_id": int or None,
+            "vlan_type": str (None, VlanIdSpec, TrunkSpec, PvlanSpec),
+            "vlan_range": str or None (for trunk ranges)
+        }
+    """
+    result = {
+        "vlan_id": None,
+        "vlan_type": None,
+        "vlan_range": None,
     }
+    
+    if not default_port_config:
+        return result
+    
+    vlan = getattr(default_port_config, "vlan", None)
+    if not vlan:
+        return result
+    
+    # Detect VLAN type by class name
+    type_name = type(vlan).__name__
+    
+    if "VlanIdSpec" in type_name:
+        result["vlan_type"] = "VlanIdSpec"
+        result["vlan_id"] = getattr(vlan, "vlanId", None)
+    elif "TrunkVlanSpec" in type_name:
+        result["vlan_type"] = "TrunkSpec"
+        # TrunkVlanSpec has vlanId as a list of NumericRange
+        ranges = getattr(vlan, "vlanId", [])
+        if ranges:
+            range_strs = []
+            for r in ranges:
+                start = getattr(r, "start", 0)
+                end = getattr(r, "end", 0)
+                if start == end:
+                    range_strs.append(str(start))
+                else:
+                    range_strs.append(f"{start}-{end}")
+            result["vlan_range"] = ",".join(range_strs)
+    elif "PvlanSpec" in type_name:
+        result["vlan_type"] = "PvlanSpec"
+        result["vlan_id"] = getattr(vlan, "pvlanId", None)
+    
+    return result
 
 
-def _process_dvpg(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
-    """Transform DVPG to JSON-serializable dict."""
+def _network_to_dict(obj, props: Dict[str, Any], lookups: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Transform standard vSphere Network to JSON-serializable dict.
+    
+    Standard networks (vim.Network) are non-distributed port groups on
+    standard vSwitches. They have limited metadata compared to DVPGs.
+    
+    Args:
+        obj: vim.Network object
+        props: Dict of properties from PropertyCollector
+        lookups: Dict of MoRef lookup maps
+        
+    Returns:
+        Dict matching vcenter_networks schema
+    """
     moref = str(obj._moId)
+    
+    # Count connected hosts/VMs if deep relationships enabled
+    host_count = 0
+    vm_count = 0
+    hosts = props.get("host", [])
+    vms = props.get("vm", [])
+    if hosts:
+        host_count = len(hosts) if hasattr(hosts, "__len__") else 0
+    if vms:
+        vm_count = len(vms) if hasattr(vms, "__len__") else 0
+    
     return {
-        "id": moref,
+        # Core identifiers
+        "vcenter_id": moref,                        # MoRef as string
         "name": props.get("name", ""),
-        "dvs_name": lookups["dvpg_moref_to_dvs"].get(moref, ""),
+        "network_type": "StandardNetwork",
+        
+        # VLAN (not available on standard networks)
+        "vlan_id": None,
+        "vlan_type": None,
+        "vlan_range": None,
+        
+        # Parent switch (not tracked for standard networks)
+        "parent_switch_name": None,
+        "parent_switch_id": None,
+        
+        # Status
+        "accessible": props.get("summary.accessible", True),
+        
+        # Counts (only populated if enable_deep=True)
+        "host_count": host_count,
+        "vm_count": vm_count,
+        
+        # Not an uplink
+        "uplink_port_group": False,
     }
 
 
-def _process_dvswitch(obj, props: Dict) -> Dict[str, Any]:
-    """Transform DVSwitch to JSON-serializable dict."""
+def _dvpg_to_dict(obj, props: Dict[str, Any], lookups: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Transform DistributedVirtualPortgroup to JSON-serializable dict.
+    
+    DVPGs are port groups on distributed virtual switches (DVS).
+    They contain VLAN configuration, uplink detection, and parent DVS reference.
+    
+    Args:
+        obj: vim.dvs.DistributedVirtualPortgroup object
+        props: Dict of properties from PropertyCollector
+        lookups: Dict of MoRef lookup maps (includes dvpg_moref_to_dvs)
+        
+    Returns:
+        Dict matching vcenter_networks schema
+    """
+    moref = str(obj._moId)
+    
+    # Resolve parent DVS via lookup
+    dvs_name = lookups.get("dvpg_moref_to_dvs", {}).get(moref, "")
+    
+    # Get parent DVS MoRef
+    parent_switch_id = ""
+    parent = props.get("parent")
+    if parent and hasattr(parent, "_moId"):
+        parent_switch_id = str(parent._moId)
+    
+    # Extract VLAN configuration
+    default_port_config = props.get("config.defaultPortConfig")
+    vlan_info = _extract_vlan_info(default_port_config)
+    
+    # Detect if this is an uplink port group by checking name pattern
+    name = props.get("name", "")
+    is_uplink = "uplink" in name.lower()
+    
+    # Count connected hosts/VMs if deep relationships enabled
+    host_count = 0
+    vm_count = 0
+    hosts = props.get("host", [])
+    vms = props.get("vm", [])
+    if hosts:
+        host_count = len(hosts) if hasattr(hosts, "__len__") else 0
+    if vms:
+        vm_count = len(vms) if hasattr(vms, "__len__") else 0
+    
     return {
-        "id": str(obj._moId),
+        # Core identifiers
+        "vcenter_id": moref,                        # MoRef as string
+        "name": name,
+        "network_type": "DistributedVirtualPortgroup",
+        
+        # VLAN configuration
+        "vlan_id": vlan_info["vlan_id"],
+        "vlan_type": vlan_info["vlan_type"],
+        "vlan_range": vlan_info["vlan_range"],
+        
+        # Parent DVS reference
+        "parent_switch_name": dvs_name,
+        "parent_switch_id": parent_switch_id,
+        
+        # Status
+        "accessible": props.get("summary.accessible", True),
+        
+        # Counts (only populated if enable_deep=True)
+        "host_count": host_count,
+        "vm_count": vm_count,
+        
+        # Uplink detection
+        "uplink_port_group": is_uplink,
+    }
+
+
+def _dvs_to_dict(obj, props: Dict[str, Any], lookups: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Transform VmwareDistributedVirtualSwitch to JSON-serializable dict.
+    
+    DVS objects are the parent switches for DVPGs. They don't have VLAN
+    configuration themselves but serve as containers.
+    
+    Args:
+        obj: vim.dvs.VmwareDistributedVirtualSwitch object
+        props: Dict of properties from PropertyCollector
+        lookups: Dict of MoRef lookup maps
+        
+    Returns:
+        Dict matching vcenter_networks schema
+    """
+    moref = str(obj._moId)
+    
+    return {
+        # Core identifiers
+        "vcenter_id": moref,                        # MoRef as string
         "name": props.get("name", ""),
+        "network_type": "VmwareDistributedVirtualSwitch",
+        
+        # DVS doesn't have VLAN config
+        "vlan_id": None,
+        "vlan_type": None,
+        "vlan_range": None,
+        
+        # No parent (DVS is the parent)
+        "parent_switch_name": None,
+        "parent_switch_id": None,
+        
+        # DVS is always accessible if we can query it
+        "accessible": True,
+        
+        # Port count from summary
+        "host_count": 0,  # Not directly available
+        "vm_count": 0,    # Not directly available
+        
+        # Not a port group
+        "uplink_port_group": False,
+        
+        # DVS-specific
         "uuid": props.get("uuid", ""),
     }
 
@@ -834,7 +1047,7 @@ def sync_vcenter_fast(
     # Process networks
     for obj, props in inventory["networks"]:
         try:
-            networks.append(_process_network(obj, props))
+            networks.append(_network_to_dict(obj, props, lookups))
         except Exception as e:
             errors.append({
                 "object": str(obj._moId) if obj else "unknown",
@@ -845,7 +1058,7 @@ def sync_vcenter_fast(
     # Process DVPGs
     for obj, props in inventory["dvpgs"]:
         try:
-            dvpgs.append(_process_dvpg(obj, props, lookups))
+            dvpgs.append(_dvpg_to_dict(obj, props, lookups))
         except Exception as e:
             errors.append({
                 "object": str(obj._moId) if obj else "unknown",
@@ -856,7 +1069,7 @@ def sync_vcenter_fast(
     # Process DVSwitches
     for obj, props in inventory["dvswitches"]:
         try:
-            dvswitches.append(_process_dvswitch(obj, props))
+            dvswitches.append(_dvs_to_dict(obj, props, lookups))
         except Exception as e:
             errors.append({
                 "object": str(obj._moId) if obj else "unknown",
