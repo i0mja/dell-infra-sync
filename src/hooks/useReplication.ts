@@ -422,7 +422,7 @@ export function useProtectionGroups() {
   };
 
   const updateGroupMutation = useMutation({
-    mutationFn: async ({ id, updates }: { id: string; updates: Partial<ProtectionGroup> }) => {
+    mutationFn: async ({ id, updates, originalGroup }: { id: string; updates: Partial<ProtectionGroup>; originalGroup?: ProtectionGroup }) => {
       const { data, error } = await supabase
         .from('protection_groups')
         .update({
@@ -437,19 +437,64 @@ export function useProtectionGroups() {
           test_reminder_days: updates.test_reminder_days,
           paused_at: updates.paused_at,
           pause_reason: updates.pause_reason,
+          source_vcenter_id: updates.source_vcenter_id,
+          protection_datastore: updates.protection_datastore,
+          dr_datastore: updates.dr_datastore,
+          target_id: updates.target_id,
         })
         .eq('id', id)
         .select()
         .single();
       if (error) throw error;
+      
+      // Check if config-affecting fields changed - queue sync job
+      const configFields = ['rpo_minutes', 'retention_policy', 'replication_schedule'];
+      const hasConfigChanges = configFields.some(field => {
+        const updateValue = updates[field as keyof typeof updates];
+        const originalValue = originalGroup?.[field as keyof ProtectionGroup];
+        if (updateValue === undefined) return false;
+        // Deep compare for objects like retention_policy
+        return JSON.stringify(updateValue) !== JSON.stringify(originalValue);
+      });
+      
+      if (hasConfigChanges) {
+        // Get current user for created_by
+        const { data: { user } } = await supabase.auth.getUser();
+        
+        // Queue sync_protection_config job
+        await supabase.from('jobs').insert({
+          job_type: 'sync_protection_config' as any, // Cast needed until types regenerate
+          status: 'pending',
+          target_scope: { protection_group_id: id },
+          details: {
+            protection_group_id: id,
+            changes: configFields.filter(f => updates[f as keyof typeof updates] !== undefined),
+            rpo_minutes: updates.rpo_minutes,
+            retention_policy: updates.retention_policy,
+            replication_schedule: updates.replication_schedule,
+          },
+          created_by: user?.id,
+        });
+      }
+      
       return {
         ...data,
-        retention_policy: (data.retention_policy as { daily: number; weekly: number; monthly: number }) || { daily: 7, weekly: 4, monthly: 12 }
-      } as ProtectionGroup;
+        retention_policy: (data.retention_policy as { daily: number; weekly: number; monthly: number }) || { daily: 7, weekly: 4, monthly: 12 },
+        configSyncQueued: hasConfigChanges
+      } as ProtectionGroup & { configSyncQueued?: boolean };
     },
-    onSuccess: () => {
-      toast({ title: 'Protection group updated' });
+    onSuccess: (data) => {
+      const configSynced = (data as any).configSyncQueued;
+      if (configSynced) {
+        toast({ 
+          title: 'Protection group updated',
+          description: 'Configuration sync job queued for ZFS appliances'
+        });
+      } else {
+        toast({ title: 'Protection group updated' });
+      }
       queryClient.invalidateQueries({ queryKey: ['protection-groups'] });
+      queryClient.invalidateQueries({ queryKey: ['jobs'] });
     },
     onError: (err: Error) => {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });

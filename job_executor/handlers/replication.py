@@ -1130,3 +1130,261 @@ class ReplicationHandler(BaseHandler):
         except Exception as e:
             self.executor.log(f"[{job_id}] Error collecting metrics: {e}", "ERROR")
             self.update_job_status(job_id, 'failed', completed_at=utc_now_iso(), details={'error': str(e)})
+    
+    # =========================================================================
+    # Sync Protection Config Handler
+    # =========================================================================
+    
+    def execute_sync_protection_config(self, job: Dict):
+        """
+        Sync protection group configuration to both ZFS appliances.
+        
+        Pushes to source AND DR target:
+        - Sanoid configuration (snapshot retention)
+        - Syncoid cron schedule (based on RPO)
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        
+        self.executor.log(f"[{job_id}] Starting protection config sync")
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso())
+        
+        try:
+            protection_group_id = details.get('protection_group_id')
+            if not protection_group_id:
+                raise ValueError("protection_group_id is required")
+            
+            # 1. Get protection group
+            group = self._get_protection_group(protection_group_id)
+            if not group:
+                raise ValueError(f"Protection group not found: {protection_group_id}")
+            
+            self.executor.log(f"[{job_id}] Syncing config for group: {group.get('name')}")
+            
+            # 2. Get source ZFS target from protection_datastore
+            source_target = self._get_target_for_datastore(group.get('protection_datastore'))
+            dr_target = None
+            
+            if source_target:
+                self.executor.log(f"[{job_id}] Source target: {source_target.get('name')} ({source_target.get('hostname')})")
+                
+                # Get DR target from partner relationship
+                if source_target.get('partner_target_id'):
+                    dr_target = self._get_replication_target(source_target['partner_target_id'])
+                    if dr_target:
+                        self.executor.log(f"[{job_id}] DR target: {dr_target.get('name')} ({dr_target.get('hostname')})")
+            
+            configured_targets = []
+            errors = []
+            
+            # 3. Configure source target
+            if source_target:
+                result = self._configure_zfs_target(source_target, group, 'source')
+                if result['success']:
+                    configured_targets.append(source_target.get('name'))
+                    self.executor.log(f"[{job_id}] Source target configured successfully")
+                else:
+                    errors.append(f"Source ({source_target.get('name')}): {result.get('error')}")
+                    self.executor.log(f"[{job_id}] Source target config failed: {result.get('error')}", "ERROR")
+            else:
+                self.executor.log(f"[{job_id}] No source target found for datastore: {group.get('protection_datastore')}", "WARN")
+            
+            # 4. Configure DR target
+            if dr_target:
+                result = self._configure_zfs_target(dr_target, group, 'dr')
+                if result['success']:
+                    configured_targets.append(dr_target.get('name'))
+                    self.executor.log(f"[{job_id}] DR target configured successfully")
+                else:
+                    errors.append(f"DR ({dr_target.get('name')}): {result.get('error')}")
+                    self.executor.log(f"[{job_id}] DR target config failed: {result.get('error')}", "ERROR")
+            else:
+                self.executor.log(f"[{job_id}] No DR target found (no partner configured)", "WARN")
+            
+            # 5. Complete job
+            if errors:
+                if configured_targets:
+                    # Partial success
+                    self.update_job_status(job_id, 'completed', completed_at=utc_now_iso(),
+                                          details={
+                                              'configured_targets': configured_targets,
+                                              'warnings': errors,
+                                              'partial_success': True
+                                          })
+                    self.executor.log(f"[{job_id}] Partial sync completed: {len(configured_targets)} targets configured, {len(errors)} errors")
+                else:
+                    # All failed
+                    raise Exception("; ".join(errors))
+            else:
+                self.update_job_status(job_id, 'completed', completed_at=utc_now_iso(),
+                                      details={'configured_targets': configured_targets})
+                self.executor.log(f"[{job_id}] Config sync completed for {len(configured_targets)} targets")
+            
+        except Exception as e:
+            self.executor.log(f"[{job_id}] Error syncing config: {e}", "ERROR")
+            self.update_job_status(job_id, 'failed', completed_at=utc_now_iso(), details={'error': str(e)})
+    
+    def _get_target_for_datastore(self, datastore_name: str) -> Optional[Dict]:
+        """Get replication target linked to a datastore"""
+        if not datastore_name:
+            return None
+        try:
+            # Find datastore and its linked target
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_datastores",
+                params={
+                    'name': f'eq.{datastore_name}',
+                    'select': 'replication_target_id'
+                },
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            if response.ok:
+                datastores = response.json()
+                if datastores and datastores[0].get('replication_target_id'):
+                    return self._get_replication_target(datastores[0]['replication_target_id'])
+        except Exception as e:
+            self.executor.log(f"Error finding target for datastore: {e}", "ERROR")
+        return None
+    
+    def _configure_zfs_target(self, target: Dict, group: Dict, role: str) -> Dict:
+        """
+        Configure a ZFS target with sanoid/syncoid settings.
+        
+        Args:
+            target: Replication target dict
+            group: Protection group dict
+            role: 'source' or 'dr'
+        
+        Returns:
+            Dict with 'success' and optionally 'error'
+        """
+        if not PARAMIKO_AVAILABLE:
+            return {'success': False, 'error': 'paramiko not installed'}
+        
+        try:
+            creds = self._get_ssh_credentials(target)
+            
+            # Generate configuration
+            dataset = f"{target.get('zfs_pool')}/{target.get('zfs_dataset_prefix', 'replication')}/{group['id']}"
+            sanoid_config = self._generate_sanoid_config(group, dataset)
+            
+            # Connect via SSH
+            ssh_result = self._test_ssh_connection(
+                creds['hostname'], creds['port'], 
+                creds['username'], creds['private_key']
+            )
+            if not ssh_result['success']:
+                return ssh_result
+            
+            # Create SSH connection for commands
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            key_file = io.StringIO(creds['private_key'])
+            pkey = None
+            for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                try:
+                    key_file.seek(0)
+                    pkey = key_class.from_private_key(key_file)
+                    break
+                except:
+                    continue
+            
+            if not pkey:
+                return {'success': False, 'error': 'Unable to parse SSH key'}
+            
+            ssh.connect(
+                hostname=creds['hostname'],
+                port=creds['port'],
+                username=creds['username'],
+                pkey=pkey,
+                timeout=30
+            )
+            
+            # Write sanoid config snippet
+            config_path = f"/etc/sanoid/sanoid.d/{group['id']}.conf"
+            cmd = f"mkdir -p /etc/sanoid/sanoid.d && cat > {config_path} << 'EOF'\n{sanoid_config}EOF"
+            stdin, stdout, stderr = ssh.exec_command(cmd)
+            exit_status = stdout.channel.recv_exit_status()
+            if exit_status != 0:
+                error = stderr.read().decode().strip()
+                ssh.close()
+                return {'success': False, 'error': f'Failed to write sanoid config: {error}'}
+            
+            # For source role, also configure syncoid cron if there's a partner
+            if role == 'source' and target.get('partner_target_id'):
+                partner = self._get_replication_target(target['partner_target_id'])
+                if partner:
+                    cron_entry = self._generate_syncoid_cron(group, dataset, partner)
+                    cron_path = f"/etc/cron.d/zerfaux-{group['id']}"
+                    cmd = f"cat > {cron_path} << 'EOF'\n{cron_entry}EOF"
+                    stdin, stdout, stderr = ssh.exec_command(cmd)
+                    exit_status = stdout.channel.recv_exit_status()
+                    if exit_status != 0:
+                        error = stderr.read().decode().strip()
+                        self.executor.log(f"Warning: Failed to write cron: {error}", "WARN")
+            
+            ssh.close()
+            return {'success': True}
+            
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+    
+    def _generate_sanoid_config(self, group: Dict, dataset: str) -> str:
+        """Generate sanoid.conf section for a dataset"""
+        retention = group.get('retention_policy', {})
+        if isinstance(retention, str):
+            import json
+            try:
+                retention = json.loads(retention)
+            except:
+                retention = {}
+        
+        rpo = group.get('rpo_minutes', 60)
+        
+        # Calculate hourly snapshots based on RPO
+        # RPO 15 min = 4 snapshots/hour = need to keep at least 4 hourly
+        hourly_count = max(24, int(24 * 60 / max(rpo, 1)))
+        
+        return f"""# Auto-generated by Zerfaux DSM - Protection Group: {group.get('name')}
+# Last updated: {utc_now_iso()}
+[{dataset}]
+    use_template = production
+    hourly = {hourly_count}
+    daily = {retention.get('daily', 7)}
+    weekly = {retention.get('weekly', 4)}
+    monthly = {retention.get('monthly', 12)}
+    autosnap = yes
+    autoprune = yes
+"""
+    
+    def _generate_syncoid_cron(self, group: Dict, source_dataset: str, dr_target: Dict) -> str:
+        """Generate syncoid cron entry based on RPO"""
+        rpo = group.get('rpo_minutes', 60)
+        
+        if rpo <= 15:
+            schedule = '*/15 * * * *'  # Every 15 min
+        elif rpo <= 30:
+            schedule = '*/30 * * * *'  # Every 30 min
+        elif rpo <= 60:
+            schedule = '0 * * * *'     # Hourly
+        else:
+            hours = max(1, rpo // 60)
+            schedule = f'0 */{hours} * * *'  # Every N hours
+        
+        dr_host = dr_target.get('hostname')
+        dr_pool = dr_target.get('zfs_pool')
+        dr_prefix = dr_target.get('zfs_dataset_prefix', 'replication')
+        dr_dataset = f"{dr_pool}/{dr_prefix}/{group['id']}"
+        
+        return f"""# Auto-generated by Zerfaux DSM - Protection Group: {group.get('name')}
+# RPO: {rpo} minutes
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+{schedule} root /usr/sbin/syncoid --no-privilege-elevation --no-sync-snap {source_dataset} root@{dr_host}:{dr_dataset} >> /var/log/zerfaux-sync.log 2>&1
+"""

@@ -255,8 +255,8 @@ export function ProtectionGroupsPanel() {
     }
   };
 
-  const handleSaveEdit = async (id: string, updates: Partial<ProtectionGroup>) => {
-    await updateGroup({ id, updates });
+  const handleSaveEdit = async (id: string, updates: Partial<ProtectionGroup>, originalGroup?: ProtectionGroup) => {
+    await updateGroup({ id, updates, originalGroup });
   };
 
   return (
