@@ -3729,6 +3729,70 @@ export type Database = {
           },
         ]
       }
+      vcenter_network_vms: {
+        Row: {
+          adapter_type: string | null
+          connected: boolean | null
+          created_at: string | null
+          id: string
+          ip_addresses: string[] | null
+          last_sync: string | null
+          mac_address: string | null
+          network_id: string
+          nic_label: string | null
+          source_vcenter_id: string | null
+          vm_id: string
+        }
+        Insert: {
+          adapter_type?: string | null
+          connected?: boolean | null
+          created_at?: string | null
+          id?: string
+          ip_addresses?: string[] | null
+          last_sync?: string | null
+          mac_address?: string | null
+          network_id: string
+          nic_label?: string | null
+          source_vcenter_id?: string | null
+          vm_id: string
+        }
+        Update: {
+          adapter_type?: string | null
+          connected?: boolean | null
+          created_at?: string | null
+          id?: string
+          ip_addresses?: string[] | null
+          last_sync?: string | null
+          mac_address?: string | null
+          network_id?: string
+          nic_label?: string | null
+          source_vcenter_id?: string | null
+          vm_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vcenter_network_vms_network_id_fkey"
+            columns: ["network_id"]
+            isOneToOne: false
+            referencedRelation: "vcenter_networks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vcenter_network_vms_source_vcenter_id_fkey"
+            columns: ["source_vcenter_id"]
+            isOneToOne: false
+            referencedRelation: "vcenters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vcenter_network_vms_vm_id_fkey"
+            columns: ["vm_id"]
+            isOneToOne: false
+            referencedRelation: "vcenter_vms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vcenter_networks: {
         Row: {
           accessible: boolean | null

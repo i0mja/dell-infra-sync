@@ -16,6 +16,7 @@ import { VCenterManagementDialog } from "@/components/vcenter/VCenterManagementD
 import { VCenterConnectivityDialog } from "@/components/vcenter/VCenterConnectivityDialog";
 import { ClusterUpdateWizard } from "@/components/jobs/ClusterUpdateWizard";
 import { VCenterDetailsSidebar } from "@/components/vcenter/VCenterDetailsSidebar";
+import { NetworkDetailsSidebar } from "@/components/vcenter/NetworkDetailsSidebar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EsxiProfilesTab } from "@/components/vcenter/EsxiProfilesTab";
 import { useVCenterData } from "@/hooks/useVCenterData";
@@ -558,6 +559,10 @@ export default function VCenter() {
     : null;
 
   const hasSelection = selectedHost || selectedVm || selectedClusterData || selectedDatastore;
+  const selectedNetwork = networks.find(n => n.id === selectedNetworkId) || null;
+  const selectedNetworkVCenterName = selectedNetwork?.source_vcenter_id 
+    ? vcenters.find(vc => vc.id === selectedNetwork.source_vcenter_id)?.name 
+    : undefined;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -915,6 +920,15 @@ export default function VCenter() {
             onHostSync={(host) => handleHostSync(host.id)}
             onViewLinkedServer={(host) => handleViewLinkedServer(host.server_id!)}
             onLinkToServer={(host) => handleLinkToServer(host.id)}
+          />
+        )}
+        
+        {/* Network details sidebar */}
+        {selectedNetwork && !hasSelection && (
+          <NetworkDetailsSidebar
+            network={selectedNetwork}
+            onClose={() => setSelectedNetworkId(null)}
+            vcenterName={selectedNetworkVCenterName}
           />
         )}
       </div>
