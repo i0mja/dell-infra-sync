@@ -404,6 +404,8 @@ class VCenterDbUpsertMixin:
                 'vlan_id': n.get('vlan_id'),
                 'vlan_type': n.get('vlan_type'),
                 'vlan_range': n.get('vlan_range'),
+                'parent_switch_name': None,  # Standard networks don't have a parent switch
+                'parent_switch_id': None,    # Must match DVPG keys for PostgREST batch
                 'accessible': n.get('accessible', True),
                 'host_count': n.get('host_count', 0),
                 'vm_count': n.get('vm_count', 0),
