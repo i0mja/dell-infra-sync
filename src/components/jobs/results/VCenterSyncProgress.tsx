@@ -14,6 +14,7 @@ import {
   Database
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useEffect, useRef } from "react";
 
 interface VCenterSyncProgressProps {
   details: any;
@@ -42,8 +43,11 @@ export const VCenterSyncProgress = ({ details, currentStep }: VCenterSyncProgres
   const currentVcenterIndex = details?.current_vcenter_index ?? 0;
   const currentVcenterName = details?.current_vcenter_name || details?.vcenter_name || details?.vcenter_host;
   
-  // Parse current step to determine which phase we're in
-  const getCurrentPhaseIndex = (): number => {
+  // Monotonic phase tracking - never go backwards
+  const highestPhaseRef = useRef<number>(-1);
+  
+  // Parse current step to determine which phase we're in (fallback)
+  const parsePhaseFromStep = (): number => {
     if (!currentStep) return -1;
     
     const stepLower = currentStep.toLowerCase();
@@ -61,6 +65,29 @@ export const VCenterSyncProgress = ({ details, currentStep }: VCenterSyncProgres
     return -1;
   };
 
+  // Get current phase index - prefer explicit sync_phase over keyword parsing
+  const getCurrentPhaseIndex = (): number => {
+    // Prefer explicit sync_phase from backend (0-5)
+    if (typeof details?.sync_phase === 'number') {
+      return details.sync_phase;
+    }
+    
+    // Fallback to keyword parsing
+    return parsePhaseFromStep();
+  };
+
+  const rawPhaseIndex = getCurrentPhaseIndex();
+  
+  // Update highest phase (monotonic - only increases)
+  useEffect(() => {
+    if (rawPhaseIndex > highestPhaseRef.current) {
+      highestPhaseRef.current = rawPhaseIndex;
+    }
+  }, [rawPhaseIndex]);
+  
+  // Use the highest phase we've seen (prevents going backwards)
+  const currentPhaseIndex = Math.max(rawPhaseIndex, highestPhaseRef.current);
+
   // Parse progress from step messages like "Synced 3/6 hosts"
   const parseProgressFromStep = (): { current: number; total: number } | null => {
     if (!currentStep) return null;
@@ -75,7 +102,6 @@ export const VCenterSyncProgress = ({ details, currentStep }: VCenterSyncProgres
     return null;
   };
 
-  const currentPhaseIndex = getCurrentPhaseIndex();
   const stepProgress = parseProgressFromStep();
   
   // Get counts from details for completed phases

@@ -25,7 +25,7 @@ class VCenterDbUpsertMixin:
         source_vcenter_id: str,
         vcenter_name: str = "",
         job_id: str = None,
-        progress_callback: Optional[Callable[[int, str], None]] = None
+        progress_callback: Optional[Callable[[int, str, int], None]] = None
     ) -> Dict[str, Any]:
         """
         Batch upsert all inventory from sync_vcenter_fast() to database.
@@ -35,7 +35,7 @@ class VCenterDbUpsertMixin:
             source_vcenter_id: vCenter UUID for foreign key
             vcenter_name: Human-readable name for logging
             job_id: Optional job ID for activity logging
-            progress_callback: Optional (percent, message) callback
+            progress_callback: Optional (percent, message, phase_idx) callback
             
         Returns:
             {
@@ -59,41 +59,41 @@ class VCenterDbUpsertMixin:
         
         prefix = f"[{vcenter_name}] " if vcenter_name else ""
         
-        # 1. Upsert clusters
+        # 1. Upsert clusters (phase 0)
         self.log(f"{prefix}Upserting {len(inventory['clusters'])} clusters...")
         if progress_callback:
-            progress_callback(10, f"{prefix}Syncing clusters...")
+            progress_callback(10, f"{prefix}Syncing clusters...", 0)
         
         cluster_result = self._upsert_clusters_batch(
             inventory["clusters"], source_vcenter_id, job_id
         )
         results["clusters"] = cluster_result
         
-        # 2. Upsert hosts (with auto-link to servers)
+        # 2. Upsert hosts (phase 1)
         self.log(f"{prefix}Upserting {len(inventory['hosts'])} hosts...")
         if progress_callback:
-            progress_callback(30, f"{prefix}Syncing hosts...")
+            progress_callback(30, f"{prefix}Syncing hosts...", 1)
         
         host_result = self._upsert_hosts_batch(
             inventory["hosts"], source_vcenter_id, job_id
         )
         results["hosts"] = host_result
         
-        # 3. Upsert datastores
+        # 3. Upsert datastores (phase 2)
         self.log(f"{prefix}Upserting {len(inventory['datastores'])} datastores...")
         if progress_callback:
-            progress_callback(50, f"{prefix}Syncing datastores...")
+            progress_callback(50, f"{prefix}Syncing datastores...", 2)
         
         ds_result = self._upsert_datastores_batch(
             inventory["datastores"], source_vcenter_id, job_id
         )
         results["datastores"] = ds_result
         
-        # 4. Upsert networks (standard + distributed)
+        # 4. Upsert networks (phase 3)
         total_networks = len(inventory["networks"]) + len(inventory["dvpgs"])
         self.log(f"{prefix}Upserting {total_networks} networks...")
         if progress_callback:
-            progress_callback(70, f"{prefix}Syncing networks...")
+            progress_callback(70, f"{prefix}Syncing networks...", 3)
         
         net_result = self._upsert_networks_batch(
             inventory["networks"], 
@@ -104,18 +104,19 @@ class VCenterDbUpsertMixin:
         )
         results["networks"] = net_result
         
-        # 5. Upsert VMs
+        # 5. Upsert VMs (phase 4)
         self.log(f"{prefix}Upserting {len(inventory['vms'])} VMs...")
         if progress_callback:
-            progress_callback(85, f"{prefix}Syncing VMs...")
+            progress_callback(85, f"{prefix}Syncing VMs...", 4)
         
         vm_result = self._upsert_vms_batch(
             inventory["vms"], source_vcenter_id, job_id
         )
         results["vms"] = vm_result
         
+        # Phase 5 (alarms) is handled separately in vcenter_handlers.py
         if progress_callback:
-            progress_callback(100, f"{prefix}Inventory sync complete")
+            progress_callback(100, f"{prefix}Inventory sync complete", 4)
         
         duration_ms = int((time.time() - start_time) * 1000)
         self.log(f"{prefix}Inventory upsert completed in {duration_ms}ms")
