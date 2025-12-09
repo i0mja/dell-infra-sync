@@ -306,6 +306,19 @@ class VCenterHandlers(BaseHandler):
             vms_result = upsert_result.get('vms', {})
             hosts_result = upsert_result.get('hosts', {})
             
+            # Collect any upsert errors into sync_errors
+            for entity_type, result in [
+                ('Clusters', clusters_result),
+                ('Hosts', hosts_result),
+                ('Datastores', datastores_result),
+                ('Networks', networks_result),
+                ('VMs', vms_result)
+            ]:
+                if result.get('error'):
+                    error_msg = f"{entity_type} upsert failed: {result['error']}"
+                    self.log(f"⚠️ {error_msg}", "WARN")
+                    sync_errors.append(error_msg)
+            
             self.log(f"✓ Inventory upsert complete: "
                 f"{clusters_result.get('synced', 0)} clusters, "
                 f"{hosts_result.get('synced', 0)} hosts, "

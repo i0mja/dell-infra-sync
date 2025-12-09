@@ -270,6 +270,7 @@ class VCenterDbUpsertMixin:
                 timeout=30
             )
             
+            error = None
             if response.status_code in [200, 201]:
                 from job_executor.utils import _safe_json_parse
                 upserted_hosts = _safe_json_parse(response) or []
@@ -302,12 +303,17 @@ class VCenterDbUpsertMixin:
                 
                 self.log(f"  ✓ Batch upserted {synced} hosts, auto-linked {auto_linked}")
             else:
-                self.log(f"  Host batch upsert failed: {response.status_code}", "WARN")
+                error = f"HTTP {response.status_code}: {response.text[:300]}"
+                self.log(f"  Host batch upsert failed: {error}", "WARN")
                 
         except Exception as e:
+            error = str(e)
             self.log(f"  Host upsert error: {e}", "ERROR")
         
-        return {"synced": synced, "total": len(hosts), "auto_linked": auto_linked}
+        result = {"synced": synced, "total": len(hosts), "auto_linked": auto_linked}
+        if error:
+            result["error"] = error
+        return result
     
     def _upsert_datastores_batch(
         self, 
@@ -355,12 +361,13 @@ class VCenterDbUpsertMixin:
                 self.log(f"  ✓ Batch upserted {len(batch)} datastores")
                 return {"synced": len(batch), "total": len(datastores)}
             else:
-                self.log(f"  Datastore batch upsert failed: {response.status_code}", "WARN")
-                return {"synced": 0, "total": len(datastores)}
+                error_msg = f"HTTP {response.status_code}: {response.text[:300]}"
+                self.log(f"  Datastore batch upsert failed: {error_msg}", "WARN")
+                return {"synced": 0, "total": len(datastores), "error": error_msg}
                 
         except Exception as e:
             self.log(f"  Datastore upsert error: {e}", "ERROR")
-            return {"synced": 0, "total": len(datastores)}
+            return {"synced": 0, "total": len(datastores), "error": str(e)}
     
     def _upsert_networks_batch(
         self, 
@@ -566,6 +573,7 @@ class VCenterDbUpsertMixin:
                     'last_sync': utc_now_iso()
                 })
             
+            errors = []
             try:
                 response = requests.post(
                     f"{DSM_URL}/rest/v1/vcenter_vms",
@@ -578,13 +586,20 @@ class VCenterDbUpsertMixin:
                 if response.status_code in [200, 201, 204]:
                     synced += len(batch)
                 else:
-                    self.log(f"  VM batch {i//batch_size + 1} upsert failed: {response.status_code}", "WARN")
+                    error_msg = f"Batch {i//batch_size + 1}: HTTP {response.status_code}: {response.text[:200]}"
+                    self.log(f"  VM batch upsert failed: {error_msg}", "WARN")
+                    errors.append(error_msg)
                     
             except Exception as e:
+                error_msg = f"Batch {i//batch_size + 1}: {str(e)}"
                 self.log(f"  VM batch upsert error: {e}", "ERROR")
+                errors.append(error_msg)
         
         self.log(f"  ✓ Batch upserted {synced}/{len(vms)} VMs")
-        return {"synced": synced, "total": len(vms)}
+        result = {"synced": synced, "total": len(vms)}
+        if errors:
+            result["error"] = "; ".join(errors)
+        return result
     
     def _upsert_network_vms_batch(
         self,
