@@ -358,6 +358,29 @@ export function OnboardZfsTargetWizard({
     }
   }, [targetName, datastoreName]);
   
+  // Track previous VM ID to detect VM selection changes
+  const [previousVMId, setPreviousVMId] = useState<string | null>(null);
+  
+  // Reset disk detection state when VM selection changes
+  useEffect(() => {
+    if (selectedVMId && selectedVMId !== previousVMId) {
+      // VM changed - reset disk state
+      setDetectedDisks([]);
+      setExcludedDisks([]);
+      setSelectedDisk("");
+      setDiskDetectionDone(false);
+      setPreviousVMId(selectedVMId);
+    }
+  }, [selectedVMId, previousVMId]);
+  
+  // Auto-detect disks when SSH test succeeds for the current VM
+  useEffect(() => {
+    if (sshTestResult === 'success' && !diskDetectionDone && !detectingDisks && selectedVM?.ip_address) {
+      // SSH test succeeded and we haven't detected disks yet for this VM
+      handleDetectDisks();
+    }
+  }, [sshTestResult, diskDetectionDone, detectingDisks, selectedVM?.ip_address]);
+  
   // Poll job status
   const pollJobStatus = useCallback(async () => {
     if (!jobId) return;
