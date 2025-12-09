@@ -177,35 +177,39 @@ export function CreateProtectionGroupWizard({ open, onOpenChange }: CreateProtec
     }
   };
   
-  const handleDeployWizardComplete = async () => {
-    // Refresh targets to get the newly created one
+  // Called when deploy wizard closes for any reason
+  const handleDeployWizardClose = (open: boolean) => {
+    if (!open) {
+      setShowDeployWizard(false);
+      // Don't auto-select anything - only onSuccess should set the target
+    }
+  };
+  
+  // Called ONLY when deployment actually succeeds with the new target ID
+  const handleDeploySuccess = async (newTargetId: string) => {
     await refetchTargets();
-    setShowDeployWizard(false);
+    setSelectedTargetId(newTargetId);
     
-    // Wait a moment for data to update
-    setTimeout(async () => {
-      const refreshedTargets = await refetchTargets();
-      // Auto-select the most recently created target
-      if (refreshedTargets?.data && refreshedTargets.data.length > 0) {
-        const sortedTargets = [...refreshedTargets.data].sort((a, b) => 
-          new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
-        );
-        const newestTarget = sortedTargets[0];
-        if (newestTarget) {
-          setSelectedTargetId(newestTarget.id);
-          // Auto-select first linked datastore if available
-          const linkedDs = datastores.find(ds => ds.replication_target?.id === newestTarget.id);
-          if (linkedDs) {
-            setSelectedDatastore(linkedDs.name);
-          }
-        }
+    // Wait for datastores to refresh, then auto-select linked datastore
+    setTimeout(() => {
+      const linkedDs = datastores.find(ds => ds.replication_target?.id === newTargetId);
+      if (linkedDs) {
+        setSelectedDatastore(linkedDs.name);
       }
-      
-      toast({
-        title: "Appliance deployed",
-        description: "Your ZFS appliance is ready. Complete the wizard to create the protection group.",
-      });
     }, 1000);
+    
+    toast({
+      title: "Appliance deployed",
+      description: "Your ZFS appliance is ready.",
+    });
+  };
+  
+  // Handle appliance mode change - clear selections when switching
+  const handleApplianceModeChange = (mode: ApplianceMode) => {
+    setApplianceMode(mode);
+    // Clear selections when switching modes
+    setSelectedTargetId("");
+    setSelectedDatastore("");
   };
   
   const handleCreate = async () => {
@@ -436,7 +440,7 @@ export function CreateProtectionGroupWizard({ open, onOpenChange }: CreateProtec
         </p>
       </div>
       
-      <RadioGroup value={applianceMode} onValueChange={(v) => setApplianceMode(v as ApplianceMode)}>
+      <RadioGroup value={applianceMode} onValueChange={(v) => handleApplianceModeChange(v as ApplianceMode)}>
         <div className="grid gap-4">
           {/* Deploy New Option */}
           <Card 
@@ -750,13 +754,8 @@ export function CreateProtectionGroupWizard({ open, onOpenChange }: CreateProtec
       {/* Inline Appliance Deployment Wizard */}
       <OnboardZfsTargetWizard
         open={showDeployWizard}
-        onOpenChange={(open) => {
-          setShowDeployWizard(open);
-          if (!open) {
-            // Wizard was closed - check if a target was created
-            handleDeployWizardComplete();
-          }
-        }}
+        onOpenChange={handleDeployWizardClose}
+        onSuccess={handleDeploySuccess}
         preselectedVCenterId={sourceVCenterId}
       />
     </>
