@@ -2445,6 +2445,14 @@ class ZfsTargetHandler(BaseHandler):
                     # Update apt sources
                     result = self._ssh_exec('apt-get update -qq', job_id=job_id)
                     
+                    # Get current kernel version and install headers (required for DKMS/ZFS)
+                    result = self._ssh_exec('uname -r', job_id=job_id)
+                    kernel_version = result['stdout'].strip() if result['exit_code'] == 0 else None
+                    
+                    if kernel_version:
+                        self._log(f"Installing kernel headers for {kernel_version}", job_id=job_id)
+                        self._ssh_exec(f'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq linux-headers-{kernel_version}', job_id=job_id)
+                    
                     # Install ZFS
                     result = self._ssh_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zfsutils-linux', job_id=job_id)
                     if result['exit_code'] != 0:
@@ -2463,10 +2471,24 @@ class ZfsTargetHandler(BaseHandler):
                     # Load ZFS module
                     add_step_result('zfs_module', 'running', 'Loading ZFS kernel module...')
                     result = self._ssh_exec('modprobe zfs', job_id=job_id)
+                    
+                    # If modprobe failed, try rebuilding DKMS modules
                     if result['exit_code'] != 0:
-                        add_step_result('zfs_module', 'warning', 'ZFS module load returned non-zero')
-                    else:
-                        add_step_result('zfs_module', 'success', 'ZFS module loaded')
+                        self._log("modprobe zfs failed, attempting DKMS rebuild...", job_id=job_id)
+                        add_step_result('zfs_module', 'running', 'Rebuilding ZFS DKMS module...')
+                        self._ssh_exec('dkms autoinstall', job_id=job_id)
+                        result = self._ssh_exec('modprobe zfs', job_id=job_id)
+                    
+                    # Final check - fail if module still won't load
+                    if result['exit_code'] != 0:
+                        check = self._ssh_exec('lsmod | grep -q zfs', job_id=job_id)
+                        if check['exit_code'] != 0:
+                            raise Exception(
+                                "ZFS kernel module failed to load. This may require a reboot "
+                                "or manual intervention. Try: 'dkms autoinstall && modprobe zfs'"
+                            )
+                    
+                    add_step_result('zfs_module', 'success', 'ZFS module loaded')
                     
                 except Exception as e:
                     add_step_result('zfs_packages', 'failed', str(e))

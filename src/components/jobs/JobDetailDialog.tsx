@@ -242,7 +242,8 @@ export const JobDetailDialog = ({
       case 'storage_vmotion':
         return <StorageVMotionResults details={job.details} status={job.status} />;
       case 'deploy_zfs_target':
-        return <ZfsDeploymentResults details={job.details} status={job.status} />;
+      case 'onboard_zfs_target':
+        return <ZfsDeploymentResults details={job.details} status={job.status} jobType={job.job_type} />;
       default:
         return <GenericResults details={job.details} />;
     }
