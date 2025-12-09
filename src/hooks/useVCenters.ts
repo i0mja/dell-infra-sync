@@ -62,6 +62,28 @@ export function useVCenters() {
     }
   };
 
+  // Trigger a silent background sync for a vCenter
+  const triggerBackgroundSync = async (vcenterId: string, vcenterName: string) => {
+    try {
+      await supabase.functions.invoke("create-job", {
+        body: {
+          job_type: "vcenter_sync",
+          target_scope: { vcenter_ids: [vcenterId] },
+          details: {
+            vcenter_id: vcenterId,
+            vcenter_name: vcenterName,
+            silent: true, // Suppresses toast notifications
+            triggered_by: 'vcenter_change',
+          },
+        },
+      });
+      console.log(`Background sync triggered for ${vcenterName}`);
+    } catch (error) {
+      console.error("Error triggering background sync:", error);
+      // Don't show toast for background sync failures - it's silent
+    }
+  };
+
   const addVCenter = async (data: VCenterFormData): Promise<{ success: boolean; id?: string }> => {
     try {
       // Insert without password first
@@ -103,6 +125,10 @@ export function useVCenters() {
       });
 
       await fetchVCenters();
+      
+      // Trigger silent background sync after successful add
+      triggerBackgroundSync(newVCenter.id, data.name);
+      
       return { success: true, id: newVCenter.id };
     } catch (error: any) {
       console.error("Error adding vCenter:", error);
@@ -149,6 +175,11 @@ export function useVCenters() {
       });
 
       await fetchVCenters();
+      
+      // Trigger silent background sync after successful update
+      const vcenterName = data.name || vcenters.find(v => v.id === id)?.name || 'vCenter';
+      triggerBackgroundSync(id, vcenterName);
+      
       return true;
     } catch (error: any) {
       console.error("Error updating vCenter:", error);
