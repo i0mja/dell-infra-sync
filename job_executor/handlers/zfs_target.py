@@ -2499,6 +2499,19 @@ class ZfsTargetHandler(BaseHandler):
             add_step_result('disk_detection', 'running', 'Detecting available disks...')
             
             try:
+                # Handle destroy_existing_pool option - destroy any existing pool first
+                if details.get('destroy_existing_pool'):
+                    self._log_console(job_id, 'WARN', 'destroy_existing_pool is set - checking for existing pools', job_details)
+                    existing_pool = self._ssh_exec('zpool list -H -o name 2>/dev/null | head -1', job_id=job_id)
+                    if existing_pool['exit_code'] == 0 and existing_pool['stdout'].strip():
+                        pool_to_destroy = existing_pool['stdout'].strip()
+                        self._log_console(job_id, 'WARN', f'Destroying existing pool: {pool_to_destroy}', job_details)
+                        add_step_result('disk_detection', 'running', f'Destroying existing pool {pool_to_destroy}...')
+                        destroy_result = self._ssh_exec(f'zpool destroy -f {pool_to_destroy}', job_id=job_id)
+                        if destroy_result['exit_code'] != 0:
+                            raise Exception(f"Failed to destroy pool {pool_to_destroy}: {destroy_result['stderr']}")
+                        self._log_console(job_id, 'INFO', f'Successfully destroyed pool: {pool_to_destroy}', job_details)
+                
                 # Detect available disk
                 zfs_disk = self._detect_zfs_disk()
                 if not zfs_disk:
@@ -2847,18 +2860,28 @@ class ZfsTargetHandler(BaseHandler):
                                 if mounted_children:
                                     mounts = ', '.join(c.get('mountpoint') for c in mounted_children)
                                     exclusion_reason = f'Has mounted partitions: {mounts}'
-                                else:
+                            else:
                                     # Check if in use by ZFS
                                     zfs_check = self._ssh_exec(f'zpool status 2>/dev/null | grep -q "{name}"', job_id, log_command=False)
                                     if zfs_check['exit_code'] == 0:
-                                        exclusion_reason = 'Already in use by ZFS pool'
+                                        # Get the pool name for this disk
+                                        pool_info = self._ssh_exec(f'zpool list -H -o name 2>/dev/null | head -1', job_id, log_command=False)
+                                        pool_name = pool_info['stdout'].strip() if pool_info['exit_code'] == 0 and pool_info['stdout'].strip() else 'unknown'
+                                        exclusion_reason = f'Already in use by ZFS pool: {pool_name}'
+                                        reclaimable_pool = pool_name
                             
                             if exclusion_reason:
-                                excluded_disks.append({
+                                excluded_entry = {
                                     'device': f'/dev/{name}',
                                     'size': size,
                                     'reason': exclusion_reason
-                                })
+                                }
+                                # Mark ZFS pools as reclaimable (can be destroyed and reused)
+                                if 'reclaimable_pool' in dir() and reclaimable_pool:
+                                    excluded_entry['reclaimable'] = True
+                                    excluded_entry['pool_name'] = reclaimable_pool
+                                    reclaimable_pool = None  # Reset for next disk
+                                excluded_disks.append(excluded_entry)
                                 self._log_console(job_id, 'DEBUG', f'Excluded disk {name}: {exclusion_reason}', job_details)
                             else:
                                 detected_disks.append({
