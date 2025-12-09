@@ -4505,6 +4505,7 @@ export type Database = {
         | "retry_onboard_step"
         | "rollback_zfs_onboard"
         | "sync_protection_config"
+        | "clone_zfs_template"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -4712,6 +4713,7 @@ export const Constants = {
         "retry_onboard_step",
         "rollback_zfs_onboard",
         "sync_protection_config",
+        "clone_zfs_template",
       ],
       operation_type: [
         "idrac_api",
