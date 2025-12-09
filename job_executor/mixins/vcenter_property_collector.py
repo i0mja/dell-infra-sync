@@ -616,18 +616,39 @@ def _cluster_to_dict(obj, props: Dict[str, Any], lookups: Dict[str, Any]) -> Dic
     }
 
 
-def _process_host(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
-    """Transform host to JSON-serializable dict."""
+def _host_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
+    """
+    Transform host to JSON-serializable dict with full metrics.
+    
+    Phase 6 implementation - includes quickstats for CPU/memory usage.
+    
+    Args:
+        obj: vim.HostSystem object
+        props: Dict of properties from PropertyCollector
+        lookups: Dict of MoRef lookup maps
+        
+    Returns:
+        Dict with host fields for database upsert
+    """
     moref = str(obj._moId)
+    
+    # Get quickstats for this host
+    quickstats = lookups.get("host_moref_to_quickstats", {}).get(moref, {})
+    
     return {
         "id": moref,
         "name": props.get("name", ""),
         "serial_number": props.get("hardware.systemInfo.serialNumber", ""),
-        "cluster": lookups["host_moref_to_cluster"].get(moref, ""),
+        "cluster_name": lookups.get("host_moref_to_cluster_name", {}).get(moref, ""),
+        "cluster_moref": lookups.get("host_moref_to_cluster", {}).get(moref, ""),
         "power_state": str(props.get("summary.runtime.powerState", "")),
         "connection_state": str(props.get("summary.runtime.connectionState", "")),
         "cpu_info": _safe_cpu_info(props.get("hardware.cpuInfo")),
         "memory_size": props.get("hardware.memorySize", 0),
+        # Quickstats metrics
+        "cpu_usage_mhz": quickstats.get("overallCpuUsage", 0) or 0,
+        "memory_usage_mb": quickstats.get("overallMemoryUsage", 0) or 0,
+        "uptime_seconds": quickstats.get("uptime", 0) or 0,
     }
 
 
@@ -710,14 +731,32 @@ def _vm_to_dict(obj, props: Dict[str, Any], lookups: Dict[str, Any]) -> Dict[str
     }
 
 
-def _process_datastore(obj, props: Dict) -> Dict[str, Any]:
-    """Transform datastore to JSON-serializable dict."""
+def _datastore_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
+    """
+    Transform datastore to JSON-serializable dict.
+    
+    Phase 6 implementation - schema-aligned field names.
+    
+    Args:
+        obj: vim.Datastore object
+        props: Dict of properties from PropertyCollector
+        lookups: Dict of MoRef lookup maps (unused but consistent signature)
+        
+    Returns:
+        Dict with datastore fields for database upsert
+    """
+    moref = str(obj._moId)
+    capacity = props.get("summary.capacity", 0) or 0
+    free_space = props.get("summary.freeSpace", 0) or 0
+    
     return {
-        "id": str(obj._moId),
+        "id": moref,
         "name": props.get("name", ""),
-        "capacity": props.get("summary.capacity", 0),
-        "free_space": props.get("summary.freeSpace", 0),
         "type": props.get("summary.type", ""),
+        "capacity_bytes": capacity,
+        "free_bytes": free_space,
+        "used_bytes": capacity - free_space,
+        "accessible": props.get("summary.accessible", True),
     }
 
 
@@ -1014,7 +1053,7 @@ def sync_vcenter_fast(
     # Process hosts
     for obj, props in inventory["hosts"]:
         try:
-            hosts.append(_process_host(obj, props, lookups))
+            hosts.append(_host_to_dict(obj, props, lookups))
         except Exception as e:
             errors.append({
                 "object": str(obj._moId) if obj else "unknown",
@@ -1036,7 +1075,7 @@ def sync_vcenter_fast(
     # Process datastores
     for obj, props in inventory["datastores"]:
         try:
-            datastores.append(_process_datastore(obj, props))
+            datastores.append(_datastore_to_dict(obj, props, lookups))
         except Exception as e:
             errors.append({
                 "object": str(obj._moId) if obj else "unknown",
@@ -1090,6 +1129,7 @@ def sync_vcenter_fast(
     )
     
     return {
+        "source_vcenter_id": source_vcenter_id,
         "clusters": clusters,
         "hosts": hosts,
         "vms": vms,
@@ -1101,4 +1141,13 @@ def sync_vcenter_fast(
         "process_time_ms": process_time_ms,
         "total_objects": total_objects,
         "errors": errors,
+        "counts": {
+            "clusters": len(clusters),
+            "hosts": len(hosts),
+            "vms": len(vms),
+            "datastores": len(datastores),
+            "networks": len(networks),
+            "dvpgs": len(dvpgs),
+            "dvswitches": len(dvswitches),
+        }
     }

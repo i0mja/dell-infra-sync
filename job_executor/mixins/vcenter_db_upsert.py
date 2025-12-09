@@ -145,9 +145,18 @@ class VCenterDbUpsertMixin:
                 'cluster_name': c.get('name', ''),
                 'vcenter_id': c.get('id', ''),
                 'source_vcenter_id': source_vcenter_id,
-                'total_cpu_mhz': c.get('total_cpu', 0),
-                'total_memory_bytes': c.get('total_memory', 0),
+                'total_cpu_mhz': c.get('total_cpu_mhz', 0),
+                'used_cpu_mhz': c.get('used_cpu_mhz', 0),
+                'total_memory_bytes': c.get('total_memory_bytes', 0),
+                'used_memory_bytes': c.get('used_memory_bytes', 0),
+                'total_storage_bytes': c.get('total_storage_bytes', 0),
+                'used_storage_bytes': c.get('used_storage_bytes', 0),
                 'host_count': c.get('num_hosts', 0),
+                'vm_count': c.get('vm_count', 0),
+                'ha_enabled': c.get('ha_enabled', False),
+                'drs_enabled': c.get('drs_enabled', False),
+                'drs_automation_level': c.get('drs_automation_level', ''),
+                'overall_status': c.get('overall_status', ''),
                 'last_sync': utc_now_iso()
             })
         
@@ -220,7 +229,7 @@ class VCenterDbUpsertMixin:
                 'name': h.get('name', ''),
                 'vcenter_id': h.get('id', ''),
                 'source_vcenter_id': source_vcenter_id,
-                'cluster': h.get('cluster', ''),
+                'cluster': h.get('cluster_name', ''),  # Updated field name
                 'serial_number': h.get('serial_number', ''),
                 'status': status,
                 'last_sync': utc_now_iso()
@@ -301,9 +310,9 @@ class VCenterDbUpsertMixin:
                 'vcenter_id': d.get('id', ''),
                 'source_vcenter_id': source_vcenter_id,
                 'type': d.get('type', ''),
-                'capacity_bytes': d.get('capacity', 0),
-                'free_bytes': d.get('free_space', 0),
-                'accessible': True,
+                'capacity_bytes': d.get('capacity_bytes', 0),
+                'free_bytes': d.get('free_bytes', 0),
+                'accessible': d.get('accessible', True),
                 'last_sync': utc_now_iso()
             })
         
@@ -343,31 +352,44 @@ class VCenterDbUpsertMixin:
             'Prefer': 'resolution=merge-duplicates,return=minimal'
         }
         
-        # Build DVS lookup
-        dvs_lookup = {d['id']: d['name'] for d in dvswitches}
+        # Build DVS lookup (for backward compat if needed)
+        dvs_lookup = {d.get('vcenter_id', d.get('id', '')): d['name'] for d in dvswitches}
         
         batch = []
         
-        # Standard networks
+        # Standard networks - use Phase 5 field names
         for n in networks:
             batch.append({
                 'name': n.get('name', ''),
-                'vcenter_id': n.get('id', ''),
+                'vcenter_id': n.get('vcenter_id', n.get('id', '')),
                 'source_vcenter_id': source_vcenter_id,
-                'network_type': 'standard',
-                'accessible': True,
+                'network_type': n.get('network_type', 'StandardNetwork'),
+                'vlan_id': n.get('vlan_id'),
+                'vlan_type': n.get('vlan_type'),
+                'vlan_range': n.get('vlan_range'),
+                'accessible': n.get('accessible', True),
+                'host_count': n.get('host_count', 0),
+                'vm_count': n.get('vm_count', 0),
+                'uplink_port_group': n.get('uplink_port_group', False),
                 'last_sync': utc_now_iso()
             })
         
-        # Distributed port groups
+        # Distributed port groups - use Phase 5 field names
         for d in dvpgs:
             batch.append({
                 'name': d.get('name', ''),
-                'vcenter_id': d.get('id', ''),
+                'vcenter_id': d.get('vcenter_id', d.get('id', '')),
                 'source_vcenter_id': source_vcenter_id,
-                'network_type': 'distributed',
-                'parent_switch_name': d.get('dvs_name', ''),
-                'accessible': True,
+                'network_type': d.get('network_type', 'DistributedVirtualPortgroup'),
+                'vlan_id': d.get('vlan_id'),
+                'vlan_type': d.get('vlan_type'),
+                'vlan_range': d.get('vlan_range'),
+                'parent_switch_name': d.get('parent_switch_name', ''),
+                'parent_switch_id': d.get('parent_switch_id', ''),
+                'accessible': d.get('accessible', True),
+                'host_count': d.get('host_count', 0),
+                'vm_count': d.get('vm_count', 0),
+                'uplink_port_group': d.get('uplink_port_group', False),
                 'last_sync': utc_now_iso()
             })
         
@@ -434,14 +456,15 @@ class VCenterDbUpsertMixin:
             batch = []
             
             for v in batch_vms:
-                # Resolve host_id from host name
-                host_id = host_lookup.get(v.get('host', ''))
+                # Resolve host_id from host name (Phase 3 uses host_name)
+                host_id = host_lookup.get(v.get('host_name', ''))
                 
                 batch.append({
                     'name': v.get('name', ''),
                     'vcenter_id': v.get('id', ''),
                     'source_vcenter_id': source_vcenter_id,
                     'host_id': host_id,
+                    'cluster_name': v.get('cluster_name', ''),
                     'power_state': v.get('power_state', 'unknown'),
                     'overall_status': v.get('connection_state', 'unknown'),
                     'last_sync': utc_now_iso()
