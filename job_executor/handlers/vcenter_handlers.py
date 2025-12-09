@@ -376,11 +376,29 @@ class VCenterHandlers(BaseHandler):
             # Complete this vCenter sync
             vcenter_duration = int(time.time() - vcenter_start)
             
+            # =====================================================================
+            # Network sync validation - add warning if networks = 0 but hosts > 0
+            # =====================================================================
+            networks_count = networks_result.get('synced', 0)
+            hosts_count = hosts_result.get('synced', 0)
+            
+            if networks_count == 0 and hosts_count > 0:
+                warning_msg = (
+                    f"Network collection returned 0 results despite {hosts_count} hosts synced. "
+                    "This may indicate a vCenter permissions issue, empty network folder, "
+                    "or networks organized in unsupported structures."
+                )
+                self.log(f"⚠️ {warning_msg}", "WARN")
+                sync_errors.append(warning_msg)
+            
             self.log(f"✓ {vcenter_name} sync completed in {vcenter_duration}s")
+            
+            # Determine final status - partial if any warnings/errors
+            has_warnings = len(sync_errors) > 0
+            final_status = 'partial' if has_warnings else 'success'
             
             # Update vCenter last_sync status on success
             try:
-                final_status = 'partial' if sync_errors else 'success'
                 requests.patch(
                     f"{DSM_URL}/rest/v1/vcenters?id=eq.{source_vcenter_id}",
                     json={
@@ -403,14 +421,14 @@ class VCenterHandlers(BaseHandler):
                 'vcenter_id': source_vcenter_id,
                 'vcenter_name': vcenter_name,
                 'vcenter_host': vcenter_host,
-                'status': 'success',
+                'status': 'completed_with_warnings' if has_warnings else 'success',
                 'sync_duration_seconds': vcenter_duration,
                 'clusters': clusters_result.get('synced', 0),
                 'datastores': datastores_result.get('synced', 0),
-                'networks': networks_result.get('synced', 0),
+                'networks': networks_count,
                 'vms': vms_result.get('synced', 0),
                 'alarms': alarms_result.get('synced', 0),
-                'hosts': hosts_result.get('synced', 0),
+                'hosts': hosts_count,
                 'auto_linked': hosts_result.get('auto_linked', 0),
                 'errors': sync_errors if sync_errors else None
             }

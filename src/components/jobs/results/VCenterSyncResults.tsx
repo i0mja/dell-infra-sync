@@ -73,7 +73,24 @@ const SingleVCenterResults = ({ result, showHeader = true }: { result: any; show
       ? `${(result.sync_duration_ms / 1000).toFixed(1)}s`
       : result?.sync_duration || null;
 
-  const isSuccess = result?.status !== 'failed' && errors === 0;
+  // Determine status - check for warnings like 0 networks
+  const hasNetworkWarning = networksSynced === 0 && hostsSynced > 0;
+  const hasWarnings = result?.status === 'completed_with_warnings' || hasNetworkWarning;
+  const isFailed = result?.status === 'failed';
+  const isSuccess = !isFailed && !hasWarnings && (typeof errors !== 'number' || errors === 0);
+
+  // Determine badge variant and text
+  const getBadgeInfo = () => {
+    if (isFailed) {
+      return { variant: 'destructive' as const, icon: XCircle, text: `${errors} Error${errors !== 1 ? 's' : ''}` };
+    }
+    if (hasWarnings) {
+      return { variant: 'outline' as const, icon: AlertTriangle, text: 'Warnings' };
+    }
+    return { variant: 'secondary' as const, icon: CheckCircle, text: 'Success' };
+  };
+
+  const badgeInfo = getBadgeInfo();
 
   return (
     <div className="space-y-4">
@@ -84,17 +101,26 @@ const SingleVCenterResults = ({ result, showHeader = true }: { result: any; show
           <div>
             <h4 className="font-semibold">{vcenterName}</h4>
             <p className="text-sm text-muted-foreground">
-              vCenter Sync {isSuccess ? 'completed successfully' : 'completed with errors'}
+              vCenter Sync {isSuccess ? 'completed successfully' : hasWarnings ? 'completed with warnings' : 'completed with errors'}
             </p>
           </div>
-          <Badge variant={isSuccess ? "secondary" : "destructive"} className="ml-auto">
-            {isSuccess ? (
-              <><CheckCircle className="h-3 w-3 mr-1" /> Success</>
-            ) : (
-              <><XCircle className="h-3 w-3 mr-1" /> {errors} Error{errors !== 1 ? 's' : ''}</>
-            )}
+          <Badge variant={badgeInfo.variant} className="ml-auto">
+            <badgeInfo.icon className="h-3 w-3 mr-1" /> {badgeInfo.text}
           </Badge>
         </div>
+      )}
+
+      {/* Network sync warning */}
+      {hasNetworkWarning && (
+        <Alert variant="default" className="border-warning bg-warning/10">
+          <AlertTriangle className="h-4 w-4 text-warning" />
+          <AlertTitle className="text-warning">No Networks Synced</AlertTitle>
+          <AlertDescription className="text-sm">
+            Network collection returned 0 results while {hostsSynced} hosts were synced. 
+            This may indicate a vCenter permissions issue, empty network folder, or networks in unsupported structures.
+            Check Job Executor logs for detailed network collection diagnostics.
+          </AlertDescription>
+        </Alert>
       )}
 
       {/* Error message for failed syncs */}
@@ -153,15 +179,14 @@ const SingleVCenterResults = ({ result, showHeader = true }: { result: any; show
           />
         )}
 
-        {/* Networks */}
-        {networksSynced > 0 && (
-          <StatCard
-            icon={<Network className="h-4 w-4" />}
-            label="Networks"
-            value={networksSynced}
-            subtext="Port groups synced"
-          />
-        )}
+        {/* Networks - always show, with warning if 0 and hosts > 0 */}
+        <StatCard
+          icon={<Network className="h-4 w-4" />}
+          label="Networks"
+          value={networksSynced}
+          subtext={hasNetworkWarning ? "⚠️ Check permissions" : "Port groups synced"}
+          variant={hasNetworkWarning ? 'warning' : 'default'}
+        />
 
         {/* VMs */}
         {vmsSynced > 0 && (

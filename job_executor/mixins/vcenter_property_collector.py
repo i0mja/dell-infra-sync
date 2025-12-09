@@ -560,17 +560,31 @@ def _collect_networks_direct(content) -> Dict[str, List]:
     dvpgs = []
     dvswitches = []
     
-    logger.info("Starting direct datacenter network folder traversal (with recursive folder support)")
+    logger.info("=" * 60)
+    logger.info("NETWORK COLLECTION DEBUG: Starting direct datacenter traversal")
+    logger.info("=" * 60)
+    
+    # Log root folder info
+    root_children = content.rootFolder.childEntity if hasattr(content.rootFolder, 'childEntity') else []
+    logger.info(f"Root folder has {len(root_children)} child entities")
     
     # Iterate through all datacenters
-    for child in content.rootFolder.childEntity:
+    for child_idx, child in enumerate(root_children):
+        child_type = type(child).__name__
+        child_name = getattr(child, 'name', 'Unknown')
+        logger.info(f"Root child [{child_idx}]: {child_name} (type: {child_type})")
+        
         # Handle both Datacenter and Folder objects
         datacenters = []
         if hasattr(child, 'networkFolder'):
             datacenters = [child]
         elif hasattr(child, 'childEntity'):
             # It's a folder, recurse into it
+            logger.info(f"  -> {child_name} is a folder, checking for datacenters inside...")
             for sub in child.childEntity:
+                sub_type = type(sub).__name__
+                sub_name = getattr(sub, 'name', 'Unknown')
+                logger.info(f"    Sub-object: {sub_name} (type: {sub_type})")
                 if hasattr(sub, 'networkFolder'):
                     datacenters.append(sub)
         
@@ -585,12 +599,27 @@ def _collect_networks_direct(content) -> Dict[str, List]:
                     continue
                     
                 network_folder = datacenter.networkFolder
+                network_folder_name = getattr(network_folder, 'name', 'Unknown')
+                logger.info(f"  Network folder object: {network_folder_name} (type: {type(network_folder).__name__})")
+                
                 if not hasattr(network_folder, 'childEntity'):
-                    logger.warning(f"Datacenter {dc_name} networkFolder has no childEntity")
+                    logger.warning(f"Datacenter {dc_name} networkFolder has no childEntity attribute")
+                    continue
+                    
+                if not network_folder.childEntity:
+                    logger.warning(f"Datacenter {dc_name} networkFolder.childEntity is empty/None")
                     continue
                 
-                entity_count = len(network_folder.childEntity) if network_folder.childEntity else 0
+                entity_count = len(network_folder.childEntity)
                 logger.info(f"Datacenter {dc_name} networkFolder has {entity_count} top-level entities")
+                
+                # Log each top-level entity type for debugging
+                for ent_idx, ent in enumerate(network_folder.childEntity):
+                    ent_type = type(ent).__name__
+                    ent_name = getattr(ent, 'name', 'Unknown')
+                    ent_moref = str(ent._moId) if hasattr(ent, '_moId') else 'no-moref'
+                    has_children = hasattr(ent, 'childEntity') and ent.childEntity
+                    logger.info(f"  Entity [{ent_idx}]: {ent_name} (type: {ent_type}, moref: {ent_moref}, has_children: {has_children})")
                 
                 # Use recursive function to handle nested folders
                 _process_network_folder_entities(
@@ -602,10 +631,12 @@ def _collect_networks_direct(content) -> Dict[str, List]:
                 )
                         
             except Exception as dc_err:
-                logger.error(f"Error traversing datacenter {dc_name}: {dc_err}")
+                logger.error(f"Error traversing datacenter {dc_name}: {dc_err}", exc_info=True)
     
-    logger.info(f"Direct network collection complete: {len(networks)} networks, "
+    logger.info("=" * 60)
+    logger.info(f"NETWORK COLLECTION COMPLETE: {len(networks)} networks, "
                 f"{len(dvpgs)} DVPGs, {len(dvswitches)} DVSwitches")
+    logger.info("=" * 60)
     
     return {
         'networks': networks,
