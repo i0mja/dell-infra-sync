@@ -38,13 +38,17 @@ import {
   AlertTriangle,
   XCircle,
   AlertCircle,
+  ArrowRight,
+  Target,
+  Info,
 } from "lucide-react";
-import { useProtectionGroups, useProtectedVMs, ProtectionGroup } from "@/hooks/useReplication";
+import { useProtectionGroups, useProtectedVMs, useReplicationTargets, ProtectionGroup } from "@/hooks/useReplication";
 import { useVCenters } from "@/hooks/useVCenters";
-import { useAccessibleDatastores } from "@/hooks/useAccessibleDatastores";
+import { useAccessibleDatastores, AccessibleDatastore } from "@/hooks/useAccessibleDatastores";
 import { formatDistanceToNow, differenceInDays } from "date-fns";
 import { ProtectedVMsTable } from "./ProtectedVMsTable";
 import { EditProtectionGroupDialog } from "./EditProtectionGroupDialog";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 function formatBytes(bytes: number | null): string {
   if (!bytes) return "N/A";
@@ -120,6 +124,7 @@ function PriorityBadge({ priority }: { priority?: string }) {
 
 export function ProtectionGroupsPanel() {
   const { groups, loading, createGroup, updateGroup, deleteGroup, pauseGroup, runReplicationNow, refetch } = useProtectionGroups();
+  const { targets: replicationTargets } = useReplicationTargets();
   const { vcenters } = useVCenters();
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -143,6 +148,19 @@ export function ProtectionGroupsPanel() {
 
   const selectedGroup = groups.find(g => g.id === selectedGroupId);
 
+  // Get the selected datastore's linked replication info
+  const selectedDatastoreInfo = datastores.find(ds => ds.name === newGroupDatastore);
+  const linkedTarget = selectedDatastoreInfo?.replication_target;
+  const drPartner = linkedTarget?.partner_target;
+
+  // Group datastores by their linked ZFS target
+  const datastoresByTarget = datastores.reduce<Record<string, AccessibleDatastore[]>>((acc, ds) => {
+    const key = ds.replication_target?.name || '_unlinked';
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(ds);
+    return acc;
+  }, {});
+
   // Check if test is overdue
   const isTestOverdue = (group: ProtectionGroup): boolean => {
     if (!group.test_reminder_days || !group.last_test_at) return false;
@@ -161,6 +179,8 @@ export function ProtectionGroupsPanel() {
         protection_datastore: newGroupDatastore,
         source_vcenter_id: selectedVCenterId,
         rpo_minutes: newGroupRpoMinutes,
+        // Auto-set target_id if datastore is linked to a ZFS target
+        target_id: linkedTarget?.id,
       });
       setShowCreateDialog(false);
       setNewGroupName("");
@@ -305,16 +325,33 @@ export function ProtectionGroupsPanel() {
                         } />
                       </SelectTrigger>
                       <SelectContent>
-                        {datastores.map((ds) => (
-                          <SelectItem key={ds.id} value={ds.name}>
-                            <div className="flex items-center gap-2">
-                              <HardDrive className="h-4 w-4 text-muted-foreground" />
-                              <span>{ds.name}</span>
-                              <span className="text-muted-foreground text-xs">
-                                ({formatBytes(ds.free_bytes)} free)
-                              </span>
-                            </div>
-                          </SelectItem>
+                        {/* Group datastores by ZFS target */}
+                        {Object.entries(datastoresByTarget).map(([targetName, dsList]) => (
+                          <div key={targetName}>
+                            {targetName !== '_unlinked' && (
+                              <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground flex items-center gap-1">
+                                <Target className="h-3 w-3" />
+                                {targetName}
+                              </div>
+                            )}
+                            {targetName === '_unlinked' && dsList.length > 0 && (
+                              <div className="px-2 py-1.5 text-xs font-medium text-amber-600 flex items-center gap-1">
+                                <AlertTriangle className="h-3 w-3" />
+                                Unlinked Datastores
+                              </div>
+                            )}
+                            {dsList.map((ds) => (
+                              <SelectItem key={ds.id} value={ds.name}>
+                                <div className="flex items-center gap-2">
+                                  <HardDrive className="h-4 w-4 text-muted-foreground" />
+                                  <span>{ds.name}</span>
+                                  <span className="text-muted-foreground text-xs">
+                                    ({formatBytes(ds.free_bytes)} free)
+                                  </span>
+                                </div>
+                              </SelectItem>
+                            ))}
+                          </div>
                         ))}
                       </SelectContent>
                     </Select>
@@ -322,6 +359,57 @@ export function ProtectionGroupsPanel() {
                       VMs will be moved here before replication (via Storage vMotion)
                     </p>
                   </div>
+
+                  {/* DR Destination Info - Auto-detected */}
+                  {newGroupDatastore && (
+                    <div className="space-y-2 pt-2 border-t">
+                      <Label className="flex items-center gap-2">
+                        <ArrowRight className="h-4 w-4" />
+                        DR Destination
+                      </Label>
+                      {linkedTarget ? (
+                        <div className="p-3 bg-muted/50 rounded-lg space-y-2">
+                          <div className="flex items-center gap-2">
+                            <Target className="h-4 w-4 text-primary" />
+                            <span className="font-medium">{linkedTarget.name}</span>
+                            <Badge variant="outline" className={
+                              linkedTarget.health_status === 'healthy' 
+                                ? 'text-green-600 border-green-500/30' 
+                                : 'text-amber-600 border-amber-500/30'
+                            }>
+                              {linkedTarget.health_status}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            {linkedTarget.hostname} • {linkedTarget.zfs_pool}
+                          </p>
+                          {drPartner ? (
+                            <div className="flex items-center gap-2 pt-2 border-t border-border/50">
+                              <ArrowRight className="h-3 w-3 text-muted-foreground" />
+                              <span className="text-sm">DR: {drPartner.name}</span>
+                              <span className="text-xs text-muted-foreground">
+                                ({drPartner.hostname})
+                              </span>
+                            </div>
+                          ) : (
+                            <Alert className="mt-2">
+                              <AlertTriangle className="h-4 w-4" />
+                              <AlertDescription className="text-xs">
+                                No DR partner configured for this ZFS target
+                              </AlertDescription>
+                            </Alert>
+                          )}
+                        </div>
+                      ) : (
+                        <Alert>
+                          <Info className="h-4 w-4" />
+                          <AlertDescription className="text-xs">
+                            Datastore not linked to a ZFS appliance. Configure datastore linking for automatic DR detection.
+                          </AlertDescription>
+                        </Alert>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
