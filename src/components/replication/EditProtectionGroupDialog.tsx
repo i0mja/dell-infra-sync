@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Dialog,
   DialogContent,
@@ -15,12 +15,27 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ProtectionGroup } from "@/hooks/useReplication";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { ProtectionGroup, useReplicationTargets } from "@/hooks/useReplication";
+import { useVCenters } from "@/hooks/useVCenters";
+import { useAccessibleDatastores } from "@/hooks/useAccessibleDatastores";
+import { 
+  ArrowRight, 
+  Target, 
+  Server, 
+  HardDrive, 
+  AlertTriangle, 
+  Info,
+  CheckCircle2,
+  XCircle
+} from "lucide-react";
 
 interface EditProtectionGroupDialogProps {
   group: ProtectionGroup | null;
@@ -54,19 +69,82 @@ export function EditProtectionGroupDialog({
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState("general");
   
-  // Form state
+  // Form state - General
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<string>("medium");
+  
+  // Form state - Sites
+  const [sourceVCenterId, setSourceVCenterId] = useState("");
+  const [sourceDatastore, setSourceDatastore] = useState("");
+  const [drVCenterId, setDrVCenterId] = useState("");
+  const [drDatastore, setDrDatastore] = useState("");
+  
+  // Form state - SLA
   const [rpoMinutes, setRpoMinutes] = useState(60);
   const [rpoUnit, setRpoUnit] = useState<"seconds" | "minutes" | "hours">("minutes");
   const [journalHistoryHours, setJournalHistoryHours] = useState(24);
   const [testReminderDays, setTestReminderDays] = useState(30);
   const [schedulePreset, setSchedulePreset] = useState("0 * * * *");
   const [customSchedule, setCustomSchedule] = useState("");
+  
+  // Form state - Retention
   const [retentionDaily, setRetentionDaily] = useState(7);
   const [retentionWeekly, setRetentionWeekly] = useState(4);
   const [retentionMonthly, setRetentionMonthly] = useState(12);
+
+  // Fetch data for sites tab
+  const { vcenters } = useVCenters();
+  const { data: sourceDatastores = [] } = useAccessibleDatastores(sourceVCenterId || undefined);
+  const { data: drDatastores = [] } = useAccessibleDatastores(drVCenterId || undefined);
+  const { targets: replicationTargets } = useReplicationTargets();
+
+  // Group datastores by their linked ZFS target
+  const sourceDatastoresByTarget = useMemo(() => {
+    const grouped: Record<string, typeof sourceDatastores> = {};
+    const unlinked: typeof sourceDatastores = [];
+    
+    sourceDatastores.forEach(ds => {
+      if (ds.replication_target_id && ds.replication_target) {
+        const targetName = ds.replication_target.name;
+        if (!grouped[targetName]) grouped[targetName] = [];
+        grouped[targetName].push(ds);
+      } else {
+        unlinked.push(ds);
+      }
+    });
+    
+    return { grouped, unlinked };
+  }, [sourceDatastores]);
+
+  const drDatastoresByTarget = useMemo(() => {
+    const grouped: Record<string, typeof drDatastores> = {};
+    const unlinked: typeof drDatastores = [];
+    
+    drDatastores.forEach(ds => {
+      if (ds.replication_target_id && ds.replication_target) {
+        const targetName = ds.replication_target.name;
+        if (!grouped[targetName]) grouped[targetName] = [];
+        grouped[targetName].push(ds);
+      } else {
+        unlinked.push(ds);
+      }
+    });
+    
+    return { grouped, unlinked };
+  }, [drDatastores]);
+
+  // Get linked ZFS target info for selected datastores
+  const sourceDatastoreInfo = useMemo(() => {
+    return sourceDatastores.find(ds => ds.name === sourceDatastore);
+  }, [sourceDatastores, sourceDatastore]);
+
+  const drDatastoreInfo = useMemo(() => {
+    return drDatastores.find(ds => ds.name === drDatastore);
+  }, [drDatastores, drDatastore]);
+
+  const sourceTarget = sourceDatastoreInfo?.replication_target;
+  const drTarget = drDatastoreInfo?.replication_target;
 
   // Initialize form from group
   useEffect(() => {
@@ -79,6 +157,11 @@ export function EditProtectionGroupDialog({
       setRetentionDaily(group.retention_policy?.daily || 7);
       setRetentionWeekly(group.retention_policy?.weekly || 4);
       setRetentionMonthly(group.retention_policy?.monthly || 12);
+      
+      // Site configuration
+      setSourceVCenterId(group.source_vcenter_id || "");
+      setSourceDatastore(group.protection_datastore || "");
+      setDrDatastore(group.dr_datastore || "");
       
       // Parse RPO
       const rpo = group.rpo_minutes || 60;
@@ -106,6 +189,16 @@ export function EditProtectionGroupDialog({
     }
   }, [group]);
 
+  // Try to derive DR vCenter from the target
+  useEffect(() => {
+    if (group?.target_id && replicationTargets.length > 0) {
+      const target = replicationTargets.find(t => t.id === group.target_id);
+      if (target?.partner_target?.dr_vcenter_id) {
+        setDrVCenterId(target.partner_target.dr_vcenter_id);
+      }
+    }
+  }, [group, replicationTargets]);
+
   const handleSave = async () => {
     if (!group) return;
     
@@ -132,6 +225,10 @@ export function EditProtectionGroupDialog({
           weekly: retentionWeekly,
           monthly: retentionMonthly,
         },
+        source_vcenter_id: sourceVCenterId || undefined,
+        protection_datastore: sourceDatastore || undefined,
+        dr_datastore: drDatastore || undefined,
+        target_id: sourceTarget?.id || undefined,
       });
       onOpenChange(false);
     } finally {
@@ -140,10 +237,12 @@ export function EditProtectionGroupDialog({
   };
 
   const selectedPriority = PRIORITY_OPTIONS.find(p => p.value === priority);
+  const sourceVCenter = vcenters.find(v => v.id === sourceVCenterId);
+  const drVCenter = vcenters.find(v => v.id === drVCenterId);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit Protection Group</DialogTitle>
           <DialogDescription>
@@ -152,8 +251,9 @@ export function EditProtectionGroupDialog({
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-4">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="general">General</TabsTrigger>
+            <TabsTrigger value="sites">Sites</TabsTrigger>
             <TabsTrigger value="sla">SLA Settings</TabsTrigger>
             <TabsTrigger value="retention">Retention</TabsTrigger>
           </TabsList>
@@ -194,6 +294,265 @@ export function EditProtectionGroupDialog({
                 ))}
               </div>
             </div>
+          </TabsContent>
+
+          <TabsContent value="sites" className="space-y-4 mt-4">
+            <div className="grid grid-cols-2 gap-6">
+              {/* Source Site (Point A) */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <Server className="h-4 w-4 text-primary" />
+                  <h4 className="font-medium">Source Site (Point A)</h4>
+                </div>
+                
+                <div className="space-y-2">
+                  <Label>Source vCenter</Label>
+                  <Select value={sourceVCenterId} onValueChange={setSourceVCenterId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select vCenter" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {vcenters.map(vc => (
+                        <SelectItem key={vc.id} value={vc.id}>
+                          {vc.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Protection Datastore</Label>
+                  <Select 
+                    value={sourceDatastore} 
+                    onValueChange={setSourceDatastore}
+                    disabled={!sourceVCenterId}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select datastore" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(sourceDatastoresByTarget.grouped).map(([targetName, datastores]) => (
+                        <SelectGroup key={targetName}>
+                          <SelectLabel className="flex items-center gap-2">
+                            <Target className="h-3 w-3" />
+                            {targetName}
+                          </SelectLabel>
+                          {datastores.map(ds => (
+                            <SelectItem key={ds.id} value={ds.name}>
+                              <div className="flex items-center gap-2">
+                                <HardDrive className="h-3 w-3" />
+                                {ds.name}
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      ))}
+                      {sourceDatastoresByTarget.unlinked.length > 0 && (
+                        <SelectGroup>
+                          <SelectLabel className="flex items-center gap-2 text-muted-foreground">
+                            <AlertTriangle className="h-3 w-3" />
+                            Unlinked Datastores
+                          </SelectLabel>
+                          {sourceDatastoresByTarget.unlinked.map(ds => (
+                            <SelectItem key={ds.id} value={ds.name}>
+                              <div className="flex items-center gap-2">
+                                <HardDrive className="h-3 w-3" />
+                                {ds.name}
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Source ZFS Target Info */}
+                {sourceDatastore && (
+                  <div className="p-3 rounded-lg bg-muted/50 space-y-2">
+                    {sourceTarget ? (
+                      <>
+                        <div className="flex items-center gap-2 text-sm">
+                          <Target className="h-4 w-4 text-primary" />
+                          <span className="font-medium">{sourceTarget.name}</span>
+                          <Badge variant={sourceTarget.health_status === 'healthy' ? 'default' : 'destructive'} className="text-xs">
+                            {sourceTarget.health_status || 'unknown'}
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          <p>{sourceTarget.hostname} • Pool: {sourceTarget.zfs_pool}</p>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex items-center gap-2 text-sm text-amber-600">
+                        <AlertTriangle className="h-4 w-4" />
+                        <span>No ZFS target linked to this datastore</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* DR Site (Point B) */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <Target className="h-4 w-4 text-destructive" />
+                  <h4 className="font-medium">DR Site (Point B)</h4>
+                </div>
+                
+                <div className="space-y-2">
+                  <Label>DR vCenter</Label>
+                  <Select value={drVCenterId} onValueChange={setDrVCenterId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select vCenter" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {vcenters
+                        .filter(vc => vc.id !== sourceVCenterId)
+                        .map(vc => (
+                          <SelectItem key={vc.id} value={vc.id}>
+                            {vc.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>DR Datastore</Label>
+                  <Select 
+                    value={drDatastore} 
+                    onValueChange={setDrDatastore}
+                    disabled={!drVCenterId}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select datastore" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(drDatastoresByTarget.grouped).map(([targetName, datastores]) => (
+                        <SelectGroup key={targetName}>
+                          <SelectLabel className="flex items-center gap-2">
+                            <Target className="h-3 w-3" />
+                            {targetName}
+                          </SelectLabel>
+                          {datastores.map(ds => (
+                            <SelectItem key={ds.id} value={ds.name}>
+                              <div className="flex items-center gap-2">
+                                <HardDrive className="h-3 w-3" />
+                                {ds.name}
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      ))}
+                      {drDatastoresByTarget.unlinked.length > 0 && (
+                        <SelectGroup>
+                          <SelectLabel className="flex items-center gap-2 text-muted-foreground">
+                            <AlertTriangle className="h-3 w-3" />
+                            Unlinked Datastores
+                          </SelectLabel>
+                          {drDatastoresByTarget.unlinked.map(ds => (
+                            <SelectItem key={ds.id} value={ds.name}>
+                              <div className="flex items-center gap-2">
+                                <HardDrive className="h-3 w-3" />
+                                {ds.name}
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* DR ZFS Target Info */}
+                {drDatastore && (
+                  <div className="p-3 rounded-lg bg-muted/50 space-y-2">
+                    {drTarget ? (
+                      <>
+                        <div className="flex items-center gap-2 text-sm">
+                          <Target className="h-4 w-4 text-destructive" />
+                          <span className="font-medium">{drTarget.name}</span>
+                          <Badge variant={drTarget.health_status === 'healthy' ? 'default' : 'destructive'} className="text-xs">
+                            {drTarget.health_status || 'unknown'}
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          <p>{drTarget.hostname} • Pool: {drTarget.zfs_pool}</p>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex items-center gap-2 text-sm text-amber-600">
+                        <AlertTriangle className="h-4 w-4" />
+                        <span>No ZFS target linked to this datastore</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Replication Flow Visualization */}
+            {(sourceDatastore || drDatastore) && (
+              <div className="mt-6 p-4 rounded-lg border bg-card">
+                <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+                  <Info className="h-4 w-4" />
+                  Replication Flow
+                </h4>
+                <div className="flex items-center justify-center gap-4">
+                  {/* Source */}
+                  <div className="text-center p-3 rounded-lg bg-primary/10 min-w-[140px]">
+                    <p className="text-xs text-muted-foreground mb-1">Source</p>
+                    <p className="font-medium text-sm">{sourceDatastore || "Not selected"}</p>
+                    {sourceVCenter && (
+                      <p className="text-xs text-muted-foreground mt-1">{sourceVCenter.name}</p>
+                    )}
+                    {sourceTarget && (
+                      <div className="flex items-center justify-center gap-1 mt-2">
+                        <Target className="h-3 w-3 text-primary" />
+                        <span className="text-xs">{sourceTarget.name}</span>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Arrow */}
+                  <div className="flex flex-col items-center">
+                    <ArrowRight className="h-6 w-6 text-muted-foreground" />
+                    {sourceTarget?.partner_target_id && drTarget?.id === sourceTarget.partner_target_id ? (
+                      <CheckCircle2 className="h-4 w-4 text-green-500 mt-1" />
+                    ) : sourceTarget && drTarget ? (
+                      <XCircle className="h-4 w-4 text-amber-500 mt-1" />
+                    ) : null}
+                  </div>
+                  
+                  {/* DR */}
+                  <div className="text-center p-3 rounded-lg bg-destructive/10 min-w-[140px]">
+                    <p className="text-xs text-muted-foreground mb-1">DR</p>
+                    <p className="font-medium text-sm">{drDatastore || "Not selected"}</p>
+                    {drVCenter && (
+                      <p className="text-xs text-muted-foreground mt-1">{drVCenter.name}</p>
+                    )}
+                    {drTarget && (
+                      <div className="flex items-center justify-center gap-1 mt-2">
+                        <Target className="h-3 w-3 text-destructive" />
+                        <span className="text-xs">{drTarget.name}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Pairing Status */}
+                {sourceTarget && drTarget && sourceTarget.partner_target_id !== drTarget.id && (
+                  <Alert className="mt-3" variant="default">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>
+                      The source and DR ZFS targets are not paired. Configure pairing in the ZFS Targets section for automated replication.
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="sla" className="space-y-4 mt-4">
