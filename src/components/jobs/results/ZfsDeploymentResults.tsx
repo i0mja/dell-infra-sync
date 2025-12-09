@@ -18,10 +18,11 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 interface ZfsDeploymentResultsProps {
   details: any;
   status: string;
+  jobType?: string;
 }
 
-// Phase definitions matching the Python handler
-const PHASES = [
+// Phase definitions for deploy_zfs_target (from template)
+const DEPLOY_PHASES = [
   { key: 'clone', label: 'Clone Template', icon: Server },
   { key: 'power_on', label: 'Power On VM', icon: Server },
   { key: 'wait_tools', label: 'Wait for VM Tools', icon: Clock },
@@ -33,7 +34,29 @@ const PHASES = [
   { key: 'register_datastore', label: 'Register Datastore', icon: HardDrive },
 ];
 
-export const ZfsDeploymentResults = ({ details, status }: ZfsDeploymentResultsProps) => {
+// Phase definitions for onboard_zfs_target (existing VM)
+const ONBOARD_PHASES = [
+  { key: 'vm_state', label: 'Check VM State', icon: Server },
+  { key: 'vcenter', label: 'vCenter Connection', icon: Network },
+  { key: 'ip_address', label: 'IP Address Detection', icon: Network },
+  { key: 'ssh_auth', label: 'SSH Authentication', icon: Terminal },
+  { key: 'zfs_packages', label: 'Install ZFS Packages', icon: HardDrive },
+  { key: 'nfs_packages', label: 'Install NFS Server', icon: Database },
+  { key: 'zfs_module', label: 'Load ZFS Module', icon: HardDrive },
+  { key: 'disk_detection', label: 'Detect Disks', icon: HardDrive },
+  { key: 'zfs_pool', label: 'Create ZFS Pool', icon: Database },
+  { key: 'nfs_export', label: 'Configure NFS', icon: Network },
+  { key: 'register_target', label: 'Register Target', icon: Database },
+];
+
+interface StepResult {
+  step: string;
+  status: 'pending' | 'running' | 'success' | 'failed' | 'warning';
+  message: string;
+  timestamp?: string;
+}
+
+export const ZfsDeploymentResults = ({ details, status, jobType }: ZfsDeploymentResultsProps) => {
   if (!details) {
     return (
       <Card>
@@ -44,31 +67,59 @@ export const ZfsDeploymentResults = ({ details, status }: ZfsDeploymentResultsPr
     );
   }
 
+  // Use the appropriate phases based on job type
+  const isOnboard = jobType === 'onboard_zfs_target';
+  const PHASES = isOnboard ? ONBOARD_PHASES : DEPLOY_PHASES;
+
   const currentPhase = details.current_phase || 'unknown';
   const progressPercent = details.progress_percent || 0;
   const consoleLog = details.console_log || [];
+  const stepResults: StepResult[] = details.step_results || [];
   const error = details.error;
 
-  // Determine phase statuses
+  // For onboard jobs, use step_results to determine phase status
+  const getStepStatus = (phaseKey: string): string => {
+    const step = stepResults.find(s => s.step === phaseKey);
+    if (step) {
+      return step.status;
+    }
+    return 'pending';
+  };
+
+  // Determine phase statuses using step_results if available, else fallback to current_phase
   const getPhaseStatus = (phaseKey: string) => {
+    // If we have step_results, use them directly
+    if (stepResults.length > 0) {
+      return getStepStatus(phaseKey);
+    }
+    
+    // Fallback to phase-based status for deploy jobs
     const phaseIndex = PHASES.findIndex(p => p.key === phaseKey);
     const currentIndex = PHASES.findIndex(p => p.key === currentPhase);
     
-    if (status === 'completed') return 'completed';
+    if (status === 'completed') return 'success';
     if (status === 'failed' && phaseKey === currentPhase) return 'failed';
-    if (phaseIndex < currentIndex) return 'completed';
+    if (phaseIndex < currentIndex) return 'success';
     if (phaseIndex === currentIndex) return status === 'running' ? 'running' : 'pending';
     return 'pending';
+  };
+
+  const getStepMessage = (phaseKey: string): string | null => {
+    const step = stepResults.find(s => s.step === phaseKey);
+    return step?.message || null;
   };
 
   const getPhaseIcon = (phaseStatus: string) => {
     switch (phaseStatus) {
       case 'completed':
+      case 'success':
         return <CheckCircle className="h-4 w-4 text-green-500" />;
       case 'running':
         return <Circle className="h-4 w-4 text-blue-500 animate-pulse" />;
       case 'failed':
         return <XCircle className="h-4 w-4 text-destructive" />;
+      case 'warning':
+        return <AlertCircle className="h-4 w-4 text-yellow-500" />;
       default:
         return <Circle className="h-4 w-4 text-muted-foreground" />;
     }
@@ -81,7 +132,7 @@ export const ZfsDeploymentResults = ({ details, status }: ZfsDeploymentResultsPr
         <CardHeader className="pb-3">
           <CardTitle className="text-sm flex items-center gap-2">
             <Server className="h-4 w-4" />
-            Deployment Configuration
+            {isOnboard ? 'Onboarding Configuration' : 'Deployment Configuration'}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -90,13 +141,15 @@ export const ZfsDeploymentResults = ({ details, status }: ZfsDeploymentResultsPr
               <span className="text-muted-foreground">VM Name:</span>
               <span className="ml-2 font-medium">{details.vm_name || 'N/A'}</span>
             </div>
-            <div>
-              <span className="text-muted-foreground">Template:</span>
-              <span className="ml-2 font-medium">{details.template_name || 'N/A'}</span>
-            </div>
+            {!isOnboard && (
+              <div>
+                <span className="text-muted-foreground">Template:</span>
+                <span className="ml-2 font-medium">{details.template_name || 'N/A'}</span>
+              </div>
+            )}
             <div>
               <span className="text-muted-foreground">Hostname:</span>
-              <span className="ml-2 font-medium">{details.hostname || 'N/A'}</span>
+              <span className="ml-2 font-medium">{details.hostname || details.vm_name || 'N/A'}</span>
             </div>
             <div>
               <span className="text-muted-foreground">Network:</span>
@@ -108,7 +161,9 @@ export const ZfsDeploymentResults = ({ details, status }: ZfsDeploymentResultsPr
             </div>
             <div>
               <span className="text-muted-foreground">ZFS Disk:</span>
-              <span className="ml-2 font-medium">{details.zfs_disk_gb || 500} GB</span>
+              <span className="ml-2 font-medium">
+                {details.zfs_disk || details.zfs_disk_gb ? `${details.zfs_disk || details.zfs_disk_gb} GB` : 'Auto'}
+              </span>
             </div>
             <div>
               <span className="text-muted-foreground">NFS Network:</span>
@@ -117,9 +172,15 @@ export const ZfsDeploymentResults = ({ details, status }: ZfsDeploymentResultsPr
             <div>
               <span className="text-muted-foreground">IP Address:</span>
               <span className="ml-2 font-medium">
-                {details.detected_ip || details.ip_address || (details.use_dhcp ? 'DHCP' : 'N/A')}
+                {details.detected_ip || details.ip_address || details.vm_ip || (details.use_dhcp ? 'DHCP' : 'N/A')}
               </span>
             </div>
+            {details.vm_moref && (
+              <div>
+                <span className="text-muted-foreground">VM MoRef:</span>
+                <span className="ml-2 font-mono text-xs">{details.vm_moref}</span>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -128,7 +189,9 @@ export const ZfsDeploymentResults = ({ details, status }: ZfsDeploymentResultsPr
       {status === 'failed' && error && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Deployment Failed</AlertTitle>
+          <AlertTitle>
+            {isOnboard ? 'Onboarding Failed' : 'Deployment Failed'}
+          </AlertTitle>
           <AlertDescription className="mt-2">
             <div className="font-mono text-sm whitespace-pre-wrap">{error}</div>
             {currentPhase && currentPhase !== 'unknown' && (
@@ -146,7 +209,7 @@ export const ZfsDeploymentResults = ({ details, status }: ZfsDeploymentResultsPr
           <div className="flex items-center justify-between">
             <CardTitle className="text-sm flex items-center gap-2">
               <Clock className="h-4 w-4" />
-              Deployment Phases
+              {isOnboard ? 'Onboarding Phases' : 'Deployment Phases'}
             </CardTitle>
             <Badge variant={status === 'completed' ? 'default' : status === 'failed' ? 'destructive' : 'secondary'}>
               {progressPercent}%
@@ -157,6 +220,7 @@ export const ZfsDeploymentResults = ({ details, status }: ZfsDeploymentResultsPr
           <div className="space-y-2">
             {PHASES.map((phase) => {
               const phaseStatus = getPhaseStatus(phase.key);
+              const stepMessage = getStepMessage(phase.key);
               const PhaseIcon = phase.icon;
               
               return (
@@ -165,19 +229,27 @@ export const ZfsDeploymentResults = ({ details, status }: ZfsDeploymentResultsPr
                   className={`flex items-center gap-3 p-2 rounded-md ${
                     phaseStatus === 'running' ? 'bg-blue-500/10 border border-blue-500/20' :
                     phaseStatus === 'failed' ? 'bg-destructive/10 border border-destructive/20' :
-                    phaseStatus === 'completed' ? 'bg-green-500/5' :
+                    phaseStatus === 'success' || phaseStatus === 'completed' ? 'bg-green-500/5' :
+                    phaseStatus === 'warning' ? 'bg-yellow-500/10 border border-yellow-500/20' :
                     'bg-muted/30'
                   }`}
                 >
                   {getPhaseIcon(phaseStatus)}
                   <PhaseIcon className="h-4 w-4 text-muted-foreground" />
-                  <span className={`text-sm ${
-                    phaseStatus === 'pending' ? 'text-muted-foreground' : ''
-                  }`}>
-                    {phase.label}
-                  </span>
+                  <div className="flex-1 min-w-0">
+                    <span className={`text-sm ${
+                      phaseStatus === 'pending' ? 'text-muted-foreground' : ''
+                    }`}>
+                      {phase.label}
+                    </span>
+                    {stepMessage && (
+                      <p className="text-xs text-muted-foreground truncate">
+                        {stepMessage}
+                      </p>
+                    )}
+                  </div>
                   {phaseStatus === 'running' && (
-                    <Badge variant="secondary" className="ml-auto text-xs">
+                    <Badge variant="secondary" className="ml-auto text-xs shrink-0">
                       In Progress
                     </Badge>
                   )}
@@ -240,10 +312,10 @@ export const ZfsDeploymentResults = ({ details, status }: ZfsDeploymentResultsPr
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 gap-4 text-sm">
-              {details.cloned_vm_moref && (
+              {(details.cloned_vm_moref || details.vm_moref) && (
                 <div>
                   <span className="text-muted-foreground">VM MoRef:</span>
-                  <span className="ml-2 font-mono">{details.cloned_vm_moref}</span>
+                  <span className="ml-2 font-mono">{details.cloned_vm_moref || details.vm_moref}</span>
                 </div>
               )}
               {details.replication_target_id && (
@@ -252,16 +324,28 @@ export const ZfsDeploymentResults = ({ details, status }: ZfsDeploymentResultsPr
                   <span className="ml-2 font-mono text-xs">{details.replication_target_id}</span>
                 </div>
               )}
-              {details.detected_ip && (
+              {(details.detected_ip || details.vm_ip) && (
                 <div>
                   <span className="text-muted-foreground">IP Address:</span>
-                  <span className="ml-2 font-medium">{details.detected_ip}</span>
+                  <span className="ml-2 font-medium">{details.detected_ip || details.vm_ip}</span>
                 </div>
               )}
               {details.datastore_name && (
                 <div>
                   <span className="text-muted-foreground">Datastore:</span>
                   <span className="ml-2 font-medium">{details.datastore_name}</span>
+                </div>
+              )}
+              {details.nfs_path && (
+                <div>
+                  <span className="text-muted-foreground">NFS Path:</span>
+                  <span className="ml-2 font-mono">{details.nfs_path}</span>
+                </div>
+              )}
+              {details.zfs_disk && (
+                <div>
+                  <span className="text-muted-foreground">ZFS Disk:</span>
+                  <span className="ml-2 font-mono">{details.zfs_disk}</span>
                 </div>
               )}
             </div>
