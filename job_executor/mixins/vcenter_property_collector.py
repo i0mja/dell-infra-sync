@@ -400,6 +400,24 @@ def collect_vcenter_inventory(
                 f"{len(vms)} VMs, {len(datastores)} datastores, {len(networks)} networks, "
                 f"{len(dvpgs)} DVPGs, {len(dvswitches)} DVSwitches")
     
+    # FALLBACK: If PropertyCollector returned no networks/DVPGs, use direct datacenter traversal
+    if len(networks) == 0 and len(dvpgs) == 0 and len(dvswitches) == 0:
+        logger.warning("PropertyCollector returned no networks - using direct datacenter traversal")
+        try:
+            direct_result = _collect_networks_direct(content)
+            networks = direct_result['networks']
+            dvpgs = direct_result['dvpgs']
+            dvswitches = direct_result['dvswitches']
+            logger.info(f"Direct traversal recovered: {len(networks)} networks, "
+                        f"{len(dvpgs)} DVPGs, {len(dvswitches)} DVSwitches")
+        except Exception as e:
+            logger.error(f"Direct network collection failed: {e}")
+            errors.append({
+                "object": "DirectNetworkCollection",
+                "message": f"Direct network traversal failed: {str(e)}",
+                "severity": "warning"
+            })
+    
     return {
         "clusters": clusters,
         "hosts": hosts,
@@ -410,6 +428,136 @@ def collect_vcenter_inventory(
         "dvswitches": dvswitches,
         "errors": errors,
         "fetch_time_ms": fetch_time_ms,
+    }
+
+
+# =============================================================================
+# Direct Network Collection (Fallback for PropertyCollector)
+# =============================================================================
+
+def _collect_networks_direct(content) -> Dict[str, List]:
+    """
+    Collect networks using direct datacenter traversal (VMware recommended approach).
+    
+    This is the proven method from VMware community samples that reliably
+    retrieves all networks, DVS, and DVPGs when PropertyCollector fails.
+    
+    DVPGs are NOT directly in networkFolder - they are accessed via dvs.portgroup property.
+    
+    Args:
+        content: vim.ServiceInstanceContent from vCenter connection
+        
+    Returns:
+        Dict with 'networks', 'dvpgs', 'dvswitches' lists of (obj, props) tuples
+    """
+    networks = []
+    dvpgs = []
+    dvswitches = []
+    
+    logger.info("Starting direct datacenter network folder traversal")
+    
+    # Iterate through all datacenters
+    for child in content.rootFolder.childEntity:
+        # Handle both Datacenter and Folder objects
+        datacenters = []
+        if hasattr(child, 'networkFolder'):
+            datacenters = [child]
+        elif hasattr(child, 'childEntity'):
+            # It's a folder, recurse into it
+            for sub in child.childEntity:
+                if hasattr(sub, 'networkFolder'):
+                    datacenters.append(sub)
+        
+        for datacenter in datacenters:
+            dc_name = getattr(datacenter, 'name', 'Unknown')
+            logger.info(f"Traversing datacenter: {dc_name}")
+            
+            try:
+                # Get all network objects from networkFolder
+                if not hasattr(datacenter, 'networkFolder') or not datacenter.networkFolder:
+                    continue
+                    
+                network_folder = datacenter.networkFolder
+                if not hasattr(network_folder, 'childEntity'):
+                    continue
+                
+                for net_obj in network_folder.childEntity:
+                    type_name = type(net_obj).__name__
+                    moref_id = str(net_obj._moId) if hasattr(net_obj, '_moId') else ''
+                    
+                    logger.debug(f"Found network object: type={type_name}, moref={moref_id}")
+                    
+                    # Check for DVS (VmwareDistributedVirtualSwitch or DistributedVirtualSwitch)
+                    if 'DistributedVirtualSwitch' in type_name or moref_id.startswith('dvs-'):
+                        dvs_props = {
+                            'name': getattr(net_obj, 'name', 'Unknown'),
+                            'uuid': getattr(net_obj, 'uuid', None) if hasattr(net_obj, 'uuid') else None,
+                        }
+                        # Get summary.numPorts if available
+                        if hasattr(net_obj, 'summary') and hasattr(net_obj.summary, 'numPorts'):
+                            dvs_props['summary.numPorts'] = net_obj.summary.numPorts
+                        else:
+                            dvs_props['summary.numPorts'] = 0
+                            
+                        dvswitches.append((net_obj, dvs_props))
+                        logger.info(f"Direct: Captured DVS: {dvs_props['name']} (moref: {moref_id})")
+                        
+                        # DVPGs are accessible via dvs.portgroup property
+                        if hasattr(net_obj, 'portgroup') and net_obj.portgroup:
+                            for pg in net_obj.portgroup:
+                                try:
+                                    pg_moref = str(pg._moId) if hasattr(pg, '_moId') else ''
+                                    pg_props = {
+                                        'name': getattr(pg, 'name', 'Unknown'),
+                                        'parent': net_obj,  # DVS reference
+                                    }
+                                    
+                                    # Get VLAN config from defaultPortConfig
+                                    if hasattr(pg, 'config') and pg.config:
+                                        if hasattr(pg.config, 'defaultPortConfig') and pg.config.defaultPortConfig:
+                                            pg_props['config.defaultPortConfig'] = pg.config.defaultPortConfig
+                                    
+                                    # Get accessibility
+                                    if hasattr(pg, 'summary') and hasattr(pg.summary, 'accessible'):
+                                        pg_props['summary.accessible'] = pg.summary.accessible
+                                    
+                                    dvpgs.append((pg, pg_props))
+                                    logger.info(f"Direct: Captured DVPG: {pg_props['name']} from DVS {dvs_props['name']} (moref: {pg_moref})")
+                                except Exception as pg_err:
+                                    logger.warning(f"Error processing portgroup: {pg_err}")
+                                    
+                    # Check for standard Network
+                    elif type_name == 'Network' or moref_id.startswith('network-'):
+                        net_props = {
+                            'name': getattr(net_obj, 'name', 'Unknown'),
+                        }
+                        # Get accessibility
+                        if hasattr(net_obj, 'summary') and hasattr(net_obj.summary, 'accessible'):
+                            net_props['summary.accessible'] = net_obj.summary.accessible
+                        else:
+                            net_props['summary.accessible'] = True  # Assume accessible if we can see it
+                            
+                        networks.append((net_obj, net_props))
+                        logger.info(f"Direct: Captured Network: {net_props['name']} (moref: {moref_id})")
+                        
+                    # Check for Folder (network folders can contain sub-folders)
+                    elif hasattr(net_obj, 'childEntity'):
+                        # Recursively process sub-folders (skip for now, log it)
+                        logger.debug(f"Found network folder: {getattr(net_obj, 'name', 'Unknown')}")
+                        
+                    else:
+                        logger.debug(f"Skipping unknown network type: {type_name} (moref: {moref_id})")
+                        
+            except Exception as dc_err:
+                logger.error(f"Error traversing datacenter {dc_name}: {dc_err}")
+    
+    logger.info(f"Direct network collection complete: {len(networks)} networks, "
+                f"{len(dvpgs)} DVPGs, {len(dvswitches)} DVSwitches")
+    
+    return {
+        'networks': networks,
+        'dvpgs': dvpgs,
+        'dvswitches': dvswitches,
     }
 
 
