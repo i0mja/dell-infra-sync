@@ -129,17 +129,31 @@ export function ProtectionGroupsPanel() {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
-  const [newGroupName, setNewGroupName] = useState("");
-  const [newGroupDescription, setNewGroupDescription] = useState("");
-  const [newGroupDatastore, setNewGroupDatastore] = useState("");
-  const [newGroupRpoMinutes, setNewGroupRpoMinutes] = useState(60);
-  const [selectedVCenterId, setSelectedVCenterId] = useState("");
   const [creating, setCreating] = useState(false);
   const [runningReplication, setRunningReplication] = useState<string | null>(null);
   const [pausingGroup, setPausingGroup] = useState<string | null>(null);
 
-  const { data: datastores = [], isLoading: loadingDatastores } = useAccessibleDatastores(
-    selectedVCenterId || undefined
+  // Form state for new protection group
+  const [formData, setFormData] = useState({
+    name: "",
+    description: "",
+    rpoMinutes: 60,
+    // Source site
+    sourceVCenterId: "",
+    sourceDatastore: "",
+    // DR site
+    drVCenterId: "",
+    drDatastore: "",
+  });
+
+  // Get datastores for source vCenter
+  const { data: sourceDatastores = [], isLoading: loadingSourceDatastores } = useAccessibleDatastores(
+    formData.sourceVCenterId || undefined
+  );
+  
+  // Get datastores for DR vCenter
+  const { data: drDatastores = [], isLoading: loadingDrDatastores } = useAccessibleDatastores(
+    formData.drVCenterId || undefined
   );
 
   const { vms, loading: vmsLoading, refetch: refetchVMs, addVMs, removeVM, batchMigrate } = useProtectedVMs(
@@ -148,13 +162,25 @@ export function ProtectionGroupsPanel() {
 
   const selectedGroup = groups.find(g => g.id === selectedGroupId);
 
-  // Get the selected datastore's linked replication info
-  const selectedDatastoreInfo = datastores.find(ds => ds.name === newGroupDatastore);
-  const linkedTarget = selectedDatastoreInfo?.replication_target;
-  const drPartner = linkedTarget?.partner_target;
+  // Get linked targets from selected datastores
+  const sourceDatastoreInfo = sourceDatastores.find(ds => ds.name === formData.sourceDatastore);
+  const drDatastoreInfo = drDatastores.find(ds => ds.name === formData.drDatastore);
+  const sourceTarget = sourceDatastoreInfo?.replication_target;
+  const drTarget = drDatastoreInfo?.replication_target;
 
-  // Group datastores by their linked ZFS target
-  const datastoresByTarget = datastores.reduce<Record<string, AccessibleDatastore[]>>((acc, ds) => {
+  // Filter DR vCenters (exclude source)
+  const drVCenterOptions = vcenters.filter(vc => vc.id !== formData.sourceVCenterId);
+
+  // Group source datastores by their linked ZFS target
+  const sourceDatastoresByTarget = sourceDatastores.reduce<Record<string, AccessibleDatastore[]>>((acc, ds) => {
+    const key = ds.replication_target?.name || '_unlinked';
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(ds);
+    return acc;
+  }, {});
+
+  // Group DR datastores by their linked ZFS target  
+  const drDatastoresByTarget = drDatastores.reduce<Record<string, AccessibleDatastore[]>>((acc, ds) => {
     const key = ds.replication_target?.name || '_unlinked';
     if (!acc[key]) acc[key] = [];
     acc[key].push(ds);
@@ -168,26 +194,34 @@ export function ProtectionGroupsPanel() {
     return daysSinceTest > group.test_reminder_days;
   };
 
+  const resetForm = () => {
+    setFormData({
+      name: "",
+      description: "",
+      rpoMinutes: 60,
+      sourceVCenterId: "",
+      sourceDatastore: "",
+      drVCenterId: "",
+      drDatastore: "",
+    });
+  };
+
   const handleCreate = async () => {
-    if (!newGroupName.trim() || !selectedVCenterId || !newGroupDatastore) return;
+    if (!formData.name.trim() || !formData.sourceVCenterId || !formData.sourceDatastore) return;
     
     setCreating(true);
     try {
       await createGroup({
-        name: newGroupName,
-        description: newGroupDescription,
-        protection_datastore: newGroupDatastore,
-        source_vcenter_id: selectedVCenterId,
-        rpo_minutes: newGroupRpoMinutes,
-        // Auto-set target_id if datastore is linked to a ZFS target
-        target_id: linkedTarget?.id,
+        name: formData.name,
+        description: formData.description,
+        protection_datastore: formData.sourceDatastore,
+        source_vcenter_id: formData.sourceVCenterId,
+        rpo_minutes: formData.rpoMinutes,
+        target_id: sourceTarget?.id,
+        dr_datastore: formData.drDatastore || undefined,
       });
       setShowCreateDialog(false);
-      setNewGroupName("");
-      setNewGroupDescription("");
-      setNewGroupDatastore("");
-      setNewGroupRpoMinutes(60);
-      setSelectedVCenterId("");
+      resetForm();
     } finally {
       setCreating(false);
     }
@@ -240,183 +274,310 @@ export function ProtectionGroupsPanel() {
                 Groups of VMs replicated together
               </CardDescription>
             </div>
-            <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+            <Dialog open={showCreateDialog} onOpenChange={(open) => { setShowCreateDialog(open); if (!open) resetForm(); }}>
               <DialogTrigger asChild>
                 <Button size="sm">
                   <Plus className="h-4 w-4 mr-1" />
                   New
                 </Button>
               </DialogTrigger>
-              <DialogContent>
+              <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
                 <DialogHeader>
-                  <DialogTitle>Create Protection Group</DialogTitle>
+                  <DialogTitle className="flex items-center gap-2">
+                    <Shield className="h-5 w-5" />
+                    Create Protection Group
+                  </DialogTitle>
                   <DialogDescription>
-                    Create a new group to protect related VMs together
+                    Configure source site (Point A) and DR site (Point B) for VM replication
                   </DialogDescription>
                 </DialogHeader>
+                
                 <div className="space-y-4 py-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="name">Group Name</Label>
-                    <Input
-                      id="name"
-                      placeholder="e.g., Production Databases"
-                      value={newGroupName}
-                      onChange={(e) => setNewGroupName(e.target.value)}
-                    />
+                  {/* Basic Info */}
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Group Name *</Label>
+                      <Input
+                        placeholder="e.g., Production Databases"
+                        value={formData.name}
+                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>RPO Target (minutes)</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={1440}
+                        value={formData.rpoMinutes}
+                        onChange={(e) => setFormData({ ...formData, rpoMinutes: parseInt(e.target.value) || 60 })}
+                      />
+                    </div>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="description">Description</Label>
+                    <Label>Description</Label>
                     <Textarea
-                      id="description"
                       placeholder="Optional description..."
-                      value={newGroupDescription}
-                      onChange={(e) => setNewGroupDescription(e.target.value)}
+                      value={formData.description}
+                      onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="rpo">RPO Target (minutes)</Label>
-                    <Input
-                      id="rpo"
-                      type="number"
-                      min={1}
-                      max={1440}
-                      value={newGroupRpoMinutes}
-                      onChange={(e) => setNewGroupRpoMinutes(parseInt(e.target.value) || 60)}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Maximum acceptable data loss in minutes
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="vcenter">Source vCenter</Label>
-                    <Select 
-                      value={selectedVCenterId} 
-                      onValueChange={(val) => {
-                        setSelectedVCenterId(val);
-                        setNewGroupDatastore("");
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select vCenter" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {vcenters.map((vc) => (
-                          <SelectItem key={vc.id} value={vc.id}>
-                            {vc.name} ({vc.host})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="datastore">Protection Datastore</Label>
-                    <Select
-                      value={newGroupDatastore}
-                      onValueChange={setNewGroupDatastore}
-                      disabled={!selectedVCenterId || loadingDatastores}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={
-                          !selectedVCenterId 
-                            ? "Select vCenter first" 
-                            : loadingDatastores 
-                              ? "Loading datastores..." 
-                              : "Select datastore"
-                        } />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {/* Group datastores by ZFS target */}
-                        {Object.entries(datastoresByTarget).map(([targetName, dsList]) => (
-                          <div key={targetName}>
-                            {targetName !== '_unlinked' && (
-                              <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground flex items-center gap-1">
-                                <Target className="h-3 w-3" />
-                                {targetName}
-                              </div>
-                            )}
-                            {targetName === '_unlinked' && dsList.length > 0 && (
-                              <div className="px-2 py-1.5 text-xs font-medium text-amber-600 flex items-center gap-1">
-                                <AlertTriangle className="h-3 w-3" />
-                                Unlinked Datastores
-                              </div>
-                            )}
-                            {dsList.map((ds) => (
-                              <SelectItem key={ds.id} value={ds.name}>
+
+                  {/* Source and DR Sites */}
+                  <div className="grid md:grid-cols-2 gap-6 pt-4">
+                    {/* Source Site (Point A) */}
+                    <div className="space-y-4 p-4 border rounded-lg bg-primary/5">
+                      <div className="flex items-center gap-2 pb-2 border-b">
+                        <Badge className="bg-primary">A</Badge>
+                        <span className="font-semibold">Source Site</span>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label>vCenter *</Label>
+                        <Select 
+                          value={formData.sourceVCenterId} 
+                          onValueChange={(val) => setFormData({ 
+                            ...formData, 
+                            sourceVCenterId: val, 
+                            sourceDatastore: "",
+                            // Reset DR if it was same as new source
+                            drVCenterId: formData.drVCenterId === val ? "" : formData.drVCenterId,
+                            drDatastore: formData.drVCenterId === val ? "" : formData.drDatastore,
+                          })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select source vCenter" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {vcenters.map((vc) => (
+                              <SelectItem key={vc.id} value={vc.id}>
                                 <div className="flex items-center gap-2">
-                                  <HardDrive className="h-4 w-4 text-muted-foreground" />
-                                  <span>{ds.name}</span>
-                                  <span className="text-muted-foreground text-xs">
-                                    ({formatBytes(ds.free_bytes)} free)
-                                  </span>
+                                  <Server className="h-4 w-4" />
+                                  {vc.name}
                                 </div>
                               </SelectItem>
                             ))}
-                          </div>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      VMs will be moved here before replication (via Storage vMotion)
-                    </p>
-                  </div>
+                          </SelectContent>
+                        </Select>
+                      </div>
 
-                  {/* DR Destination Info - Auto-detected */}
-                  {newGroupDatastore && (
-                    <div className="space-y-2 pt-2 border-t">
-                      <Label className="flex items-center gap-2">
-                        <ArrowRight className="h-4 w-4" />
-                        DR Destination
-                      </Label>
-                      {linkedTarget ? (
-                        <div className="p-3 bg-muted/50 rounded-lg space-y-2">
-                          <div className="flex items-center gap-2">
-                            <Target className="h-4 w-4 text-primary" />
-                            <span className="font-medium">{linkedTarget.name}</span>
-                            <Badge variant="outline" className={
-                              linkedTarget.health_status === 'healthy' 
-                                ? 'text-green-600 border-green-500/30' 
-                                : 'text-amber-600 border-amber-500/30'
-                            }>
-                              {linkedTarget.health_status}
-                            </Badge>
+                      <div className="space-y-2">
+                        <Label>Protection Datastore *</Label>
+                        <Select
+                          value={formData.sourceDatastore}
+                          onValueChange={(val) => setFormData({ ...formData, sourceDatastore: val })}
+                          disabled={!formData.sourceVCenterId || loadingSourceDatastores}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder={
+                              !formData.sourceVCenterId 
+                                ? "Select vCenter first" 
+                                : loadingSourceDatastores 
+                                  ? "Loading..." 
+                                  : "Select datastore"
+                            } />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {Object.entries(sourceDatastoresByTarget).map(([targetName, dsList]) => (
+                              <div key={targetName}>
+                                {targetName !== '_unlinked' && (
+                                  <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground flex items-center gap-1">
+                                    <Target className="h-3 w-3" />
+                                    {targetName}
+                                  </div>
+                                )}
+                                {targetName === '_unlinked' && dsList.length > 0 && (
+                                  <div className="px-2 py-1.5 text-xs font-medium text-amber-600 flex items-center gap-1">
+                                    <AlertTriangle className="h-3 w-3" />
+                                    Unlinked
+                                  </div>
+                                )}
+                                {dsList.map((ds) => (
+                                  <SelectItem key={ds.id} value={ds.name}>
+                                    <div className="flex items-center gap-2">
+                                      <HardDrive className="h-3 w-3" />
+                                      <span>{ds.name}</span>
+                                      <span className="text-xs text-muted-foreground">
+                                        ({formatBytes(ds.free_bytes)})
+                                      </span>
+                                    </div>
+                                  </SelectItem>
+                                ))}
+                              </div>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Show linked ZFS target info */}
+                      {sourceTarget && (
+                        <div className="p-2 bg-muted/50 rounded text-xs space-y-1">
+                          <div className="flex items-center gap-1">
+                            <Target className="h-3 w-3 text-primary" />
+                            <span className="font-medium">{sourceTarget.name}</span>
                           </div>
-                          <p className="text-xs text-muted-foreground">
-                            {linkedTarget.hostname} • {linkedTarget.zfs_pool}
-                          </p>
-                          {drPartner ? (
-                            <div className="flex items-center gap-2 pt-2 border-t border-border/50">
-                              <ArrowRight className="h-3 w-3 text-muted-foreground" />
-                              <span className="text-sm">DR: {drPartner.name}</span>
-                              <span className="text-xs text-muted-foreground">
-                                ({drPartner.hostname})
-                              </span>
-                            </div>
-                          ) : (
-                            <Alert className="mt-2">
-                              <AlertTriangle className="h-4 w-4" />
-                              <AlertDescription className="text-xs">
-                                No DR partner configured for this ZFS target
-                              </AlertDescription>
-                            </Alert>
-                          )}
+                          <div className="text-muted-foreground">
+                            {sourceTarget.hostname} • {sourceTarget.zfs_pool}
+                          </div>
                         </div>
-                      ) : (
-                        <Alert>
-                          <Info className="h-4 w-4" />
-                          <AlertDescription className="text-xs">
-                            Datastore not linked to a ZFS appliance. Configure datastore linking for automatic DR detection.
-                          </AlertDescription>
-                        </Alert>
                       )}
                     </div>
+
+                    {/* DR Site (Point B) */}
+                    <div className="space-y-4 p-4 border rounded-lg bg-secondary/30">
+                      <div className="flex items-center gap-2 pb-2 border-b">
+                        <Badge variant="secondary">B</Badge>
+                        <span className="font-semibold">DR Site (Recovery)</span>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label>vCenter</Label>
+                        <Select 
+                          value={formData.drVCenterId} 
+                          onValueChange={(val) => setFormData({ 
+                            ...formData, 
+                            drVCenterId: val, 
+                            drDatastore: "" 
+                          })}
+                          disabled={!formData.sourceVCenterId}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder={
+                              !formData.sourceVCenterId 
+                                ? "Select source first" 
+                                : "Select DR vCenter"
+                            } />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {drVCenterOptions.map((vc) => (
+                              <SelectItem key={vc.id} value={vc.id}>
+                                <div className="flex items-center gap-2">
+                                  <Server className="h-4 w-4" />
+                                  {vc.name}
+                                </div>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>DR Datastore</Label>
+                        <Select
+                          value={formData.drDatastore}
+                          onValueChange={(val) => setFormData({ ...formData, drDatastore: val })}
+                          disabled={!formData.drVCenterId || loadingDrDatastores}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder={
+                              !formData.drVCenterId 
+                                ? "Select DR vCenter first" 
+                                : loadingDrDatastores 
+                                  ? "Loading..." 
+                                  : "Select datastore"
+                            } />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {Object.entries(drDatastoresByTarget).map(([targetName, dsList]) => (
+                              <div key={targetName}>
+                                {targetName !== '_unlinked' && (
+                                  <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground flex items-center gap-1">
+                                    <Target className="h-3 w-3" />
+                                    {targetName}
+                                  </div>
+                                )}
+                                {targetName === '_unlinked' && dsList.length > 0 && (
+                                  <div className="px-2 py-1.5 text-xs font-medium text-amber-600 flex items-center gap-1">
+                                    <AlertTriangle className="h-3 w-3" />
+                                    Unlinked
+                                  </div>
+                                )}
+                                {dsList.map((ds) => (
+                                  <SelectItem key={ds.id} value={ds.name}>
+                                    <div className="flex items-center gap-2">
+                                      <HardDrive className="h-3 w-3" />
+                                      <span>{ds.name}</span>
+                                      <span className="text-xs text-muted-foreground">
+                                        ({formatBytes(ds.free_bytes)})
+                                      </span>
+                                    </div>
+                                  </SelectItem>
+                                ))}
+                              </div>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Show linked ZFS target info */}
+                      {drTarget && (
+                        <div className="p-2 bg-muted/50 rounded text-xs space-y-1">
+                          <div className="flex items-center gap-1">
+                            <Target className="h-3 w-3 text-primary" />
+                            <span className="font-medium">{drTarget.name}</span>
+                          </div>
+                          <div className="text-muted-foreground">
+                            {drTarget.hostname} • {drTarget.zfs_pool}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Replication Flow Visualization */}
+                  {formData.sourceDatastore && formData.drDatastore && (
+                    <div className="flex items-center justify-center gap-4 py-3 px-4 bg-muted/50 rounded-lg">
+                      <div className="text-center">
+                        <div className="text-sm font-medium">{formData.sourceDatastore}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {vcenters.find(v => v.id === formData.sourceVCenterId)?.name}
+                        </div>
+                        {sourceTarget && (
+                          <div className="text-xs text-primary">{sourceTarget.name}</div>
+                        )}
+                      </div>
+                      <ArrowRight className="h-5 w-5 text-muted-foreground" />
+                      <div className="text-center">
+                        <div className="text-sm font-medium">{formData.drDatastore}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {vcenters.find(v => v.id === formData.drVCenterId)?.name}
+                        </div>
+                        {drTarget && (
+                          <div className="text-xs text-primary">{drTarget.name}</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Warnings */}
+                  {formData.sourceDatastore && !sourceTarget && (
+                    <Alert>
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertDescription className="text-sm">
+                        Source datastore is not linked to a ZFS appliance. Link it in ZFS Targets for automatic replication.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {sourceTarget && drTarget && sourceTarget.partner_target_id !== drTarget.id && (
+                    <Alert>
+                      <Info className="h-4 w-4" />
+                      <AlertDescription className="text-sm">
+                        Source and DR ZFS targets are not paired. Pair them in ZFS Targets for optimal configuration.
+                      </AlertDescription>
+                    </Alert>
                   )}
                 </div>
-                <DialogFooter>
+
+                <DialogFooter className="gap-2">
                   <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
                     Cancel
                   </Button>
-                  <Button onClick={handleCreate} disabled={creating || !newGroupName.trim() || !selectedVCenterId || !newGroupDatastore}>
-                    {creating ? 'Creating...' : 'Create Group'}
+                  <Button 
+                    onClick={handleCreate} 
+                    disabled={creating || !formData.name.trim() || !formData.sourceVCenterId || !formData.sourceDatastore}
+                  >
+                    {creating ? 'Creating...' : 'Create Protection Group'}
                   </Button>
                 </DialogFooter>
               </DialogContent>

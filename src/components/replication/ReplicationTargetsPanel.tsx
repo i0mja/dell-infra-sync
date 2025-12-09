@@ -67,41 +67,96 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
   const [selectedPartnerId, setSelectedPartnerId] = useState<string>("");
   const [editingTarget, setEditingTarget] = useState<any>(null);
   const [healthCheckingId, setHealthCheckingId] = useState<string | null>(null);
+  
+  // Form for creating paired targets (source + DR)
   const [formData, setFormData] = useState({
-    name: "",
-    description: "",
-    hostname: "",
-    port: "22",
-    zfs_pool: "",
-    zfs_dataset_prefix: "",
-    ssh_username: ""
+    // Source site (Point A)
+    sourceName: "",
+    sourceDescription: "",
+    sourceHostname: "",
+    sourcePort: "22",
+    sourceZfsPool: "",
+    sourceDatasetPrefix: "",
+    sourceSshUsername: "",
+    // DR site (Point B)
+    drName: "",
+    drDescription: "",
+    drHostname: "",
+    drPort: "22",
+    drZfsPool: "",
+    drDatasetPrefix: "",
+    drSshUsername: "",
   });
   const [creating, setCreating] = useState(false);
   const [pairing, setPairing] = useState(false);
 
+  const resetForm = () => {
+    setFormData({
+      sourceName: "",
+      sourceDescription: "",
+      sourceHostname: "",
+      sourcePort: "22",
+      sourceZfsPool: "",
+      sourceDatasetPrefix: "",
+      sourceSshUsername: "",
+      drName: "",
+      drDescription: "",
+      drHostname: "",
+      drPort: "22",
+      drZfsPool: "",
+      drDatasetPrefix: "",
+      drSshUsername: "",
+    });
+  };
+
   const handleCreate = async () => {
-    if (!formData.name.trim() || !formData.hostname.trim() || !formData.zfs_pool.trim()) return;
+    // Require at least source target
+    if (!formData.sourceName.trim() || !formData.sourceHostname.trim() || !formData.sourceZfsPool.trim()) return;
     
     setCreating(true);
     try {
-      await createTarget({
-        name: formData.name,
-        description: formData.description || undefined,
-        hostname: formData.hostname,
-        port: parseInt(formData.port) || 22,
-        zfs_pool: formData.zfs_pool,
-        zfs_dataset_prefix: formData.zfs_dataset_prefix || undefined,
-        ssh_username: formData.ssh_username || undefined,
+      // Create source target first
+      const sourceTarget = await createTarget({
+        name: formData.sourceName,
+        description: formData.sourceDescription || undefined,
+        hostname: formData.sourceHostname,
+        port: parseInt(formData.sourcePort) || 22,
+        zfs_pool: formData.sourceZfsPool,
+        zfs_dataset_prefix: formData.sourceDatasetPrefix || undefined,
+        ssh_username: formData.sourceSshUsername || undefined,
+        site_role: 'primary',
       });
+
+      // If DR target info provided, create it and pair them
+      if (formData.drName.trim() && formData.drHostname.trim() && formData.drZfsPool.trim() && sourceTarget) {
+        const drTarget = await createTarget({
+          name: formData.drName,
+          description: formData.drDescription || undefined,
+          hostname: formData.drHostname,
+          port: parseInt(formData.drPort) || 22,
+          zfs_pool: formData.drZfsPool,
+          zfs_dataset_prefix: formData.drDatasetPrefix || undefined,
+          ssh_username: formData.drSshUsername || undefined,
+          site_role: 'dr',
+        });
+
+        // Pair them together
+        if (drTarget) {
+          await setPartner({ sourceId: sourceTarget.id, partnerId: drTarget.id });
+        }
+      }
+
       setShowCreateDialog(false);
-      setFormData({
-        name: "",
-        description: "",
-        hostname: "",
-        port: "22",
-        zfs_pool: "",
-        zfs_dataset_prefix: "",
-        ssh_username: ""
+      resetForm();
+      toast({
+        title: "ZFS targets created",
+        description: formData.drName.trim() ? "Source and DR targets created and paired" : "Source target created",
+      });
+    } catch (err: any) {
+      toast({
+        title: "Error creating targets",
+        description: err.message,
+        variant: "destructive",
       });
     } finally {
       setCreating(false);
@@ -278,101 +333,197 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                 Add ZFS Target
               </Button>
             )}
-            <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+            <Dialog open={showCreateDialog} onOpenChange={(open) => { setShowCreateDialog(open); if (!open) resetForm(); }}>
               <DialogTrigger asChild>
-                <Button variant="outline">
+                <Button>
                   <Plus className="h-4 w-4 mr-1" />
-                  Manual Entry
+                  Create ZFS Pair
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-lg">
+              <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
                 <DialogHeader>
-                  <DialogTitle>Add Replication Target</DialogTitle>
+                  <DialogTitle className="flex items-center gap-2">
+                    <ArrowRightLeft className="h-5 w-5" />
+                    Create Paired ZFS Targets
+                  </DialogTitle>
                   <DialogDescription>
-                    Manually configure a DR site with ZFS storage
+                    Configure both source (Point A) and DR (Point B) ZFS appliances that will replicate data between sites
                   </DialogDescription>
                 </DialogHeader>
-                <div className="grid gap-4 py-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="target-name">Name</Label>
-                      <Input
-                        id="target-name"
-                        placeholder="e.g., DR-Site-West"
-                        value={formData.name}
-                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      />
+                
+                <div className="grid md:grid-cols-2 gap-6 py-4">
+                  {/* Source Site (Point A) */}
+                  <div className="space-y-4 p-4 border rounded-lg bg-primary/5">
+                    <div className="flex items-center gap-2 pb-2 border-b">
+                      <Badge className="bg-primary">A</Badge>
+                      <span className="font-semibold">Source Site (Primary)</span>
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="target-hostname">Hostname / IP</Label>
-                      <Input
-                        id="target-hostname"
-                        placeholder="e.g., dr-storage.local"
-                        value={formData.hostname}
-                        onChange={(e) => setFormData({ ...formData, hostname: e.target.value })}
-                      />
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label>Name *</Label>
+                        <Input
+                          placeholder="e.g., zfs-prod-01"
+                          value={formData.sourceName}
+                          onChange={(e) => setFormData({ ...formData, sourceName: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Hostname / IP *</Label>
+                        <Input
+                          placeholder="e.g., 10.207.105.106"
+                          value={formData.sourceHostname}
+                          onChange={(e) => setFormData({ ...formData, sourceHostname: e.target.value })}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-2">
+                          <Label>ZFS Pool *</Label>
+                          <Input
+                            placeholder="e.g., tank"
+                            value={formData.sourceZfsPool}
+                            onChange={(e) => setFormData({ ...formData, sourceZfsPool: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>SSH Port</Label>
+                          <Input
+                            type="number"
+                            value={formData.sourcePort}
+                            onChange={(e) => setFormData({ ...formData, sourcePort: e.target.value })}
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-2">
+                          <Label>SSH Username</Label>
+                          <Input
+                            placeholder="e.g., zfsrepl"
+                            value={formData.sourceSshUsername}
+                            onChange={(e) => setFormData({ ...formData, sourceSshUsername: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Dataset Prefix</Label>
+                          <Input
+                            placeholder="e.g., nfs"
+                            value={formData.sourceDatasetPrefix}
+                            onChange={(e) => setFormData({ ...formData, sourceDatasetPrefix: e.target.value })}
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Description</Label>
+                        <Textarea
+                          placeholder="Optional..."
+                          className="h-16"
+                          value={formData.sourceDescription}
+                          onChange={(e) => setFormData({ ...formData, sourceDescription: e.target.value })}
+                        />
+                      </div>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="zfs-pool">ZFS Pool</Label>
-                      <Input
-                        id="zfs-pool"
-                        placeholder="e.g., tank/replicated"
-                        value={formData.zfs_pool}
-                        onChange={(e) => setFormData({ ...formData, zfs_pool: e.target.value })}
-                      />
+
+                  {/* DR Site (Point B) */}
+                  <div className="space-y-4 p-4 border rounded-lg bg-secondary/30">
+                    <div className="flex items-center gap-2 pb-2 border-b">
+                      <Badge variant="secondary">B</Badge>
+                      <span className="font-semibold">DR Site (Recovery)</span>
+                      <span className="text-xs text-muted-foreground ml-auto">Optional</span>
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="ssh-port">SSH Port</Label>
-                      <Input
-                        id="ssh-port"
-                        type="number"
-                        placeholder="22"
-                        value={formData.port}
-                        onChange={(e) => setFormData({ ...formData, port: e.target.value })}
-                      />
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label>Name</Label>
+                        <Input
+                          placeholder="e.g., zfs-dr-01"
+                          value={formData.drName}
+                          onChange={(e) => setFormData({ ...formData, drName: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Hostname / IP</Label>
+                        <Input
+                          placeholder="e.g., 10.208.105.106"
+                          value={formData.drHostname}
+                          onChange={(e) => setFormData({ ...formData, drHostname: e.target.value })}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-2">
+                          <Label>ZFS Pool</Label>
+                          <Input
+                            placeholder="e.g., tank"
+                            value={formData.drZfsPool}
+                            onChange={(e) => setFormData({ ...formData, drZfsPool: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>SSH Port</Label>
+                          <Input
+                            type="number"
+                            value={formData.drPort}
+                            onChange={(e) => setFormData({ ...formData, drPort: e.target.value })}
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-2">
+                          <Label>SSH Username</Label>
+                          <Input
+                            placeholder="e.g., zfsrepl"
+                            value={formData.drSshUsername}
+                            onChange={(e) => setFormData({ ...formData, drSshUsername: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Dataset Prefix</Label>
+                          <Input
+                            placeholder="e.g., dr"
+                            value={formData.drDatasetPrefix}
+                            onChange={(e) => setFormData({ ...formData, drDatasetPrefix: e.target.value })}
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Description</Label>
+                        <Textarea
+                          placeholder="Optional..."
+                          className="h-16"
+                          value={formData.drDescription}
+                          onChange={(e) => setFormData({ ...formData, drDescription: e.target.value })}
+                        />
+                      </div>
                     </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="ssh-user">SSH Username</Label>
-                      <Input
-                        id="ssh-user"
-                        placeholder="e.g., zfsrepl"
-                        value={formData.ssh_username}
-                        onChange={(e) => setFormData({ ...formData, ssh_username: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="dataset-prefix">Dataset Prefix</Label>
-                      <Input
-                        id="dataset-prefix"
-                        placeholder="e.g., dr-vms"
-                        value={formData.zfs_dataset_prefix}
-                        onChange={(e) => setFormData({ ...formData, zfs_dataset_prefix: e.target.value })}
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="target-desc">Description</Label>
-                    <Textarea
-                      id="target-desc"
-                      placeholder="Optional description..."
-                      value={formData.description}
-                      onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    />
                   </div>
                 </div>
-                <DialogFooter>
+
+                {/* Replication Flow Visualization */}
+                {formData.sourceName && formData.drName && (
+                  <div className="flex items-center justify-center gap-4 py-3 px-4 bg-muted/50 rounded-lg">
+                    <div className="text-center">
+                      <div className="font-mono text-sm font-medium">{formData.sourceName}</div>
+                      <div className="text-xs text-muted-foreground">{formData.sourceHostname || '...'}</div>
+                    </div>
+                    <div className="flex items-center gap-1 text-muted-foreground">
+                      <ArrowRightLeft className="h-4 w-4" />
+                      <span className="text-xs">ZFS Send/Recv</span>
+                    </div>
+                    <div className="text-center">
+                      <div className="font-mono text-sm font-medium">{formData.drName}</div>
+                      <div className="text-xs text-muted-foreground">{formData.drHostname || '...'}</div>
+                    </div>
+                  </div>
+                )}
+
+                <DialogFooter className="gap-2">
                   <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
                     Cancel
                   </Button>
                   <Button 
                     onClick={handleCreate} 
-                    disabled={creating || !formData.name.trim() || !formData.hostname.trim() || !formData.zfs_pool.trim()}
+                    disabled={creating || !formData.sourceName.trim() || !formData.sourceHostname.trim() || !formData.sourceZfsPool.trim()}
                   >
-                    {creating ? 'Creating...' : 'Add Target'}
+                    {creating && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                    {creating ? 'Creating...' : formData.drName.trim() ? 'Create Paired Targets' : 'Create Source Target'}
                   </Button>
                 </DialogFooter>
               </DialogContent>

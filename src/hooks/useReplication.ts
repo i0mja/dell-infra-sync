@@ -71,6 +71,8 @@ export interface ProtectionGroup {
   source_vcenter_id?: string;
   target_id?: string;
   protection_datastore?: string;
+  dr_datastore?: string;
+  dr_dataset?: string;
   replication_schedule?: string;
   retention_policy: {
     daily: number;
@@ -359,6 +361,8 @@ export function useProtectionGroups() {
           source_vcenter_id: group.source_vcenter_id,
           target_id: group.target_id,
           protection_datastore: group.protection_datastore,
+          dr_datastore: group.dr_datastore,
+          dr_dataset: group.dr_dataset,
           replication_schedule: group.replication_schedule,
           retention_policy: group.retention_policy || { daily: 7, weekly: 4, monthly: 12 },
           rpo_minutes: group.rpo_minutes || 60,
