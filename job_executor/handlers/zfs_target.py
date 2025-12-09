@@ -2571,12 +2571,14 @@ class ZfsTargetHandler(BaseHandler):
                     'name': target_name,
                     'hostname': vm_ip,
                     'target_type': 'zfs',
-                    'vcenter_id': vcenter_id,
+                    'dr_vcenter_id': vcenter_id,
                     'deployed_vm_moref': vm_moref,
                     'zfs_pool': pool_name,
-                    'nfs_export_path': nfs_path,
-                    'status': 'online',
-                    'is_active': True
+                    'zfs_dataset_prefix': f'{pool_name}/nfs',
+                    'health_status': 'healthy',
+                    'is_active': True,
+                    'deployed_job_id': job_id,
+                    'ssh_username': ssh_username
                 }
                 
                 headers = {
