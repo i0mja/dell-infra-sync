@@ -325,6 +325,7 @@ def collect_vcenter_inventory(
         for obj_content in objects:
             try:
                 obj, props = _parse_object_content(obj_content)
+                type_name = type(obj).__name__
                 
                 if isinstance(obj, vim.VirtualMachine):
                     vms.append((obj, props))
@@ -334,12 +335,16 @@ def collect_vcenter_inventory(
                     clusters.append((obj, props))
                 elif isinstance(obj, vim.Datastore):
                     datastores.append((obj, props))
-                elif isinstance(obj, vim.dvs.DistributedVirtualPortgroup):
+                # Use type name matching for distributed networking (pyVmomi dynamic types)
+                elif isinstance(obj, vim.dvs.DistributedVirtualPortgroup) or 'DistributedVirtualPortgroup' in type_name:
                     dvpgs.append((obj, props))
-                elif isinstance(obj, vim.DistributedVirtualSwitch):
+                    logger.debug(f"Captured DVPG: {props.get('name', 'unknown')} (type: {type_name})")
+                elif isinstance(obj, vim.DistributedVirtualSwitch) or 'DistributedVirtualSwitch' in type_name or 'VmwareDistributedVirtualSwitch' in type_name:
                     dvswitches.append((obj, props))
-                elif isinstance(obj, vim.Network):
+                    logger.debug(f"Captured DVS: {props.get('name', 'unknown')} (type: {type_name})")
+                elif isinstance(obj, vim.Network) or type_name == 'Network':
                     networks.append((obj, props))
+                    logger.debug(f"Captured Network: {props.get('name', 'unknown')} (type: {type_name})")
                     
             except vmodl.fault.ManagedObjectNotFound:
                 errors.append({
