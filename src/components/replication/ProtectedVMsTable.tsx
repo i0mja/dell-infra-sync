@@ -26,12 +26,12 @@ import { ProtectedVM } from "@/hooks/useReplication";
 import { formatDistanceToNow } from "date-fns";
 import { ProtectionDatastoreWizard } from "./ProtectionDatastoreWizard";
 import { DrShellVmWizard } from "./DrShellVmWizard";
-import { AddVMSelector } from "./AddVMSelector";
+import { AddVMsDialog } from "./AddVMsDialog";
 
 interface ProtectedVMsTableProps {
   vms: ProtectedVM[];
   loading: boolean;
-  onAddVM: (vm: Partial<ProtectedVM>) => Promise<ProtectedVM | undefined>;
+  onAddVMs: (vms: Partial<ProtectedVM>[]) => Promise<unknown>;
   onRemoveVM: (vmId: string) => Promise<void>;
   protectionDatastore?: string;
   sourceVCenterId?: string;
@@ -41,7 +41,7 @@ interface ProtectedVMsTableProps {
 export function ProtectedVMsTable({
   vms,
   loading,
-  onAddVM,
+  onAddVMs,
   onRemoveVM,
   protectionDatastore,
   sourceVCenterId,
@@ -111,23 +111,23 @@ export function ProtectedVMsTable({
 
   return (
     <div className="space-y-4">
-      {/* Add VM Button */}
+      {/* Add VMs Button */}
       <div className="flex justify-end">
         <Button size="sm" onClick={() => setShowAddDialog(true)} disabled={!sourceVCenterId}>
           <Plus className="h-4 w-4 mr-1" />
-          Add VM
+          Add VMs
         </Button>
       </div>
 
-      {/* Add VM Selector Dialog */}
+      {/* Add VMs Dialog */}
       {sourceVCenterId && (
-        <AddVMSelector
+        <AddVMsDialog
           open={showAddDialog}
           onOpenChange={setShowAddDialog}
           sourceVCenterId={sourceVCenterId}
           protectionDatastore={protectionDatastore}
           existingVMIds={existingVMIds}
-          onAddVM={onAddVM}
+          onAddVMs={onAddVMs}
         />
       )}
 
