@@ -177,7 +177,7 @@ class VCenterDbUpsertMixin:
         
         try:
             response = requests.post(
-                f"{DSM_URL}/rest/v1/vcenter_clusters",
+                f"{DSM_URL}/rest/v1/vcenter_clusters?on_conflict=cluster_name",
                 headers=headers,
                 json=batch,
                 verify=VERIFY_SSL,
@@ -263,7 +263,7 @@ class VCenterDbUpsertMixin:
         
         try:
             response = requests.post(
-                f"{DSM_URL}/rest/v1/vcenter_hosts",
+                f"{DSM_URL}/rest/v1/vcenter_hosts?on_conflict=vcenter_id,source_vcenter_id",
                 headers=headers,
                 json=batch,
                 verify=VERIFY_SSL,
@@ -350,7 +350,7 @@ class VCenterDbUpsertMixin:
         
         try:
             response = requests.post(
-                f"{DSM_URL}/rest/v1/vcenter_datastores",
+                f"{DSM_URL}/rest/v1/vcenter_datastores?on_conflict=vcenter_id,source_vcenter_id",
                 headers=headers,
                 json=batch,
                 verify=VERIFY_SSL,
@@ -576,7 +576,7 @@ class VCenterDbUpsertMixin:
             errors = []
             try:
                 response = requests.post(
-                    f"{DSM_URL}/rest/v1/vcenter_vms",
+                    f"{DSM_URL}/rest/v1/vcenter_vms?on_conflict=vcenter_id",
                     headers=headers,
                     json=batch,
                     verify=VERIFY_SSL,

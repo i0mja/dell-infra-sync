@@ -2443,7 +2443,7 @@ class VCenterMixin:
                     batch = alarm_records[i:i + batch_size]
                     
                     response = requests.post(
-                        f"{DSM_URL}/rest/v1/vcenter_alarms",
+                        f"{DSM_URL}/rest/v1/vcenter_alarms?on_conflict=alarm_key",
                         headers=headers,
                         json=batch,
                         verify=VERIFY_SSL,
