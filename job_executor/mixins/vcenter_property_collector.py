@@ -44,6 +44,7 @@ def _get_host_properties() -> List[str]:
         "hardware.memorySize",
         "summary.runtime.powerState",
         "summary.runtime.connectionState",
+        "summary.quickStats",  # Phase 2: CPU/memory usage metrics
         "parent",
     ]
 
@@ -56,6 +57,7 @@ def _get_cluster_properties() -> List[str]:
         "summary.numEffectiveHosts",
         "summary.totalCpu",
         "summary.totalMemory",
+        "datastore",  # Phase 2: List[vim.Datastore] for cluster_moref_to_datastores
     ]
 
 
@@ -360,14 +362,21 @@ def collect_vcenter_inventory(
 # MoRef Lookup Maps (Required from spec)
 # =============================================================================
 
-def _build_moref_lookups(inventory: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+def _build_moref_lookups(inventory: Dict[str, Any]) -> Dict[str, Any]:
     """
     Build MoRef-keyed lookup maps for relationship resolution.
     
-    Required maps (from spec):
+    Phase 2 lookups:
+        - host_moref_to_cluster: MoRef -> cluster MoRef string
+        - host_moref_to_cluster_name: MoRef -> cluster name string
+        - cluster_moref_to_datastores: MoRef -> List[datastore MoRef strings]
+        - datastore_moref_to_summary: MoRef -> {capacity, freeSpace, type}
+        - host_moref_to_quickstats: MoRef -> {overallCpuUsage, overallMemoryUsage, ...}
+        - cluster_moref_to_vm_count: MoRef -> int (count of VMs in cluster)
+        
+    Existing lookups (preserved):
         - cluster_moref_to_name
         - host_moref_to_name
-        - host_moref_to_cluster
         - dvpg_moref_to_dvs
         - dvs_moref_to_name
         
@@ -377,35 +386,71 @@ def _build_moref_lookups(inventory: Dict[str, Any]) -> Dict[str, Dict[str, str]]
     Returns:
         Dict containing all lookup maps
     """
+    # Initialize all lookup dictionaries
     cluster_moref_to_name = {}
     host_moref_to_name = {}
-    host_moref_to_cluster = {}
+    host_moref_to_cluster = {}         # Phase 2: MoRef -> cluster MoRef
+    host_moref_to_cluster_name = {}    # Phase 2: MoRef -> cluster name
+    cluster_moref_to_datastores = {}   # Phase 2: MoRef -> List[datastore MoRefs]
+    datastore_moref_to_summary = {}    # Phase 2: MoRef -> summary dict
+    host_moref_to_quickstats = {}      # Phase 2: MoRef -> quickStats dict
+    cluster_moref_to_vm_count = {}     # Phase 2: MoRef -> VM count
     dvpg_moref_to_dvs = {}
     dvs_moref_to_name = {}
     
-    # Build cluster map first (needed for host resolution)
+    # 1. Build cluster lookups first (needed for host resolution)
     for obj, props in inventory["clusters"]:
         moref = str(obj._moId)
         cluster_moref_to_name[moref] = props.get("name", "")
+        cluster_moref_to_vm_count[moref] = 0  # Initialize, will count VMs later
+        
+        # Extract cluster datastores
+        datastores = props.get("datastore", [])
+        ds_morefs = []
+        if datastores:
+            for ds in datastores:
+                if hasattr(ds, "_moId"):
+                    ds_morefs.append(str(ds._moId))
+        cluster_moref_to_datastores[moref] = ds_morefs
     
-    # Build DVS map (needed for DVPG resolution)
+    # 2. Build datastore summary lookups
+    for obj, props in inventory["datastores"]:
+        moref = str(obj._moId)
+        datastore_moref_to_summary[moref] = {
+            "capacity": props.get("summary.capacity", 0),
+            "freeSpace": props.get("summary.freeSpace", 0),
+            "type": props.get("summary.type", ""),
+        }
+    
+    # 3. Build DVS map (needed for DVPG resolution)
     for obj, props in inventory["dvswitches"]:
         moref = str(obj._moId)
         dvs_moref_to_name[moref] = props.get("name", "")
     
-    # Build host maps
+    # 4. Build host lookups
     for obj, props in inventory["hosts"]:
         moref = str(obj._moId)
         host_moref_to_name[moref] = props.get("name", "")
         
-        # Resolve parent cluster
+        # Resolve parent cluster (MoRef and name)
         parent = props.get("parent")
         if parent and hasattr(parent, "_moId"):
-            parent_moref = str(parent._moId)
-            cluster_name = cluster_moref_to_name.get(parent_moref, "")
-            host_moref_to_cluster[moref] = cluster_name
+            cluster_moref = str(parent._moId)
+            host_moref_to_cluster[moref] = cluster_moref
+            host_moref_to_cluster_name[moref] = cluster_moref_to_name.get(cluster_moref, "")
+        
+        # Extract quickStats
+        quick_stats = props.get("summary.quickStats")
+        if quick_stats:
+            host_moref_to_quickstats[moref] = {
+                "overallCpuUsage": getattr(quick_stats, "overallCpuUsage", 0),
+                "overallMemoryUsage": getattr(quick_stats, "overallMemoryUsage", 0),
+                "distributedCpuFairness": getattr(quick_stats, "distributedCpuFairness", None),
+                "distributedMemoryFairness": getattr(quick_stats, "distributedMemoryFairness", None),
+                "uptime": getattr(quick_stats, "uptime", 0),
+            }
     
-    # Build DVPG to DVS map
+    # 5. Build DVPG to DVS map
     for obj, props in inventory["dvpgs"]:
         moref = str(obj._moId)
         parent = props.get("parent")
@@ -413,12 +458,28 @@ def _build_moref_lookups(inventory: Dict[str, Any]) -> Dict[str, Dict[str, str]]
             dvs_moref = str(parent._moId)
             dvpg_moref_to_dvs[moref] = dvs_moref_to_name.get(dvs_moref, "")
     
+    # 6. Count VMs per cluster
+    for obj, props in inventory["vms"]:
+        host_ref = props.get("summary.runtime.host")
+        if host_ref and hasattr(host_ref, "_moId"):
+            host_moref = str(host_ref._moId)
+            cluster_moref = host_moref_to_cluster.get(host_moref)
+            if cluster_moref and cluster_moref in cluster_moref_to_vm_count:
+                cluster_moref_to_vm_count[cluster_moref] += 1
+    
     return {
+        # Existing lookups
         "cluster_moref_to_name": cluster_moref_to_name,
         "host_moref_to_name": host_moref_to_name,
-        "host_moref_to_cluster": host_moref_to_cluster,
         "dvpg_moref_to_dvs": dvpg_moref_to_dvs,
         "dvs_moref_to_name": dvs_moref_to_name,
+        # Phase 2 lookups
+        "host_moref_to_cluster": host_moref_to_cluster,
+        "host_moref_to_cluster_name": host_moref_to_cluster_name,
+        "cluster_moref_to_datastores": cluster_moref_to_datastores,
+        "datastore_moref_to_summary": datastore_moref_to_summary,
+        "host_moref_to_quickstats": host_moref_to_quickstats,
+        "cluster_moref_to_vm_count": cluster_moref_to_vm_count,
     }
 
 
