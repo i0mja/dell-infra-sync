@@ -54,6 +54,7 @@ import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { PrepareTemplateWizard } from "./PrepareTemplateWizard";
+import { PairedZfsDeployWizard } from "./PairedZfsDeployWizard";
 
 interface ReplicationTargetsPanelProps {
   onAddTarget?: () => void;
@@ -65,6 +66,7 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [showPairDialog, setShowPairDialog] = useState(false);
+  const [showPairedDeployWizard, setShowPairedDeployWizard] = useState(false);
   const [showPrepareTemplateWizard, setShowPrepareTemplateWizard] = useState(false);
   const [pairingTargetId, setPairingTargetId] = useState<string | null>(null);
   const [selectedPartnerId, setSelectedPartnerId] = useState<string>("");
@@ -335,16 +337,20 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
               Prepare Template
             </Button>
             {onAddTarget && (
-              <Button onClick={onAddTarget}>
+              <Button variant="outline" onClick={onAddTarget}>
                 <Plus className="h-4 w-4 mr-1" />
-                Add ZFS Target
+                Add Single Target
               </Button>
             )}
+            <Button onClick={() => setShowPairedDeployWizard(true)}>
+              <ArrowRightLeft className="h-4 w-4 mr-1" />
+              Deploy Paired Targets
+            </Button>
             <Dialog open={showCreateDialog} onOpenChange={(open) => { setShowCreateDialog(open); if (!open) resetForm(); }}>
               <DialogTrigger asChild>
-                <Button>
+                <Button variant="outline">
                   <Plus className="h-4 w-4 mr-1" />
-                  Create ZFS Pair
+                  Manual Pair Setup
                 </Button>
               </DialogTrigger>
               <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
@@ -795,6 +801,20 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
       <PrepareTemplateWizard 
         open={showPrepareTemplateWizard} 
         onOpenChange={setShowPrepareTemplateWizard} 
+      />
+      
+      {/* Paired ZFS Deploy Wizard */}
+      <PairedZfsDeployWizard
+        open={showPairedDeployWizard}
+        onOpenChange={setShowPairedDeployWizard}
+        onSuccess={() => {
+          refetch();
+          setShowPairedDeployWizard(false);
+          toast({
+            title: "Paired targets deployed",
+            description: "Source and DR ZFS targets are now ready for replication",
+          });
+        }}
       />
     </Card>
   );
