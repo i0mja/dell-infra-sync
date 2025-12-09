@@ -95,6 +95,8 @@ type SchedulePreset = keyof typeof SCHEDULE_PRESETS;
 interface OnboardZfsTargetWizardProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Called only when deployment completes successfully with the new target ID */
+  onSuccess?: (targetId: string) => void;
   preselectedVCenterId?: string;
   preselectedVMId?: string;
 }
@@ -167,6 +169,7 @@ function getStatusIcon(status: StepStatus) {
 export function OnboardZfsTargetWizard({
   open,
   onOpenChange,
+  onSuccess,
   preselectedVCenterId,
   preselectedVMId,
 }: OnboardZfsTargetWizardProps) {
@@ -361,6 +364,7 @@ export function OnboardZfsTargetWizard({
       setRetryingStep(null);
       setRollingBack(false);
       setRollbackStatus('idle');
+      setSuccessCallbackFired(false);
       setIsTemplateMode(false);
       setCloneSettings({
         cloneName: '',
@@ -440,6 +444,9 @@ export function OnboardZfsTargetWizard({
     }
   }, [sshTestResult, diskDetectionDone, detectingDisks, selectedVM?.ip_address]);
   
+  // Track if onSuccess has been called for this job
+  const [successCallbackFired, setSuccessCallbackFired] = useState(false);
+  
   // Poll job status
   const pollJobStatus = useCallback(async () => {
     if (!jobId) return;
@@ -478,24 +485,45 @@ export function OnboardZfsTargetWizard({
       }
     }
     
-    return job.status;
+    return { status: job.status, details };
   }, [jobId]);
   
-  // Polling effect
+  // Polling effect - calls onSuccess when job completes successfully
   useEffect(() => {
     if (!jobId) return;
     
     const interval = setInterval(async () => {
-      const status = await pollJobStatus();
-      if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+      const result = await pollJobStatus();
+      if (result?.status === 'completed' || result?.status === 'failed' || result?.status === 'cancelled') {
         clearInterval(interval);
+        
+        // On successful completion, fire onSuccess callback with target ID
+        if (result.status === 'completed' && onSuccess && !successCallbackFired) {
+          const targetId = result.details?.created_target_id as string | undefined;
+          if (targetId) {
+            setSuccessCallbackFired(true);
+            onSuccess(targetId);
+          } else {
+            // If no target ID in details, try to find the most recently created target
+            const { data: targets } = await supabase
+              .from('replication_targets')
+              .select('id')
+              .order('created_at', { ascending: false })
+              .limit(1);
+            
+            if (targets?.[0]?.id) {
+              setSuccessCallbackFired(true);
+              onSuccess(targets[0].id);
+            }
+          }
+        }
       }
     }, 2000);
     
     pollJobStatus();
     
     return () => clearInterval(interval);
-  }, [jobId, pollJobStatus]);
+  }, [jobId, pollJobStatus, onSuccess, successCallbackFired]);
   
   // Start the onboarding job
   const startOnboarding = async () => {
