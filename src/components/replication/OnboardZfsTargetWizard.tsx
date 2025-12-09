@@ -196,10 +196,11 @@ export function OnboardZfsTargetWizard({
   const [zfsCompression, setZfsCompression] = useState<'lz4' | 'zstd' | 'off'>('lz4');
   const [nfsNetwork, setNfsNetwork] = useState("10.0.0.0/8");
   const [detectedDisks, setDetectedDisks] = useState<Array<{ device: string; size: string; type: string }>>([]);
-  const [excludedDisks, setExcludedDisks] = useState<Array<{ device: string; size: string; reason: string }>>([]);
+  const [excludedDisks, setExcludedDisks] = useState<Array<{ device: string; size: string; reason: string; reclaimable?: boolean; pool_name?: string }>>([]);
   const [selectedDisk, setSelectedDisk] = useState("");
   const [detectingDisks, setDetectingDisks] = useState(false);
   const [diskDetectionDone, setDiskDetectionDone] = useState(false);
+  const [destroyExistingPool, setDestroyExistingPool] = useState(false);
   
   // Page 4: vCenter Integration
   const [datastoreName, setDatastoreName] = useState("");
@@ -470,7 +471,8 @@ export function OnboardZfsTargetWizard({
             zfs_pool_name: zfsPoolName,
             nfs_network: nfsNetwork,
             zfs_compression: zfsCompression,
-            zfs_disk: selectedDisk || undefined,
+            zfs_disk: selectedDisk || (destroyExistingPool ? excludedDisks.find(d => d.reclaimable)?.device : undefined),
+            destroy_existing_pool: destroyExistingPool,
             datastore_name: datastoreName,
             protection_group_option: protectionGroupOption,
             existing_protection_group_id: protectionGroupOption === 'existing' ? existingProtectionGroupId : undefined,
@@ -698,21 +700,25 @@ export function OnboardZfsTargetWizard({
           clearInterval(pollInterval);
           const details = jobResult.details as Record<string, unknown>;
           const disks = (details?.detected_disks || []) as Array<{ device: string; size: string; type: string }>;
-          const excluded = (details?.excluded_disks || []) as Array<{ device: string; size: string; reason: string }>;
+          const excluded = (details?.excluded_disks || []) as Array<{ device: string; size: string; reason: string; reclaimable?: boolean; pool_name?: string }>;
           setDetectedDisks(disks);
           setExcludedDisks(excluded);
           setDiskDetectionDone(true);
           setDetectingDisks(false);
+          setDestroyExistingPool(false); // Reset the flag on new detection
           if (disks.length > 0) {
             setSelectedDisk(disks[0].device);
             toast({ title: `Found ${disks.length} available disk(s)` });
           } else {
+            const reclaimable = excluded.filter(d => d.reclaimable);
             toast({ 
               title: 'No available disks found', 
-              description: excluded.length > 0 
-                ? `${excluded.length} disk(s) excluded - see details below`
-                : 'Please add a secondary disk to this VM',
-              variant: 'destructive' 
+              description: reclaimable.length > 0 
+                ? `Existing ZFS pool detected - you can destroy it and reuse the disk`
+                : excluded.length > 0 
+                  ? `${excluded.length} disk(s) excluded - see details below`
+                  : 'Please add a secondary disk to this VM',
+              variant: reclaimable.length > 0 ? 'default' : 'destructive'
             });
           }
         } else if (jobResult?.status === 'failed' || attempts >= 15) {
@@ -923,7 +929,9 @@ export function OnboardZfsTargetWizard({
                authMethod === 'existing_key' ? !!selectedSshKeyId : 
                authMethod === 'generate_key' ? (!!newGeneratedKeyId || !!selectedSshKeyId) : false;
       case 3: 
-        return !!zfsPoolName && !!nfsNetwork;
+        // Need pool name, network, and either a selected disk OR destroyExistingPool with a reclaimable disk
+        const hasValidDisk = !!selectedDisk || (destroyExistingPool && excludedDisks.some(d => d.reclaimable));
+        return !!zfsPoolName && !!nfsNetwork && (hasValidDisk || !diskDetectionDone);
       case 4: 
         return !!datastoreName;
       case 5: 
@@ -1358,13 +1366,52 @@ export function OnboardZfsTargetWizard({
                         </SelectContent>
                       </Select>
                     ) : diskDetectionDone ? (
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2 p-2 rounded border border-yellow-500/30 bg-yellow-500/10">
-                          <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0" />
-                          <p className="text-xs text-yellow-600 dark:text-yellow-400">
-                            No available disks detected. Please add a secondary disk (not sda/vda) to this VM and click "Detect Disks" again.
-                          </p>
-                        </div>
+                      <div className="space-y-3">
+                        {/* Check for reclaimable ZFS pool disks */}
+                        {(() => {
+                          const reclaimableDisks = excludedDisks.filter(d => d.reclaimable);
+                          if (reclaimableDisks.length > 0) {
+                            return (
+                              <div className="p-3 rounded-lg border border-orange-500/30 bg-orange-500/10 space-y-3">
+                                <div className="flex items-center gap-2">
+                                  <AlertTriangle className="h-4 w-4 text-orange-500" />
+                                  <span className="text-sm font-medium text-orange-600 dark:text-orange-400">
+                                    Existing ZFS Pool Detected
+                                  </span>
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                  The disk has an existing ZFS pool. You can destroy it and start fresh:
+                                </p>
+                                <div className="flex items-center space-x-2">
+                                  <Checkbox
+                                    id="destroy-pool"
+                                    checked={destroyExistingPool}
+                                    onCheckedChange={(c) => setDestroyExistingPool(!!c)}
+                                  />
+                                  <Label htmlFor="destroy-pool" className="text-sm cursor-pointer text-destructive">
+                                    Destroy pool "{reclaimableDisks[0].pool_name}" and reuse {reclaimableDisks[0].device}
+                                  </Label>
+                                </div>
+                                {destroyExistingPool && (
+                                  <div className="flex items-center gap-2 p-2 rounded border border-destructive/30 bg-destructive/10">
+                                    <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
+                                    <p className="text-xs text-destructive">
+                                      ⚠️ This will permanently delete ALL data in the existing pool!
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          }
+                          return (
+                            <div className="flex items-center gap-2 p-2 rounded border border-yellow-500/30 bg-yellow-500/10">
+                              <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0" />
+                              <p className="text-xs text-yellow-600 dark:text-yellow-400">
+                                No available disks detected. Please add a secondary disk (not sda/vda) to this VM and click "Detect Disks" again.
+                              </p>
+                            </div>
+                          );
+                        })()}
                         {excludedDisks.length > 0 && (
                           <div className="space-y-1">
                             <p className="text-xs text-muted-foreground font-medium">Excluded disks:</p>
@@ -1374,6 +1421,11 @@ export function OnboardZfsTargetWizard({
                                   <XCircle className="h-3 w-3 text-muted-foreground/50" />
                                   <span>{disk.device} ({disk.size})</span>
                                   <span className="text-muted-foreground/70">— {disk.reason}</span>
+                                  {disk.reclaimable && (
+                                    <Badge variant="outline" className="text-[10px] px-1 py-0 text-orange-500 border-orange-500/30">
+                                      Reclaimable
+                                    </Badge>
+                                  )}
                                 </div>
                               ))}
                             </div>
