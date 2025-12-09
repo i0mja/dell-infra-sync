@@ -101,7 +101,7 @@ export function CreateProtectionGroupWizard({ open, onOpenChange }: CreateProtec
   
   // Step 2: Source Site
   const [sourceVCenterId, setSourceVCenterId] = useState("");
-  const [sourceCluster, setSourceCluster] = useState("");
+  const [sourceCluster, setSourceCluster] = useState("all");
   
   // Step 3: Appliance
   const [applianceMode, setApplianceMode] = useState<ApplianceMode>('deploy_new');
@@ -136,7 +136,7 @@ export function CreateProtectionGroupWizard({ open, onOpenChange }: CreateProtec
       setRpoMinutes(60);
       setPriority("medium");
       setSourceVCenterId("");
-      setSourceCluster("");
+      setSourceCluster("all");
       setApplianceMode('deploy_new');
       setSelectedTargetId("");
       setSelectedDatastore("");
@@ -400,7 +400,7 @@ export function CreateProtectionGroupWizard({ open, onOpenChange }: CreateProtec
                 <SelectValue placeholder="All clusters" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All clusters</SelectItem>
+                <SelectItem value="all">All clusters</SelectItem>
                 {clusters.map((cluster) => (
                   <SelectItem key={cluster.id} value={cluster.cluster_name}>
                     {cluster.cluster_name}
