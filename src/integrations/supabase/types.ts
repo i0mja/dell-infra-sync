@@ -1933,6 +1933,8 @@ export type Database = {
           created_by: string | null
           current_rpo_seconds: number | null
           description: string | null
+          dr_dataset: string | null
+          dr_datastore: string | null
           id: string
           is_enabled: boolean | null
           journal_history_hours: number | null
@@ -1960,6 +1962,8 @@ export type Database = {
           created_by?: string | null
           current_rpo_seconds?: number | null
           description?: string | null
+          dr_dataset?: string | null
+          dr_datastore?: string | null
           id?: string
           is_enabled?: boolean | null
           journal_history_hours?: number | null
@@ -1987,6 +1991,8 @@ export type Database = {
           created_by?: string | null
           current_rpo_seconds?: number | null
           description?: string | null
+          dr_dataset?: string | null
+          dr_datastore?: string | null
           id?: string
           is_enabled?: boolean | null
           journal_history_hours?: number | null
@@ -2274,6 +2280,7 @@ export type Database = {
           is_active: boolean | null
           last_health_check: string | null
           name: string
+          partner_target_id: string | null
           port: number | null
           site_location: string | null
           site_role: string | null
@@ -2300,6 +2307,7 @@ export type Database = {
           is_active?: boolean | null
           last_health_check?: string | null
           name: string
+          partner_target_id?: string | null
           port?: number | null
           site_location?: string | null
           site_role?: string | null
@@ -2326,6 +2334,7 @@ export type Database = {
           is_active?: boolean | null
           last_health_check?: string | null
           name?: string
+          partner_target_id?: string | null
           port?: number | null
           site_location?: string | null
           site_role?: string | null
@@ -2351,6 +2360,13 @@ export type Database = {
             columns: ["dr_vcenter_id"]
             isOneToOne: false
             referencedRelation: "vcenters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "replication_targets_partner_target_id_fkey"
+            columns: ["partner_target_id"]
+            isOneToOne: false
+            referencedRelation: "replication_targets"
             referencedColumns: ["id"]
           },
           {
@@ -3606,6 +3622,7 @@ export type Database = {
           last_sync: string | null
           maintenance_mode: string | null
           name: string
+          replication_target_id: string | null
           source_vcenter_id: string | null
           type: string | null
           updated_at: string | null
@@ -3622,6 +3639,7 @@ export type Database = {
           last_sync?: string | null
           maintenance_mode?: string | null
           name: string
+          replication_target_id?: string | null
           source_vcenter_id?: string | null
           type?: string | null
           updated_at?: string | null
@@ -3638,6 +3656,7 @@ export type Database = {
           last_sync?: string | null
           maintenance_mode?: string | null
           name?: string
+          replication_target_id?: string | null
           source_vcenter_id?: string | null
           type?: string | null
           updated_at?: string | null
@@ -3645,6 +3664,13 @@ export type Database = {
           vm_count?: number | null
         }
         Relationships: [
+          {
+            foreignKeyName: "vcenter_datastores_replication_target_id_fkey"
+            columns: ["replication_target_id"]
+            isOneToOne: false
+            referencedRelation: "replication_targets"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "vcenter_datastores_source_vcenter_id_fkey"
             columns: ["source_vcenter_id"]

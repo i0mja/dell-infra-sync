@@ -51,6 +51,17 @@ export interface ReplicationTarget {
   health_status: string;
   last_health_check?: string;
   created_at: string;
+  site_role?: string;
+  partner_target_id?: string;
+  // Joined partner target info
+  partner_target?: {
+    id: string;
+    name: string;
+    hostname: string;
+    zfs_pool: string;
+    health_status: string;
+    dr_vcenter_id?: string;
+  } | null;
 }
 
 export interface ProtectionGroup {
@@ -156,7 +167,27 @@ export function useReplicationTargets() {
         .select('*')
         .order('name');
       if (error) throw error;
-      return data as ReplicationTarget[];
+
+      // Fetch partner target info
+      const targetsWithPartnerIds = (data || []).filter(t => t.partner_target_id);
+      let partnerMap: Record<string, ReplicationTarget['partner_target']> = {};
+      
+      if (targetsWithPartnerIds.length > 0) {
+        const partnerIds = targetsWithPartnerIds.map(t => t.partner_target_id);
+        const { data: partners } = await supabase
+          .from('replication_targets')
+          .select('id, name, hostname, zfs_pool, health_status, dr_vcenter_id')
+          .in('id', partnerIds);
+        
+        if (partners) {
+          partnerMap = Object.fromEntries(partners.map(p => [p.id, p]));
+        }
+      }
+
+      return (data || []).map(t => ({
+        ...t,
+        partner_target: t.partner_target_id ? partnerMap[t.partner_target_id] || null : null
+      })) as ReplicationTarget[];
     }
   });
 
@@ -208,13 +239,93 @@ export function useReplicationTargets() {
     }
   });
 
+  const updateTargetMutation = useMutation({
+    mutationFn: async ({ id, updates }: { id: string; updates: Partial<ReplicationTarget> }) => {
+      const { data, error } = await supabase
+        .from('replication_targets')
+        .update({
+          name: updates.name,
+          description: updates.description,
+          partner_target_id: updates.partner_target_id,
+          site_role: updates.site_role,
+          dr_vcenter_id: updates.dr_vcenter_id,
+        })
+        .eq('id', id)
+        .select()
+        .single();
+      if (error) throw error;
+      return data as ReplicationTarget;
+    },
+    onSuccess: () => {
+      toast({ title: 'Target updated' });
+      queryClient.invalidateQueries({ queryKey: ['replication-targets'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  });
+
+  // Set partner relationship (bidirectional)
+  const setPartnerMutation = useMutation({
+    mutationFn: async ({ sourceId, partnerId }: { sourceId: string; partnerId: string | null }) => {
+      // If setting a partner, update both sides
+      if (partnerId) {
+        // Update source to point to partner
+        const { error: err1 } = await supabase
+          .from('replication_targets')
+          .update({ partner_target_id: partnerId, site_role: 'primary' })
+          .eq('id', sourceId);
+        if (err1) throw err1;
+
+        // Update partner to point back to source
+        const { error: err2 } = await supabase
+          .from('replication_targets')
+          .update({ partner_target_id: sourceId, site_role: 'dr' })
+          .eq('id', partnerId);
+        if (err2) throw err2;
+      } else {
+        // Clearing partner - get current partner first
+        const { data: current } = await supabase
+          .from('replication_targets')
+          .select('partner_target_id')
+          .eq('id', sourceId)
+          .single();
+        
+        // Clear source
+        const { error: err1 } = await supabase
+          .from('replication_targets')
+          .update({ partner_target_id: null, site_role: null })
+          .eq('id', sourceId);
+        if (err1) throw err1;
+
+        // Clear former partner if exists
+        if (current?.partner_target_id) {
+          const { error: err2 } = await supabase
+            .from('replication_targets')
+            .update({ partner_target_id: null, site_role: null })
+            .eq('id', current.partner_target_id);
+          if (err2) throw err2;
+        }
+      }
+    },
+    onSuccess: (_, variables) => {
+      toast({ title: variables.partnerId ? 'Targets paired successfully' : 'Pairing removed' });
+      queryClient.invalidateQueries({ queryKey: ['replication-targets'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  });
+
   return { 
     targets, 
     loading, 
     error: error?.message || null, 
     refetch, 
     createTarget: createTargetMutation.mutateAsync, 
-    deleteTarget: deleteTargetMutation.mutateAsync 
+    deleteTarget: deleteTargetMutation.mutateAsync,
+    updateTarget: updateTargetMutation.mutateAsync,
+    setPartner: setPartnerMutation.mutateAsync
   };
 }
 

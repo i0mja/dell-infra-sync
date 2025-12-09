@@ -22,6 +22,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { 
   Target, 
@@ -36,7 +43,10 @@ import {
   HeartPulse,
   Pencil,
   Building2,
-  Loader2
+  Loader2,
+  Link2,
+  Unlink,
+  ArrowRightLeft,
 } from "lucide-react";
 import { useReplicationTargets } from "@/hooks/useReplication";
 import { formatDistanceToNow } from "date-fns";
@@ -48,10 +58,13 @@ interface ReplicationTargetsPanelProps {
 }
 
 export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanelProps) {
-  const { targets, loading, createTarget, deleteTarget, refetch } = useReplicationTargets();
+  const { targets, loading, createTarget, deleteTarget, setPartner, refetch } = useReplicationTargets();
   const { toast } = useToast();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
+  const [showPairDialog, setShowPairDialog] = useState(false);
+  const [pairingTargetId, setPairingTargetId] = useState<string | null>(null);
+  const [selectedPartnerId, setSelectedPartnerId] = useState<string>("");
   const [editingTarget, setEditingTarget] = useState<any>(null);
   const [healthCheckingId, setHealthCheckingId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
@@ -64,6 +77,7 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
     ssh_username: ""
   });
   const [creating, setCreating] = useState(false);
+  const [pairing, setPairing] = useState(false);
 
   const handleCreate = async () => {
     if (!formData.name.trim() || !formData.hostname.trim() || !formData.zfs_pool.trim()) return;
@@ -161,6 +175,39 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
         variant: "destructive"
       });
     }
+  };
+
+  const handleOpenPairDialog = (targetId: string) => {
+    setPairingTargetId(targetId);
+    setSelectedPartnerId("");
+    setShowPairDialog(true);
+  };
+
+  const handlePairTargets = async () => {
+    if (!pairingTargetId || !selectedPartnerId) return;
+    
+    setPairing(true);
+    try {
+      await setPartner({ sourceId: pairingTargetId, partnerId: selectedPartnerId });
+      setShowPairDialog(false);
+      setPairingTargetId(null);
+      setSelectedPartnerId("");
+    } finally {
+      setPairing(false);
+    }
+  };
+
+  const handleUnpairTarget = async (targetId: string) => {
+    if (!confirm('Remove pairing between these ZFS targets?')) return;
+    await setPartner({ sourceId: targetId, partnerId: null });
+  };
+
+  // Get available targets for pairing (exclude self and already paired)
+  const getAvailablePartners = (targetId: string) => {
+    return targets.filter(t => 
+      t.id !== targetId && 
+      !t.partner_target_id
+    );
   };
 
   const getHealthBadge = (status: string) => {
@@ -398,10 +445,10 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Site</TableHead>
+                  <TableHead>Partner</TableHead>
                   <TableHead>Host</TableHead>
                   <TableHead>ZFS Pool</TableHead>
                   <TableHead>Health</TableHead>
-                  <TableHead>Status</TableHead>
                   <TableHead>Last Check</TableHead>
                   <TableHead className="w-12"></TableHead>
                 </TableRow>
@@ -419,7 +466,28 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                       )}
                     </TableCell>
                     <TableCell>
-                      {getSiteRoleBadge((target as any).site_role)}
+                      {getSiteRoleBadge(target.site_role)}
+                    </TableCell>
+                    <TableCell>
+                      {target.partner_target ? (
+                        <div className="flex items-center gap-2">
+                          <ArrowRightLeft className="h-3 w-3 text-muted-foreground" />
+                          <span className="text-sm">{target.partner_target.name}</span>
+                          <Badge variant="outline" className="text-xs">
+                            {target.partner_target.hostname}
+                          </Badge>
+                        </div>
+                      ) : (
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="text-muted-foreground"
+                          onClick={() => handleOpenPairDialog(target.id)}
+                        >
+                          <Link2 className="h-3 w-3 mr-1" />
+                          Pair
+                        </Button>
+                      )}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
@@ -435,15 +503,6 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                     </TableCell>
                     <TableCell>
                       {getHealthBadge(target.health_status)}
-                    </TableCell>
-                    <TableCell>
-                      {target.is_active ? (
-                        <Badge variant="outline" className="text-green-600 border-green-500/30">
-                          Active
-                        </Badge>
-                      ) : (
-                        <Badge variant="secondary">Inactive</Badge>
-                      )}
                     </TableCell>
                     <TableCell className="text-muted-foreground text-sm">
                       {target.last_health_check
@@ -471,6 +530,18 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                             Edit
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
+                          {target.partner_target ? (
+                            <DropdownMenuItem onClick={() => handleUnpairTarget(target.id)}>
+                              <Unlink className="h-4 w-4 mr-2" />
+                              Remove Pairing
+                            </DropdownMenuItem>
+                          ) : (
+                            <DropdownMenuItem onClick={() => handleOpenPairDialog(target.id)}>
+                              <Link2 className="h-4 w-4 mr-2" />
+                              Pair with DR Target
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuSeparator />
                           <DropdownMenuItem 
                             onClick={() => handleDelete(target.id)}
                             className="text-destructive"
@@ -488,6 +559,79 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
           </div>
         )}
       </CardContent>
+
+      {/* Pair Targets Dialog */}
+      <Dialog open={showPairDialog} onOpenChange={setShowPairDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Link2 className="h-5 w-5" />
+              Pair ZFS Targets
+            </DialogTitle>
+            <DialogDescription>
+              Connect a source ZFS target with a DR destination for replication
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="p-3 bg-muted/50 rounded-lg">
+              <p className="text-sm font-medium">Source Target</p>
+              <p className="text-sm text-muted-foreground">
+                {targets.find(t => t.id === pairingTargetId)?.name || 'Unknown'}
+              </p>
+            </div>
+            <div className="flex items-center justify-center">
+              <ArrowRightLeft className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="space-y-2">
+              <Label>DR Destination Target</Label>
+              <Select value={selectedPartnerId} onValueChange={setSelectedPartnerId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select DR target..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {pairingTargetId && getAvailablePartners(pairingTargetId).map(t => (
+                    <SelectItem key={t.id} value={t.id}>
+                      <div className="flex items-center gap-2">
+                        <Target className="h-4 w-4" />
+                        {t.name}
+                        <span className="text-muted-foreground text-xs">
+                          ({t.hostname})
+                        </span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {pairingTargetId && getAvailablePartners(pairingTargetId).length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No available targets. Create another ZFS target first.
+                </p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPairDialog(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handlePairTargets} 
+              disabled={pairing || !selectedPartnerId}
+            >
+              {pairing ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Pairing...
+                </>
+              ) : (
+                <>
+                  <Link2 className="h-4 w-4 mr-2" />
+                  Create Pair
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
