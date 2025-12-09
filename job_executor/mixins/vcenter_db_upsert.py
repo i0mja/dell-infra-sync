@@ -361,19 +361,45 @@ class VCenterDbUpsertMixin:
             'apikey': SERVICE_ROLE_KEY,
             'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
             'Content-Type': 'application/json',
-            'Prefer': 'resolution=merge-duplicates,return=minimal'
+            'Prefer': 'resolution=merge-duplicates,return=minimal',
+            'on-conflict': 'vcenter_id,source_vcenter_id'  # Explicit conflict columns
         }
         
         # Build DVS lookup (for backward compat if needed)
         dvs_lookup = {d.get('vcenter_id', d.get('id', '')): d['name'] for d in dvswitches}
         
+        # Deduplicate networks by vcenter_id to avoid 400 errors from duplicate entries
+        seen_vcenter_ids = set()
+        duplicates_removed = 0
+        skipped_empty_names = 0
+        
         batch = []
         
         # Standard networks - use Phase 5 field names
         for n in networks:
+            vid = n.get('vcenter_id', n.get('id', ''))
+            name = n.get('name', '')
+            
+            # Skip entries with empty vcenter_id
+            if not vid:
+                self.log(f"    Skipping network with empty vcenter_id: name={name}", "WARN")
+                continue
+            
+            # Skip entries with empty names (would violate NOT NULL constraint)
+            if not name:
+                self.log(f"    Skipping network with empty name: vcenter_id={vid}", "WARN")
+                skipped_empty_names += 1
+                continue
+            
+            # Skip duplicates
+            if vid in seen_vcenter_ids:
+                duplicates_removed += 1
+                continue
+            seen_vcenter_ids.add(vid)
+            
             batch.append({
-                'name': n.get('name', ''),
-                'vcenter_id': n.get('vcenter_id', n.get('id', '')),
+                'name': name,
+                'vcenter_id': vid,
                 'source_vcenter_id': source_vcenter_id,
                 'network_type': n.get('network_type', 'StandardNetwork'),
                 'vlan_id': n.get('vlan_id'),
@@ -388,9 +414,29 @@ class VCenterDbUpsertMixin:
         
         # Distributed port groups - use Phase 5 field names
         for d in dvpgs:
+            vid = d.get('vcenter_id', d.get('id', ''))
+            name = d.get('name', '')
+            
+            # Skip entries with empty vcenter_id
+            if not vid:
+                self.log(f"    Skipping DVPG with empty vcenter_id: name={name}", "WARN")
+                continue
+            
+            # Skip entries with empty names
+            if not name:
+                self.log(f"    Skipping DVPG with empty name: vcenter_id={vid}", "WARN")
+                skipped_empty_names += 1
+                continue
+            
+            # Skip duplicates
+            if vid in seen_vcenter_ids:
+                duplicates_removed += 1
+                continue
+            seen_vcenter_ids.add(vid)
+            
             batch.append({
-                'name': d.get('name', ''),
-                'vcenter_id': d.get('vcenter_id', d.get('id', '')),
+                'name': name,
+                'vcenter_id': vid,
                 'source_vcenter_id': source_vcenter_id,
                 'network_type': d.get('network_type', 'DistributedVirtualPortgroup'),
                 'vlan_id': d.get('vlan_id'),
@@ -404,6 +450,12 @@ class VCenterDbUpsertMixin:
                 'uplink_port_group': d.get('uplink_port_group', False),
                 'last_sync': utc_now_iso()
             })
+        
+        # Log if we filtered anything
+        if duplicates_removed > 0:
+            self.log(f"    Removed {duplicates_removed} duplicate network entries", "WARN")
+        if skipped_empty_names > 0:
+            self.log(f"    Skipped {skipped_empty_names} networks with empty names", "WARN")
         
         if not batch:
             return {"synced": 0, "total": 0}
@@ -421,12 +473,18 @@ class VCenterDbUpsertMixin:
                 self.log(f"  ✓ Batch upserted {len(batch)} networks")
                 return {"synced": len(batch), "total": len(networks) + len(dvpgs)}
             else:
-                self.log(f"  Network batch upsert failed: {response.status_code}", "WARN")
-                return {"synced": 0, "total": len(networks) + len(dvpgs)}
+                # Log the actual error response for debugging
+                error_body = ""
+                try:
+                    error_body = response.text[:500]  # First 500 chars
+                except:
+                    pass
+                self.log(f"  Network batch upsert failed: {response.status_code} - {error_body}", "WARN")
+                return {"synced": 0, "total": len(networks) + len(dvpgs), "error": error_body}
                 
         except Exception as e:
             self.log(f"  Network upsert error: {e}", "ERROR")
-            return {"synced": 0, "total": len(networks) + len(dvpgs)}
+            return {"synced": 0, "total": len(networks) + len(dvpgs), "error": str(e)}
     
     def _upsert_vms_batch(
         self, 
