@@ -79,16 +79,21 @@ def _get_cluster_properties() -> List[str]:
 
 
 def _get_datastore_properties(enable_deep: bool = False) -> List[str]:
-    """Datastore properties - Required + optional deep relationships."""
+    """Datastore properties - Required + optional deep relationships.
+    
+    Note: 'host' is always fetched to populate vcenter_datastore_hosts table
+    for proper cluster-aware datastore filtering.
+    """
     props = [
         "name",
         "summary.capacity",
         "summary.freeSpace",
         "summary.type",
         "summary.accessible",                 # Phase 7: Accessibility
+        "host",                               # Always fetch for datastore-host relationships
     ]
     if enable_deep:
-        props.extend(["host", "vm"])
+        props.append("vm")
     return props
 
 
@@ -1163,13 +1168,23 @@ def _datastore_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
     capacity = props.get("summary.capacity", 0) or 0
     free_space = props.get("summary.freeSpace", 0) or 0
     
-    # Phase 7: Count hosts and VMs if deep relationships enabled
+    # Extract host relationships for vcenter_datastore_hosts table
     host_count = 0
-    vm_count = 0
+    host_morefs = []
     hosts = props.get("host", [])
-    vms = props.get("vm", [])
     if hosts:
-        host_count = len(hosts) if hasattr(hosts, "__len__") else 0
+        try:
+            for host_mount in hosts:
+                # Each item is a vim.Datastore.HostMount with key=HostSystem ref
+                if hasattr(host_mount, 'key') and hasattr(host_mount.key, '_moId'):
+                    host_morefs.append(str(host_mount.key._moId))
+            host_count = len(host_morefs)
+        except Exception as e:
+            logger.warning(f"Error extracting host mounts for datastore {props.get('name', '')}: {e}")
+    
+    # Count VMs if deep relationships enabled
+    vm_count = 0
+    vms = props.get("vm", [])
     if vms:
         vm_count = len(vms) if hasattr(vms, "__len__") else 0
     
@@ -1181,8 +1196,10 @@ def _datastore_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
         "free_bytes": free_space,
         "used_bytes": capacity - free_space,
         "accessible": props.get("summary.accessible", True),
-        # Phase 7: Host and VM counts
+        # Host relationships
         "host_count": host_count,
+        "host_morefs": host_morefs,  # List of host MoRefs for relationship table
+        # VM count
         "vm_count": vm_count,
     }
 
