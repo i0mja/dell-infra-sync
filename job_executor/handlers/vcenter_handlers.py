@@ -275,17 +275,21 @@ class VCenterHandlers(BaseHandler):
                 return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
             
             # Batch upsert all inventory to database
-            def inventory_progress(pct, msg):
+            def inventory_progress(pct, msg, phase_idx=None):
                 if 'inventory' in phase_tasks:
                     # Scale progress from 50-100% for upsert phase
                     scaled_pct = 50 + int(pct * 0.5)
                     self.update_task_status(phase_tasks['inventory'], 'running', log=msg, progress=scaled_pct)
-                self.update_job_status(job['id'], 'running', details={
+                details = {
                     'current_step': msg,
                     'total_vcenters': total_vcenters,
                     'current_vcenter_index': vcenter_index,
                     'current_vcenter_name': vcenter_name
-                })
+                }
+                # Add sync_phase for monotonic UI progress tracking
+                if phase_idx is not None:
+                    details['sync_phase'] = phase_idx
+                self.update_job_status(job['id'], 'running', details=details)
             
             upsert_result = self.executor.upsert_inventory_fast(
                 inventory_result,
@@ -352,7 +356,8 @@ class VCenterHandlers(BaseHandler):
                     'current_step': msg,
                     'total_vcenters': total_vcenters,
                     'current_vcenter_index': vcenter_index,
-                    'current_vcenter_name': vcenter_name
+                    'current_vcenter_name': vcenter_name,
+                    'sync_phase': 5  # Alarms phase
                 })
             
             alarms_result = self.executor.sync_vcenter_alarms(content, source_vcenter_id, progress_callback=alarm_progress, vcenter_name=vcenter_name, job_id=job['id'])
