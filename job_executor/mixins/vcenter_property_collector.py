@@ -435,6 +435,112 @@ def collect_vcenter_inventory(
 # Direct Network Collection (Fallback for PropertyCollector)
 # =============================================================================
 
+def _process_network_folder_entities(
+    entities,
+    networks: List,
+    dvpgs: List,
+    dvswitches: List,
+    parent_folder: str = ""
+):
+    """
+    Recursively process network folder entities, handling nested folders.
+    
+    Args:
+        entities: List of network folder childEntity objects
+        networks: List to append standard networks to
+        dvpgs: List to append DVPGs to  
+        dvswitches: List to append DVSwitches to
+        parent_folder: Parent folder path for logging
+    """
+    if not entities:
+        return
+        
+    for net_obj in entities:
+        try:
+            type_name = type(net_obj).__name__
+            moref_id = str(net_obj._moId) if hasattr(net_obj, '_moId') else ''
+            
+            logger.debug(f"Processing network object: type={type_name}, moref={moref_id}, folder={parent_folder}")
+            
+            # RECURSIVE: Handle network folders FIRST
+            if 'Folder' in type_name and hasattr(net_obj, 'childEntity') and net_obj.childEntity:
+                folder_name = getattr(net_obj, 'name', 'Unknown')
+                folder_path = f"{parent_folder}/{folder_name}" if parent_folder else folder_name
+                logger.info(f"Direct: Recursing into network folder: {folder_path}")
+                _process_network_folder_entities(
+                    net_obj.childEntity, networks, dvpgs, dvswitches, folder_path
+                )
+                continue
+            
+            # Check for DVS (VmwareDistributedVirtualSwitch or DistributedVirtualSwitch)
+            if 'DistributedVirtualSwitch' in type_name or moref_id.startswith('dvs-'):
+                dvs_props = {
+                    'name': getattr(net_obj, 'name', 'Unknown'),
+                    'uuid': getattr(net_obj, 'uuid', None) if hasattr(net_obj, 'uuid') else None,
+                }
+                # Get summary.numPorts if available
+                if hasattr(net_obj, 'summary') and hasattr(net_obj.summary, 'numPorts'):
+                    dvs_props['summary.numPorts'] = net_obj.summary.numPorts
+                else:
+                    dvs_props['summary.numPorts'] = 0
+                    
+                dvswitches.append((net_obj, dvs_props))
+                logger.info(f"Direct: Captured DVS: {dvs_props['name']} (moref: {moref_id}, folder: {parent_folder})")
+                
+                # DVPGs are accessible via dvs.portgroup property
+                if hasattr(net_obj, 'portgroup') and net_obj.portgroup:
+                    for pg in net_obj.portgroup:
+                        try:
+                            pg_moref = str(pg._moId) if hasattr(pg, '_moId') else ''
+                            pg_props = {
+                                'name': getattr(pg, 'name', 'Unknown'),
+                                'parent': net_obj,  # DVS reference
+                            }
+                            
+                            # Get VLAN config from defaultPortConfig
+                            if hasattr(pg, 'config') and pg.config:
+                                if hasattr(pg.config, 'defaultPortConfig') and pg.config.defaultPortConfig:
+                                    pg_props['config.defaultPortConfig'] = pg.config.defaultPortConfig
+                            
+                            # Get accessibility
+                            if hasattr(pg, 'summary') and hasattr(pg.summary, 'accessible'):
+                                pg_props['summary.accessible'] = pg.summary.accessible
+                            
+                            dvpgs.append((pg, pg_props))
+                            logger.info(f"Direct: Captured DVPG: {pg_props['name']} from DVS {dvs_props['name']} (moref: {pg_moref})")
+                        except Exception as pg_err:
+                            logger.warning(f"Error processing portgroup: {pg_err}")
+                            
+            # Check for standard Network
+            elif type_name == 'Network' or moref_id.startswith('network-'):
+                net_props = {
+                    'name': getattr(net_obj, 'name', 'Unknown'),
+                }
+                # Get accessibility
+                if hasattr(net_obj, 'summary') and hasattr(net_obj.summary, 'accessible'):
+                    net_props['summary.accessible'] = net_obj.summary.accessible
+                else:
+                    net_props['summary.accessible'] = True  # Assume accessible if we can see it
+                    
+                networks.append((net_obj, net_props))
+                logger.info(f"Direct: Captured Network: {net_props['name']} (moref: {moref_id}, folder: {parent_folder})")
+                
+            # Fallback: check if it has childEntity but wasn't caught as Folder
+            elif hasattr(net_obj, 'childEntity') and net_obj.childEntity:
+                folder_name = getattr(net_obj, 'name', 'Unknown')
+                folder_path = f"{parent_folder}/{folder_name}" if parent_folder else folder_name
+                logger.info(f"Direct: Found container object with children: {folder_path} (type: {type_name})")
+                _process_network_folder_entities(
+                    net_obj.childEntity, networks, dvpgs, dvswitches, folder_path
+                )
+                
+            else:
+                logger.debug(f"Skipping unknown network type: {type_name} (moref: {moref_id})")
+                
+        except Exception as obj_err:
+            logger.warning(f"Error processing network object: {obj_err}")
+
+
 def _collect_networks_direct(content) -> Dict[str, List]:
     """
     Collect networks using direct datacenter traversal (VMware recommended approach).
@@ -454,7 +560,7 @@ def _collect_networks_direct(content) -> Dict[str, List]:
     dvpgs = []
     dvswitches = []
     
-    logger.info("Starting direct datacenter network folder traversal")
+    logger.info("Starting direct datacenter network folder traversal (with recursive folder support)")
     
     # Iterate through all datacenters
     for child in content.rootFolder.childEntity:
@@ -470,83 +576,30 @@ def _collect_networks_direct(content) -> Dict[str, List]:
         
         for datacenter in datacenters:
             dc_name = getattr(datacenter, 'name', 'Unknown')
-            logger.info(f"Traversing datacenter: {dc_name}")
+            logger.info(f"Traversing datacenter networkFolder: {dc_name}")
             
             try:
                 # Get all network objects from networkFolder
                 if not hasattr(datacenter, 'networkFolder') or not datacenter.networkFolder:
+                    logger.warning(f"Datacenter {dc_name} has no networkFolder")
                     continue
                     
                 network_folder = datacenter.networkFolder
                 if not hasattr(network_folder, 'childEntity'):
+                    logger.warning(f"Datacenter {dc_name} networkFolder has no childEntity")
                     continue
                 
-                for net_obj in network_folder.childEntity:
-                    type_name = type(net_obj).__name__
-                    moref_id = str(net_obj._moId) if hasattr(net_obj, '_moId') else ''
-                    
-                    logger.debug(f"Found network object: type={type_name}, moref={moref_id}")
-                    
-                    # Check for DVS (VmwareDistributedVirtualSwitch or DistributedVirtualSwitch)
-                    if 'DistributedVirtualSwitch' in type_name or moref_id.startswith('dvs-'):
-                        dvs_props = {
-                            'name': getattr(net_obj, 'name', 'Unknown'),
-                            'uuid': getattr(net_obj, 'uuid', None) if hasattr(net_obj, 'uuid') else None,
-                        }
-                        # Get summary.numPorts if available
-                        if hasattr(net_obj, 'summary') and hasattr(net_obj.summary, 'numPorts'):
-                            dvs_props['summary.numPorts'] = net_obj.summary.numPorts
-                        else:
-                            dvs_props['summary.numPorts'] = 0
-                            
-                        dvswitches.append((net_obj, dvs_props))
-                        logger.info(f"Direct: Captured DVS: {dvs_props['name']} (moref: {moref_id})")
-                        
-                        # DVPGs are accessible via dvs.portgroup property
-                        if hasattr(net_obj, 'portgroup') and net_obj.portgroup:
-                            for pg in net_obj.portgroup:
-                                try:
-                                    pg_moref = str(pg._moId) if hasattr(pg, '_moId') else ''
-                                    pg_props = {
-                                        'name': getattr(pg, 'name', 'Unknown'),
-                                        'parent': net_obj,  # DVS reference
-                                    }
-                                    
-                                    # Get VLAN config from defaultPortConfig
-                                    if hasattr(pg, 'config') and pg.config:
-                                        if hasattr(pg.config, 'defaultPortConfig') and pg.config.defaultPortConfig:
-                                            pg_props['config.defaultPortConfig'] = pg.config.defaultPortConfig
-                                    
-                                    # Get accessibility
-                                    if hasattr(pg, 'summary') and hasattr(pg.summary, 'accessible'):
-                                        pg_props['summary.accessible'] = pg.summary.accessible
-                                    
-                                    dvpgs.append((pg, pg_props))
-                                    logger.info(f"Direct: Captured DVPG: {pg_props['name']} from DVS {dvs_props['name']} (moref: {pg_moref})")
-                                except Exception as pg_err:
-                                    logger.warning(f"Error processing portgroup: {pg_err}")
-                                    
-                    # Check for standard Network
-                    elif type_name == 'Network' or moref_id.startswith('network-'):
-                        net_props = {
-                            'name': getattr(net_obj, 'name', 'Unknown'),
-                        }
-                        # Get accessibility
-                        if hasattr(net_obj, 'summary') and hasattr(net_obj.summary, 'accessible'):
-                            net_props['summary.accessible'] = net_obj.summary.accessible
-                        else:
-                            net_props['summary.accessible'] = True  # Assume accessible if we can see it
-                            
-                        networks.append((net_obj, net_props))
-                        logger.info(f"Direct: Captured Network: {net_props['name']} (moref: {moref_id})")
-                        
-                    # Check for Folder (network folders can contain sub-folders)
-                    elif hasattr(net_obj, 'childEntity'):
-                        # Recursively process sub-folders (skip for now, log it)
-                        logger.debug(f"Found network folder: {getattr(net_obj, 'name', 'Unknown')}")
-                        
-                    else:
-                        logger.debug(f"Skipping unknown network type: {type_name} (moref: {moref_id})")
+                entity_count = len(network_folder.childEntity) if network_folder.childEntity else 0
+                logger.info(f"Datacenter {dc_name} networkFolder has {entity_count} top-level entities")
+                
+                # Use recursive function to handle nested folders
+                _process_network_folder_entities(
+                    network_folder.childEntity,
+                    networks,
+                    dvpgs,
+                    dvswitches,
+                    parent_folder=""
+                )
                         
             except Exception as dc_err:
                 logger.error(f"Error traversing datacenter {dc_name}: {dc_err}")
