@@ -326,6 +326,8 @@ def collect_vcenter_inventory(
             try:
                 obj, props = _parse_object_content(obj_content)
                 type_name = type(obj).__name__
+                full_type_str = str(type(obj))  # Full class path for pyVmomi
+                moref_id = str(obj._moId) if hasattr(obj, '_moId') else ''
                 
                 if isinstance(obj, vim.VirtualMachine):
                     vms.append((obj, props))
@@ -335,16 +337,31 @@ def collect_vcenter_inventory(
                     clusters.append((obj, props))
                 elif isinstance(obj, vim.Datastore):
                     datastores.append((obj, props))
-                # Use type name matching for distributed networking (pyVmomi dynamic types)
-                elif isinstance(obj, vim.dvs.DistributedVirtualPortgroup) or 'DistributedVirtualPortgroup' in type_name:
+                # DVPGs - multiple detection strategies including MoRef prefix fallback
+                elif (isinstance(obj, vim.dvs.DistributedVirtualPortgroup) or 
+                      'DistributedVirtualPortgroup' in type_name or
+                      'DistributedVirtualPortgroup' in full_type_str or
+                      moref_id.startswith('dvportgroup-')):
                     dvpgs.append((obj, props))
-                    logger.debug(f"Captured DVPG: {props.get('name', 'unknown')} (type: {type_name})")
-                elif isinstance(obj, vim.DistributedVirtualSwitch) or 'DistributedVirtualSwitch' in type_name or 'VmwareDistributedVirtualSwitch' in type_name:
+                    logger.info(f"Captured DVPG: {props.get('name', 'unknown')} (type: {type_name}, moref: {moref_id})")
+                # DVS - multiple detection strategies including MoRef prefix fallback
+                elif (isinstance(obj, vim.DistributedVirtualSwitch) or 
+                      'DistributedVirtualSwitch' in type_name or
+                      'DistributedVirtualSwitch' in full_type_str or
+                      'VmwareDistributedVirtualSwitch' in type_name or
+                      moref_id.startswith('dvs-')):
                     dvswitches.append((obj, props))
-                    logger.debug(f"Captured DVS: {props.get('name', 'unknown')} (type: {type_name})")
-                elif isinstance(obj, vim.Network) or type_name == 'Network':
+                    logger.info(f"Captured DVS: {props.get('name', 'unknown')} (type: {type_name}, moref: {moref_id})")
+                # Standard networks - multiple detection strategies including MoRef prefix fallback
+                elif (isinstance(obj, vim.Network) or 
+                      type_name == 'Network' or
+                      'vim.Network' in full_type_str or
+                      moref_id.startswith('network-')):
                     networks.append((obj, props))
-                    logger.debug(f"Captured Network: {props.get('name', 'unknown')} (type: {type_name})")
+                    logger.info(f"Captured Network: {props.get('name', 'unknown')} (type: {type_name}, moref: {moref_id})")
+                else:
+                    # Log unrecognized types for debugging
+                    logger.warning(f"Unrecognized object type: {type_name} (full: {full_type_str}, moref: {moref_id})")
                     
             except vmodl.fault.ManagedObjectNotFound:
                 errors.append({
@@ -377,6 +394,11 @@ def collect_vcenter_inventory(
                 pass
     
     fetch_time_ms = int((time.time() - start_time) * 1000)
+    
+    # Summary logging for diagnostics
+    logger.info(f"PropertyCollector categorized: {len(clusters)} clusters, {len(hosts)} hosts, "
+                f"{len(vms)} VMs, {len(datastores)} datastores, {len(networks)} networks, "
+                f"{len(dvpgs)} DVPGs, {len(dvswitches)} DVSwitches")
     
     return {
         "clusters": clusters,
