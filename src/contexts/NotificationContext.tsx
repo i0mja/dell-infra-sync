@@ -416,12 +416,22 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
             return;
           }
           
+          // Check if job is silent (should not show toast notifications)
+          const isSilentJob = (job: Job | null): boolean => {
+            if (!job) return false;
+            const details = job.details;
+            return typeof details === 'object' && details !== null && (details as any).silent === true;
+          };
+          
           // Detect state transitions and show toasts
           if (payload.eventType === 'UPDATE' && oldJob && newJob) {
             // Use ref to get current status map (avoids stale closure)
             const previousStatus = previousJobStatusesRef.current.get(newJob.id) || oldJob.status;
             if (previousStatus !== newJob.status) {
-              showJobStateToast(newJob, previousStatus);
+              // Only show toast if job is NOT silent
+              if (!isSilentJob(newJob)) {
+                showJobStateToast(newJob, previousStatus);
+              }
               setPreviousJobStatuses(prev => new Map(prev).set(newJob.id, newJob.status));
               
               // Track recently completed jobs so they remain visible briefly
@@ -430,18 +440,21 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
               }
             }
           } else if (payload.eventType === 'INSERT' && newJob) {
-            // New job created - check for duplicate toasts
-            const toastKey = `${newJob.id}-queued`;
-            const now = Date.now();
-            const lastToastTime = recentToastsRef.current.get(toastKey);
-            
-            // Only show toast if we haven't shown one for this job recently
-            if (!lastToastTime || (now - lastToastTime) > TOAST_DEDUP_WINDOW_MS) {
-              recentToastsRef.current.set(toastKey, now);
-              toast.info(`Job Queued: ${formatJobType(newJob.job_type)}`, {
-                description: 'Job added to queue',
-                duration: 3000,
-              });
+            // Only show toast if job is NOT silent
+            if (!isSilentJob(newJob)) {
+              // New job created - check for duplicate toasts
+              const toastKey = `${newJob.id}-queued`;
+              const now = Date.now();
+              const lastToastTime = recentToastsRef.current.get(toastKey);
+              
+              // Only show toast if we haven't shown one for this job recently
+              if (!lastToastTime || (now - lastToastTime) > TOAST_DEDUP_WINDOW_MS) {
+                recentToastsRef.current.set(toastKey, now);
+                toast.info(`Job Queued: ${formatJobType(newJob.job_type)}`, {
+                  description: 'Job added to queue',
+                  duration: 3000,
+                });
+              }
             }
             setPreviousJobStatuses(prev => new Map(prev).set(newJob.id, newJob.status));
           }
