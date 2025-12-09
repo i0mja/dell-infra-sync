@@ -2860,7 +2860,7 @@ class ZfsTargetHandler(BaseHandler):
                                 if mounted_children:
                                     mounts = ', '.join(c.get('mountpoint') for c in mounted_children)
                                     exclusion_reason = f'Has mounted partitions: {mounts}'
-                            else:
+                                else:
                                     # Check if in use by ZFS
                                     zfs_check = self._ssh_exec(f'zpool status 2>/dev/null | grep -q "{name}"', job_id, log_command=False)
                                     if zfs_check['exit_code'] == 0:
