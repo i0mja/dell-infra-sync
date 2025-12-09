@@ -196,6 +196,7 @@ export function OnboardZfsTargetWizard({
   const [zfsCompression, setZfsCompression] = useState<'lz4' | 'zstd' | 'off'>('lz4');
   const [nfsNetwork, setNfsNetwork] = useState("10.0.0.0/8");
   const [detectedDisks, setDetectedDisks] = useState<Array<{ device: string; size: string; type: string }>>([]);
+  const [excludedDisks, setExcludedDisks] = useState<Array<{ device: string; size: string; reason: string }>>([]);
   const [selectedDisk, setSelectedDisk] = useState("");
   const [detectingDisks, setDetectingDisks] = useState(false);
   const [diskDetectionDone, setDiskDetectionDone] = useState(false);
@@ -674,14 +675,22 @@ export function OnboardZfsTargetWizard({
           clearInterval(pollInterval);
           const details = jobResult.details as Record<string, unknown>;
           const disks = (details?.detected_disks || []) as Array<{ device: string; size: string; type: string }>;
+          const excluded = (details?.excluded_disks || []) as Array<{ device: string; size: string; reason: string }>;
           setDetectedDisks(disks);
+          setExcludedDisks(excluded);
           setDiskDetectionDone(true);
           setDetectingDisks(false);
           if (disks.length > 0) {
             setSelectedDisk(disks[0].device);
             toast({ title: `Found ${disks.length} available disk(s)` });
           } else {
-            toast({ title: 'No unmounted disks found', variant: 'destructive' });
+            toast({ 
+              title: 'No available disks found', 
+              description: excluded.length > 0 
+                ? `${excluded.length} disk(s) excluded - see details below`
+                : 'Please add a secondary disk to this VM',
+              variant: 'destructive' 
+            });
           }
         } else if (jobResult?.status === 'failed' || attempts >= 15) {
           clearInterval(pollInterval);
@@ -1326,9 +1335,28 @@ export function OnboardZfsTargetWizard({
                         </SelectContent>
                       </Select>
                     ) : diskDetectionDone ? (
-                      <p className="text-xs text-muted-foreground">
-                        No available disks detected. Pool will be created on detected disks.
-                      </p>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 p-2 rounded border border-yellow-500/30 bg-yellow-500/10">
+                          <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0" />
+                          <p className="text-xs text-yellow-600 dark:text-yellow-400">
+                            No available disks detected. Please add a secondary disk (not sda/vda) to this VM and click "Detect Disks" again.
+                          </p>
+                        </div>
+                        {excludedDisks.length > 0 && (
+                          <div className="space-y-1">
+                            <p className="text-xs text-muted-foreground font-medium">Excluded disks:</p>
+                            <div className="text-xs space-y-0.5">
+                              {excludedDisks.map((disk) => (
+                                <div key={disk.device} className="flex items-center gap-2 text-muted-foreground">
+                                  <XCircle className="h-3 w-3 text-muted-foreground/50" />
+                                  <span>{disk.device} ({disk.size})</span>
+                                  <span className="text-muted-foreground/70">— {disk.reason}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     ) : null}
                   </div>
                 )}

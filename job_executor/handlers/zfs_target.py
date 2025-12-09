@@ -2783,6 +2783,8 @@ class ZfsTargetHandler(BaseHandler):
             result = self._ssh_exec('lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT 2>/dev/null || lsblk -dno NAME,SIZE,TYPE', job_id)
             
             detected_disks = []
+            excluded_disks = []
+            os_disk_names = ['sda', 'vda', 'nvme0n1', 'xvda']
             
             if result['exit_code'] == 0:
                 output = result['stdout'].strip()
@@ -2798,49 +2800,70 @@ class ZfsTargetHandler(BaseHandler):
                             dtype = device.get('type', '')
                             mountpoint = device.get('mountpoint')
                             
-                            # Skip non-disk devices, mounted disks, and OS disk
+                            # Skip non-disk devices
                             if dtype != 'disk':
                                 continue
+                            
+                            # Check exclusion reasons
+                            exclusion_reason = None
+                            
                             if mountpoint:
-                                continue
-                            if name in ['sda', 'vda', 'nvme0n1', 'xvda']:
-                                continue
+                                exclusion_reason = f'Mounted at {mountpoint}'
+                            elif name in os_disk_names:
+                                exclusion_reason = 'Primary OS disk (boot device)'
+                            else:
+                                # Check if any partitions are mounted
+                                children = device.get('children', [])
+                                mounted_children = [c for c in children if c.get('mountpoint')]
+                                if mounted_children:
+                                    mounts = ', '.join(c.get('mountpoint') for c in mounted_children)
+                                    exclusion_reason = f'Has mounted partitions: {mounts}'
+                                else:
+                                    # Check if in use by ZFS
+                                    zfs_check = self._ssh_exec(f'zpool status 2>/dev/null | grep -q "{name}"', job_id, log_command=False)
+                                    if zfs_check['exit_code'] == 0:
+                                        exclusion_reason = 'Already in use by ZFS pool'
                             
-                            # Check if any partitions are mounted
-                            children = device.get('children', [])
-                            has_mounted_child = any(c.get('mountpoint') for c in children)
-                            if has_mounted_child:
-                                continue
-                            
-                            # Check if in use by ZFS
-                            zfs_check = self._ssh_exec(f'zpool status 2>/dev/null | grep -q "{name}"', job_id, log_command=False)
-                            if zfs_check['exit_code'] == 0:
-                                continue
-                            
-                            detected_disks.append({
-                                'device': f'/dev/{name}',
-                                'size': size,
-                                'type': dtype
-                            })
-                    except json.JSONDecodeError:
-                        pass
-                
-                # Fallback to plain text parsing
-                if not detected_disks:
-                    for line in output.split('\n'):
-                        parts = line.split()
-                        if len(parts) >= 3:
-                            name, size, dtype = parts[0], parts[1], parts[2]
-                            if dtype == 'disk' and name not in ['sda', 'vda', 'nvme0n1', 'xvda']:
+                            if exclusion_reason:
+                                excluded_disks.append({
+                                    'device': f'/dev/{name}',
+                                    'size': size,
+                                    'reason': exclusion_reason
+                                })
+                                self._log_console(job_id, 'DEBUG', f'Excluded disk {name}: {exclusion_reason}', job_details)
+                            else:
                                 detected_disks.append({
                                     'device': f'/dev/{name}',
                                     'size': size,
                                     'type': dtype
                                 })
+                    except json.JSONDecodeError:
+                        pass
+                
+                # Fallback to plain text parsing
+                if not detected_disks and not excluded_disks:
+                    for line in output.split('\n'):
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            name, size, dtype = parts[0], parts[1], parts[2]
+                            if dtype == 'disk':
+                                if name in os_disk_names:
+                                    excluded_disks.append({
+                                        'device': f'/dev/{name}',
+                                        'size': size,
+                                        'reason': 'Primary OS disk (boot device)'
+                                    })
+                                else:
+                                    detected_disks.append({
+                                        'device': f'/dev/{name}',
+                                        'size': size,
+                                        'type': dtype
+                                    })
             
-            self._log_console(job_id, 'INFO', f'Found {len(detected_disks)} available disk(s)', job_details)
+            self._log_console(job_id, 'INFO', f'Found {len(detected_disks)} available disk(s), {len(excluded_disks)} excluded', job_details)
             
             job_details['detected_disks'] = detected_disks
+            job_details['excluded_disks'] = excluded_disks
             self.update_job_status(job_id, 'completed', completed_at=utc_now_iso(), details=job_details)
             
             return {'success': True, 'detected_disks': detected_disks}
