@@ -4504,6 +4504,7 @@ export type Database = {
         | "detect_disks"
         | "retry_onboard_step"
         | "rollback_zfs_onboard"
+        | "sync_protection_config"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -4710,6 +4711,7 @@ export const Constants = {
         "detect_disks",
         "retry_onboard_step",
         "rollback_zfs_onboard",
+        "sync_protection_config",
       ],
       operation_type: [
         "idrac_api",

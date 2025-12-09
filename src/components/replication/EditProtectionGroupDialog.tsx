@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Dialog,
   DialogContent,
@@ -26,6 +27,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ProtectionGroup, useReplicationTargets } from "@/hooks/useReplication";
 import { useVCenters } from "@/hooks/useVCenters";
 import { useAccessibleDatastores } from "@/hooks/useAccessibleDatastores";
+import { supabase } from "@/integrations/supabase/client";
 import { 
   ArrowRight, 
   Target, 
@@ -34,14 +36,15 @@ import {
   AlertTriangle, 
   Info,
   CheckCircle2,
-  XCircle
+  XCircle,
+  RefreshCw
 } from "lucide-react";
 
 interface EditProtectionGroupDialogProps {
   group: ProtectionGroup | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSave: (id: string, updates: Partial<ProtectionGroup>) => Promise<void>;
+  onSave: (id: string, updates: Partial<ProtectionGroup>, originalGroup?: ProtectionGroup) => Promise<void>;
 }
 
 const SCHEDULE_PRESETS = [
@@ -98,6 +101,24 @@ export function EditProtectionGroupDialog({
   const { data: sourceDatastores = [] } = useAccessibleDatastores(sourceVCenterId || undefined);
   const { data: drDatastores = [] } = useAccessibleDatastores(drVCenterId || undefined);
   const { targets: replicationTargets } = useReplicationTargets();
+
+  // Query for pending sync jobs for this protection group
+  const { data: pendingSyncJobs = [] } = useQuery({
+    queryKey: ['sync-jobs', group?.id],
+    queryFn: async () => {
+      if (!group?.id) return [];
+      const { data } = await supabase
+        .from('jobs')
+        .select('id, status, created_at')
+        .eq('job_type', 'sync_protection_config')
+        .contains('target_scope', { protection_group_id: group.id })
+        .in('status', ['pending', 'running'])
+        .order('created_at', { ascending: false });
+      return data || [];
+    },
+    enabled: !!group?.id && open,
+    refetchInterval: 5000, // Poll every 5 seconds when open
+  });
 
   // Group datastores by their linked ZFS target
   const sourceDatastoresByTarget = useMemo(() => {
@@ -229,7 +250,7 @@ export function EditProtectionGroupDialog({
         protection_datastore: sourceDatastore || undefined,
         dr_datastore: drDatastore || undefined,
         target_id: sourceTarget?.id || undefined,
-      });
+      }, group);
       onOpenChange(false);
     } finally {
       setSaving(false);
@@ -249,6 +270,17 @@ export function EditProtectionGroupDialog({
             Modify settings for {group?.name}
           </DialogDescription>
         </DialogHeader>
+
+        {/* Pending Sync Jobs Indicator */}
+        {pendingSyncJobs.length > 0 && (
+          <Alert className="border-primary/50 bg-primary/10">
+            <RefreshCw className="h-4 w-4 animate-spin text-primary" />
+            <AlertDescription className="text-sm">
+              Syncing configuration to ZFS appliances...
+              {pendingSyncJobs[0]?.status === 'running' && ' (in progress)'}
+            </AlertDescription>
+          </Alert>
+        )}
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-4">
           <TabsList className="grid w-full grid-cols-4">
