@@ -137,7 +137,7 @@ export function ProtectionGroupsPanel() {
     selectedVCenterId || undefined
   );
 
-  const { vms, loading: vmsLoading, refetch: refetchVMs, addVMs, removeVM } = useProtectedVMs(
+  const { vms, loading: vmsLoading, refetch: refetchVMs, addVMs, removeVM, batchMigrate } = useProtectedVMs(
     selectedGroupId || undefined
   );
 
@@ -480,6 +480,7 @@ export function ProtectionGroupsPanel() {
               loading={vmsLoading}
               onAddVMs={addVMs}
               onRemoveVM={removeVM}
+              onBatchMigrate={batchMigrate}
               protectionDatastore={selectedGroup.protection_datastore}
               sourceVCenterId={selectedGroup.source_vcenter_id || undefined}
               onRefresh={refetchVMs}
