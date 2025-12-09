@@ -53,6 +53,7 @@ class VCenterDbUpsertMixin:
             "hosts": {"synced": 0, "total": 0, "auto_linked": 0},
             "vms": {"synced": 0, "total": 0},
             "datastores": {"synced": 0, "total": 0},
+            "datastore_hosts": {"synced": 0, "total": 0},
             "networks": {"synced": 0, "total": 0},
             "network_vms": {"synced": 0, "total": 0},
             "errors": []
@@ -89,6 +90,13 @@ class VCenterDbUpsertMixin:
             inventory["datastores"], source_vcenter_id, job_id
         )
         results["datastores"] = ds_result
+        
+        # 3b. Upsert datastore-host relationships (for cluster-aware filtering)
+        self.log(f"{prefix}Upserting datastore-host relationships...")
+        ds_hosts_result = self._upsert_datastore_hosts_batch(
+            inventory["datastores"], source_vcenter_id, job_id
+        )
+        results["datastore_hosts"] = ds_hosts_result
         
         # 4. Upsert networks (phase 3)
         total_networks = len(inventory["networks"]) + len(inventory["dvpgs"])
@@ -368,6 +376,143 @@ class VCenterDbUpsertMixin:
         except Exception as e:
             self.log(f"  Datastore upsert error: {e}", "ERROR")
             return {"synced": 0, "total": len(datastores), "error": str(e)}
+    
+    def _upsert_datastore_hosts_batch(
+        self,
+        datastores: List[Dict],
+        source_vcenter_id: str,
+        job_id: str = None
+    ) -> Dict[str, int]:
+        """
+        Upsert datastore-host relationships to vcenter_datastore_hosts table.
+        
+        This enables cluster-aware datastore filtering in useAccessibleDatastores hook.
+        """
+        if not datastores:
+            return {"synced": 0, "total": 0}
+        
+        headers = {
+            'apikey': SERVICE_ROLE_KEY,
+            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            'Content-Type': 'application/json',
+            'Prefer': 'resolution=merge-duplicates,return=minimal'
+        }
+        
+        # First, get datastore UUIDs from database (we have MoRefs, need UUIDs)
+        ds_morefs = [d.get('id', '') for d in datastores if d.get('id')]
+        if not ds_morefs:
+            return {"synced": 0, "total": 0}
+        
+        # Fetch datastore UUID mappings
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_datastores",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                },
+                params={
+                    'source_vcenter_id': f'eq.{source_vcenter_id}',
+                    'select': 'id,vcenter_id'
+                },
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+            if response.status_code != 200:
+                error_msg = f"Failed to fetch datastore mappings: {response.status_code}"
+                self.log(f"  {error_msg}", "WARN")
+                return {"synced": 0, "total": 0, "error": error_msg}
+            
+            ds_uuid_map = {d['vcenter_id']: d['id'] for d in response.json()}
+        except Exception as e:
+            self.log(f"  Error fetching datastore mappings: {e}", "ERROR")
+            return {"synced": 0, "total": 0, "error": str(e)}
+        
+        # Fetch host UUID mappings
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_hosts",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                },
+                params={
+                    'source_vcenter_id': f'eq.{source_vcenter_id}',
+                    'select': 'id,vcenter_id'
+                },
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+            if response.status_code != 200:
+                error_msg = f"Failed to fetch host mappings: {response.status_code}"
+                self.log(f"  {error_msg}", "WARN")
+                return {"synced": 0, "total": 0, "error": error_msg}
+            
+            host_uuid_map = {h['vcenter_id']: h['id'] for h in response.json()}
+        except Exception as e:
+            self.log(f"  Error fetching host mappings: {e}", "ERROR")
+            return {"synced": 0, "total": 0, "error": str(e)}
+        
+        # Build relationship batch
+        batch = []
+        for ds in datastores:
+            ds_moref = ds.get('id', '')
+            ds_uuid = ds_uuid_map.get(ds_moref)
+            if not ds_uuid:
+                continue
+            
+            host_morefs = ds.get('host_morefs', [])
+            for host_moref in host_morefs:
+                host_uuid = host_uuid_map.get(host_moref)
+                if not host_uuid:
+                    continue
+                
+                batch.append({
+                    'datastore_id': ds_uuid,
+                    'host_id': host_uuid,
+                    'source_vcenter_id': source_vcenter_id,
+                    'accessible': True,
+                    'last_sync': utc_now_iso()
+                })
+        
+        if not batch:
+            self.log(f"  No datastore-host relationships to sync")
+            return {"synced": 0, "total": 0}
+        
+        # Upsert in batches to avoid request size limits
+        batch_size = 200
+        synced = 0
+        errors = []
+        
+        for i in range(0, len(batch), batch_size):
+            chunk = batch[i:i + batch_size]
+            try:
+                response = requests.post(
+                    f"{DSM_URL}/rest/v1/vcenter_datastore_hosts?on_conflict=datastore_id,host_id",
+                    headers=headers,
+                    json=chunk,
+                    verify=VERIFY_SSL,
+                    timeout=30
+                )
+                
+                if response.status_code in [200, 201, 204]:
+                    synced += len(chunk)
+                else:
+                    error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
+                    errors.append(error_msg)
+                    self.log(f"  Datastore-host batch upsert failed: {error_msg}", "WARN")
+            except Exception as e:
+                errors.append(str(e))
+                self.log(f"  Datastore-host upsert error: {e}", "ERROR")
+        
+        self.log(f"  ✓ Synced {synced}/{len(batch)} datastore-host relationships")
+        
+        result = {"synced": synced, "total": len(batch)}
+        if errors:
+            result["error"] = "; ".join(errors)
+        return result
     
     def _upsert_networks_batch(
         self, 
