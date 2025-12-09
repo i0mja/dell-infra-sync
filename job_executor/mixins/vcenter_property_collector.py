@@ -24,11 +24,12 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 def _get_vm_properties() -> List[str]:
-    """VM properties - Required set from spec + Phase 7 additions."""
+    """VM properties - Required set from spec + Phase 7 additions + Phase 8 network NICs."""
     return [
         "name",
         "config.uuid",
         "config.template",                    # Phase 7: Is VM a template?
+        "config.hardware.device",             # Phase 8: NICs for network relationships
         "runtime.powerState",
         "summary.config.vmPathName",
         "summary.config.numCpu",              # Phase 7: CPU count
@@ -37,6 +38,7 @@ def _get_vm_properties() -> List[str]:
         "summary.runtime.host",
         "summary.runtime.connectionState",
         "guest.ipAddress",                    # Phase 7: Primary IP
+        "guest.net",                          # Phase 8: Guest NIC info (IP per NIC)
         "guest.toolsStatus",                  # Phase 7: VMware Tools status
         "guest.toolsVersionStatus2",          # Phase 7: VMware Tools version status
         "storage.perDatastoreUsage",          # Phase 7: Disk usage by datastore
@@ -1034,6 +1036,78 @@ def _vm_to_dict(obj, props: Dict[str, Any], lookups: Dict[str, Any]) -> Dict[str
         except Exception:
             disk_gb = 0.0
     
+    # Phase 8: Extract network interfaces (NICs)
+    network_interfaces = []
+    devices = props.get("config.hardware.device", [])
+    guest_nets = props.get("guest.net", [])
+    
+    # Build a map of MAC address -> guest NIC info for IP resolution
+    mac_to_guest_info = {}
+    if guest_nets:
+        try:
+            for gnic in guest_nets:
+                mac = getattr(gnic, 'macAddress', None)
+                if mac:
+                    ip_addresses = []
+                    ip_config = getattr(gnic, 'ipConfig', None)
+                    if ip_config:
+                        ip_addrs = getattr(ip_config, 'ipAddress', [])
+                        for ip_obj in ip_addrs:
+                            ip = getattr(ip_obj, 'ipAddress', None)
+                            if ip:
+                                ip_addresses.append(ip)
+                    mac_to_guest_info[mac.lower()] = {
+                        'ip_addresses': ip_addresses,
+                        'connected': getattr(gnic, 'connected', True)
+                    }
+        except Exception:
+            pass
+    
+    if devices:
+        try:
+            for device in devices:
+                # Check if it's a virtual ethernet adapter
+                device_type = type(device).__name__
+                if 'VirtualEthernetCard' in device_type or 'VirtualVmxnet' in device_type or 'VirtualE1000' in device_type:
+                    backing = getattr(device, 'backing', None)
+                    network_moref = None
+                    network_name = None
+                    
+                    if backing:
+                        # DVS backing
+                        if hasattr(backing, 'port') and hasattr(backing.port, 'portgroupKey'):
+                            network_moref = backing.port.portgroupKey
+                        # Standard network backing
+                        elif hasattr(backing, 'network') and hasattr(backing.network, '_moId'):
+                            network_moref = str(backing.network._moId)
+                        # Network name from deviceName
+                        if hasattr(backing, 'deviceName'):
+                            network_name = backing.deviceName
+                    
+                    mac_address = getattr(device, 'macAddress', None)
+                    nic_label = getattr(device.deviceInfo, 'label', None) if hasattr(device, 'deviceInfo') else None
+                    connectable = getattr(device, 'connectable', None)
+                    connected = getattr(connectable, 'connected', True) if connectable else True
+                    
+                    # Get IP addresses from guest info via MAC address
+                    ip_addresses = []
+                    if mac_address and mac_address.lower() in mac_to_guest_info:
+                        guest_info = mac_to_guest_info[mac_address.lower()]
+                        ip_addresses = guest_info.get('ip_addresses', [])
+                        connected = guest_info.get('connected', connected)
+                    
+                    network_interfaces.append({
+                        'network_moref': network_moref,
+                        'network_name': network_name,
+                        'nic_label': nic_label,
+                        'mac_address': mac_address,
+                        'adapter_type': device_type,
+                        'connected': connected,
+                        'ip_addresses': ip_addresses,
+                    })
+        except Exception as e:
+            logger.warning(f"Error extracting NICs for VM {props.get('name', '')}: {e}")
+    
     return {
         # Core identifiers
         "id": moref,                                    # MoRef as string
@@ -1065,6 +1139,9 @@ def _vm_to_dict(obj, props: Dict[str, Any], lookups: Dict[str, Any]) -> Dict[str
         # Phase 7: Tools info
         "tools_status": tools_status,
         "tools_version": tools_version,
+        
+        # Phase 8: Network interfaces
+        "network_interfaces": network_interfaces,
     }
 
 

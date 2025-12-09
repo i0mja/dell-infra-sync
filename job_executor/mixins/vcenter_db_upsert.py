@@ -54,6 +54,7 @@ class VCenterDbUpsertMixin:
             "vms": {"synced": 0, "total": 0},
             "datastores": {"synced": 0, "total": 0},
             "networks": {"synced": 0, "total": 0},
+            "network_vms": {"synced": 0, "total": 0},
             "errors": []
         }
         
@@ -107,16 +108,29 @@ class VCenterDbUpsertMixin:
         # 5. Upsert VMs (phase 4)
         self.log(f"{prefix}Upserting {len(inventory['vms'])} VMs...")
         if progress_callback:
-            progress_callback(85, f"{prefix}Syncing VMs...", 4)
+            progress_callback(80, f"{prefix}Syncing VMs...", 4)
         
         vm_result = self._upsert_vms_batch(
             inventory["vms"], source_vcenter_id, job_id
         )
         results["vms"] = vm_result
         
-        # Phase 5 (alarms) is handled separately in vcenter_handlers.py
+        # 6. Upsert Network-VM relationships (phase 5)
+        self.log(f"{prefix}Upserting network-VM relationships...")
         if progress_callback:
-            progress_callback(100, f"{prefix}Inventory sync complete", 4)
+            progress_callback(90, f"{prefix}Syncing network-VM relationships...", 5)
+        
+        network_vm_result = self._upsert_network_vms_batch(
+            inventory["vms"], source_vcenter_id, job_id
+        )
+        results["network_vms"] = network_vm_result
+        
+        # 7. Update network VM counts from relationships
+        self._update_network_vm_counts(source_vcenter_id)
+        
+        # Phase 6 (alarms) is handled separately in vcenter_handlers.py
+        if progress_callback:
+            progress_callback(100, f"{prefix}Inventory sync complete", 5)
         
         duration_ms = int((time.time() - start_time) * 1000)
         self.log(f"{prefix}Inventory upsert completed in {duration_ms}ms")
@@ -571,3 +585,190 @@ class VCenterDbUpsertMixin:
         
         self.log(f"  ✓ Batch upserted {synced}/{len(vms)} VMs")
         return {"synced": synced, "total": len(vms)}
+    
+    def _upsert_network_vms_batch(
+        self,
+        vms: List[Dict],
+        source_vcenter_id: str,
+        job_id: str = None
+    ) -> Dict[str, int]:
+        """Batch upsert network-VM relationships from VM network interfaces."""
+        if not vms:
+            return {"synced": 0, "total": 0}
+        
+        headers = {
+            'apikey': SERVICE_ROLE_KEY,
+            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            'Content-Type': 'application/json',
+            'Prefer': 'resolution=merge-duplicates,return=minimal'
+        }
+        
+        # Fetch network lookup (vcenter_id -> id mapping)
+        networks_response = requests.get(
+            f"{DSM_URL}/rest/v1/vcenter_networks?source_vcenter_id=eq.{source_vcenter_id}&select=id,vcenter_id,name",
+            headers={
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+            },
+            verify=VERIFY_SSL
+        )
+        network_lookup = {}
+        network_name_lookup = {}
+        if networks_response.status_code == 200:
+            from job_executor.utils import _safe_json_parse
+            networks_list = _safe_json_parse(networks_response) or []
+            for n in networks_list:
+                if n.get('vcenter_id'):
+                    network_lookup[n['vcenter_id']] = n['id']
+                if n.get('name'):
+                    network_name_lookup[n['name']] = n['id']
+        
+        # Fetch VM lookup (vcenter_id -> id mapping)
+        vms_response = requests.get(
+            f"{DSM_URL}/rest/v1/vcenter_vms?source_vcenter_id=eq.{source_vcenter_id}&select=id,vcenter_id",
+            headers={
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+            },
+            verify=VERIFY_SSL
+        )
+        vm_lookup = {}
+        if vms_response.status_code == 200:
+            from job_executor.utils import _safe_json_parse
+            vms_list = _safe_json_parse(vms_response) or []
+            vm_lookup = {v['vcenter_id']: v['id'] for v in vms_list if v.get('vcenter_id')}
+        
+        # Build relationship records
+        relationships = []
+        for v in vms:
+            vm_vcenter_id = v.get('id', '')
+            vm_id = vm_lookup.get(vm_vcenter_id)
+            if not vm_id:
+                continue
+            
+            network_interfaces = v.get('network_interfaces', [])
+            for nic in network_interfaces:
+                # Try to resolve network by moref first, then by name
+                network_moref = nic.get('network_moref')
+                network_name = nic.get('network_name')
+                network_id = None
+                
+                if network_moref:
+                    network_id = network_lookup.get(network_moref)
+                if not network_id and network_name:
+                    network_id = network_name_lookup.get(network_name)
+                
+                if not network_id:
+                    continue  # Can't resolve network
+                
+                relationships.append({
+                    'network_id': network_id,
+                    'vm_id': vm_id,
+                    'source_vcenter_id': source_vcenter_id,
+                    'nic_label': nic.get('nic_label'),
+                    'mac_address': nic.get('mac_address'),
+                    'ip_addresses': nic.get('ip_addresses', []),
+                    'adapter_type': nic.get('adapter_type'),
+                    'connected': nic.get('connected', True),
+                    'last_sync': utc_now_iso()
+                })
+        
+        if not relationships:
+            self.log(f"  No network-VM relationships found")
+            return {"synced": 0, "total": 0}
+        
+        # Clear old relationships for this vCenter before inserting new ones
+        try:
+            requests.delete(
+                f"{DSM_URL}/rest/v1/vcenter_network_vms?source_vcenter_id=eq.{source_vcenter_id}",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+        except Exception as e:
+            self.log(f"  Failed to clear old network-VM relationships: {e}", "WARN")
+        
+        # Batch upsert relationships
+        synced = 0
+        batch_size = 100
+        
+        for i in range(0, len(relationships), batch_size):
+            batch = relationships[i:i+batch_size]
+            
+            try:
+                response = requests.post(
+                    f"{DSM_URL}/rest/v1/vcenter_network_vms",
+                    headers=headers,
+                    json=batch,
+                    verify=VERIFY_SSL,
+                    timeout=30
+                )
+                
+                if response.status_code in [200, 201, 204]:
+                    synced += len(batch)
+                else:
+                    self.log(f"  Network-VM batch {i//batch_size + 1} upsert failed: {response.status_code} - {response.text}", "WARN")
+                    
+            except Exception as e:
+                self.log(f"  Network-VM batch upsert error: {e}", "ERROR")
+        
+        self.log(f"  ✓ Batch upserted {synced}/{len(relationships)} network-VM relationships")
+        return {"synced": synced, "total": len(relationships)}
+    
+    def _update_network_vm_counts(self, source_vcenter_id: str):
+        """Update vm_count on networks based on relationship counts."""
+        try:
+            # Get counts per network from relationships
+            count_response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_network_vms?source_vcenter_id=eq.{source_vcenter_id}&select=network_id",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL
+            )
+            
+            if count_response.status_code != 200:
+                self.log(f"  Failed to fetch network-VM counts", "WARN")
+                return
+            
+            from job_executor.utils import _safe_json_parse
+            relationships = _safe_json_parse(count_response) or []
+            
+            # Count VMs per network
+            network_counts = {}
+            for rel in relationships:
+                net_id = rel.get('network_id')
+                if net_id:
+                    network_counts[net_id] = network_counts.get(net_id, 0) + 1
+            
+            # Update each network's vm_count
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            }
+            
+            updated = 0
+            for network_id, count in network_counts.items():
+                try:
+                    response = requests.patch(
+                        f"{DSM_URL}/rest/v1/vcenter_networks?id=eq.{network_id}",
+                        headers=headers,
+                        json={'vm_count': count},
+                        verify=VERIFY_SSL,
+                        timeout=10
+                    )
+                    if response.status_code in [200, 204]:
+                        updated += 1
+                except Exception:
+                    pass
+            
+            self.log(f"  ✓ Updated VM counts for {updated} networks")
+            
+        except Exception as e:
+            self.log(f"  Failed to update network VM counts: {e}", "WARN")
