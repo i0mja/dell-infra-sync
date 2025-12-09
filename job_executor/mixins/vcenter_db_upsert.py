@@ -229,9 +229,17 @@ class VCenterDbUpsertMixin:
                 'name': h.get('name', ''),
                 'vcenter_id': h.get('id', ''),
                 'source_vcenter_id': source_vcenter_id,
-                'cluster': h.get('cluster_name', ''),  # Updated field name
+                'cluster': h.get('cluster_name', ''),
                 'serial_number': h.get('serial_number', ''),
                 'status': status,
+                # Phase 7: ESXi version and maintenance mode
+                'esxi_version': h.get('esxi_version', ''),
+                'maintenance_mode': h.get('maintenance_mode', False),
+                # Phase 6: Quickstats metrics
+                'cpu_usage_mhz': h.get('cpu_usage_mhz', 0),
+                'memory_usage_mb': h.get('memory_usage_mb', 0),
+                'uptime_seconds': h.get('uptime_seconds', 0),
+                'memory_size': h.get('memory_size', 0),
                 'last_sync': utc_now_iso()
             })
         
@@ -313,6 +321,9 @@ class VCenterDbUpsertMixin:
                 'capacity_bytes': d.get('capacity_bytes', 0),
                 'free_bytes': d.get('free_bytes', 0),
                 'accessible': d.get('accessible', True),
+                # Phase 7: Host and VM counts
+                'host_count': d.get('host_count', 0),
+                'vm_count': d.get('vm_count', 0),
                 'last_sync': utc_now_iso()
             })
         
@@ -467,6 +478,17 @@ class VCenterDbUpsertMixin:
                     'cluster_name': v.get('cluster_name', ''),
                     'power_state': v.get('power_state', 'unknown'),
                     'overall_status': v.get('connection_state', 'unknown'),
+                    # Phase 7: VM resources
+                    'cpu_count': v.get('cpu_count', 0),
+                    'memory_mb': v.get('memory_mb', 0),
+                    'disk_gb': v.get('disk_gb', 0),
+                    # Phase 7: Guest info
+                    'guest_os': v.get('guest_os', ''),
+                    'ip_address': v.get('ip_address', ''),
+                    'is_template': v.get('is_template', False),
+                    # Phase 7: Tools info
+                    'tools_status': v.get('tools_status', ''),
+                    'tools_version': v.get('tools_version', ''),
                     'last_sync': utc_now_iso()
                 })
             

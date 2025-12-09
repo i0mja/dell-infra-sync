@@ -24,19 +24,27 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 def _get_vm_properties() -> List[str]:
-    """VM properties - Required set from spec."""
+    """VM properties - Required set from spec + Phase 7 additions."""
     return [
         "name",
         "config.uuid",
+        "config.template",                    # Phase 7: Is VM a template?
         "runtime.powerState",
         "summary.config.vmPathName",
+        "summary.config.numCpu",              # Phase 7: CPU count
+        "summary.config.memorySizeMB",        # Phase 7: Memory in MB
+        "summary.config.guestFullName",       # Phase 7: Guest OS name
         "summary.runtime.host",
         "summary.runtime.connectionState",
+        "guest.ipAddress",                    # Phase 7: Primary IP
+        "guest.toolsStatus",                  # Phase 7: VMware Tools status
+        "guest.toolsVersionStatus2",          # Phase 7: VMware Tools version status
+        "storage.perDatastoreUsage",          # Phase 7: Disk usage by datastore
     ]
 
 
 def _get_host_properties() -> List[str]:
-    """Host properties - Required set from spec."""
+    """Host properties - Required set from spec + Phase 7 additions."""
     return [
         "name",
         "hardware.systemInfo.serialNumber",
@@ -44,7 +52,10 @@ def _get_host_properties() -> List[str]:
         "hardware.memorySize",
         "summary.runtime.powerState",
         "summary.runtime.connectionState",
-        "summary.quickStats",  # Phase 2: CPU/memory usage metrics
+        "summary.runtime.inMaintenanceMode",  # Phase 7: Maintenance mode
+        "summary.config.product.version",     # Phase 7: ESXi version
+        "summary.config.product.build",       # Phase 7: ESXi build
+        "summary.quickStats",                 # Phase 2: CPU/memory usage metrics
         "parent",
     ]
 
@@ -72,6 +83,7 @@ def _get_datastore_properties(enable_deep: bool = False) -> List[str]:
         "summary.capacity",
         "summary.freeSpace",
         "summary.type",
+        "summary.accessible",                 # Phase 7: Accessibility
     ]
     if enable_deep:
         props.extend(["host", "vm"])
@@ -620,7 +632,7 @@ def _host_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
     """
     Transform host to JSON-serializable dict with full metrics.
     
-    Phase 6 implementation - includes quickstats for CPU/memory usage.
+    Phase 6+7 implementation - includes quickstats + ESXi version + maintenance mode.
     
     Args:
         obj: vim.HostSystem object
@@ -635,6 +647,20 @@ def _host_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
     # Get quickstats for this host
     quickstats = lookups.get("host_moref_to_quickstats", {}).get(moref, {})
     
+    # Phase 7: ESXi version string
+    esxi_version = props.get("summary.config.product.version", "") or ""
+    esxi_build = props.get("summary.config.product.build", "") or ""
+    if esxi_version and esxi_build:
+        esxi_version_full = f"{esxi_version} (Build {esxi_build})"
+    else:
+        esxi_version_full = esxi_version
+    
+    # Phase 7: Maintenance mode
+    maintenance_mode = props.get("summary.runtime.inMaintenanceMode", False) or False
+    
+    # Connection state as status
+    connection_state = str(props.get("summary.runtime.connectionState", ""))
+    
     return {
         "id": moref,
         "name": props.get("name", ""),
@@ -642,13 +668,17 @@ def _host_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
         "cluster_name": lookups.get("host_moref_to_cluster_name", {}).get(moref, ""),
         "cluster_moref": lookups.get("host_moref_to_cluster", {}).get(moref, ""),
         "power_state": str(props.get("summary.runtime.powerState", "")),
-        "connection_state": str(props.get("summary.runtime.connectionState", "")),
+        "connection_state": connection_state,
+        "status": connection_state,                      # Phase 7: Status = connection state
         "cpu_info": _safe_cpu_info(props.get("hardware.cpuInfo")),
         "memory_size": props.get("hardware.memorySize", 0),
         # Quickstats metrics
         "cpu_usage_mhz": quickstats.get("overallCpuUsage", 0) or 0,
         "memory_usage_mb": quickstats.get("overallMemoryUsage", 0) or 0,
         "uptime_seconds": quickstats.get("uptime", 0) or 0,
+        # Phase 7: ESXi version and maintenance mode
+        "esxi_version": esxi_version_full,
+        "maintenance_mode": maintenance_mode,
     }
 
 
@@ -671,9 +701,10 @@ def _vm_to_dict(obj, props: Dict[str, Any], lookups: Dict[str, Any]) -> Dict[str
     """
     Transform VM to JSON-serializable dict with cluster resolution.
     
-    Phase 3 implementation per docs/vcenter_sync_final_plan.md:
+    Phase 3+7 implementation per docs/vcenter_sync_final_plan.md:
     - All fields JSON-safe (no vim objects)
     - Cluster resolved via host->cluster lookup chain
+    - Phase 7: CPU, memory, disk, IP, guest OS, tools info
     
     Args:
         obj: vim.VirtualMachine object
@@ -711,6 +742,39 @@ def _vm_to_dict(obj, props: Dict[str, Any], lookups: Dict[str, Any]) -> Dict[str
     else:
         connection_state = ""
     
+    # Phase 7: Extract guest info
+    guest_os = props.get("summary.config.guestFullName", "") or ""
+    cpu_count = props.get("summary.config.numCpu", 0) or 0
+    memory_mb = props.get("summary.config.memorySizeMB", 0) or 0
+    ip_address = props.get("guest.ipAddress", "") or ""
+    is_template = props.get("config.template", False) or False
+    
+    # Phase 7: Tools status
+    tools_status = props.get("guest.toolsStatus")
+    if tools_status is not None:
+        tools_status = str(tools_status)
+    else:
+        tools_status = ""
+    
+    # Phase 7: Tools version status
+    tools_version = props.get("guest.toolsVersionStatus2")
+    if tools_version is not None:
+        tools_version = str(tools_version)
+    else:
+        tools_version = ""
+    
+    # Phase 7: Calculate disk_gb from storage usage
+    disk_gb = 0.0
+    storage_usage = props.get("storage.perDatastoreUsage", [])
+    if storage_usage:
+        try:
+            for usage in storage_usage:
+                committed = getattr(usage, 'committed', 0) or 0
+                disk_gb += committed / (1024**3)
+            disk_gb = round(disk_gb, 2)
+        except Exception:
+            disk_gb = 0.0
+    
     return {
         # Core identifiers
         "id": moref,                                    # MoRef as string
@@ -728,6 +792,20 @@ def _vm_to_dict(obj, props: Dict[str, Any], lookups: Dict[str, Any]) -> Dict[str
         
         # Storage path
         "vm_path_name": props.get("summary.config.vmPathName", ""),  # [datastore] path/to/vm.vmx
+        
+        # Phase 7: VM resources
+        "cpu_count": cpu_count,
+        "memory_mb": memory_mb,
+        "disk_gb": disk_gb,
+        
+        # Phase 7: Guest info
+        "guest_os": guest_os,
+        "ip_address": ip_address,
+        "is_template": is_template,
+        
+        # Phase 7: Tools info
+        "tools_status": tools_status,
+        "tools_version": tools_version,
     }
 
 
@@ -735,7 +813,7 @@ def _datastore_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
     """
     Transform datastore to JSON-serializable dict.
     
-    Phase 6 implementation - schema-aligned field names.
+    Phase 6+7 implementation - schema-aligned field names + host/vm counts.
     
     Args:
         obj: vim.Datastore object
@@ -749,6 +827,16 @@ def _datastore_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
     capacity = props.get("summary.capacity", 0) or 0
     free_space = props.get("summary.freeSpace", 0) or 0
     
+    # Phase 7: Count hosts and VMs if deep relationships enabled
+    host_count = 0
+    vm_count = 0
+    hosts = props.get("host", [])
+    vms = props.get("vm", [])
+    if hosts:
+        host_count = len(hosts) if hasattr(hosts, "__len__") else 0
+    if vms:
+        vm_count = len(vms) if hasattr(vms, "__len__") else 0
+    
     return {
         "id": moref,
         "name": props.get("name", ""),
@@ -757,6 +845,9 @@ def _datastore_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
         "free_bytes": free_space,
         "used_bytes": capacity - free_space,
         "accessible": props.get("summary.accessible", True),
+        # Phase 7: Host and VM counts
+        "host_count": host_count,
+        "vm_count": vm_count,
     }
 
 
