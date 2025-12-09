@@ -1641,16 +1641,19 @@ export function OnboardZfsTargetWizard({
                     </Label>
                   </div>
                   
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="reset-machine-id"
-                      checked={resetMachineId}
-                      onCheckedChange={(c) => setResetMachineId(!!c)}
-                    />
-                    <Label htmlFor="reset-machine-id" className="text-sm cursor-pointer">
-                      Reset machine-id (for cloned VMs)
-                    </Label>
-                  </div>
+                  {/* Only show for non-template VMs - templates use TemplateCloneConfig's clearMachineId instead */}
+                  {!isTemplateMode && (
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="reset-machine-id"
+                        checked={resetMachineId}
+                        onCheckedChange={(c) => setResetMachineId(!!c)}
+                      />
+                      <Label htmlFor="reset-machine-id" className="text-sm cursor-pointer">
+                        Reset machine-id (for cloned VMs)
+                      </Label>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
