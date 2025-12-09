@@ -427,6 +427,41 @@ export function useProtectedVMs(groupId?: string) {
     }
   });
 
+  // Batch add multiple VMs
+  const addVMsMutation = useMutation({
+    mutationFn: async (vmsToAdd: Partial<ProtectedVM>[]) => {
+      if (!groupId) throw new Error('No group selected');
+      if (vmsToAdd.length === 0) throw new Error('No VMs to add');
+
+      const insertData = vmsToAdd.map((vm, index) => ({
+        protection_group_id: groupId,
+        vm_id: vm.vm_id,
+        vm_name: vm.vm_name,
+        vm_vcenter_id: vm.vm_vcenter_id,
+        current_datastore: vm.current_datastore,
+        target_datastore: vm.target_datastore,
+        needs_storage_vmotion: vm.needs_storage_vmotion ?? false,
+        replication_status: 'pending',
+        priority: vm.priority || 100 + index
+      }));
+
+      const { data, error } = await supabase
+        .from('protected_vms')
+        .insert(insertData)
+        .select();
+      
+      if (error) throw error;
+      return data as ProtectedVM[];
+    },
+    onSuccess: (data) => {
+      toast({ title: `${data.length} VM${data.length !== 1 ? 's' : ''} added to protection group` });
+      queryClient.invalidateQueries({ queryKey: ['protected-vms', groupId] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  });
+
   const removeVMMutation = useMutation({
     mutationFn: async (vmId: string) => {
       const { error } = await supabase
@@ -449,7 +484,8 @@ export function useProtectedVMs(groupId?: string) {
     loading, 
     error: error?.message || null, 
     refetch, 
-    addVM: addVMMutation.mutateAsync, 
+    addVM: addVMMutation.mutateAsync,
+    addVMs: addVMsMutation.mutateAsync,
     removeVM: removeVMMutation.mutateAsync 
   };
 }
