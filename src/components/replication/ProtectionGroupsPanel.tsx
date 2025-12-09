@@ -2,26 +2,7 @@ import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { 
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { 
   Shield, 
   Plus, 
@@ -31,24 +12,18 @@ import {
   Server,
   ChevronRight,
   CheckCircle2,
-  HardDrive,
   Pencil,
   Pause,
   PlayCircle,
   AlertTriangle,
   XCircle,
   AlertCircle,
-  ArrowRight,
-  Target,
-  Info,
 } from "lucide-react";
-import { useProtectionGroups, useProtectedVMs, useReplicationTargets, ProtectionGroup } from "@/hooks/useReplication";
-import { useVCenters } from "@/hooks/useVCenters";
-import { useAccessibleDatastores, AccessibleDatastore } from "@/hooks/useAccessibleDatastores";
+import { useProtectionGroups, useProtectedVMs, ProtectionGroup } from "@/hooks/useReplication";
 import { formatDistanceToNow, differenceInDays } from "date-fns";
 import { ProtectedVMsTable } from "./ProtectedVMsTable";
 import { EditProtectionGroupDialog } from "./EditProtectionGroupDialog";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { CreateProtectionGroupWizard } from "./CreateProtectionGroupWizard";
 
 function formatBytes(bytes: number | null): string {
   if (!bytes) return "N/A";
@@ -123,38 +98,12 @@ function PriorityBadge({ priority }: { priority?: string }) {
 }
 
 export function ProtectionGroupsPanel() {
-  const { groups, loading, createGroup, updateGroup, deleteGroup, pauseGroup, runReplicationNow, refetch } = useProtectionGroups();
-  const { targets: replicationTargets } = useReplicationTargets();
-  const { vcenters } = useVCenters();
+  const { groups, loading, updateGroup, deleteGroup, pauseGroup, runReplicationNow, refetch } = useProtectionGroups();
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
-  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showCreateWizard, setShowCreateWizard] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
-  const [creating, setCreating] = useState(false);
   const [runningReplication, setRunningReplication] = useState<string | null>(null);
   const [pausingGroup, setPausingGroup] = useState<string | null>(null);
-
-  // Form state for new protection group
-  const [formData, setFormData] = useState({
-    name: "",
-    description: "",
-    rpoMinutes: 60,
-    // Source site
-    sourceVCenterId: "",
-    sourceDatastore: "",
-    // DR site
-    drVCenterId: "",
-    drDatastore: "",
-  });
-
-  // Get datastores for source vCenter
-  const { data: sourceDatastores = [], isLoading: loadingSourceDatastores } = useAccessibleDatastores(
-    formData.sourceVCenterId || undefined
-  );
-  
-  // Get datastores for DR vCenter
-  const { data: drDatastores = [], isLoading: loadingDrDatastores } = useAccessibleDatastores(
-    formData.drVCenterId || undefined
-  );
 
   const { vms, loading: vmsLoading, refetch: refetchVMs, addVMs, removeVM, batchMigrate } = useProtectedVMs(
     selectedGroupId || undefined
@@ -162,69 +111,11 @@ export function ProtectionGroupsPanel() {
 
   const selectedGroup = groups.find(g => g.id === selectedGroupId);
 
-  // Get linked targets from selected datastores
-  const sourceDatastoreInfo = sourceDatastores.find(ds => ds.name === formData.sourceDatastore);
-  const drDatastoreInfo = drDatastores.find(ds => ds.name === formData.drDatastore);
-  const sourceTarget = sourceDatastoreInfo?.replication_target;
-  const drTarget = drDatastoreInfo?.replication_target;
-
-  // Filter DR vCenters (exclude source)
-  const drVCenterOptions = vcenters.filter(vc => vc.id !== formData.sourceVCenterId);
-
-  // Group source datastores by their linked ZFS target
-  const sourceDatastoresByTarget = sourceDatastores.reduce<Record<string, AccessibleDatastore[]>>((acc, ds) => {
-    const key = ds.replication_target?.name || '_unlinked';
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(ds);
-    return acc;
-  }, {});
-
-  // Group DR datastores by their linked ZFS target  
-  const drDatastoresByTarget = drDatastores.reduce<Record<string, AccessibleDatastore[]>>((acc, ds) => {
-    const key = ds.replication_target?.name || '_unlinked';
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(ds);
-    return acc;
-  }, {});
-
   // Check if test is overdue
   const isTestOverdue = (group: ProtectionGroup): boolean => {
     if (!group.test_reminder_days || !group.last_test_at) return false;
     const daysSinceTest = differenceInDays(new Date(), new Date(group.last_test_at));
     return daysSinceTest > group.test_reminder_days;
-  };
-
-  const resetForm = () => {
-    setFormData({
-      name: "",
-      description: "",
-      rpoMinutes: 60,
-      sourceVCenterId: "",
-      sourceDatastore: "",
-      drVCenterId: "",
-      drDatastore: "",
-    });
-  };
-
-  const handleCreate = async () => {
-    if (!formData.name.trim() || !formData.sourceVCenterId || !formData.sourceDatastore) return;
-    
-    setCreating(true);
-    try {
-      await createGroup({
-        name: formData.name,
-        description: formData.description,
-        protection_datastore: formData.sourceDatastore,
-        source_vcenter_id: formData.sourceVCenterId,
-        rpo_minutes: formData.rpoMinutes,
-        target_id: sourceTarget?.id,
-        dr_datastore: formData.drDatastore || undefined,
-      });
-      setShowCreateDialog(false);
-      resetForm();
-    } finally {
-      setCreating(false);
-    }
   };
 
   const handleRunNow = async (groupId: string) => {
@@ -274,314 +165,10 @@ export function ProtectionGroupsPanel() {
                 Groups of VMs replicated together
               </CardDescription>
             </div>
-            <Dialog open={showCreateDialog} onOpenChange={(open) => { setShowCreateDialog(open); if (!open) resetForm(); }}>
-              <DialogTrigger asChild>
-                <Button size="sm">
-                  <Plus className="h-4 w-4 mr-1" />
-                  New
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle className="flex items-center gap-2">
-                    <Shield className="h-5 w-5" />
-                    Create Protection Group
-                  </DialogTitle>
-                  <DialogDescription>
-                    Configure source site (Point A) and DR site (Point B) for VM replication
-                  </DialogDescription>
-                </DialogHeader>
-                
-                <div className="space-y-4 py-4">
-                  {/* Basic Info */}
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Group Name *</Label>
-                      <Input
-                        placeholder="e.g., Production Databases"
-                        value={formData.name}
-                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>RPO Target (minutes)</Label>
-                      <Input
-                        type="number"
-                        min={1}
-                        max={1440}
-                        value={formData.rpoMinutes}
-                        onChange={(e) => setFormData({ ...formData, rpoMinutes: parseInt(e.target.value) || 60 })}
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Description</Label>
-                    <Textarea
-                      placeholder="Optional description..."
-                      value={formData.description}
-                      onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    />
-                  </div>
-
-                  {/* Source and DR Sites */}
-                  <div className="grid md:grid-cols-2 gap-6 pt-4">
-                    {/* Source Site (Point A) */}
-                    <div className="space-y-4 p-4 border rounded-lg bg-primary/5">
-                      <div className="flex items-center gap-2 pb-2 border-b">
-                        <Badge className="bg-primary">A</Badge>
-                        <span className="font-semibold">Source Site</span>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <Label>vCenter *</Label>
-                        <Select 
-                          value={formData.sourceVCenterId} 
-                          onValueChange={(val) => setFormData({ 
-                            ...formData, 
-                            sourceVCenterId: val, 
-                            sourceDatastore: "",
-                            // Reset DR if it was same as new source
-                            drVCenterId: formData.drVCenterId === val ? "" : formData.drVCenterId,
-                            drDatastore: formData.drVCenterId === val ? "" : formData.drDatastore,
-                          })}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select source vCenter" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {vcenters.map((vc) => (
-                              <SelectItem key={vc.id} value={vc.id}>
-                                <div className="flex items-center gap-2">
-                                  <Server className="h-4 w-4" />
-                                  {vc.name}
-                                </div>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label>Protection Datastore *</Label>
-                        <Select
-                          value={formData.sourceDatastore}
-                          onValueChange={(val) => setFormData({ ...formData, sourceDatastore: val })}
-                          disabled={!formData.sourceVCenterId || loadingSourceDatastores}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder={
-                              !formData.sourceVCenterId 
-                                ? "Select vCenter first" 
-                                : loadingSourceDatastores 
-                                  ? "Loading..." 
-                                  : "Select datastore"
-                            } />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {Object.entries(sourceDatastoresByTarget).map(([targetName, dsList]) => (
-                              <div key={targetName}>
-                                {targetName !== '_unlinked' && (
-                                  <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground flex items-center gap-1">
-                                    <Target className="h-3 w-3" />
-                                    {targetName}
-                                  </div>
-                                )}
-                                {targetName === '_unlinked' && dsList.length > 0 && (
-                                  <div className="px-2 py-1.5 text-xs font-medium text-amber-600 flex items-center gap-1">
-                                    <AlertTriangle className="h-3 w-3" />
-                                    Unlinked
-                                  </div>
-                                )}
-                                {dsList.map((ds) => (
-                                  <SelectItem key={ds.id} value={ds.name}>
-                                    <div className="flex items-center gap-2">
-                                      <HardDrive className="h-3 w-3" />
-                                      <span>{ds.name}</span>
-                                      <span className="text-xs text-muted-foreground">
-                                        ({formatBytes(ds.free_bytes)})
-                                      </span>
-                                    </div>
-                                  </SelectItem>
-                                ))}
-                              </div>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      {/* Show linked ZFS target info */}
-                      {sourceTarget && (
-                        <div className="p-2 bg-muted/50 rounded text-xs space-y-1">
-                          <div className="flex items-center gap-1">
-                            <Target className="h-3 w-3 text-primary" />
-                            <span className="font-medium">{sourceTarget.name}</span>
-                          </div>
-                          <div className="text-muted-foreground">
-                            {sourceTarget.hostname} • {sourceTarget.zfs_pool}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* DR Site (Point B) */}
-                    <div className="space-y-4 p-4 border rounded-lg bg-secondary/30">
-                      <div className="flex items-center gap-2 pb-2 border-b">
-                        <Badge variant="secondary">B</Badge>
-                        <span className="font-semibold">DR Site (Recovery)</span>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <Label>vCenter</Label>
-                        <Select 
-                          value={formData.drVCenterId} 
-                          onValueChange={(val) => setFormData({ 
-                            ...formData, 
-                            drVCenterId: val, 
-                            drDatastore: "" 
-                          })}
-                          disabled={!formData.sourceVCenterId}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder={
-                              !formData.sourceVCenterId 
-                                ? "Select source first" 
-                                : "Select DR vCenter"
-                            } />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {drVCenterOptions.map((vc) => (
-                              <SelectItem key={vc.id} value={vc.id}>
-                                <div className="flex items-center gap-2">
-                                  <Server className="h-4 w-4" />
-                                  {vc.name}
-                                </div>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label>DR Datastore</Label>
-                        <Select
-                          value={formData.drDatastore}
-                          onValueChange={(val) => setFormData({ ...formData, drDatastore: val })}
-                          disabled={!formData.drVCenterId || loadingDrDatastores}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder={
-                              !formData.drVCenterId 
-                                ? "Select DR vCenter first" 
-                                : loadingDrDatastores 
-                                  ? "Loading..." 
-                                  : "Select datastore"
-                            } />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {Object.entries(drDatastoresByTarget).map(([targetName, dsList]) => (
-                              <div key={targetName}>
-                                {targetName !== '_unlinked' && (
-                                  <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground flex items-center gap-1">
-                                    <Target className="h-3 w-3" />
-                                    {targetName}
-                                  </div>
-                                )}
-                                {targetName === '_unlinked' && dsList.length > 0 && (
-                                  <div className="px-2 py-1.5 text-xs font-medium text-amber-600 flex items-center gap-1">
-                                    <AlertTriangle className="h-3 w-3" />
-                                    Unlinked
-                                  </div>
-                                )}
-                                {dsList.map((ds) => (
-                                  <SelectItem key={ds.id} value={ds.name}>
-                                    <div className="flex items-center gap-2">
-                                      <HardDrive className="h-3 w-3" />
-                                      <span>{ds.name}</span>
-                                      <span className="text-xs text-muted-foreground">
-                                        ({formatBytes(ds.free_bytes)})
-                                      </span>
-                                    </div>
-                                  </SelectItem>
-                                ))}
-                              </div>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      {/* Show linked ZFS target info */}
-                      {drTarget && (
-                        <div className="p-2 bg-muted/50 rounded text-xs space-y-1">
-                          <div className="flex items-center gap-1">
-                            <Target className="h-3 w-3 text-primary" />
-                            <span className="font-medium">{drTarget.name}</span>
-                          </div>
-                          <div className="text-muted-foreground">
-                            {drTarget.hostname} • {drTarget.zfs_pool}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Replication Flow Visualization */}
-                  {formData.sourceDatastore && formData.drDatastore && (
-                    <div className="flex items-center justify-center gap-4 py-3 px-4 bg-muted/50 rounded-lg">
-                      <div className="text-center">
-                        <div className="text-sm font-medium">{formData.sourceDatastore}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {vcenters.find(v => v.id === formData.sourceVCenterId)?.name}
-                        </div>
-                        {sourceTarget && (
-                          <div className="text-xs text-primary">{sourceTarget.name}</div>
-                        )}
-                      </div>
-                      <ArrowRight className="h-5 w-5 text-muted-foreground" />
-                      <div className="text-center">
-                        <div className="text-sm font-medium">{formData.drDatastore}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {vcenters.find(v => v.id === formData.drVCenterId)?.name}
-                        </div>
-                        {drTarget && (
-                          <div className="text-xs text-primary">{drTarget.name}</div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Warnings */}
-                  {formData.sourceDatastore && !sourceTarget && (
-                    <Alert>
-                      <AlertTriangle className="h-4 w-4" />
-                      <AlertDescription className="text-sm">
-                        Source datastore is not linked to a ZFS appliance. Link it in ZFS Targets for automatic replication.
-                      </AlertDescription>
-                    </Alert>
-                  )}
-
-                  {sourceTarget && drTarget && sourceTarget.partner_target_id !== drTarget.id && (
-                    <Alert>
-                      <Info className="h-4 w-4" />
-                      <AlertDescription className="text-sm">
-                        Source and DR ZFS targets are not paired. Pair them in ZFS Targets for optimal configuration.
-                      </AlertDescription>
-                    </Alert>
-                  )}
-                </div>
-
-                <DialogFooter className="gap-2">
-                  <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
-                    Cancel
-                  </Button>
-                  <Button 
-                    onClick={handleCreate} 
-                    disabled={creating || !formData.name.trim() || !formData.sourceVCenterId || !formData.sourceDatastore}
-                  >
-                    {creating ? 'Creating...' : 'Create Protection Group'}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+            <Button size="sm" onClick={() => setShowCreateWizard(true)}>
+              <Plus className="h-4 w-4 mr-1" />
+              New
+            </Button>
           </div>
         </CardHeader>
         <CardContent>
@@ -744,6 +331,12 @@ export function ProtectionGroupsPanel() {
         open={showEditDialog}
         onOpenChange={setShowEditDialog}
         onSave={handleSaveEdit}
+      />
+
+      {/* Create Protection Group Wizard */}
+      <CreateProtectionGroupWizard
+        open={showCreateWizard}
+        onOpenChange={setShowCreateWizard}
       />
     </div>
   );
