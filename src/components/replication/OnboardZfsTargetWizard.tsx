@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/select";
 import { VMCombobox } from "./VMCombobox";
 import { VMMultiSelectList } from "./VMMultiSelectList";
+import { TemplateCloneConfig, CloneSettings } from "./TemplateCloneConfig";
 import {
   Collapsible,
   CollapsibleContent,
@@ -75,6 +76,7 @@ import { useVCenters } from "@/hooks/useVCenters";
 import { useVCenterVMs } from "@/hooks/useVCenterVMs";
 import { useSshKeys } from "@/hooks/useSshKeys";
 import { useProtectionGroups } from "@/hooks/useReplication";
+import { useAccessibleDatastores } from "@/hooks/useAccessibleDatastores";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -217,6 +219,22 @@ export function OnboardZfsTargetWizard({
   const [schedulePreset, setSchedulePreset] = useState<SchedulePreset>('hourly');
   const [customCron, setCustomCron] = useState("0 * * * *");
   
+  // Template cloning state
+  const [isTemplateMode, setIsTemplateMode] = useState(false);
+  const [cloneSettings, setCloneSettings] = useState<CloneSettings>({
+    cloneName: '',
+    targetDatastore: '',
+    targetCluster: '',
+    useGuestCustomization: true,
+    clearMachineId: true,
+    clearSshHostKeys: true,
+    useStaticIp: false,
+    staticIp: '',
+    staticNetmask: '',
+    staticGateway: '',
+    staticDns: '',
+  });
+  
   // Page 6: Job execution state
   const [jobStatus, setJobStatus] = useState<string>('');
   const [stepResults, setStepResults] = useState<StepResult[]>([]);
@@ -241,6 +259,9 @@ export function OnboardZfsTargetWizard({
   
   // Fetch VMs from selected vCenter
   const { data: vms = [], isLoading: vmsLoading, clusters = [] } = useVCenterVMs(selectedVCenterId || undefined);
+  
+  // Fetch datastores for template cloning
+  const { data: datastores = [], isLoading: datastoresLoading } = useAccessibleDatastores(selectedVCenterId || undefined);
   
   // Fetch SSH keys
   const { sshKeys = [], isLoading: sshKeysLoading, generateKey } = useSshKeys();
@@ -340,6 +361,20 @@ export function OnboardZfsTargetWizard({
       setRetryingStep(null);
       setRollingBack(false);
       setRollbackStatus('idle');
+      setIsTemplateMode(false);
+      setCloneSettings({
+        cloneName: '',
+        targetDatastore: '',
+        targetCluster: '',
+        useGuestCustomization: true,
+        clearMachineId: true,
+        clearSshHostKeys: true,
+        useStaticIp: false,
+        staticIp: '',
+        staticNetmask: '',
+        staticGateway: '',
+        staticDns: '',
+      });
     }
   }, [open, preselectedVCenterId, preselectedVMId]);
   
@@ -357,7 +392,30 @@ export function OnboardZfsTargetWizard({
     if (targetName && !datastoreName) {
       setDatastoreName(`NFS-${targetName}`);
     }
-  }, [targetName, datastoreName]);
+    // Auto-update clone name when target name changes in template mode
+    if (targetName && isTemplateMode && !cloneSettings.cloneName) {
+      setCloneSettings(prev => ({
+        ...prev,
+        cloneName: `${targetName}-${Date.now().toString(36).slice(-4)}`,
+      }));
+    }
+  }, [targetName, datastoreName, isTemplateMode, cloneSettings.cloneName]);
+  
+  // Auto-detect template mode when VM changes
+  useEffect(() => {
+    if (selectedVM?.is_template) {
+      setIsTemplateMode(true);
+      // Auto-generate clone name
+      if (targetName && !cloneSettings.cloneName) {
+        setCloneSettings(prev => ({
+          ...prev,
+          cloneName: `${targetName}-${Date.now().toString(36).slice(-4)}`,
+        }));
+      }
+    } else {
+      setIsTemplateMode(false);
+    }
+  }, [selectedVM?.is_template, targetName]);
   
   // Track previous VM ID to detect VM selection changes
   const [previousVMId, setPreviousVMId] = useState<string | null>(null);
@@ -485,6 +543,25 @@ export function OnboardZfsTargetWizard({
             rpo_minutes: protectionGroupOption !== 'skip' 
               ? (schedulePreset === 'custom' ? 60 : SCHEDULE_PRESETS[schedulePreset].rpoMinutes)
               : undefined,
+            // Template cloning configuration
+            is_template_deploy: isTemplateMode,
+            clone_config: isTemplateMode ? {
+              source_vm_moref: selectedVM?.vcenter_id,
+              clone_name: cloneSettings.cloneName,
+              target_datastore: cloneSettings.targetDatastore,
+              target_cluster: cloneSettings.targetCluster,
+              guest_customization: {
+                hostname: targetName,
+                clear_machine_id: cloneSettings.clearMachineId,
+                clear_ssh_host_keys: cloneSettings.clearSshHostKeys,
+                static_ip: cloneSettings.useStaticIp ? {
+                  ip: cloneSettings.staticIp,
+                  netmask: cloneSettings.staticNetmask,
+                  gateway: cloneSettings.staticGateway,
+                  dns: cloneSettings.staticDns,
+                } : null,
+              }
+            } : undefined,
           }
         })
         .select()
@@ -923,7 +1000,12 @@ export function OnboardZfsTargetWizard({
   const canProceedFromPage = (page: number): boolean => {
     switch (page) {
       case 1: 
-        return !!selectedVCenterId && !!selectedVMId && !!targetName;
+        const baseValid = !!selectedVCenterId && !!selectedVMId && !!targetName;
+        // Templates require additional clone config validation
+        if (isTemplateMode) {
+          return baseValid && !!cloneSettings.cloneName && !!cloneSettings.targetCluster;
+        }
+        return baseValid;
       case 2: 
         return authMethod === 'password' ? !!rootPassword : 
                authMethod === 'existing_key' ? !!selectedSshKeyId : 
@@ -1130,6 +1212,22 @@ export function OnboardZfsTargetWizard({
                   This name will be used for the replication target and datastore
                 </p>
               </div>
+              
+              {/* Template Clone Configuration */}
+              {isTemplateMode && (
+                <TemplateCloneConfig
+                  templateName={selectedVM?.name || ''}
+                  targetName={targetName}
+                  settings={cloneSettings}
+                  onSettingsChange={setCloneSettings}
+                  datastores={datastores.map(ds => ({ 
+                    name: ds.name, 
+                    freeSpace: ds.free_bytes || undefined 
+                  }))}
+                  clusters={clusters.map(c => ({ name: c }))}
+                  isLoading={datastoresLoading}
+                />
+              )}
             </div>
           )}
           

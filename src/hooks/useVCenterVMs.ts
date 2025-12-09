@@ -20,6 +20,7 @@ export interface VCenterVM {
   ip_address?: string;
   cluster_name?: string;
   is_template?: boolean;
+  vcenter_id?: string; // VMware moref (e.g., vm-123)
 }
 
 const BATCH_SIZE = 1000;
@@ -87,6 +88,7 @@ export function useVCenterVMs(vcenterId?: string) {
         ip_address: vm.ip_address,
         cluster_name: vm.cluster_name,
         is_template: vm.is_template,
+        vcenter_id: vm.vcenter_id,
       })) as VCenterVM[];
     },
     enabled: !!vcenterId,

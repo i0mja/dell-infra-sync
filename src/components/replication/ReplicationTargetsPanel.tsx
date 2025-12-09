@@ -47,11 +47,13 @@ import {
   Link2,
   Unlink,
   ArrowRightLeft,
+  Wand2,
 } from "lucide-react";
 import { useReplicationTargets } from "@/hooks/useReplication";
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { PrepareTemplateWizard } from "./PrepareTemplateWizard";
 
 interface ReplicationTargetsPanelProps {
   onAddTarget?: () => void;
@@ -63,6 +65,7 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [showPairDialog, setShowPairDialog] = useState(false);
+  const [showPrepareTemplateWizard, setShowPrepareTemplateWizard] = useState(false);
   const [pairingTargetId, setPairingTargetId] = useState<string | null>(null);
   const [selectedPartnerId, setSelectedPartnerId] = useState<string>("");
   const [editingTarget, setEditingTarget] = useState<any>(null);
@@ -327,6 +330,10 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
             </CardDescription>
           </div>
           <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setShowPrepareTemplateWizard(true)}>
+              <Wand2 className="h-4 w-4 mr-1" />
+              Prepare Template
+            </Button>
             {onAddTarget && (
               <Button onClick={onAddTarget}>
                 <Plus className="h-4 w-4 mr-1" />
@@ -783,6 +790,12 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      
+      {/* Prepare Template Wizard */}
+      <PrepareTemplateWizard 
+        open={showPrepareTemplateWizard} 
+        onOpenChange={setShowPrepareTemplateWizard} 
+      />
     </Card>
   );
 }

@@ -114,6 +114,7 @@ from job_executor.handlers import (
 )
 from job_executor.handlers.template_copy import TemplateCopyHandler
 from job_executor.handlers.ssh_key_handlers import SshKeyHandler
+from job_executor.handlers.template_handler import TemplateHandler
 
 # Import IDM/FreeIPA authentication (conditional)
 try:
@@ -192,6 +193,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
         self.ssh_key_handler = SshKeyHandler(self)
         self.zfs_target_handler = ZfsTargetHandler(self)
         self.replication_handler = ReplicationHandler(self)
+        self.template_handler = TemplateHandler(self)
 
     def _validate_service_role_key(self):
         """Ensure SERVICE_ROLE_KEY is present before making Supabase requests"""
@@ -941,6 +943,9 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
             'commit_failover': self.replication_handler.execute_commit_failover,
             'rollback_failover': self.replication_handler.execute_rollback_failover,
             'collect_replication_metrics': self.replication_handler.execute_collect_replication_metrics,
+            # Template handlers
+            'prepare_zfs_template': self.template_handler.execute_prepare_zfs_template,
+            'clone_zfs_template': self.template_handler.execute_clone_zfs_template,
         }
         
         handler = handler_map.get(job_type)
