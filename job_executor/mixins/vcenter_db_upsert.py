@@ -361,8 +361,7 @@ class VCenterDbUpsertMixin:
             'apikey': SERVICE_ROLE_KEY,
             'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
             'Content-Type': 'application/json',
-            'Prefer': 'resolution=merge-duplicates,return=minimal',
-            'on-conflict': 'vcenter_id,source_vcenter_id'  # Explicit conflict columns
+            'Prefer': 'resolution=merge-duplicates,return=minimal'
         }
         
         # Build DVS lookup (for backward compat if needed)
@@ -462,7 +461,7 @@ class VCenterDbUpsertMixin:
         
         try:
             response = requests.post(
-                f"{DSM_URL}/rest/v1/vcenter_networks",
+                f"{DSM_URL}/rest/v1/vcenter_networks?on_conflict=vcenter_id,source_vcenter_id",
                 headers=headers,
                 json=batch,
                 verify=VERIFY_SSL,
