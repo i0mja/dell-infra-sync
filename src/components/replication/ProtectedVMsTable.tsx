@@ -10,6 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { 
   Plus, 
   Trash2, 
@@ -21,6 +22,7 @@ import {
   MoveRight,
   MoreVertical,
   Wand2,
+  Loader2,
 } from "lucide-react";
 import { ProtectedVM } from "@/hooks/useReplication";
 import { formatDistanceToNow } from "date-fns";
@@ -31,8 +33,9 @@ import { AddVMsDialog } from "./AddVMsDialog";
 interface ProtectedVMsTableProps {
   vms: ProtectedVM[];
   loading: boolean;
-  onAddVMs: (vms: Partial<ProtectedVM>[]) => Promise<unknown>;
+  onAddVMs: (vms: Partial<ProtectedVM>[], autoMigrate?: boolean) => Promise<unknown>;
   onRemoveVM: (vmId: string) => Promise<void>;
+  onBatchMigrate?: (vmIds: string[]) => Promise<unknown>;
   protectionDatastore?: string;
   sourceVCenterId?: string;
   onRefresh?: () => void;
@@ -43,11 +46,13 @@ export function ProtectedVMsTable({
   loading,
   onAddVMs,
   onRemoveVM,
+  onBatchMigrate,
   protectionDatastore,
   sourceVCenterId,
   onRefresh,
 }: ProtectedVMsTableProps) {
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const [migratingAll, setMigratingAll] = useState(false);
   
   // Wizard state
   const [datastoreWizardOpen, setDatastoreWizardOpen] = useState(false);
@@ -56,6 +61,10 @@ export function ProtectedVMsTable({
   
   // Get existing VM IDs to exclude from selector
   const existingVMIds = vms.map(vm => vm.vm_id).filter(Boolean) as string[];
+  
+  // Count VMs pending migration
+  const pendingMigrationVMs = vms.filter(vm => vm.needs_storage_vmotion);
+  const pendingMigrationCount = pendingMigrationVMs.length;
   
   const openDatastoreWizard = (vm: ProtectedVM) => {
     setSelectedVM(vm);
@@ -69,6 +78,18 @@ export function ProtectedVMsTable({
   
   const handleWizardComplete = () => {
     onRefresh?.();
+  };
+
+  const handleBatchMigrate = async () => {
+    if (!onBatchMigrate || pendingMigrationCount === 0) return;
+    
+    setMigratingAll(true);
+    try {
+      const vmIds = pendingMigrationVMs.map(vm => vm.id);
+      await onBatchMigrate(vmIds);
+    } finally {
+      setMigratingAll(false);
+    }
   };
 
   const getStatusBadge = (status: string) => {
@@ -111,6 +132,38 @@ export function ProtectedVMsTable({
 
   return (
     <div className="space-y-4">
+      {/* Pending Migrations Alert */}
+      {pendingMigrationCount > 0 && onBatchMigrate && (
+        <Alert className="border-amber-500/30 bg-amber-500/10">
+          <AlertTriangle className="h-4 w-4 text-amber-600" />
+          <AlertDescription className="flex items-center justify-between">
+            <span className="text-amber-600">
+              {pendingMigrationCount} VM{pendingMigrationCount !== 1 ? 's' : ''} need{pendingMigrationCount === 1 ? 's' : ''} migration to protection datastore
+              {protectionDatastore && <span className="text-muted-foreground"> ({protectionDatastore})</span>}
+            </span>
+            <Button 
+              size="sm" 
+              variant="outline"
+              onClick={handleBatchMigrate}
+              disabled={migratingAll}
+              className="border-amber-500/30 text-amber-600 hover:bg-amber-500/10"
+            >
+              {migratingAll ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                  Migrating...
+                </>
+              ) : (
+                <>
+                  <MoveRight className="h-4 w-4 mr-1" />
+                  Migrate All
+                </>
+              )}
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Add VMs Button */}
       <div className="flex justify-end">
         <Button size="sm" onClick={() => setShowAddDialog(true)} disabled={!sourceVCenterId}>

@@ -30,6 +30,7 @@ import {
   ArrowUpDown,
   FileStack,
   CheckSquare,
+  MoveRight,
 } from "lucide-react";
 import { ProtectedVM } from "@/hooks/useReplication";
 import { useVCenterVMs, VCenterVM } from "@/hooks/useVCenterVMs";
@@ -44,7 +45,7 @@ interface AddVMsDialogProps {
   sourceVCenterId: string;
   protectionDatastore?: string;
   existingVMIds: string[];
-  onAddVMs: (vms: Partial<ProtectedVM>[]) => Promise<unknown>;
+  onAddVMs: (vms: Partial<ProtectedVM>[], autoMigrate?: boolean) => Promise<unknown>;
 }
 
 export function AddVMsDialog({
@@ -63,6 +64,7 @@ export function AddVMsDialog({
   const [adding, setAdding] = useState(false);
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [autoMigrate, setAutoMigrate] = useState(false);
 
   // Use paginated hook for all VMs
   const { data: vms = [], isLoading, clusters } = useVCenterVMs(open ? sourceVCenterId : undefined);
@@ -187,7 +189,7 @@ export function AddVMsDialog({
         needs_storage_vmotion: true,
       }));
 
-      await onAddVMs(vmsToAdd);
+      await onAddVMs(vmsToAdd, autoMigrate);
       handleClose();
     } finally {
       setAdding(false);
@@ -201,6 +203,7 @@ export function AddVMsDialog({
     setClusterFilter("all");
     setPowerFilter("all");
     setHideTemplates(true);
+    setAutoMigrate(false);
   };
 
   const clearFilters = () => {
@@ -415,12 +418,31 @@ export function AddVMsDialog({
 
           {/* Selection Summary */}
           {selectedVMIds.size > 0 && (
-            <div className="flex items-center gap-4 px-3 py-2 bg-muted/50 rounded-lg border text-sm">
-              <CheckSquare className="h-4 w-4 text-primary" />
-              <span className="font-medium">{selectedVMIds.size} VMs selected</span>
-              <span className="text-muted-foreground">
-                • {poweredOnSelected} powered on • {poweredOffSelected} powered off
-              </span>
+            <div className="flex flex-col gap-2 px-3 py-2 bg-muted/50 rounded-lg border">
+              <div className="flex items-center gap-4 text-sm">
+                <CheckSquare className="h-4 w-4 text-primary" />
+                <span className="font-medium">{selectedVMIds.size} VMs selected</span>
+                <span className="text-muted-foreground">
+                  • {poweredOnSelected} powered on • {poweredOffSelected} powered off
+                </span>
+              </div>
+              {protectionDatastore && (
+                <div className="flex items-center gap-2 pt-1 border-t border-border/50">
+                  <Checkbox
+                    id="auto-migrate"
+                    checked={autoMigrate}
+                    onCheckedChange={(checked) => setAutoMigrate(!!checked)}
+                  />
+                  <label 
+                    htmlFor="auto-migrate" 
+                    className="text-sm cursor-pointer flex items-center gap-1"
+                  >
+                    <MoveRight className="h-3 w-3" />
+                    Automatically migrate to protection datastore
+                    <span className="text-muted-foreground">({protectionDatastore})</span>
+                  </label>
+                </div>
+              )}
             </div>
           )}
         </div>

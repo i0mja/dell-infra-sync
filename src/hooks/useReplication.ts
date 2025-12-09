@@ -429,7 +429,7 @@ export function useProtectedVMs(groupId?: string) {
 
   // Batch add multiple VMs
   const addVMsMutation = useMutation({
-    mutationFn: async (vmsToAdd: Partial<ProtectedVM>[]) => {
+    mutationFn: async ({ vmsToAdd, autoMigrate }: { vmsToAdd: Partial<ProtectedVM>[], autoMigrate?: boolean }) => {
       if (!groupId) throw new Error('No group selected');
       if (vmsToAdd.length === 0) throw new Error('No VMs to add');
 
@@ -440,7 +440,7 @@ export function useProtectedVMs(groupId?: string) {
         vm_vcenter_id: vm.vm_vcenter_id,
         current_datastore: vm.current_datastore,
         target_datastore: vm.target_datastore,
-        needs_storage_vmotion: vm.needs_storage_vmotion ?? false,
+        needs_storage_vmotion: vm.needs_storage_vmotion ?? true,
         replication_status: 'pending',
         priority: vm.priority || 100 + index
       }));
@@ -451,6 +451,21 @@ export function useProtectedVMs(groupId?: string) {
         .select();
       
       if (error) throw error;
+
+      // If autoMigrate is true, trigger batch migration jobs
+      if (autoMigrate && data && data.length > 0) {
+        try {
+          const vmIds = data.map(vm => vm.id);
+          await fetchJobExecutor('/api/zerfaux/batch-storage-vmotion', {
+            method: 'POST',
+            body: JSON.stringify({ vm_ids: vmIds })
+          });
+        } catch (migrationError) {
+          console.error('Auto-migration job creation failed:', migrationError);
+          // Don't throw - VMs are added, migration jobs just failed to queue
+        }
+      }
+
       return data as ProtectedVM[];
     },
     onSuccess: (data) => {
@@ -479,13 +494,35 @@ export function useProtectedVMs(groupId?: string) {
     }
   });
 
+  // Batch migrate VMs to protection datastore
+  const batchMigrateMutation = useMutation({
+    mutationFn: async (vmIds: string[]) => {
+      if (vmIds.length === 0) throw new Error('No VMs to migrate');
+      
+      const result = await fetchJobExecutor('/api/zerfaux/batch-storage-vmotion', {
+        method: 'POST',
+        body: JSON.stringify({ vm_ids: vmIds })
+      });
+      return result;
+    },
+    onSuccess: () => {
+      toast({ title: 'Migration jobs created', description: 'VMs will be migrated to protection datastore' });
+      queryClient.invalidateQueries({ queryKey: ['protected-vms', groupId] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Error creating migration jobs', description: err.message, variant: 'destructive' });
+    }
+  });
+
   return { 
     vms, 
     loading, 
     error: error?.message || null, 
     refetch, 
     addVM: addVMMutation.mutateAsync,
-    addVMs: addVMsMutation.mutateAsync,
+    addVMs: (vmsToAdd: Partial<ProtectedVM>[], autoMigrate?: boolean) => 
+      addVMsMutation.mutateAsync({ vmsToAdd, autoMigrate }),
+    batchMigrate: batchMigrateMutation.mutateAsync,
     removeVM: removeVMMutation.mutateAsync 
   };
 }
