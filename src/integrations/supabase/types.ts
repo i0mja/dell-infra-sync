@@ -3657,47 +3657,59 @@ export type Database = {
       vcenter_hosts: {
         Row: {
           cluster: string | null
+          cpu_usage_mhz: number | null
           created_at: string
           esxi_version: string | null
           id: string
           last_sync: string | null
           maintenance_mode: boolean | null
+          memory_size: number | null
+          memory_usage_mb: number | null
           name: string
           serial_number: string | null
           server_id: string | null
           source_vcenter_id: string | null
           status: string | null
           updated_at: string
+          uptime_seconds: number | null
           vcenter_id: string | null
         }
         Insert: {
           cluster?: string | null
+          cpu_usage_mhz?: number | null
           created_at?: string
           esxi_version?: string | null
           id?: string
           last_sync?: string | null
           maintenance_mode?: boolean | null
+          memory_size?: number | null
+          memory_usage_mb?: number | null
           name: string
           serial_number?: string | null
           server_id?: string | null
           source_vcenter_id?: string | null
           status?: string | null
           updated_at?: string
+          uptime_seconds?: number | null
           vcenter_id?: string | null
         }
         Update: {
           cluster?: string | null
+          cpu_usage_mhz?: number | null
           created_at?: string
           esxi_version?: string | null
           id?: string
           last_sync?: string | null
           maintenance_mode?: boolean | null
+          memory_size?: number | null
+          memory_usage_mb?: number | null
           name?: string
           serial_number?: string | null
           server_id?: string | null
           source_vcenter_id?: string | null
           status?: string | null
           updated_at?: string
+          uptime_seconds?: number | null
           vcenter_id?: string | null
         }
         Relationships: [
