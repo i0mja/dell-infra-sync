@@ -2262,8 +2262,13 @@ class ZfsTargetHandler(BaseHandler):
                 raise Exception(f"VM not found in database: {vm_id}")
             
             vm_name = vm_info.get('name', 'Unknown')
-            vm_moref = vm_info.get('moref')
+            vm_moref = vm_info.get('vcenter_id')  # Column is 'vcenter_id', not 'moref'
+            vm_ip = vm_info.get('ip_address')
             target_name = details.get('target_name', f'zfs-{vm_name}')
+            
+            # Validate we have the moref
+            if not vm_moref:
+                raise Exception(f"VM {vm_name} has no vCenter ID (moref) - please resync vCenter inventory")
             
             job_details['vm_name'] = vm_name
             job_details['vm_moref'] = vm_moref
