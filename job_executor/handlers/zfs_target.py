@@ -2303,6 +2303,54 @@ class ZfsTargetHandler(BaseHandler):
                 if not vm:
                     raise Exception(f"VM not found in vCenter: {vm_moref}")
                 
+                # Check if this is a template deployment
+                is_template_deploy = details.get('is_template_deploy', False)
+                is_template = hasattr(vm.config, 'template') and vm.config.template
+                
+                if is_template or is_template_deploy:
+                    # Clone the template first
+                    clone_config = details.get('clone_template', {})
+                    clone_name = clone_config.get('clone_name') or f"{target_name}-vm"
+                    target_cluster = clone_config.get('target_cluster')
+                    target_datastore = clone_config.get('target_datastore')
+                    
+                    add_step_result('clone_template', 'running', f'Cloning template to {clone_name}...')
+                    self._log_console(job_id, 'INFO', f'Source is a template, cloning to: {clone_name}', job_details)
+                    
+                    # Find resource pool from cluster
+                    content = self.vcenter_conn.RetrieveContent()
+                    resource_pool = self._find_resource_pool(content, target_cluster)
+                    if not resource_pool:
+                        raise Exception(f"No resource pool found for cluster: {target_cluster or 'any'}")
+                    
+                    self._log_console(job_id, 'INFO', f'Using resource pool: {resource_pool.name}', job_details)
+                    
+                    # Build clone spec
+                    clone_spec = vim.vm.CloneSpec()
+                    clone_spec.location = vim.vm.RelocateSpec()
+                    clone_spec.location.pool = resource_pool
+                    clone_spec.powerOn = False  # We'll power on after clone
+                    clone_spec.template = False
+                    
+                    # Execute clone
+                    folder = vm.parent
+                    task = vm.Clone(folder=folder, name=clone_name, spec=clone_spec)
+                    self._wait_for_task(task, job_id, job_details)
+                    
+                    cloned_vm = task.info.result
+                    
+                    # Update references to point to the cloned VM
+                    vm = cloned_vm
+                    vm_moref = str(vm._moId)
+                    vm_name = clone_name
+                    job_details['cloned_vm_moref'] = vm_moref
+                    job_details['cloned_vm_name'] = clone_name
+                    job_details['is_cloned'] = True
+                    
+                    add_step_result('clone_template', 'success', f'Cloned to {clone_name}')
+                    self._log_console(job_id, 'INFO', f'Clone complete: {clone_name} ({vm_moref})', job_details)
+                
+                # Now check power state (for cloned VM or existing VM)
                 power_state = str(vm.runtime.powerState)
                 job_details['vm_state'] = power_state
                 
