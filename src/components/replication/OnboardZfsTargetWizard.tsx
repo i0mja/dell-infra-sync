@@ -80,6 +80,7 @@ import { useAccessibleDatastores } from "@/hooks/useAccessibleDatastores";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { generateTargetNames, getVCenterSiteCodes } from "@/utils/targetNaming";
 
 // Schedule presets with cron and RPO mappings
 const SCHEDULE_PRESETS = {
@@ -382,44 +383,38 @@ export function OnboardZfsTargetWizard({
     }
   }, [open, preselectedVCenterId, preselectedVMId]);
   
-  // Auto-populate target name from VM
+  // Auto-generate names when vCenter is selected
   useEffect(() => {
-    if (selectedVM && !targetName) {
-      const generatedName = `zfs-${selectedVM.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
-      setTargetName(generatedName);
-      setDatastoreName(`NFS-${generatedName}`);
-    }
-  }, [selectedVM, targetName]);
-  
-  // Auto-update datastore name when target name changes
-  useEffect(() => {
-    if (targetName && !datastoreName) {
-      setDatastoreName(`NFS-${targetName}`);
-    }
-    // Auto-update clone name when target name changes in template mode
-    if (targetName && isTemplateMode && !cloneSettings.cloneName) {
-      setCloneSettings(prev => ({
-        ...prev,
-        cloneName: `${targetName}-${Date.now().toString(36).slice(-4)}`,
-      }));
-    }
-  }, [targetName, datastoreName, isTemplateMode, cloneSettings.cloneName]);
+    const generateNames = async () => {
+      if (!selectedVCenterId || targetName) return;
+      
+      const { siteCode, vmPrefix } = await getVCenterSiteCodes(selectedVCenterId);
+      if (siteCode) {
+        const { targetName: genTargetName, vmName, datastoreName: genDatastoreName } = 
+          await generateTargetNames(siteCode, vmPrefix || '');
+        setTargetName(genTargetName);
+        setDatastoreName(genDatastoreName);
+        setCloneSettings(prev => ({ ...prev, cloneName: vmName }));
+      }
+    };
+    generateNames();
+  }, [selectedVCenterId]);
   
   // Auto-detect template mode when VM changes
   useEffect(() => {
     if (selectedVM?.is_template) {
       setIsTemplateMode(true);
-      // Auto-generate clone name
-      if (targetName && !cloneSettings.cloneName) {
+      // Auto-set cluster from VM if not set
+      if (!cloneSettings.targetCluster && selectedVM.cluster_name) {
         setCloneSettings(prev => ({
           ...prev,
-          cloneName: `${targetName}-${Date.now().toString(36).slice(-4)}`,
+          targetCluster: selectedVM.cluster_name || '',
         }));
       }
     } else {
       setIsTemplateMode(false);
     }
-  }, [selectedVM?.is_template, targetName]);
+  }, [selectedVM?.is_template, selectedVM?.cluster_name]);
   
   // Track previous VM ID to detect VM selection changes
   const [previousVMId, setPreviousVMId] = useState<string | null>(null);

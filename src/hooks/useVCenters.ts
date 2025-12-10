@@ -18,6 +18,8 @@ export interface VCenter {
   last_sync_error: string | null;
   is_primary: boolean | null;
   color: string | null;
+  site_code: string | null;
+  vm_prefix: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -33,6 +35,8 @@ export interface VCenterFormData {
   sync_enabled: boolean;
   color?: string;
   is_primary?: boolean;
+  site_code?: string;
+  vm_prefix?: string;
 }
 
 export function useVCenters() {
@@ -99,6 +103,8 @@ export function useVCenters() {
           sync_enabled: data.sync_enabled,
           color: data.color || "#6366f1",
           is_primary: data.is_primary || false,
+          site_code: data.site_code || null,
+          vm_prefix: data.vm_prefix || null,
         },
       ]).select().single();
 

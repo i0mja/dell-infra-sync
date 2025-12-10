@@ -57,6 +57,7 @@ import { useVCenterVMs } from "@/hooks/useVCenterVMs";
 import { useSshKeys } from "@/hooks/useSshKeys";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { generateTargetNames, getVCenterSiteCodes } from "@/utils/targetNaming";
 
 interface PairedZfsDeployWizardProps {
   open: boolean;
@@ -175,40 +176,68 @@ export function PairedZfsDeployWizard({
     }
   }, [open]);
   
-  // Auto-populate names from VMs and detect template mode for source
+  // Auto-generate names when source vCenter is selected
+  useEffect(() => {
+    const generateSourceNames = async () => {
+      if (!sourceConfig.vcenterId || sourceConfig.targetName) return;
+      
+      const { siteCode, vmPrefix } = await getVCenterSiteCodes(sourceConfig.vcenterId);
+      if (siteCode) {
+        const { targetName, vmName, datastoreName } = await generateTargetNames(siteCode, vmPrefix || '');
+        setSourceConfig(prev => ({
+          ...prev,
+          targetName,
+          datastoreName,
+          cloneSettings: { ...prev.cloneSettings, cloneName: vmName },
+        }));
+      }
+    };
+    generateSourceNames();
+  }, [sourceConfig.vcenterId]);
+  
+  // Auto-generate names when DR vCenter is selected
+  useEffect(() => {
+    const generateDrNames = async () => {
+      if (!drConfig.vcenterId || drConfig.targetName) return;
+      
+      const { siteCode, vmPrefix } = await getVCenterSiteCodes(drConfig.vcenterId);
+      if (siteCode) {
+        const { targetName, vmName, datastoreName } = await generateTargetNames(siteCode, vmPrefix || '');
+        setDrConfig(prev => ({
+          ...prev,
+          targetName,
+          datastoreName,
+          cloneSettings: { ...prev.cloneSettings, cloneName: vmName },
+        }));
+      }
+    };
+    generateDrNames();
+  }, [drConfig.vcenterId]);
+  
+  // Detect template mode for source VM
   useEffect(() => {
     if (sourceVm) {
       const isTemplate = sourceVm.is_template === true;
-      const name = sourceConfig.targetName || `zfs-source-${sourceVm.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
-      
       setSourceConfig(prev => ({ 
         ...prev, 
-        targetName: prev.targetName || name,
-        datastoreName: prev.datastoreName || `NFS-${name}`,
         isTemplate,
-        cloneSettings: isTemplate && !prev.cloneSettings.cloneName ? {
+        cloneSettings: isTemplate && !prev.cloneSettings.targetCluster ? {
           ...prev.cloneSettings,
-          cloneName: `${name}-clone`,
           targetCluster: sourceVm.cluster_name || '',
         } : prev.cloneSettings,
       }));
     }
   }, [sourceVm]);
   
-  // Auto-populate names from VMs and detect template mode for DR
+  // Detect template mode for DR VM
   useEffect(() => {
     if (drVm) {
       const isTemplate = drVm.is_template === true;
-      const name = drConfig.targetName || `zfs-dr-${drVm.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
-      
       setDrConfig(prev => ({ 
         ...prev, 
-        targetName: prev.targetName || name,
-        datastoreName: prev.datastoreName || `NFS-${name}`,
         isTemplate,
-        cloneSettings: isTemplate && !prev.cloneSettings.cloneName ? {
+        cloneSettings: isTemplate && !prev.cloneSettings.targetCluster ? {
           ...prev.cloneSettings,
-          cloneName: `${name}-clone`,
           targetCluster: drVm.cluster_name || '',
         } : prev.cloneSettings,
       }));
@@ -533,22 +562,51 @@ export function PairedZfsDeployWizard({
                 targetName: e.target.value,
                 datastoreName: `NFS-${e.target.value}`,
               }))}
-              placeholder="e.g., zfs-target-01"
+              placeholder="e.g., zfs-mar-vrep-01"
               className="h-9"
             />
+            <p className="text-xs text-muted-foreground">Auto-generated from site code. Edit to override.</p>
           </div>
           
-          {/* Template Clone Configuration */}
+          {config.isTemplate && (
+            <div className="space-y-2">
+              <Label className="text-xs">Clone VM Name</Label>
+              <Input
+                value={config.cloneSettings.cloneName}
+                onChange={(e) => setConfig(prev => ({ 
+                  ...prev, 
+                  cloneSettings: { ...prev.cloneSettings, cloneName: e.target.value }
+                }))}
+                placeholder="e.g., S06-VREP-01"
+                className="h-9"
+              />
+              <p className="text-xs text-muted-foreground">VM name in vCenter after cloning.</p>
+            </div>
+          )}
+          
+          {/* Template Cluster Selection - only show if template and cluster not auto-selected */}
           {config.isTemplate && selectedVm && (
-            <TemplateCloneConfig
-              templateName={selectedVm.name}
-              targetName={config.targetName}
-              settings={config.cloneSettings}
-              onSettingsChange={(settings) => setConfig(prev => ({ ...prev, cloneSettings: settings }))}
-              datastores={[]} // TODO: fetch from vCenter if needed
-              clusters={clusters.map(name => ({ name }))}
-              isLoading={vmsLoading}
-            />
+            <div className="space-y-2">
+              <Label className="text-xs">Target Cluster</Label>
+              <Select 
+                value={config.cloneSettings.targetCluster} 
+                onValueChange={(v) => setConfig(prev => ({ 
+                  ...prev, 
+                  cloneSettings: { ...prev.cloneSettings, targetCluster: v }
+                }))}
+              >
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder="Select cluster" />
+                </SelectTrigger>
+                <SelectContent>
+                  {clusters.map((cluster) => (
+                    <SelectItem key={cluster} value={cluster}>
+                      {cluster}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           )}
         </div>
       )}
