@@ -885,31 +885,63 @@ class ZfsTargetHandler(BaseHandler):
             # From here on, we have SSH access
             # Step 10-16: Package installation and configuration (require root password for apt)
             if install_packages and root_password:
-                # Step 10: Check/add contrib to APT sources (Debian 13)
+                # Step 10: Check/add contrib to APT sources (Debian 13 - supports deb822 format)
                 step_results.append({'step': 'apt_sources', 'status': 'running', 'message': 'Checking APT sources...'})
                 self.update_job_status(job_id, 'running', details=job_details)
                 
-                result = self._ssh_exec('grep -E "^deb.*contrib" /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null | head -1')
-                if result['exit_code'] != 0 or not result['stdout'].strip():
-                    # Add contrib to sources
-                    self._log_console(job_id, 'INFO', 'Adding contrib to APT sources', job_details)
-                    self._ssh_exec('sed -i "s/main$/main contrib/" /etc/apt/sources.list')
-                    step_results[-1] = {'step': 'apt_sources', 'status': 'fixed', 'message': 'Added contrib repository'}
+                # Check for deb822 format (.sources files) vs traditional format
+                check_deb822 = self._ssh_exec('ls /etc/apt/sources.list.d/*.sources 2>/dev/null')
+                
+                if check_deb822['exit_code'] == 0 and check_deb822['stdout'].strip():
+                    # deb822 format - check if contrib is in Components line
+                    result = self._ssh_exec('grep -r "Components:.*contrib" /etc/apt/sources.list.d/*.sources 2>/dev/null')
+                    if result['exit_code'] != 0 or not result['stdout'].strip():
+                        self._log_console(job_id, 'INFO', 'Adding contrib to deb822 sources', job_details)
+                        self._ssh_exec(r"sed -i 's/^Components: main$/Components: main contrib/' /etc/apt/sources.list.d/*.sources")
+                        step_results[-1] = {'step': 'apt_sources', 'status': 'fixed', 'message': 'Added contrib to deb822 sources'}
+                    else:
+                        step_results[-1] = {'step': 'apt_sources', 'status': 'success', 'message': 'contrib already enabled (deb822)'}
                 else:
-                    step_results[-1] = {'step': 'apt_sources', 'status': 'success', 'message': 'contrib already enabled'}
+                    # Traditional format - check sources.list
+                    result = self._ssh_exec('grep -E "^deb.*contrib" /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null | head -1')
+                    if result['exit_code'] != 0 or not result['stdout'].strip():
+                        self._log_console(job_id, 'INFO', 'Adding contrib to APT sources', job_details)
+                        self._ssh_exec(r"sed -i 's/^\(deb.*main\)$/\1 contrib/' /etc/apt/sources.list")
+                        step_results[-1] = {'step': 'apt_sources', 'status': 'fixed', 'message': 'Added contrib repository'}
+                    else:
+                        step_results[-1] = {'step': 'apt_sources', 'status': 'success', 'message': 'contrib already enabled'}
                 
                 job_details['progress_percent'] = 45
                 self.update_job_status(job_id, 'running', details=job_details)
                 
-                # Step 11: Install ZFS packages
-                step_results.append({'step': 'zfs_packages', 'status': 'running', 'message': 'Installing ZFS packages...'})
+                # Step 11: Install kernel headers (required for ZFS DKMS)
+                step_results.append({'step': 'kernel_headers', 'status': 'running', 'message': 'Installing kernel headers...'})
+                self.update_job_status(job_id, 'running', details=job_details)
+                
+                result = self._ssh_exec('uname -r')
+                kernel_version = result['stdout'].strip() if result['exit_code'] == 0 else None
+                if kernel_version:
+                    self._log_console(job_id, 'INFO', f'Installing kernel headers for {kernel_version}', job_details)
+                    result = self._ssh_exec(f'DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y dpkg-dev linux-headers-{kernel_version}')
+                    if result['exit_code'] != 0:
+                        step_results[-1] = {'step': 'kernel_headers', 'status': 'warning', 'message': 'Headers install warning: ' + result['stderr'][:80]}
+                    else:
+                        step_results[-1] = {'step': 'kernel_headers', 'status': 'success', 'message': f'Headers installed for {kernel_version}'}
+                else:
+                    step_results[-1] = {'step': 'kernel_headers', 'status': 'skipped', 'message': 'Could not detect kernel version'}
+                
+                job_details['progress_percent'] = 50
+                self.update_job_status(job_id, 'running', details=job_details)
+                
+                # Step 12: Install ZFS packages (zfs-dkms + zfsutils-linux)
+                step_results.append({'step': 'zfs_packages', 'status': 'running', 'message': 'Installing ZFS packages (DKMS build may take a few minutes)...'})
                 self.update_job_status(job_id, 'running', details=job_details)
                 
                 # Check if already installed
                 result = self._ssh_exec('dpkg -l zfsutils-linux 2>/dev/null | grep -q "^ii"')
                 if result['exit_code'] != 0:
-                    self._log_console(job_id, 'INFO', 'Installing zfs-dkms and zfsutils-linux...', job_details)
-                    result = self._ssh_exec('DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y zfs-dkms zfsutils-linux')
+                    self._log_console(job_id, 'INFO', 'Installing zfs-dkms and zfsutils-linux (this may take several minutes)...', job_details)
+                    result = self._ssh_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y zfs-dkms zfsutils-linux')
                     if result['exit_code'] != 0:
                         step_results[-1] = {'step': 'zfs_packages', 'status': 'failed', 'message': 'Install failed: ' + result['stderr'][:100]}
                         self._log_console(job_id, 'ERROR', f'ZFS install failed: {result["stderr"]}', job_details)
@@ -2487,28 +2519,68 @@ class ZfsTargetHandler(BaseHandler):
             # ========== Step 3: Install Packages ==========
             if details.get('install_packages', True):
                 job_details['progress_percent'] = 35
-                add_step_result('zfs_packages', 'running', 'Installing ZFS packages...')
                 
                 try:
-                    # Update apt sources
+                    # Step 3a: Enable contrib repository (required for ZFS on Debian 13)
+                    add_step_result('apt_sources', 'running', 'Configuring repositories for ZFS...')
+                    self._log_console(job_id, 'INFO', 'Checking repository configuration...', job_details)
+                    
+                    # Check for deb822 format (.sources files) vs traditional format
+                    check_deb822 = self._ssh_exec('ls /etc/apt/sources.list.d/*.sources 2>/dev/null', job_id=job_id)
+                    
+                    if check_deb822['exit_code'] == 0 and check_deb822['stdout'].strip():
+                        # deb822 format (Debian 12+) - check if contrib is in Components line
+                        result = self._ssh_exec('grep -r "Components:.*contrib" /etc/apt/sources.list.d/*.sources 2>/dev/null', job_id=job_id)
+                        if result['exit_code'] != 0 or not result['stdout'].strip():
+                            self._log_console(job_id, 'INFO', 'Adding contrib to deb822 sources...', job_details)
+                            self._ssh_exec(r"sed -i 's/^Components: main$/Components: main contrib/' /etc/apt/sources.list.d/*.sources", job_id=job_id)
+                            add_step_result('apt_sources', 'success', 'Added contrib to deb822 sources')
+                        else:
+                            add_step_result('apt_sources', 'success', 'contrib already enabled (deb822)')
+                    else:
+                        # Traditional format - check sources.list
+                        result = self._ssh_exec('grep -E "^deb.*contrib" /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null', job_id=job_id)
+                        if result['exit_code'] != 0 or not result['stdout'].strip():
+                            self._log_console(job_id, 'INFO', 'Adding contrib to sources.list...', job_details)
+                            self._ssh_exec(r"sed -i 's/^\(deb.*main\)$/\1 contrib/' /etc/apt/sources.list", job_id=job_id)
+                            add_step_result('apt_sources', 'success', 'Added contrib repository')
+                        else:
+                            add_step_result('apt_sources', 'success', 'contrib already enabled')
+                    
+                    # Update apt sources after adding contrib
+                    self._log_console(job_id, 'INFO', 'Updating package lists...', job_details)
                     result = self._ssh_exec('apt-get update -qq', job_id=job_id)
                     
-                    # Get current kernel version and install headers (required for DKMS/ZFS)
+                    # Step 3b: Install kernel headers (required for DKMS/ZFS module build)
+                    add_step_result('kernel_headers', 'running', 'Installing kernel headers...')
                     result = self._ssh_exec('uname -r', job_id=job_id)
                     kernel_version = result['stdout'].strip() if result['exit_code'] == 0 else None
                     
                     if kernel_version:
-                        self.log(f"Installing kernel headers for {kernel_version}")
-                        self._ssh_exec(f'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq linux-headers-{kernel_version}', job_id=job_id)
+                        self._log_console(job_id, 'INFO', f'Installing kernel headers for {kernel_version}...', job_details)
+                        result = self._ssh_exec(
+                            f'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dpkg-dev linux-headers-{kernel_version}',
+                            job_id=job_id
+                        )
+                        if result['exit_code'] != 0:
+                            self._log_console(job_id, 'WARN', f'Header install warning: {result["stderr"]}', job_details)
+                            add_step_result('kernel_headers', 'warning', 'Headers may not have installed correctly')
+                        else:
+                            add_step_result('kernel_headers', 'success', f'Headers installed for {kernel_version}')
+                    else:
+                        add_step_result('kernel_headers', 'skipped', 'Could not detect kernel version')
                     
-                    # Install ZFS
-                    result = self._ssh_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zfsutils-linux', job_id=job_id)
+                    # Step 3c: Install ZFS packages (zfs-dkms builds kernel module, zfsutils-linux provides tools)
+                    add_step_result('zfs_packages', 'running', 'Installing ZFS packages (DKMS build may take several minutes)...')
+                    self._log_console(job_id, 'INFO', 'Installing zfs-dkms and zfsutils-linux...', job_details)
+                    
+                    result = self._ssh_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y zfs-dkms zfsutils-linux', job_id=job_id)
                     if result['exit_code'] != 0:
                         raise Exception(f"Failed to install ZFS: {result['stderr']}")
                     
                     add_step_result('zfs_packages', 'success', 'ZFS packages installed')
                     
-                    # Install NFS
+                    # Step 3d: Install NFS
                     add_step_result('nfs_packages', 'running', 'Installing NFS packages...')
                     result = self._ssh_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nfs-kernel-server', job_id=job_id)
                     if result['exit_code'] != 0:
@@ -2516,13 +2588,13 @@ class ZfsTargetHandler(BaseHandler):
                     
                     add_step_result('nfs_packages', 'success', 'NFS packages installed')
                     
-                    # Load ZFS module
+                    # Step 3e: Load ZFS module
                     add_step_result('zfs_module', 'running', 'Loading ZFS kernel module...')
                     result = self._ssh_exec('modprobe zfs', job_id=job_id)
                     
                     # If modprobe failed, try rebuilding DKMS modules
                     if result['exit_code'] != 0:
-                        self.log("modprobe zfs failed, attempting DKMS rebuild...")
+                        self._log_console(job_id, 'WARN', 'modprobe zfs failed, attempting DKMS rebuild...', job_details)
                         add_step_result('zfs_module', 'running', 'Rebuilding ZFS DKMS module...')
                         self._ssh_exec('dkms autoinstall', job_id=job_id)
                         result = self._ssh_exec('modprobe zfs', job_id=job_id)
@@ -3159,8 +3231,29 @@ class ZfsTargetHandler(BaseHandler):
             # Execute the specific step
             step_success = False
             if from_step == 'zfs_packages':
-                result = self._ssh_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y zfsutils-linux', job_id)
+                # Enable contrib repository first (Debian 13 deb822 format support)
+                check_deb822 = self._ssh_exec('ls /etc/apt/sources.list.d/*.sources 2>/dev/null', job_id)
+                if check_deb822['exit_code'] == 0 and check_deb822['stdout'].strip():
+                    self._ssh_exec(r"sed -i 's/^Components: main$/Components: main contrib/' /etc/apt/sources.list.d/*.sources", job_id)
+                else:
+                    self._ssh_exec(r"sed -i 's/^\(deb.*main\)$/\1 contrib/' /etc/apt/sources.list", job_id)
+                
+                self._ssh_exec('apt-get update -qq', job_id)
+                
+                # Install kernel headers first
+                kernel_result = self._ssh_exec('uname -r', job_id)
+                if kernel_result['exit_code'] == 0:
+                    kernel_version = kernel_result['stdout'].strip()
+                    self._ssh_exec(f'DEBIAN_FRONTEND=noninteractive apt-get install -y dpkg-dev linux-headers-{kernel_version}', job_id)
+                
+                # Install ZFS packages (zfs-dkms + zfsutils-linux)
+                result = self._ssh_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y zfs-dkms zfsutils-linux', job_id)
                 step_success = result['exit_code'] == 0
+                
+                if step_success:
+                    # Load the module
+                    self._ssh_exec('modprobe zfs', job_id)
+                
                 job_details['step_results'].append({
                     'step': 'zfs_packages',
                     'status': 'success' if step_success else 'failed',
