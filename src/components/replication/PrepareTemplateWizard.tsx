@@ -67,6 +67,7 @@ import { useVCenters } from "@/hooks/useVCenters";
 import { useVCenterVMs } from "@/hooks/useVCenterVMs";
 import { useSshKeys } from "@/hooks/useSshKeys";
 import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
 import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
@@ -388,11 +389,9 @@ export function PrepareTemplateWizard({
     try {
       const { data: user } = await supabase.auth.getUser();
       
-      const { data: job, error } = await supabase
-        .from('jobs')
-        .insert({
+      const jobInsert = {
           job_type: 'prepare_zfs_template' as const,
-          status: 'pending',
+          status: 'pending' as const,
           created_by: user?.user?.id,
           target_scope: { 
             vcenter_id: selectedVCenterId,
@@ -401,7 +400,7 @@ export function PrepareTemplateWizard({
           details: {
             template_name: templateName,
             template_version: templateVersion,
-            vm_moref: (selectedVM as unknown as Record<string, unknown>)?.vcenter_id || selectedVM?.id,
+            vm_moref: String((selectedVM as unknown as Record<string, unknown>)?.vcenter_id || selectedVM?.id || ''),
             install_packages: installPackages,
             packages: selectedPackages,
             create_user: createUser,
@@ -425,7 +424,11 @@ export function PrepareTemplateWizard({
             convert_to_template: convertToTemplate,
             create_rollback_snapshot: createRollbackSnapshot,
           }
-        })
+        };
+      
+      const { data: job, error } = await supabase
+        .from('jobs')
+        .insert([jobInsert])
         .select()
         .single();
       
