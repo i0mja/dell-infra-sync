@@ -4024,11 +4024,13 @@ export type Database = {
           name: string
           password_encrypted: string | null
           port: number
+          site_code: string | null
           sync_enabled: boolean
           sync_interval_minutes: number | null
           updated_at: string
           username: string
           verify_ssl: boolean
+          vm_prefix: string | null
         }
         Insert: {
           color?: string | null
@@ -4043,11 +4045,13 @@ export type Database = {
           name: string
           password_encrypted?: string | null
           port?: number
+          site_code?: string | null
           sync_enabled?: boolean
           sync_interval_minutes?: number | null
           updated_at?: string
           username: string
           verify_ssl?: boolean
+          vm_prefix?: string | null
         }
         Update: {
           color?: string | null
@@ -4062,11 +4066,13 @@ export type Database = {
           name?: string
           password_encrypted?: string | null
           port?: number
+          site_code?: string | null
           sync_enabled?: boolean
           sync_interval_minutes?: number | null
           updated_at?: string
           username?: string
           verify_ssl?: boolean
+          vm_prefix?: string | null
         }
         Relationships: []
       }

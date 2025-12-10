@@ -25,6 +25,8 @@ const vCenterSchema = z.object({
   sync_enabled: z.boolean(),
   color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
   is_primary: z.boolean().optional(),
+  site_code: z.string().trim().max(5).optional(),
+  vm_prefix: z.string().trim().max(5).optional(),
 });
 
 export function VCenterForm({
@@ -46,6 +48,8 @@ export function VCenterForm({
     sync_enabled: initialData?.sync_enabled ?? true,
     color: initialData?.color ?? "#6366f1",
     is_primary: initialData?.is_primary ?? false,
+    site_code: initialData?.site_code ?? "",
+    vm_prefix: initialData?.vm_prefix ?? "",
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -151,6 +155,34 @@ export function VCenterForm({
             disabled={loading}
           />
           {errors.password && <p className="text-sm text-destructive">{errors.password}</p>}
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="grid gap-2">
+            <Label htmlFor="site_code">Site Code</Label>
+            <Input
+              id="site_code"
+              placeholder="MAR"
+              maxLength={5}
+              value={formData.site_code}
+              onChange={(e) => setFormData({ ...formData, site_code: e.target.value.toUpperCase() })}
+              disabled={loading}
+            />
+            <p className="text-xs text-muted-foreground">3-5 letter code for naming (e.g., MAR, LYO)</p>
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="vm_prefix">VM Prefix</Label>
+            <Input
+              id="vm_prefix"
+              placeholder="S06"
+              maxLength={5}
+              value={formData.vm_prefix}
+              onChange={(e) => setFormData({ ...formData, vm_prefix: e.target.value.toUpperCase() })}
+              disabled={loading}
+            />
+            <p className="text-xs text-muted-foreground">Prefix for VM names (e.g., S06, S16)</p>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
