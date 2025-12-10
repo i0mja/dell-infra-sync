@@ -48,8 +48,10 @@ import {
   Play,
   XCircle,
   RefreshCw,
+  Copy,
 } from "lucide-react";
 import { VMCombobox } from "./VMCombobox";
+import { TemplateCloneConfig, CloneSettings } from "./TemplateCloneConfig";
 import { useVCenters } from "@/hooks/useVCenters";
 import { useVCenterVMs } from "@/hooks/useVCenterVMs";
 import { useSshKeys } from "@/hooks/useSshKeys";
@@ -73,6 +75,9 @@ interface SiteConfig {
   authMethod: 'existing_key' | 'password';
   sshKeyId: string;
   password: string;
+  // Template support
+  isTemplate: boolean;
+  cloneSettings: CloneSettings;
 }
 
 interface JobProgress {
@@ -90,6 +95,20 @@ const WIZARD_PAGES = [
   { id: 4, label: 'Deploy', icon: CheckCircle2 },
 ];
 
+const defaultCloneSettings = (): CloneSettings => ({
+  cloneName: '',
+  targetDatastore: '',
+  targetCluster: '',
+  useGuestCustomization: true,
+  clearMachineId: true,
+  clearSshHostKeys: true,
+  useStaticIp: false,
+  staticIp: '',
+  staticNetmask: '',
+  staticGateway: '',
+  staticDns: '',
+});
+
 const defaultSiteConfig = (): SiteConfig => ({
   vcenterId: '',
   vmId: '',
@@ -101,6 +120,8 @@ const defaultSiteConfig = (): SiteConfig => ({
   authMethod: 'existing_key',
   sshKeyId: '',
   password: '',
+  isTemplate: false,
+  cloneSettings: defaultCloneSettings(),
 });
 
 export function PairedZfsDeployWizard({
@@ -154,28 +175,45 @@ export function PairedZfsDeployWizard({
     }
   }, [open]);
   
-  // Auto-populate names from VMs
+  // Auto-populate names from VMs and detect template mode for source
   useEffect(() => {
-    if (sourceVm && !sourceConfig.targetName) {
-      const name = `zfs-source-${sourceVm.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+    if (sourceVm) {
+      const isTemplate = sourceVm.is_template === true;
+      const name = sourceConfig.targetName || `zfs-source-${sourceVm.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+      
       setSourceConfig(prev => ({ 
         ...prev, 
-        targetName: name,
-        datastoreName: `NFS-${name}`,
+        targetName: prev.targetName || name,
+        datastoreName: prev.datastoreName || `NFS-${name}`,
+        isTemplate,
+        cloneSettings: isTemplate && !prev.cloneSettings.cloneName ? {
+          ...prev.cloneSettings,
+          cloneName: `${name}-clone`,
+          targetCluster: sourceVm.cluster_name || '',
+        } : prev.cloneSettings,
       }));
     }
-  }, [sourceVm, sourceConfig.targetName]);
+  }, [sourceVm]);
   
+  // Auto-populate names from VMs and detect template mode for DR
   useEffect(() => {
-    if (drVm && !drConfig.targetName) {
-      const name = `zfs-dr-${drVm.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+    if (drVm) {
+      const isTemplate = drVm.is_template === true;
+      const name = drConfig.targetName || `zfs-dr-${drVm.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+      
       setDrConfig(prev => ({ 
         ...prev, 
-        targetName: name,
-        datastoreName: `NFS-${name}`,
+        targetName: prev.targetName || name,
+        datastoreName: prev.datastoreName || `NFS-${name}`,
+        isTemplate,
+        cloneSettings: isTemplate && !prev.cloneSettings.cloneName ? {
+          ...prev.cloneSettings,
+          cloneName: `${name}-clone`,
+          targetCluster: drVm.cluster_name || '',
+        } : prev.cloneSettings,
       }));
     }
-  }, [drVm, drConfig.targetName]);
+  }, [drVm]);
   
   // Poll job status
   const pollJob = useCallback(async (
@@ -206,6 +244,44 @@ export function PairedZfsDeployWizard({
     return job.status;
   }, []);
   
+  // Build job details for a site
+  const buildJobDetails = (config: SiteConfig, vm: any, siteRole: 'primary' | 'dr') => {
+    const baseDetails: Record<string, unknown> = {
+      target_name: config.targetName,
+      site_role: siteRole,
+      auth_method: config.authMethod,
+      ssh_key_id: config.authMethod === 'existing_key' ? config.sshKeyId : undefined,
+      root_password: config.authMethod === 'password' ? config.password : undefined,
+      zfs_pool_name: config.zfsPool,
+      nfs_network: config.nfsNetwork,
+      zfs_compression: config.compression,
+      datastore_name: config.datastoreName,
+      install_packages: true,
+      create_user: true,
+    };
+    
+    // Add template clone config if deploying from template
+    if (config.isTemplate) {
+      baseDetails.is_template_deploy = true;
+      baseDetails.clone_template = {
+        source_vm_moref: vm?.vcenter_id,
+        clone_name: config.cloneSettings.cloneName,
+        target_cluster: config.cloneSettings.targetCluster,
+        target_datastore: config.cloneSettings.targetDatastore,
+        use_guest_customization: config.cloneSettings.useGuestCustomization,
+        clear_machine_id: config.cloneSettings.clearMachineId,
+        regenerate_ssh_keys: config.cloneSettings.clearSshHostKeys,
+        use_static_ip: config.cloneSettings.useStaticIp,
+        static_ip: config.cloneSettings.staticIp,
+        static_netmask: config.cloneSettings.staticNetmask,
+        static_gateway: config.cloneSettings.staticGateway,
+        static_dns: config.cloneSettings.staticDns,
+      };
+    }
+    
+    return baseDetails;
+  };
+  
   // Start parallel deployment
   const startDeployment = async () => {
     setDeploying(true);
@@ -217,26 +293,14 @@ export function PairedZfsDeployWizard({
       const { data: sourceJob, error: sourceError } = await supabase
         .from('jobs')
         .insert({
-          job_type: 'onboard_zfs_target' as const,
-          status: 'pending',
+          job_type: 'onboard_zfs_target',
+          status: 'pending' as const,
           created_by: user?.user?.id,
           target_scope: { 
             vcenter_id: sourceConfig.vcenterId,
             vm_id: sourceConfig.vmId 
-          },
-          details: {
-            target_name: sourceConfig.targetName,
-            site_role: 'primary',
-            auth_method: sourceConfig.authMethod,
-            ssh_key_id: sourceConfig.authMethod === 'existing_key' ? sourceConfig.sshKeyId : undefined,
-            root_password: sourceConfig.authMethod === 'password' ? sourceConfig.password : undefined,
-            zfs_pool_name: sourceConfig.zfsPool,
-            nfs_network: sourceConfig.nfsNetwork,
-            zfs_compression: sourceConfig.compression,
-            datastore_name: sourceConfig.datastoreName,
-            install_packages: true,
-            create_user: true,
-          }
+          } as unknown as undefined,
+          details: buildJobDetails(sourceConfig, sourceVm, 'primary') as unknown as undefined,
         })
         .select()
         .single();
@@ -247,26 +311,14 @@ export function PairedZfsDeployWizard({
       const { data: drJob, error: drError } = await supabase
         .from('jobs')
         .insert({
-          job_type: 'onboard_zfs_target' as const,
-          status: 'pending',
+          job_type: 'onboard_zfs_target',
+          status: 'pending' as const,
           created_by: user?.user?.id,
           target_scope: { 
             vcenter_id: drConfig.vcenterId,
             vm_id: drConfig.vmId 
-          },
-          details: {
-            target_name: drConfig.targetName,
-            site_role: 'dr',
-            auth_method: drConfig.authMethod,
-            ssh_key_id: drConfig.authMethod === 'existing_key' ? drConfig.sshKeyId : undefined,
-            root_password: drConfig.authMethod === 'password' ? drConfig.password : undefined,
-            zfs_pool_name: drConfig.zfsPool,
-            nfs_network: drConfig.nfsNetwork,
-            zfs_compression: drConfig.compression,
-            datastore_name: drConfig.datastoreName,
-            install_packages: true,
-            create_user: true,
-          }
+          } as unknown as undefined,
+          details: buildJobDetails(drConfig, drVm, 'dr') as unknown as undefined,
         })
         .select()
         .single();
@@ -358,9 +410,18 @@ export function PairedZfsDeployWizard({
   // Page validation
   const canProceedFromPage = (page: number): boolean => {
     switch (page) {
-      case 1:
-        return !!sourceConfig.vcenterId && !!sourceConfig.vmId && !!sourceConfig.targetName &&
-               !!drConfig.vcenterId && !!drConfig.vmId && !!drConfig.targetName;
+      case 1: {
+        const sourceBasicValid = !!sourceConfig.vcenterId && !!sourceConfig.vmId && !!sourceConfig.targetName;
+        const drBasicValid = !!drConfig.vcenterId && !!drConfig.vmId && !!drConfig.targetName;
+        
+        // Templates need clone config with at least clone name and cluster
+        const sourceCloneValid = !sourceConfig.isTemplate || 
+          (!!sourceConfig.cloneSettings.cloneName && !!sourceConfig.cloneSettings.targetCluster);
+        const drCloneValid = !drConfig.isTemplate ||
+          (!!drConfig.cloneSettings.cloneName && !!drConfig.cloneSettings.targetCluster);
+        
+        return sourceBasicValid && drBasicValid && sourceCloneValid && drCloneValid;
+      }
       case 2:
         const sourceAuthValid = sourceConfig.authMethod === 'password' 
           ? !!sourceConfig.password 
@@ -411,13 +472,19 @@ export function PairedZfsDeployWizard({
           {badgeLabel}
         </Badge>
         <span className="font-semibold">{title}</span>
+        {config.isTemplate && (
+          <Badge variant="outline" className="text-xs ml-auto">
+            <Copy className="h-3 w-3 mr-1" />
+            Template
+          </Badge>
+        )}
       </div>
       
       {currentPage === 1 && (
         <div className="space-y-3">
           <div className="space-y-2">
             <Label className="text-xs">vCenter</Label>
-            <Select value={config.vcenterId} onValueChange={(v) => setConfig(prev => ({ ...prev, vcenterId: v, vmId: '' }))}>
+            <Select value={config.vcenterId} onValueChange={(v) => setConfig(prev => ({ ...prev, vcenterId: v, vmId: '', isTemplate: false, cloneSettings: defaultCloneSettings() }))}>
               <SelectTrigger className="h-9">
                 <SelectValue placeholder={vcentersLoading ? "Loading..." : "Select vCenter"} />
               </SelectTrigger>
@@ -432,7 +499,7 @@ export function PairedZfsDeployWizard({
           </div>
           
           <div className="space-y-2">
-            <Label className="text-xs">VM</Label>
+            <Label className="text-xs">VM or Template</Label>
             <VMCombobox
               vms={vms}
               clusters={clusters}
@@ -440,11 +507,11 @@ export function PairedZfsDeployWizard({
               onSelectVm={(vm) => setConfig(prev => ({ ...prev, vmId: vm.id }))}
               disabled={!config.vcenterId}
               isLoading={vmsLoading}
-              placeholder={!config.vcenterId ? "Select vCenter first" : "Select VM"}
+              placeholder={!config.vcenterId ? "Select vCenter first" : "Select VM or Template"}
             />
           </div>
           
-          {selectedVm && (
+          {selectedVm && !config.isTemplate && (
             <div className="text-xs text-muted-foreground p-2 rounded bg-muted/50">
               <div className="flex justify-between">
                 <span>IP:</span>
@@ -470,6 +537,19 @@ export function PairedZfsDeployWizard({
               className="h-9"
             />
           </div>
+          
+          {/* Template Clone Configuration */}
+          {config.isTemplate && selectedVm && (
+            <TemplateCloneConfig
+              templateName={selectedVm.name}
+              targetName={config.targetName}
+              settings={config.cloneSettings}
+              onSettingsChange={(settings) => setConfig(prev => ({ ...prev, cloneSettings: settings }))}
+              datastores={[]} // TODO: fetch from vCenter if needed
+              clusters={clusters.map(name => ({ name }))}
+              isLoading={vmsLoading}
+            />
+          )}
         </div>
       )}
       
@@ -687,10 +767,19 @@ export function PairedZfsDeployWizard({
                     <div className="space-y-2 p-3 rounded bg-primary/5">
                       <div className="font-medium flex items-center gap-2">
                         <Badge>A</Badge> Source Site
+                        {sourceConfig.isTemplate && (
+                          <Badge variant="outline" className="text-xs">
+                            <Copy className="h-3 w-3 mr-1" />
+                            From Template
+                          </Badge>
+                        )}
                       </div>
                       <div className="space-y-1 text-muted-foreground">
                         <div>Target: {sourceConfig.targetName}</div>
                         <div>VM: {sourceVm?.name}</div>
+                        {sourceConfig.isTemplate && (
+                          <div>Clone Name: {sourceConfig.cloneSettings.cloneName}</div>
+                        )}
                         <div>Pool: {sourceConfig.zfsPool} ({sourceConfig.compression})</div>
                         <div>Datastore: {sourceConfig.datastoreName}</div>
                       </div>
@@ -698,10 +787,19 @@ export function PairedZfsDeployWizard({
                     <div className="space-y-2 p-3 rounded bg-secondary/30">
                       <div className="font-medium flex items-center gap-2">
                         <Badge variant="secondary">B</Badge> DR Site
+                        {drConfig.isTemplate && (
+                          <Badge variant="outline" className="text-xs">
+                            <Copy className="h-3 w-3 mr-1" />
+                            From Template
+                          </Badge>
+                        )}
                       </div>
                       <div className="space-y-1 text-muted-foreground">
                         <div>Target: {drConfig.targetName}</div>
                         <div>VM: {drVm?.name}</div>
+                        {drConfig.isTemplate && (
+                          <div>Clone Name: {drConfig.cloneSettings.cloneName}</div>
+                        )}
                         <div>Pool: {drConfig.zfsPool} ({drConfig.compression})</div>
                         <div>Datastore: {drConfig.datastoreName}</div>
                       </div>
@@ -711,6 +809,9 @@ export function PairedZfsDeployWizard({
                   <div className="mt-4 p-3 rounded bg-muted/50 text-sm text-muted-foreground">
                     <strong>What will happen:</strong>
                     <ol className="list-decimal ml-4 mt-1 space-y-1">
+                      {(sourceConfig.isTemplate || drConfig.isTemplate) && (
+                        <li>Templates will be cloned to new VMs with guest customization</li>
+                      )}
                       <li>Both VMs will be configured in parallel</li>
                       <li>ZFS and NFS packages will be installed</li>
                       <li>ZFS pools and NFS exports will be created</li>
