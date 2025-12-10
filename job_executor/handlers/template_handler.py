@@ -41,15 +41,20 @@ class TemplateHandler(BaseHandler):
     
     def execute_prepare_zfs_template(self, job: Dict):
         """
-        Prepare a VM as a ZFS appliance template.
+        Prepare a VM as a ZFS appliance template with enhanced features.
         
         Steps:
-        1. Connect to vCenter
+        1. Connect to vCenter (optional: create rollback snapshot)
         2. SSH to VM
-        3. Install packages (ZFS, NFS, open-vm-tools)
-        4. Create service user with SSH key
-        5. Clean system IDs (machine-id, SSH host keys)
-        6. Power off and optionally convert to template
+        3. Pre-flight checks (disk space, repo access, kernel headers)
+        4. Detect OS family (Debian/RHEL)
+        5. Install packages (ZFS, NFS, open-vm-tools) with proper repo setup
+        6. Apply ZFS tuning configuration
+        7. Create service user with SSH key
+        8. Install health check script
+        9. Clean system IDs and network state
+        10. Stamp template version
+        11. Power off and optionally convert to template
         """
         job_id = job['id']
         details = job.get('details', {}) or {}
@@ -58,10 +63,13 @@ class TemplateHandler(BaseHandler):
         job_details = {
             'step_results': [],
             'console_log': [],
-            'progress_percent': 0
+            'progress_percent': 0,
+            'preflight_checks': [],
+            'os_family': None,
+            'template_version': details.get('template_version', '1.0.0'),
         }
         
-        self._log_console(job_id, 'INFO', 'Starting ZFS template preparation', job_details)
+        self._log_console(job_id, 'INFO', 'Starting enhanced ZFS template preparation', job_details)
         self.update_job_status(job_id, 'running', started_at=utc_now_iso(), details=job_details)
         
         try:
@@ -85,9 +93,42 @@ class TemplateHandler(BaseHandler):
             if not root_password:
                 raise Exception('Root password is required for template preparation')
             
+            # Optional: Create rollback snapshot before making changes
+            if details.get('create_rollback_snapshot', False):
+                self._add_step_result(job_id, job_details, 'rollback_snapshot', 'running', 'Creating rollback snapshot...')
+                try:
+                    vc_settings = self._get_vcenter_settings(vcenter_id)
+                    if vc_settings:
+                        self.vcenter_conn = self._connect_vcenter(
+                            vc_settings['host'],
+                            vc_settings['username'],
+                            vc_settings['password'],
+                            vc_settings.get('port', 443),
+                            vc_settings.get('verify_ssl', False)
+                        )
+                        if self.vcenter_conn:
+                            vm_moref = vm_info.get('vcenter_id') or details.get('vm_moref')
+                            vm_obj = self._find_vm_by_moref(self.vcenter_conn, vm_moref)
+                            if vm_obj:
+                                snapshot_name = f"pre-template-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+                                task = vm_obj.CreateSnapshot(
+                                    name=snapshot_name,
+                                    description="Rollback snapshot before template preparation",
+                                    memory=False,
+                                    quiesce=False
+                                )
+                                self._wait_for_task(task)
+                                job_details['rollback_snapshot'] = snapshot_name
+                                self._add_step_result(job_id, job_details, 'rollback_snapshot', 'success', f'Created snapshot: {snapshot_name}')
+                            Disconnect(self.vcenter_conn)
+                            self.vcenter_conn = None
+                except Exception as snap_err:
+                    self._log_console(job_id, 'WARN', f'Rollback snapshot failed: {snap_err}', job_details)
+                    self._add_step_result(job_id, job_details, 'rollback_snapshot', 'warning', str(snap_err))
+            
             # Step 1: Connect to VM via SSH
             self._add_step_result(job_id, job_details, 'ssh_connect', 'running', 'Connecting via SSH...')
-            self._update_progress(job_id, job_details, 10)
+            self._update_progress(job_id, job_details, 5)
             
             ssh_client = self._connect_ssh_password(vm_ip, 'root', root_password)
             if not ssh_client:
@@ -97,30 +138,67 @@ class TemplateHandler(BaseHandler):
             self._add_step_result(job_id, job_details, 'ssh_connect', 'success', f'Connected to {vm_ip}')
             self.ssh_client = ssh_client
             
-            # Step 2: Install packages
+            # Step 2: Pre-flight checks
+            self._add_step_result(job_id, job_details, 'preflight', 'running', 'Running pre-flight checks...')
+            self._update_progress(job_id, job_details, 8)
+            
+            preflight_results = self._preflight_checks(ssh_client, job_id, job_details)
+            job_details['preflight_checks'] = preflight_results
+            
+            # Check for critical failures
+            critical_failures = [c for c in preflight_results if not c['ok'] and c.get('critical', False)]
+            if critical_failures:
+                failure_msg = ', '.join([f"{c['check']}: {c['value']}" for c in critical_failures])
+                self._add_step_result(job_id, job_details, 'preflight', 'failed', failure_msg)
+                raise Exception(f'Pre-flight checks failed: {failure_msg}')
+            
+            warnings = [c for c in preflight_results if not c['ok'] and not c.get('critical', False)]
+            if warnings:
+                warning_msg = ', '.join([f"{c['check']}: {c['value']}" for c in warnings])
+                self._add_step_result(job_id, job_details, 'preflight', 'warning', f'Warnings: {warning_msg}')
+            else:
+                self._add_step_result(job_id, job_details, 'preflight', 'success', 'All pre-flight checks passed')
+            
+            # Step 3: Detect OS family
+            self._add_step_result(job_id, job_details, 'os_detect', 'running', 'Detecting OS family...')
+            self._update_progress(job_id, job_details, 10)
+            
+            os_family = self._detect_os_family(ssh_client)
+            job_details['os_family'] = os_family
+            self._log_console(job_id, 'INFO', f'Detected OS family: {os_family}', job_details)
+            self._add_step_result(job_id, job_details, 'os_detect', 'success', f'OS: {os_family}')
+            
+            # Step 4: Install packages
             if details.get('install_packages', True):
                 packages = details.get('packages', ['zfsutils-linux', 'nfs-kernel-server', 'open-vm-tools'])
                 self._add_step_result(job_id, job_details, 'install_packages', 'running', f'Installing {len(packages)} packages...')
-                self._update_progress(job_id, job_details, 20)
+                self._update_progress(job_id, job_details, 15)
                 
-                # Update apt sources
-                self._log_console(job_id, 'INFO', 'Updating apt sources...', job_details)
-                self._exec_ssh(ssh_client, 'apt-get update -y')
-                
-                # Install each package
-                for pkg in packages:
-                    self._log_console(job_id, 'INFO', f'Installing {pkg}...', job_details)
-                    result = self._exec_ssh(ssh_client, f'DEBIAN_FRONTEND=noninteractive apt-get install -y {pkg}')
-                    if result['exit_code'] != 0:
-                        self._log_console(job_id, 'WARN', f'Package {pkg} may have had issues: {result["stderr"]}', job_details)
+                if os_family == 'debian':
+                    self._install_packages_debian(ssh_client, packages, job_id, job_details)
+                elif os_family == 'rhel':
+                    self._install_packages_rhel(ssh_client, packages, job_id, job_details)
+                else:
+                    # Fallback to apt
+                    self._install_packages_debian(ssh_client, packages, job_id, job_details)
                 
                 self._add_step_result(job_id, job_details, 'install_packages', 'success', f'Installed {len(packages)} packages')
-                self._update_progress(job_id, job_details, 40)
+                self._update_progress(job_id, job_details, 35)
             
-            # Step 3: Create service user
+            # Step 5: Apply ZFS tuning
+            tuning = details.get('zfs_tuning', {})
+            if tuning.get('enabled', True):
+                self._add_step_result(job_id, job_details, 'zfs_tuning', 'running', 'Applying ZFS tuning...')
+                self._update_progress(job_id, job_details, 38)
+                
+                self._configure_zfs_tuning(ssh_client, job_id, job_details, tuning)
+                self._add_step_result(job_id, job_details, 'zfs_tuning', 'success', 'ZFS tuning applied')
+            
+            # Step 6: Create service user
             if details.get('create_user', True):
                 username = details.get('username', 'zfsadmin')
                 self._add_step_result(job_id, job_details, 'create_user', 'running', f'Creating user {username}...')
+                self._update_progress(job_id, job_details, 42)
                 
                 # Create user with home directory
                 self._exec_ssh(ssh_client, f'useradd -m -s /bin/bash {username} || true')
@@ -129,17 +207,17 @@ class TemplateHandler(BaseHandler):
                 self._exec_ssh(ssh_client, f'usermod -aG sudo {username}')
                 
                 # Allow passwordless sudo for ZFS commands
-                sudo_line = f'{username} ALL=(ALL) NOPASSWD: /sbin/zpool, /sbin/zfs, /bin/systemctl, /usr/sbin/exportfs'
+                sudo_line = f'{username} ALL=(ALL) NOPASSWD: /sbin/zpool, /sbin/zfs, /bin/systemctl, /usr/sbin/exportfs, /usr/local/bin/zfs-health-check'
                 self._exec_ssh(ssh_client, f'echo "{sudo_line}" > /etc/sudoers.d/{username}')
                 self._exec_ssh(ssh_client, f'chmod 440 /etc/sudoers.d/{username}')
                 
                 self._add_step_result(job_id, job_details, 'create_user', 'success', f'Created user {username} with sudo access')
-                self._update_progress(job_id, job_details, 50)
             
-            # Step 4: Deploy SSH key
+            # Step 7: Deploy SSH key
             ssh_key_id = details.get('ssh_key_id')
             if ssh_key_id:
                 self._add_step_result(job_id, job_details, 'deploy_key', 'running', 'Deploying SSH key...')
+                self._update_progress(job_id, job_details, 48)
                 
                 key_data = self._get_ssh_key(ssh_key_id)
                 if key_data and key_data.get('public_key'):
@@ -163,11 +241,18 @@ class TemplateHandler(BaseHandler):
                     self._add_step_result(job_id, job_details, 'deploy_key', 'success', 'SSH key deployed')
                 else:
                     self._add_step_result(job_id, job_details, 'deploy_key', 'warning', 'SSH key not found')
-                
-                self._update_progress(job_id, job_details, 60)
             
-            # Step 5: Clean system for templating
+            # Step 8: Install health check script
+            if details.get('install_health_script', True):
+                self._add_step_result(job_id, job_details, 'health_script', 'running', 'Installing health check script...')
+                self._update_progress(job_id, job_details, 52)
+                
+                self._install_health_check_script(ssh_client, job_id, job_details)
+                self._add_step_result(job_id, job_details, 'health_script', 'success', 'Health check script installed')
+            
+            # Step 9: Clean system for templating
             cleanup = details.get('cleanup', {})
+            self._update_progress(job_id, job_details, 58)
             
             if cleanup.get('clear_machine_id', True):
                 self._add_step_result(job_id, job_details, 'clean_machine_id', 'running', 'Clearing machine-id...')
@@ -179,7 +264,8 @@ class TemplateHandler(BaseHandler):
                 self._add_step_result(job_id, job_details, 'clean_ssh_keys', 'running', 'Clearing SSH host keys...')
                 self._exec_ssh(ssh_client, 'rm -f /etc/ssh/ssh_host_*')
                 # Configure to regenerate on boot
-                self._exec_ssh(ssh_client, 'dpkg-reconfigure openssh-server || true')
+                if os_family == 'debian':
+                    self._exec_ssh(ssh_client, 'dpkg-reconfigure openssh-server || true')
                 self._add_step_result(job_id, job_details, 'clean_ssh_keys', 'success', 'SSH host keys cleared')
             
             if cleanup.get('clean_cloud_init', True):
@@ -188,13 +274,29 @@ class TemplateHandler(BaseHandler):
                 self._exec_ssh(ssh_client, 'rm -rf /var/lib/cloud/* || true')
                 self._add_step_result(job_id, job_details, 'clean_cloud_init', 'success', 'cloud-init cleaned')
             
+            # Step 10: Clean network state
+            if cleanup.get('clean_network', True):
+                self._add_step_result(job_id, job_details, 'clean_network', 'running', 'Cleaning network state...')
+                self._cleanup_network(ssh_client, job_id, job_details)
+                self._add_step_result(job_id, job_details, 'clean_network', 'success', 'Network state cleaned')
+            
+            self._update_progress(job_id, job_details, 68)
+            
+            # Step 11: Stamp template version
+            template_version = details.get('template_version', '1.0.0')
+            packages_installed = details.get('packages', ['zfsutils-linux', 'nfs-kernel-server', 'open-vm-tools'])
+            
+            self._add_step_result(job_id, job_details, 'stamp_version', 'running', f'Stamping version {template_version}...')
+            self._stamp_template_version(ssh_client, template_version, packages_installed, os_family, job_id, job_details)
+            self._add_step_result(job_id, job_details, 'stamp_version', 'success', f'Template version: {template_version}')
+            
             self._update_progress(job_id, job_details, 75)
             
             # Close SSH before power operations
             ssh_client.close()
             self.ssh_client = None
             
-            # Step 6: Power off and convert to template
+            # Step 12: Power off and convert to template
             if details.get('power_off_first', True) or details.get('convert_to_template', True):
                 # Connect to vCenter
                 vc_settings = self._get_vcenter_settings(vcenter_id)
@@ -245,7 +347,7 @@ class TemplateHandler(BaseHandler):
             
             # Complete
             self._update_progress(job_id, job_details, 100)
-            self._log_console(job_id, 'INFO', 'Template preparation complete', job_details)
+            self._log_console(job_id, 'INFO', 'Enhanced template preparation complete', job_details)
             
             self.update_job_status(
                 job_id, 
@@ -500,7 +602,342 @@ class TemplateHandler(BaseHandler):
                 details={**job_details, 'error': str(e)}
             )
     
-    # Helper methods
+    # ========== Enhanced Template Preparation Methods ==========
+    
+    def _preflight_checks(self, ssh_client: Any, job_id: str, job_details: Dict) -> list:
+        """Validate prerequisites before making changes."""
+        checks = []
+        
+        # Check disk space (need ~2GB for ZFS packages)
+        result = self._exec_ssh(ssh_client, "df -BG / | tail -1 | awk '{print $4}' | tr -d 'G'")
+        try:
+            free_gb = int(result['stdout'].strip()) if result['exit_code'] == 0 else 0
+            checks.append({
+                'check': 'disk_space',
+                'ok': free_gb >= 2,
+                'value': f'{free_gb}GB free',
+                'critical': free_gb < 1  # Critical if less than 1GB
+            })
+        except ValueError:
+            checks.append({'check': 'disk_space', 'ok': False, 'value': 'Could not determine', 'critical': False})
+        
+        # Check internet/repo access
+        result = self._exec_ssh(ssh_client, "curl -s --connect-timeout 5 http://deb.debian.org > /dev/null 2>&1 && echo ok || echo fail")
+        repo_ok = 'ok' in result['stdout']
+        checks.append({
+            'check': 'repo_access',
+            'ok': repo_ok,
+            'value': 'Debian repos accessible' if repo_ok else 'Cannot reach Debian repos',
+            'critical': False  # Not critical, might be RHEL
+        })
+        
+        # Check kernel headers available
+        result = self._exec_ssh(ssh_client, "uname -r")
+        kernel_version = result['stdout'].strip() if result['exit_code'] == 0 else 'unknown'
+        
+        result = self._exec_ssh(ssh_client, f"apt-cache search linux-headers-{kernel_version} 2>/dev/null || yum list kernel-devel 2>/dev/null")
+        headers_available = len(result['stdout'].strip()) > 0
+        checks.append({
+            'check': 'kernel_headers',
+            'ok': headers_available,
+            'value': f'Headers for {kernel_version}' if headers_available else 'Headers may need installation',
+            'critical': False
+        })
+        
+        # Check if ZFS is already installed
+        result = self._exec_ssh(ssh_client, "which zpool 2>/dev/null")
+        zfs_installed = result['exit_code'] == 0
+        checks.append({
+            'check': 'zfs_installed',
+            'ok': True,  # Not a failure either way
+            'value': 'ZFS already installed' if zfs_installed else 'ZFS not installed (will install)',
+            'critical': False
+        })
+        
+        # Check SSH server running
+        result = self._exec_ssh(ssh_client, "systemctl is-active sshd 2>/dev/null || systemctl is-active ssh 2>/dev/null")
+        ssh_active = 'active' in result['stdout']
+        checks.append({
+            'check': 'ssh_service',
+            'ok': ssh_active,
+            'value': 'SSH service active' if ssh_active else 'SSH service status unknown',
+            'critical': False
+        })
+        
+        self._log_console(job_id, 'INFO', f'Pre-flight checks: {len([c for c in checks if c["ok"]])}/{len(checks)} passed', job_details)
+        return checks
+    
+    def _detect_os_family(self, ssh_client: Any) -> str:
+        """Detect OS family for package manager selection."""
+        result = self._exec_ssh(ssh_client, 'cat /etc/os-release 2>/dev/null')
+        os_info = result['stdout'].lower()
+        
+        if 'debian' in os_info or 'ubuntu' in os_info:
+            return 'debian'
+        elif 'rhel' in os_info or 'centos' in os_info or 'rocky' in os_info or 'alma' in os_info or 'fedora' in os_info:
+            return 'rhel'
+        
+        # Fallback checks
+        result = self._exec_ssh(ssh_client, 'which apt-get 2>/dev/null')
+        if result['exit_code'] == 0:
+            return 'debian'
+        
+        result = self._exec_ssh(ssh_client, 'which yum 2>/dev/null || which dnf 2>/dev/null')
+        if result['exit_code'] == 0:
+            return 'rhel'
+        
+        return 'unknown'
+    
+    def _install_packages_debian(self, ssh_client: Any, packages: list, job_id: str, job_details: Dict):
+        """Install packages on Debian/Ubuntu with proper ZFS repo setup."""
+        self._log_console(job_id, 'INFO', 'Configuring Debian repositories...', job_details)
+        
+        # Detect repository format (deb822 vs traditional)
+        check_deb822 = self._exec_ssh(ssh_client, 'ls /etc/apt/sources.list.d/*.sources 2>/dev/null')
+        
+        if check_deb822['exit_code'] == 0 and check_deb822['stdout'].strip():
+            # deb822 format - add contrib component to existing files
+            self._log_console(job_id, 'INFO', 'Using deb822 repository format', job_details)
+            self._exec_ssh(ssh_client, r"sed -i 's/Components: main$/Components: main contrib/' /etc/apt/sources.list.d/*.sources")
+        else:
+            # Traditional format - check if contrib is already present
+            check_contrib = self._exec_ssh(ssh_client, 'grep -r "contrib" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null')
+            if check_contrib['exit_code'] != 0:
+                self._log_console(job_id, 'INFO', 'Adding contrib repository', job_details)
+                # Detect codename
+                codename_result = self._exec_ssh(ssh_client, 'lsb_release -cs 2>/dev/null || grep VERSION_CODENAME /etc/os-release | cut -d= -f2')
+                codename = codename_result['stdout'].strip() or 'bookworm'
+                self._exec_ssh(ssh_client, f'echo "deb http://deb.debian.org/debian {codename} main contrib" > /etc/apt/sources.list.d/contrib.list')
+        
+        # Update package lists
+        self._log_console(job_id, 'INFO', 'Updating package lists...', job_details)
+        self._exec_ssh(ssh_client, 'apt-get update -qq')
+        
+        # Install kernel headers first (required for DKMS to build ZFS module)
+        result = self._exec_ssh(ssh_client, 'uname -r')
+        kernel_version = result['stdout'].strip() if result['exit_code'] == 0 else None
+        
+        if kernel_version:
+            self._log_console(job_id, 'INFO', f'Installing kernel headers for {kernel_version}...', job_details)
+            result = self._exec_ssh(ssh_client, f'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dpkg-dev linux-headers-{kernel_version}')
+            if result['exit_code'] != 0:
+                self._log_console(job_id, 'WARN', f'Header install warning: {result["stderr"]}', job_details)
+        
+        # Separate ZFS packages from others
+        zfs_packages = [p for p in packages if 'zfs' in p.lower()]
+        other_packages = [p for p in packages if 'zfs' not in p.lower()]
+        
+        # Install non-ZFS packages first
+        if other_packages:
+            pkg_str = ' '.join(other_packages)
+            self._log_console(job_id, 'INFO', f'Installing packages: {pkg_str}', job_details)
+            result = self._exec_ssh(ssh_client, f'DEBIAN_FRONTEND=noninteractive apt-get install -y {pkg_str}')
+            if result['exit_code'] != 0:
+                self._log_console(job_id, 'WARN', f'Package install warning: {result["stderr"]}', job_details)
+        
+        # Install ZFS packages (zfs-dkms + zfsutils-linux)
+        if zfs_packages or 'zfsutils-linux' in packages:
+            self._log_console(job_id, 'INFO', 'Installing ZFS packages (this may take a few minutes for DKMS build)...', job_details)
+            result = self._exec_ssh(ssh_client, 'DEBIAN_FRONTEND=noninteractive apt-get install -y zfs-dkms zfsutils-linux')
+            if result['exit_code'] != 0:
+                self._log_console(job_id, 'WARN', f'ZFS install warning: {result["stderr"]}', job_details)
+            
+            # Load ZFS kernel module
+            result = self._exec_ssh(ssh_client, 'modprobe zfs')
+            if result['exit_code'] != 0:
+                self._log_console(job_id, 'WARN', 'modprobe zfs failed, trying dkms autoinstall...', job_details)
+                self._exec_ssh(ssh_client, 'dkms autoinstall')
+                result = self._exec_ssh(ssh_client, 'modprobe zfs')
+                if result['exit_code'] != 0:
+                    self._log_console(job_id, 'WARN', f'modprobe zfs still failed: {result["stderr"]}', job_details)
+            
+            # Verify ZFS is loaded
+            result = self._exec_ssh(ssh_client, 'lsmod | grep zfs')
+            if result['exit_code'] == 0:
+                self._log_console(job_id, 'INFO', 'ZFS kernel module loaded successfully', job_details)
+            else:
+                self._log_console(job_id, 'WARN', 'ZFS kernel module not loaded - may work after reboot', job_details)
+    
+    def _install_packages_rhel(self, ssh_client: Any, packages: list, job_id: str, job_details: Dict):
+        """Install packages on RHEL/CentOS/Rocky."""
+        self._log_console(job_id, 'INFO', 'Configuring RHEL-family repositories...', job_details)
+        
+        # Enable EPEL repository
+        self._exec_ssh(ssh_client, 'yum install -y epel-release 2>/dev/null || dnf install -y epel-release 2>/dev/null || true')
+        
+        # Install kernel-devel for DKMS
+        result = self._exec_ssh(ssh_client, 'uname -r')
+        kernel_version = result['stdout'].strip()
+        self._exec_ssh(ssh_client, f'yum install -y kernel-devel-{kernel_version} || dnf install -y kernel-devel-{kernel_version} || true')
+        
+        # Map Debian package names to RHEL equivalents
+        rhel_packages = []
+        for pkg in packages:
+            if pkg == 'zfsutils-linux':
+                rhel_packages.append('zfs')
+            elif pkg == 'nfs-kernel-server':
+                rhel_packages.append('nfs-utils')
+            elif pkg == 'open-vm-tools':
+                rhel_packages.append('open-vm-tools')
+            else:
+                rhel_packages.append(pkg)
+        
+        # Install ZFS repo for RHEL
+        if 'zfs' in rhel_packages:
+            self._log_console(job_id, 'INFO', 'Adding ZFS repository...', job_details)
+            # This is a simplified approach - in production might need more specific handling
+            self._exec_ssh(ssh_client, 'yum install -y https://zfsonlinux.org/epel/zfs-release-2-3$(rpm --eval "%{dist}").noarch.rpm || true')
+            self._exec_ssh(ssh_client, 'yum-config-manager --enable zfs || true')
+        
+        # Install packages
+        pkg_str = ' '.join(rhel_packages)
+        self._log_console(job_id, 'INFO', f'Installing packages: {pkg_str}', job_details)
+        result = self._exec_ssh(ssh_client, f'yum install -y {pkg_str} || dnf install -y {pkg_str}')
+        if result['exit_code'] != 0:
+            self._log_console(job_id, 'WARN', f'Package install warning: {result["stderr"]}', job_details)
+        
+        # Enable NFS service
+        self._exec_ssh(ssh_client, 'systemctl enable nfs-server 2>/dev/null || true')
+    
+    def _configure_zfs_tuning(self, ssh_client: Any, job_id: str, job_details: Dict, tuning: Dict):
+        """Apply ZFS performance tuning for NFS workloads."""
+        self._log_console(job_id, 'INFO', 'Applying ZFS tuning parameters...', job_details)
+        
+        tuning_lines = []
+        
+        # ARC size limit (default: 50% of RAM)
+        arc_percent = tuning.get('arc_percent', 50)
+        if arc_percent and arc_percent > 0:
+            tuning_lines.append(f'# Limit ARC to {arc_percent}% of RAM')
+            tuning_lines.append(f'options zfs zfs_arc_max=$(( $(grep MemTotal /proc/meminfo | awk \'{{print $2}}\') * 1024 * {arc_percent} / 100 ))')
+        
+        # Enable prefetch (good for sequential workloads)
+        if tuning.get('enable_prefetch', True):
+            tuning_lines.append('# Enable prefetch for sequential reads')
+            tuning_lines.append('options zfs zfs_prefetch_disable=0')
+        
+        # Sync write optimization
+        if tuning.get('sync_optimization', False):
+            tuning_lines.append('# Optimize sync writes')
+            tuning_lines.append('options zfs zfs_txg_timeout=5')
+        
+        # Write tuning config
+        if tuning_lines:
+            tuning_content = '\n'.join(tuning_lines)
+            self._exec_ssh(ssh_client, f'cat > /etc/modprobe.d/zfs-tuning.conf << \'EOF\'\n{tuning_content}\nEOF')
+            self._log_console(job_id, 'INFO', f'Applied {len(tuning_lines)} ZFS tuning parameters', job_details)
+        
+        # NFS tuning
+        if tuning.get('nfs_tuning', True):
+            self._log_console(job_id, 'INFO', 'Applying NFS tuning...', job_details)
+            nfs_tuning = '''# NFS tuning for ZFS appliance
+# Increase number of NFS threads
+RPCNFSDCOUNT=16
+'''
+            self._exec_ssh(ssh_client, f'cat >> /etc/default/nfs-kernel-server << \'EOF\'\n{nfs_tuning}\nEOF')
+    
+    def _install_health_check_script(self, ssh_client: Any, job_id: str, job_details: Dict):
+        """Install ZFS health check script."""
+        script = '''#!/bin/bash
+# ZFS Appliance Health Check
+# Installed by Dell Server Manager Template Preparation
+
+echo "=== ZFS Appliance Health Check ==="
+echo "Date: $(date)"
+echo "Hostname: $(hostname)"
+echo ""
+
+echo "=== ZFS Pools ==="
+if command -v zpool &> /dev/null; then
+    zpool list 2>/dev/null || echo "No pools configured"
+    echo ""
+    echo "Pool Status:"
+    zpool status 2>/dev/null || echo "No pools to check"
+else
+    echo "ZFS not installed or not in PATH"
+fi
+echo ""
+
+echo "=== ZFS Module ==="
+lsmod | grep zfs || echo "ZFS module not loaded"
+echo ""
+
+echo "=== NFS Exports ==="
+exportfs -v 2>/dev/null || echo "No NFS exports or exportfs not available"
+echo ""
+
+echo "=== Services ==="
+echo -n "NFS Server: "
+systemctl is-active nfs-server.service 2>/dev/null || systemctl is-active nfs-kernel-server.service 2>/dev/null || echo "not found"
+echo -n "ZFS Import: "
+systemctl is-active zfs-import-cache.service 2>/dev/null || echo "not found"
+echo -n "ZFS Mount: "
+systemctl is-active zfs-mount.service 2>/dev/null || echo "not found"
+echo ""
+
+echo "=== Disk Space ==="
+df -h / /var 2>/dev/null
+echo ""
+
+echo "=== Memory ==="
+free -h
+echo ""
+
+echo "=== Template Info ==="
+cat /etc/zfs-template-info 2>/dev/null || echo "Template info not found"
+'''
+        # Write the script
+        self._exec_ssh(ssh_client, f"cat > /usr/local/bin/zfs-health-check << 'HEALTHEOF'\n{script}\nHEALTHEOF")
+        self._exec_ssh(ssh_client, 'chmod +x /usr/local/bin/zfs-health-check')
+        
+        self._log_console(job_id, 'INFO', 'Installed /usr/local/bin/zfs-health-check', job_details)
+    
+    def _cleanup_network(self, ssh_client: Any, job_id: str, job_details: Dict):
+        """Clean network state for cloning."""
+        commands = [
+            ('DHCP leases', 'rm -f /var/lib/dhcp/*.leases /var/lib/dhclient/* 2>/dev/null || true'),
+            ('Persistent net rules', 'rm -f /etc/udev/rules.d/70-persistent-net.rules 2>/dev/null || true'),
+            ('NetworkManager connections', 'rm -f /etc/NetworkManager/system-connections/* 2>/dev/null || true'),
+            ('Hostname (optional)', 'truncate -s 0 /etc/hostname 2>/dev/null || true'),
+        ]
+        
+        for desc, cmd in commands:
+            result = self._exec_ssh(ssh_client, cmd)
+            if result['exit_code'] == 0:
+                self._log_console(job_id, 'INFO', f'Cleaned: {desc}', job_details)
+    
+    def _stamp_template_version(self, ssh_client: Any, version: str, packages: list, os_family: str, job_id: str, job_details: Dict):
+        """Create /etc/zfs-template-info with version metadata."""
+        timestamp = datetime.now(timezone.utc).isoformat()
+        packages_str = ','.join(packages)
+        
+        # Get OS details
+        os_result = self._exec_ssh(ssh_client, 'cat /etc/os-release | grep PRETTY_NAME | cut -d= -f2 | tr -d \'"\'')
+        os_name = os_result['stdout'].strip() or 'Unknown'
+        
+        kernel_result = self._exec_ssh(ssh_client, 'uname -r')
+        kernel = kernel_result['stdout'].strip() or 'Unknown'
+        
+        zfs_result = self._exec_ssh(ssh_client, 'zfs --version 2>/dev/null | head -1 || echo "Not installed"')
+        zfs_version = zfs_result['stdout'].strip()
+        
+        info_content = f'''# ZFS Appliance Template
+# Created by Dell Server Manager
+
+VERSION={version}
+CREATED={timestamp}
+OS_FAMILY={os_family}
+OS_NAME={os_name}
+KERNEL={kernel}
+ZFS_VERSION={zfs_version}
+PACKAGES={packages_str}
+'''
+        
+        self._exec_ssh(ssh_client, f"cat > /etc/zfs-template-info << 'TPLEOF'\n{info_content}\nTPLEOF")
+        self._log_console(job_id, 'INFO', f'Template version {version} stamped', job_details)
+    
+    # ========== Original Helper Methods ==========
+    
     def _log_console(self, job_id: str, level: str, message: str, job_details: Dict):
         """Add message to console log"""
         timestamp = datetime.now(timezone.utc).strftime('%H:%M:%S')
