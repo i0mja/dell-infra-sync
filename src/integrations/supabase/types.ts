@@ -4540,6 +4540,7 @@ export type Database = {
         | "sync_protection_config"
         | "clone_zfs_template"
         | "partial_vcenter_sync"
+        | "inspect_zfs_appliance"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -4749,6 +4750,7 @@ export const Constants = {
         "sync_protection_config",
         "clone_zfs_template",
         "partial_vcenter_sync",
+        "inspect_zfs_appliance",
       ],
       operation_type: [
         "idrac_api",
