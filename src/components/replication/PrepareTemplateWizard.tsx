@@ -67,6 +67,9 @@ import {
 import { useVCenters } from "@/hooks/useVCenters";
 import { useVCenterVMs } from "@/hooks/useVCenterVMs";
 import { useSshKeys } from "@/hooks/useSshKeys";
+import { useQuickRefresh } from "@/hooks/useQuickRefresh";
+import { RefreshIndicator } from "@/components/ui/RefreshIndicator";
+import { RefreshButton } from "@/components/ui/RefreshButton";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { useToast } from "@/hooks/use-toast";
@@ -171,6 +174,9 @@ export function PrepareTemplateWizard({
   // Fetch SSH keys
   const { sshKeys = [], isLoading: sshKeysLoading } = useSshKeys();
   
+  // Quick refresh for vCenter data
+  const quickRefresh = useQuickRefresh(selectedVCenterId || null);
+  
   // Filter active SSH keys
   const activeSshKeys = useMemo(() => 
     sshKeys.filter(k => k.status === 'active'), 
@@ -224,6 +230,13 @@ export function PrepareTemplateWizard({
       setCreateRollbackSnapshot(false);
     }
   }, [open, preselectedVCenterId]);
+  
+  // Auto-refresh VMs when vCenter is selected
+  useEffect(() => {
+    if (open && selectedVCenterId) {
+      quickRefresh.triggerQuickRefresh(['vms']);
+    }
+  }, [open, selectedVCenterId]);
   
   // Auto-populate template name from VM
   useEffect(() => {
@@ -554,10 +567,13 @@ export function PrepareTemplateWizard({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <FileBox className="h-5 w-5" />
-            Prepare ZFS Appliance Template
-          </DialogTitle>
+          <div className="flex items-center justify-between">
+            <DialogTitle className="flex items-center gap-2">
+              <FileBox className="h-5 w-5" />
+              Prepare ZFS Appliance Template
+            </DialogTitle>
+            <RefreshIndicator isRefreshing={quickRefresh.isRefreshing} />
+          </div>
           <DialogDescription>
             Configure a VM as a baseline ZFS appliance template with enhanced validation and tuning
           </DialogDescription>
@@ -619,19 +635,30 @@ export function PrepareTemplateWizard({
               
               <div className="space-y-2">
                 <Label>VM to Convert (must be powered on)</Label>
-                <VMCombobox
-                  vms={eligibleVMs}
-                  clusters={clusters}
-                  selectedVmId={selectedVMId}
-                  onSelectVm={(vm) => setSelectedVMId(vm.id)}
-                  disabled={!selectedVCenterId}
-                  isLoading={vmsLoading}
-                  placeholder={
-                    !selectedVCenterId 
-                      ? "Select vCenter first" 
-                      : "Select a powered-on VM"
-                  }
-                />
+                <div className="flex items-center gap-1">
+                  <div className="flex-1">
+                    <VMCombobox
+                      vms={eligibleVMs}
+                      clusters={clusters}
+                      selectedVmId={selectedVMId}
+                      onSelectVm={(vm) => setSelectedVMId(vm.id)}
+                      disabled={!selectedVCenterId}
+                      isLoading={vmsLoading}
+                      placeholder={
+                        !selectedVCenterId 
+                          ? "Select vCenter first" 
+                          : "Select a powered-on VM"
+                      }
+                    />
+                  </div>
+                  {selectedVCenterId && (
+                    <RefreshButton 
+                      onClick={() => quickRefresh.refreshSingle('vms')}
+                      isRefreshing={quickRefresh.isRefreshingScope('vms')}
+                      tooltip="Refresh VMs"
+                    />
+                  )}
+                </div>
               </div>
               
               {/* VM Preview */}

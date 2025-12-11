@@ -53,6 +53,9 @@ import { useVCenters } from "@/hooks/useVCenters";
 import { useReplicationTargets, useProtectionGroups } from "@/hooks/useReplication";
 import { useAccessibleDatastores } from "@/hooks/useAccessibleDatastores";
 import { useVCenterData } from "@/hooks/useVCenterData";
+import { useQuickRefresh } from "@/hooks/useQuickRefresh";
+import { RefreshIndicator } from "@/components/ui/RefreshIndicator";
+import { RefreshButton } from "@/components/ui/RefreshButton";
 import { useToast } from "@/hooks/use-toast";
 import { OnboardZfsTargetWizard } from "./OnboardZfsTargetWizard";
 
@@ -113,6 +116,9 @@ export function CreateProtectionGroupWizard({ open, onOpenChange }: CreateProtec
   const { clusters } = useVCenterData(sourceVCenterId || null);
   const { data: datastores = [] } = useAccessibleDatastores(sourceVCenterId || undefined);
   
+  // Quick refresh for vCenter data
+  const quickRefresh = useQuickRefresh(sourceVCenterId || null);
+  
   // Filter targets for the selected vCenter
   const availableTargets = targets.filter(t => {
     // Find datastores linked to this target that are in the selected vCenter
@@ -142,6 +148,13 @@ export function CreateProtectionGroupWizard({ open, onOpenChange }: CreateProtec
       setSelectedDatastore("");
     }
   }, [open]);
+  
+  // Auto-refresh datastores when vCenter is selected
+  useEffect(() => {
+    if (open && sourceVCenterId) {
+      quickRefresh.triggerQuickRefresh(['datastores']);
+    }
+  }, [open, sourceVCenterId]);
   
   // Validate current step
   const isStepValid = (step: number): boolean => {

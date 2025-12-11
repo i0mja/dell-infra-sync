@@ -55,6 +55,9 @@ import { TemplateCloneConfig, CloneSettings } from "./TemplateCloneConfig";
 import { useVCenters } from "@/hooks/useVCenters";
 import { useVCenterVMs } from "@/hooks/useVCenterVMs";
 import { useSshKeys } from "@/hooks/useSshKeys";
+import { useQuickRefresh } from "@/hooks/useQuickRefresh";
+import { RefreshIndicator } from "@/components/ui/RefreshIndicator";
+import { RefreshButton } from "@/components/ui/RefreshButton";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { generateTargetNames, getVCenterSiteCodes } from "@/utils/targetNaming";
@@ -159,6 +162,10 @@ export function PairedZfsDeployWizard({
   // Filter active SSH keys
   const activeSshKeys = sshKeys.filter(k => k.status === 'active');
   
+  // Quick refresh for source and DR vCenters
+  const sourceRefresh = useQuickRefresh(sourceConfig.vcenterId || null);
+  const drRefresh = useQuickRefresh(drConfig.vcenterId || null);
+  
   // Get VM details
   const sourceVm = sourceVms.find(vm => vm.id === sourceConfig.vmId);
   const drVm = drVms.find(vm => vm.id === drConfig.vmId);
@@ -175,6 +182,19 @@ export function PairedZfsDeployWizard({
       setDeployComplete(false);
     }
   }, [open]);
+  
+  // Auto-refresh VMs when vCenter is selected
+  useEffect(() => {
+    if (open && sourceConfig.vcenterId) {
+      sourceRefresh.triggerQuickRefresh(['vms', 'datastores']);
+    }
+  }, [open, sourceConfig.vcenterId]);
+  
+  useEffect(() => {
+    if (open && drConfig.vcenterId) {
+      drRefresh.triggerQuickRefresh(['vms', 'datastores']);
+    }
+  }, [open, drConfig.vcenterId]);
   
   // Auto-generate names and load default template when source vCenter is selected
   useEffect(() => {
@@ -572,7 +592,8 @@ export function PairedZfsDeployWizard({
     vms: any[],
     vmsLoading: boolean,
     clusters: string[],
-    selectedVm: any
+    selectedVm: any,
+    refreshState: ReturnType<typeof useQuickRefresh>
   ) => (
     <div className={`space-y-4 p-4 rounded-lg border ${isPrimary ? 'bg-primary/5 border-primary/20' : 'bg-secondary/30'}`}>
       <div className="flex items-center gap-2 pb-2 border-b">
@@ -608,15 +629,26 @@ export function PairedZfsDeployWizard({
           
           <div className="space-y-2">
             <Label className="text-xs">VM or Template</Label>
-            <VMCombobox
-              vms={vms}
-              clusters={clusters}
-              selectedVmId={config.vmId}
-              onSelectVm={(vm) => setConfig(prev => ({ ...prev, vmId: vm.id }))}
-              disabled={!config.vcenterId}
-              isLoading={vmsLoading}
-              placeholder={!config.vcenterId ? "Select vCenter first" : "Select VM or Template"}
-            />
+            <div className="flex items-center gap-1">
+              <div className="flex-1">
+                <VMCombobox
+                  vms={vms}
+                  clusters={clusters}
+                  selectedVmId={config.vmId}
+                  onSelectVm={(vm) => setConfig(prev => ({ ...prev, vmId: vm.id }))}
+                  disabled={!config.vcenterId}
+                  isLoading={vmsLoading}
+                  placeholder={!config.vcenterId ? "Select vCenter first" : "Select VM or Template"}
+                />
+              </div>
+              {config.vcenterId && (
+                <RefreshButton 
+                  onClick={() => refreshState.refreshSingle('vms')}
+                  isRefreshing={refreshState.isRefreshingScope('vms')}
+                  tooltip="Refresh VMs"
+                />
+              )}
+            </div>
           </div>
           
           {selectedVm && !config.isTemplate && (
@@ -820,10 +852,13 @@ export function PairedZfsDeployWizard({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col overflow-hidden">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <ArrowRightLeft className="h-5 w-5" />
-            Deploy Paired ZFS Replication Targets
-          </DialogTitle>
+          <div className="flex items-center justify-between">
+            <DialogTitle className="flex items-center gap-2">
+              <ArrowRightLeft className="h-5 w-5" />
+              Deploy Paired ZFS Replication Targets
+            </DialogTitle>
+            <RefreshIndicator isRefreshing={sourceRefresh.isRefreshing || drRefresh.isRefreshing} />
+          </div>
           <DialogDescription>
             Set up both source and DR ZFS appliances for replication between sites
           </DialogDescription>
@@ -875,7 +910,8 @@ export function PairedZfsDeployWizard({
                 sourceVms,
                 sourceVmsLoading,
                 sourceClusters,
-                sourceVm
+                sourceVm,
+                sourceRefresh
               )}
               {renderSiteCard(
                 'DR Site (Recovery)',
@@ -886,7 +922,8 @@ export function PairedZfsDeployWizard({
                 drVms,
                 drVmsLoading,
                 drClusters,
-                drVm
+                drVm,
+                drRefresh
               )}
             </div>
           )}
