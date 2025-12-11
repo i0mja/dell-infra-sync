@@ -20,12 +20,14 @@ interface ZfsApplianceSelectorProps {
   selectedId?: string;
   onSelect: (template: ZfsTargetTemplate | null) => void;
   showOnlyReady?: boolean;
+  vcenterId?: string;
 }
 
 export const ZfsApplianceSelector = ({ 
   selectedId, 
   onSelect,
-  showOnlyReady = true 
+  showOnlyReady = true,
+  vcenterId
 }: ZfsApplianceSelectorProps) => {
   const { templates, loading } = useZfsTemplates();
   const [searchQuery, setSearchQuery] = useState("");
@@ -33,6 +35,10 @@ export const ZfsApplianceSelector = ({
   // Filter templates
   const filteredTemplates = templates.filter((template) => {
     const extTemplate = template as ZfsTargetTemplate & { status?: string };
+    // Filter by vCenter if specified
+    if (vcenterId && template.vcenter_id !== vcenterId) {
+      return false;
+    }
     const matchesSearch = 
       template.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       template.description?.toLowerCase().includes(searchQuery.toLowerCase());
@@ -57,7 +63,9 @@ export const ZfsApplianceSelector = ({
           <p className="text-sm text-muted-foreground mb-2">
             {searchQuery 
               ? "No appliances match your search" 
-              : "No ready appliances available"}
+              : vcenterId 
+                ? "No ready appliances for this vCenter"
+                : "No ready appliances available"}
           </p>
           <p className="text-xs text-muted-foreground">
             Prepare a template first in Settings → Infrastructure → Appliance Library
