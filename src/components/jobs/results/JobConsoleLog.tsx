@@ -43,9 +43,17 @@ interface ConsoleEntry {
 }
 
 interface ExecutorLogEntry {
+  id: string;
   timestamp: string;
   level: string;
   message: string;
+}
+
+interface StepResult {
+  step: string;
+  status: string;
+  message: string;
+  timestamp?: string;
 }
 
 interface JobConsoleLogProps {
@@ -61,11 +69,12 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
   const [filter, setFilter] = useState<FilterType>('all');
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const parseExecutorLog = (logLine: string): ExecutorLogEntry | null => {
+  const parseExecutorLog = (logLine: string, idx: number): ExecutorLogEntry | null => {
     // Parse format: [HH:MM:SS] [LEVEL] message
     const match = logLine.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*\[(\w+)\]\s*(.+)$/);
     if (match) {
       return {
+        id: `exec-${idx}`,
         timestamp: match[1],
         level: match[2],
         message: match[3]
@@ -106,7 +115,7 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
         const details = jobData.details as Record<string, unknown>;
         if (details.console_log && Array.isArray(details.console_log)) {
           const parsed = (details.console_log as string[])
-            .map(parseExecutorLog)
+            .map((line, idx) => parseExecutorLog(line, idx))
             .filter((e): e is ExecutorLogEntry => e !== null);
           setExecutorLogs(parsed);
         }
@@ -232,7 +241,7 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
           const job = payload.new as { details?: Record<string, unknown> };
           if (job.details?.console_log && Array.isArray(job.details.console_log)) {
             const parsed = (job.details.console_log as string[])
-              .map(parseExecutorLog)
+              .map((line, idx) => parseExecutorLog(line, idx))
               .filter((e): e is ExecutorLogEntry => e !== null);
             setExecutorLogs(parsed);
           }
@@ -300,20 +309,39 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
     toast.success('Console log copied to clipboard');
   };
 
-  const filteredEntries = entries.filter(entry => {
+  // Convert executor logs to console entries for unified display
+  const executorAsConsoleEntries: ConsoleEntry[] = executorLogs.map((log) => ({
+    id: log.id,
+    timestamp: log.timestamp, // Time-only format
+    type: 'task' as const,
+    status: log.level === 'ERROR' ? 'failed' : log.level === 'WARN' ? 'pending' : 'completed',
+    message: log.message,
+    details: {}
+  }));
+
+  const filteredEntries = (() => {
     switch (filter) {
       case 'tasks':
-        return entry.type === 'task';
+        return entries.filter(e => e.type === 'task');
       case 'activity':
-        return entry.type === 'activity';
+        return entries.filter(e => e.type === 'activity');
       case 'errors':
-        return entry.status === 'failed' || entry.details?.error_message;
+        return [...entries, ...executorAsConsoleEntries].filter(
+          e => e.status === 'failed' || e.details?.error_message
+        );
       case 'executor':
-        return false; // Executor logs handled separately
+        return []; // Handled separately with executor-specific rendering
+      case 'all':
       default:
-        return true;
+        // Merge entries with executor logs for "All" view
+        // If we have executor logs but no task entries, show executor logs
+        if (entries.length === 0 && executorLogs.length > 0) {
+          return executorAsConsoleEntries;
+        }
+        // Otherwise show normal entries (tasks + activity)
+        return entries;
     }
-  });
+  })();
 
   const getExecutorLogColor = (level: string): string => {
     switch (level.toUpperCase()) {
