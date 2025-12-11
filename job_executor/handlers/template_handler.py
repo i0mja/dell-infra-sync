@@ -1934,6 +1934,7 @@ modprobe error: {result['stdout']} {result['stderr']}
             target_scope = job.get('target_scope', {}) or {}
             vcenter_id = target_scope.get('vcenter_id')
             template_moref = details.get('template_moref')
+            cluster_name = details.get('cluster_name')
             ssh_username = details.get('ssh_username', 'root')
             # Handle both 'auth_method' (from wizard) and 'ssh_auth_method' (legacy)
             ssh_auth_method = details.get('auth_method') or details.get('ssh_auth_method', 'password')
@@ -2009,17 +2010,47 @@ modprobe error: {result['stdout']} {result['stderr']}
                 self._log_console(job_id, 'INFO', 'Converting template to VM...', job_details)
                 self._update_progress(job_id, job_details, 18)
                 
-                # Find a resource pool - try to find any available one
+                # Find resource pool - prefer cluster-aware selection for datastore accessibility
                 content = vcenter_conn.RetrieveContent()
                 resource_pool = None
-                for dc in content.rootFolder.childEntity:
-                    if hasattr(dc, 'hostFolder'):
-                        for compute_resource in dc.hostFolder.childEntity:
-                            if hasattr(compute_resource, 'resourcePool'):
-                                resource_pool = compute_resource.resourcePool
-                                break
+                
+                if cluster_name:
+                    # Use cluster-aware resource pool selection
+                    self._log_console(job_id, 'INFO', f'Finding resource pool for cluster: {cluster_name}', job_details)
+                    resource_pool = self._find_resource_pool_for_cluster(vcenter_conn, cluster_name)
                     if resource_pool:
-                        break
+                        self._log_console(job_id, 'INFO', f'Found resource pool in cluster: {cluster_name}', job_details)
+                
+                # Fallback: find resource pool from host that has access to template's datastore
+                if not resource_pool and vm_obj.datastore:
+                    self._log_console(job_id, 'INFO', 'Cluster pool not found, finding pool with datastore access...', job_details)
+                    template_datastores = [ds.name for ds in vm_obj.datastore]
+                    
+                    for dc in content.rootFolder.childEntity:
+                        if hasattr(dc, 'hostFolder'):
+                            for compute_resource in dc.hostFolder.childEntity:
+                                if hasattr(compute_resource, 'resourcePool'):
+                                    # Check if this compute resource has access to the template's datastore
+                                    if hasattr(compute_resource, 'datastore'):
+                                        cr_datastores = [ds.name for ds in compute_resource.datastore]
+                                        if any(ds in cr_datastores for ds in template_datastores):
+                                            resource_pool = compute_resource.resourcePool
+                                            self._log_console(job_id, 'INFO', f'Found resource pool with datastore access', job_details)
+                                            break
+                        if resource_pool:
+                            break
+                
+                # Last resort: any resource pool (may fail if no datastore access)
+                if not resource_pool:
+                    self._log_console(job_id, 'WARNING', 'Using first available resource pool (may lack datastore access)', job_details)
+                    for dc in content.rootFolder.childEntity:
+                        if hasattr(dc, 'hostFolder'):
+                            for compute_resource in dc.hostFolder.childEntity:
+                                if hasattr(compute_resource, 'resourcePool'):
+                                    resource_pool = compute_resource.resourcePool
+                                    break
+                        if resource_pool:
+                            break
                 
                 if not resource_pool:
                     raise Exception('No resource pool found to convert template')
