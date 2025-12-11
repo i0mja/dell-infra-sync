@@ -1211,9 +1211,16 @@ PACKAGES={packages_str}
                 data = response.json()
                 if data:
                     vc = data[0]
+                    self.log(f'Retrieved vCenter settings for {vc.get("host", "unknown")} (user: {vc.get("username", "unknown")})', 'DEBUG')
                     # Decrypt password
                     if vc.get('password_encrypted'):
-                        vc['password'] = self._decrypt_password(vc['password_encrypted'])
+                        decrypted = self._decrypt_password(vc['password_encrypted'])
+                        # Detect if decryption failed (returned encrypted string unchanged)
+                        if decrypted == vc['password_encrypted']:
+                            self.log('WARNING: vCenter password may not have been decrypted correctly - check encryption key configuration', 'WARNING')
+                        vc['password'] = decrypted
+                    else:
+                        self.log('WARNING: No encrypted password found for vCenter', 'WARNING')
                     return vc
             return None
         except Exception as e:
@@ -1226,11 +1233,13 @@ PACKAGES={packages_str}
             from job_executor.config import get_encryption_key
             from cryptography.fernet import Fernet
             key = get_encryption_key()
-            if key:
-                f = Fernet(key.encode() if isinstance(key, str) else key)
-                return f.decrypt(encrypted.encode()).decode()
-            return encrypted
-        except Exception:
+            if not key:
+                self.log('WARNING: No encryption key available - password decryption will fail', 'WARNING')
+                return encrypted
+            f = Fernet(key.encode() if isinstance(key, str) else key)
+            return f.decrypt(encrypted.encode()).decode()
+        except Exception as e:
+            self.log(f'Password decryption failed: {e}', 'ERROR')
             return encrypted
     
     def _get_ssh_key(self, key_id: str) -> Optional[Dict]:
