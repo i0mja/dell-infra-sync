@@ -6,11 +6,10 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CheckCircle, XCircle, PlayCircle, Clock, AlertCircle, FileCode, ListChecks, Activity, Link2, ExternalLink, Calendar, Minimize2 } from "lucide-react";
+import { CheckCircle, XCircle, PlayCircle, Clock, AlertCircle, ListChecks, Link2, ExternalLink, Calendar, Minimize2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
 import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
-import { ApiCallStream } from "./ApiCallStream";
 import { DiscoveryScanResults, VCenterSyncResults, CredentialTestResults, ScpResults, MultiServerResults, GenericResults, JobTimingCard, EsxiUpgradeResults, EsxiPreflightResults, JobProgressHeader, JobTasksTimeline, JobConsoleLog, StorageVMotionResults, ZfsDeploymentResults, ValidationPreflightResults } from "./results";
 interface Job {
   id: string;
@@ -36,17 +35,6 @@ interface JobDetailDialogProps {
   onOpenChange: (open: boolean) => void;
   onViewWindow?: (windowId: string) => void;
 }
-type IdracCommand = {
-  id: string;
-  endpoint: string;
-  status_code: number | null;
-  error_message: string | null;
-  response_body: any;
-  created_at: string;
-  operation_type: string | null;
-  command_type: string | null;
-  success: boolean | null;
-};
 export const JobDetailDialog = ({
   job,
   open,
@@ -55,8 +43,6 @@ export const JobDetailDialog = ({
 }: JobDetailDialogProps) => {
   const [subJobs, setSubJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
-  const [idracCommands, setIdracCommands] = useState<IdracCommand[]>([]);
-  const [idracLoading, setIdracLoading] = useState(false);
   const [parentWindow, setParentWindow] = useState<ParentWindow | null>(null);
   const {
     minimizeJob
@@ -71,7 +57,6 @@ export const JobDetailDialog = ({
     // Check if this job belongs to a maintenance window
     fetchParentWindow();
     if (isWorkflowJob) return;
-    fetchIdracCommands();
 
     // Fetch sub-jobs for full_server_update jobs
     if (job.job_type === 'full_server_update') {
@@ -149,24 +134,6 @@ export const JobDetailDialog = ({
       console.error("Error fetching sub-jobs:", error);
     }
   };
-  const fetchIdracCommands = async () => {
-    if (!job) return;
-    try {
-      setIdracLoading(true);
-      const {
-        data,
-        error
-      } = await supabase.from('idrac_commands').select('id, endpoint, status_code, error_message, response_body, created_at, operation_type, command_type, success').eq('job_id', job.id).order('created_at', {
-        ascending: false
-      }).limit(5);
-      if (error) throw error;
-      setIdracCommands(data || []);
-    } catch (error) {
-      console.error('Error fetching iDRAC commands:', error);
-    } finally {
-      setIdracLoading(false);
-    }
-  };
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'completed':
@@ -200,17 +167,6 @@ export const JobDetailDialog = ({
       return Object.entries(validationErrors).map(([key, value]) => `${key}: ${value}`);
     }
     return [String(validationErrors)];
-  };
-  const failingCommand = idracCommands.find(cmd => cmd.success === false || (cmd.status_code ?? 0) >= 400) || idracCommands[0];
-  const renderResponseBody = (body: any) => {
-    if (!body) return 'No response body provided by iDRAC.';
-    if (typeof body === 'string') return body;
-    try {
-      return JSON.stringify(body, null, 2);
-    } catch (error) {
-      console.error('Error stringifying response body:', error);
-      return 'Unable to display iDRAC response body';
-    }
   };
 
   // Job-type-specific result renderer
@@ -305,14 +261,10 @@ export const JobDetailDialog = ({
           <ParentWindowBanner />
 
           <Tabs defaultValue="progress" className="w-full">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="progress">Progress</TabsTrigger>
               <TabsTrigger value="console">Console</TabsTrigger>
               <TabsTrigger value="results">Results</TabsTrigger>
-              <TabsTrigger value="api-calls">
-                <Activity className="h-4 w-4 mr-2" />
-                API Activity
-              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="progress" className="space-y-4 mt-4">
@@ -374,47 +326,6 @@ export const JobDetailDialog = ({
                 </CardContent>
               </Card>}
 
-            {/* iDRAC Response Details */}
-            {job.status === 'failed' && <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <div className="flex items-center gap-2">
-                    <FileCode className="h-4 w-4 text-destructive" />
-                    <CardTitle className="text-base">iDRAC response that triggered failure</CardTitle>
-                  </div>
-                  {failingCommand?.status_code && <Badge variant={failingCommand.status_code >= 400 ? 'destructive' : 'secondary'}>
-                      HTTP {failingCommand.status_code}
-                    </Badge>}
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {idracLoading ? <p className="text-sm text-muted-foreground">Loading iDRAC command details...</p> : failingCommand ? <div className="space-y-3">
-                      <div className="space-y-1 text-sm">
-                        <div className="flex items-center gap-2">
-                          <span className="text-muted-foreground">Endpoint</span>
-                          <Badge variant="outline">{failingCommand.command_type || failingCommand.operation_type || 'iDRAC API'}</Badge>
-                        </div>
-                        <p className="font-mono break-all text-xs bg-muted p-2 rounded">{failingCommand.endpoint}</p>
-                      </div>
-                      {failingCommand.error_message && <Alert variant="destructive">
-                          <AlertCircle className="h-4 w-4" />
-                          <AlertTitle>Rejected by iDRAC</AlertTitle>
-                          <AlertDescription className="mt-1 text-sm font-mono whitespace-pre-wrap">
-                            {failingCommand.error_message}
-                          </AlertDescription>
-                        </Alert>}
-                      <div className="space-y-1">
-                        <p className="text-sm text-muted-foreground">Raw response</p>
-                        <ScrollArea className="h-48 rounded border bg-muted p-3">
-                          <pre className="text-xs font-mono whitespace-pre-wrap break-all">
-                            {renderResponseBody(failingCommand.response_body)}
-                          </pre>
-                        </ScrollArea>
-                        <p className="text-xs text-muted-foreground">
-                          Captured at {new Date(failingCommand.created_at).toLocaleString()}
-                        </p>
-                      </div>
-                    </div> : <p className="text-sm text-muted-foreground">No iDRAC responses were logged for this job.</p>}
-                </CardContent>
-              </Card>}
 
             {/* Health Check Failure Details */}
             {job.status === 'failed' && job.job_type === 'health_check' && job.details?.failed_servers && <Alert variant="destructive">
@@ -459,9 +370,6 @@ export const JobDetailDialog = ({
                 </Card>}
             </TabsContent>
 
-            <TabsContent value="api-calls" className="mt-4">
-              <ApiCallStream jobId={job.id} jobType={job.job_type} />
-            </TabsContent>
           </Tabs>
         </DialogContent>}
     </Dialog>;

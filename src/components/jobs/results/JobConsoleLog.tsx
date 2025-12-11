@@ -70,8 +70,8 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const parseExecutorLog = (logLine: string, idx: number): ExecutorLogEntry | null => {
-    // Parse format: [HH:MM:SS] [LEVEL] message
-    const match = logLine.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*\[(\w+)\]\s*(.+)$/);
+    // Format 1: [HH:MM:SS] [LEVEL] message
+    let match = logLine.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*\[(\w+)\]\s*(.+)$/);
     if (match) {
       return {
         id: `exec-${idx}`,
@@ -80,6 +80,29 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
         message: match[3]
       };
     }
+    
+    // Format 2: [HH:MM:SS] LEVEL: message (Python handler format)
+    match = logLine.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*(\w+):\s*(.+)$/);
+    if (match) {
+      return {
+        id: `exec-${idx}`,
+        timestamp: match[1],
+        level: match[2].toUpperCase(),
+        message: match[3]
+      };
+    }
+    
+    // Format 3: Plain message with timestamp prefix
+    match = logLine.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*(.+)$/);
+    if (match) {
+      return {
+        id: `exec-${idx}`,
+        timestamp: match[1],
+        level: 'INFO',
+        message: match[2]
+      };
+    }
+    
     return null;
   };
 
