@@ -602,6 +602,168 @@ class TemplateHandler(BaseHandler):
                 details={**job_details, 'error': str(e)}
             )
     
+    def execute_validate_zfs_template(self, job: Dict):
+        """
+        Validate ZFS template preparation prerequisites without making changes.
+        
+        Runs read-only checks:
+        1. SSH connectivity test
+        2. Disk space check (≥2GB free)
+        3. Repository access (Debian or RHEL repos)
+        4. Kernel headers availability
+        5. ZFS installation status
+        6. SSH service status
+        7. OS family detection
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        target_scope = job.get('target_scope', {}) or {}
+        
+        job_details = {
+            'step_results': [],
+            'console_log': [],
+            'progress_percent': 0,
+            'validation_mode': True,
+        }
+        
+        self._log_console(job_id, 'INFO', 'Starting ZFS template validation (read-only)', job_details)
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso(), details=job_details)
+        
+        try:
+            # Get VM info
+            vm_id = target_scope.get('vm_id')
+            if not vm_id:
+                raise Exception('No VM ID provided for validation')
+            
+            # Fetch VM details
+            vm_info = self._fetch_vm_by_id(vm_id)
+            if not vm_info:
+                raise Exception(f'VM not found: {vm_id}')
+            
+            vm_ip = vm_info.get('ip_address')
+            vm_name = vm_info.get('name', 'Unknown')
+            
+            if not vm_ip:
+                raise Exception(f'VM {vm_name} has no IP address - ensure VM is powered on and has VMware Tools')
+            
+            root_password = details.get('root_password')
+            if not root_password:
+                raise Exception('Root password is required for validation')
+            
+            self._log_console(job_id, 'INFO', f'Connecting to VM {vm_name} at {vm_ip}...', job_details)
+            self._update_progress(job_id, job_details, 10)
+            
+            # SSH connect
+            ssh_client = self._connect_ssh_password(vm_ip, 'root', root_password)
+            if not ssh_client:
+                raise Exception(f'Failed to SSH connect to {vm_ip} - check credentials')
+            
+            self._log_console(job_id, 'INFO', 'SSH connected successfully', job_details)
+            self._add_step_result(job_id, job_details, 'ssh_connect', 'success', f'Connected to {vm_ip}')
+            self._update_progress(job_id, job_details, 25)
+            
+            try:
+                # Run preflight checks (read-only)
+                self._log_console(job_id, 'INFO', 'Running pre-flight checks...', job_details)
+                preflight_results = self._preflight_checks(ssh_client, job_id, job_details)
+                self._update_progress(job_id, job_details, 50)
+                
+                # Detect OS family (read-only)
+                os_family = self._detect_os_family(ssh_client)
+                self._log_console(job_id, 'INFO', f'Detected OS family: {os_family}', job_details)
+                self._update_progress(job_id, job_details, 65)
+                
+                # Get additional system info (read-only)
+                kernel_result = self._exec_ssh(ssh_client, 'uname -r')
+                kernel_version = kernel_result.get('stdout', '').strip() if kernel_result.get('exit_code') == 0 else 'unknown'
+                
+                memory_result = self._exec_ssh(ssh_client, "grep MemTotal /proc/meminfo | awk '{print $2}'")
+                try:
+                    memory_kb = int(memory_result.get('stdout', '0').strip() or 0)
+                    memory_gb = round(memory_kb / 1024 / 1024, 1)
+                except ValueError:
+                    memory_gb = 0
+                
+                # Get hostname
+                hostname_result = self._exec_ssh(ssh_client, 'hostname')
+                hostname = hostname_result.get('stdout', '').strip() if hostname_result.get('exit_code') == 0 else 'unknown'
+                
+                # Check if ZFS is already installed
+                zfs_already_installed = any(
+                    check.get('check') == 'zfs_installed' and check.get('ok', False)
+                    for check in preflight_results
+                )
+                
+                self._update_progress(job_id, job_details, 85)
+                
+                # Determine if VM is ready for preparation
+                critical_checks = ['disk_space', 'ssh_service']
+                all_critical_passed = all(
+                    check.get('ok', False) 
+                    for check in preflight_results 
+                    if check.get('check') in critical_checks
+                )
+                
+                os_supported = os_family in ['debian', 'rhel']
+                ready_for_preparation = all_critical_passed and os_supported
+                
+                # Compile validation results
+                validation_results = {
+                    'vm_name': vm_name,
+                    'vm_ip': vm_ip,
+                    'hostname': hostname,
+                    'os_family': os_family,
+                    'os_supported': os_supported,
+                    'kernel_version': kernel_version,
+                    'memory_gb': memory_gb,
+                    'zfs_already_installed': zfs_already_installed,
+                    'preflight_checks': preflight_results,
+                    'all_checks_passed': all(c.get('ok', False) for c in preflight_results),
+                    'ready_for_preparation': ready_for_preparation,
+                }
+                
+                job_details['validation_results'] = validation_results
+                job_details['preflight_checks'] = preflight_results
+                job_details['os_family'] = os_family
+                
+                self._update_progress(job_id, job_details, 100)
+                
+                # Set final status based on results
+                if ready_for_preparation:
+                    self._log_console(job_id, 'INFO', 'Validation passed - VM is ready for template preparation', job_details)
+                    self._add_step_result(job_id, job_details, 'validation', 'success', 'All checks passed')
+                else:
+                    issues = []
+                    if not os_supported:
+                        issues.append(f'Unsupported OS: {os_family}')
+                    failed_checks = [c['check'] for c in preflight_results if not c.get('ok')]
+                    if failed_checks:
+                        issues.append(f'Failed checks: {", ".join(failed_checks)}')
+                    self._log_console(job_id, 'WARN', f'Validation completed with warnings: {"; ".join(issues)}', job_details)
+                    self._add_step_result(job_id, job_details, 'validation', 'warning', '; '.join(issues))
+                
+                # Mark job completed (even with warnings - it's informational)
+                self.update_job_status(
+                    job_id, 
+                    'completed', 
+                    completed_at=utc_now_iso(), 
+                    details=job_details
+                )
+                
+            finally:
+                if ssh_client:
+                    ssh_client.close()
+                    
+        except Exception as e:
+            self._log_console(job_id, 'ERROR', f'Validation failed: {str(e)}', job_details)
+            self._add_step_result(job_id, job_details, 'validation', 'failed', str(e))
+            self.update_job_status(
+                job_id, 
+                'failed', 
+                completed_at=utc_now_iso(), 
+                details={**job_details, 'error': str(e)}
+            )
+    
     # ========== Enhanced Template Preparation Methods ==========
     
     def _preflight_checks(self, ssh_client: Any, job_id: str, job_details: Dict) -> list:

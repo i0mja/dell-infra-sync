@@ -946,6 +946,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
             # Template handlers
             'prepare_zfs_template': self.template_handler.execute_prepare_zfs_template,
             'clone_zfs_template': self.template_handler.execute_clone_zfs_template,
+            'validate_zfs_template': self.template_handler.execute_validate_zfs_template,
         }
         
         handler = handler_map.get(job_type)
