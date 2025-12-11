@@ -29,6 +29,7 @@ import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { DrReplicationTab } from "@/components/replication/DrReplicationTab";
 import { NetworksTable } from "@/components/vcenter/NetworksTable";
 import { NetworksFilterToolbar } from "@/components/vcenter/NetworksFilterToolbar";
+import { SyncableTabTrigger } from "@/components/vcenter/SyncableTabTrigger";
 
 interface VCenterHost {
   id: string;
@@ -113,6 +114,7 @@ export default function VCenter() {
   const [selectedClusterForUpdate, setSelectedClusterForUpdate] = useState<string | undefined>();
   const [preSelectedClusterForUpdate, setPreSelectedClusterForUpdate] = useState<string | undefined>();
   const [syncing, setSyncing] = useState(false);
+  const [partialSyncing, setPartialSyncing] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [vcenterHost, setVcenterHost] = useState("");
   const [activeTab, setActiveTab] = useState("hosts");
@@ -399,6 +401,63 @@ export default function VCenter() {
     }
   };
 
+  const handlePartialSync = async (scope: 'vms' | 'hosts' | 'clusters' | 'datastores' | 'networks') => {
+    try {
+      setPartialSyncing(scope);
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (!user) {
+        toast({
+          title: "Authentication required",
+          description: "Please log in to sync",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const targetVCenterId = selectedVCenterId === "all" ? null : selectedVCenterId;
+
+      const { data, error } = await supabase.from("jobs").insert({
+        job_type: "partial_vcenter_sync",
+        status: "pending",
+        created_by: user.id,
+        details: { 
+          sync_scope: scope,
+          vcenter_id: targetVCenterId,
+          sync_type: `${scope}_only`
+        },
+      }).select().single();
+
+      if (error) throw error;
+
+      const scopeLabel = scope.charAt(0).toUpperCase() + scope.slice(1);
+      toast({
+        title: `${scopeLabel} sync started`,
+        description: `Syncing ${scope} from vCenter`,
+        action: (
+          <Button variant="outline" size="sm" onClick={() => navigate('/maintenance-planner?tab=jobs')}>
+            View Jobs
+          </Button>
+        ),
+      });
+
+      // Refresh data after a short delay
+      setTimeout(() => {
+        if (scope === 'hosts') fetchHosts();
+        refetchVCenterData();
+      }, 2000);
+      
+    } catch (error: any) {
+      toast({ 
+        title: "Sync failed", 
+        description: error.message, 
+        variant: "destructive" 
+      });
+    } finally {
+      setPartialSyncing(null);
+    }
+  };
+
   const handleClusterUpdate = (clusterName?: string) => {
     setSelectedClusterForUpdate(clusterName);
     setClusterUpdateOpen(true);
@@ -598,36 +657,41 @@ export default function VCenter() {
           {/* Tabs Row with Action Buttons */}
           <div className="flex items-center border-b bg-card px-4">
             <TabsList className="h-auto p-0 bg-transparent gap-2">
-              <TabsTrigger 
+              <SyncableTabTrigger
                 value="hosts"
-                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
-              >
-                Hosts ({hosts.length})
-              </TabsTrigger>
-              <TabsTrigger 
+                label="Hosts"
+                count={hosts.length}
+                onSync={() => handlePartialSync('hosts')}
+                syncing={partialSyncing === 'hosts'}
+              />
+              <SyncableTabTrigger
                 value="vms"
-                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
-              >
-                VMs ({vms.length})
-              </TabsTrigger>
-              <TabsTrigger 
+                label="VMs"
+                count={vms.length}
+                onSync={() => handlePartialSync('vms')}
+                syncing={partialSyncing === 'vms'}
+              />
+              <SyncableTabTrigger
                 value="clusters"
-                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
-              >
-                Clusters ({clusters.length})
-              </TabsTrigger>
-               <TabsTrigger 
+                label="Clusters"
+                count={clusters.length}
+                onSync={() => handlePartialSync('clusters')}
+                syncing={partialSyncing === 'clusters'}
+              />
+              <SyncableTabTrigger
                 value="datastores"
-                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
-              >
-                Datastores ({datastores.length})
-              </TabsTrigger>
-              <TabsTrigger 
+                label="Datastores"
+                count={datastores.length}
+                onSync={() => handlePartialSync('datastores')}
+                syncing={partialSyncing === 'datastores'}
+              />
+              <SyncableTabTrigger
                 value="networks"
-                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
-              >
-                Networks ({networks.length})
-              </TabsTrigger>
+                label="Networks"
+                count={networks.length}
+                onSync={() => handlePartialSync('networks')}
+                syncing={partialSyncing === 'networks'}
+              />
               <TabsTrigger
                 value="esxi-profiles"
                 className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"

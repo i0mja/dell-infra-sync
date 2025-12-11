@@ -4523,6 +4523,7 @@ export type Database = {
         | "rollback_zfs_onboard"
         | "sync_protection_config"
         | "clone_zfs_template"
+        | "partial_vcenter_sync"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -4731,6 +4732,7 @@ export const Constants = {
         "rollback_zfs_onboard",
         "sync_protection_config",
         "clone_zfs_template",
+        "partial_vcenter_sync",
       ],
       operation_type: [
         "idrac_api",

@@ -1595,3 +1595,310 @@ def sync_vcenter_fast(
             "dvswitches": len(dvswitches),
         }
     }
+
+
+# =============================================================================
+# Partial/Granular Sync Functions (for per-tab syncing)
+# =============================================================================
+
+def _get_type_for_scope(scope: str):
+    """Get vim types for a sync scope."""
+    scope_map = {
+        'vms': [vim.VirtualMachine],
+        'hosts': [vim.HostSystem],
+        'clusters': [vim.ClusterComputeResource],
+        'datastores': [vim.Datastore],
+        'networks': [vim.Network, vim.dvs.DistributedVirtualPortgroup, vim.DistributedVirtualSwitch],
+    }
+    return scope_map.get(scope, [])
+
+
+def _get_property_spec_for_scope(scope: str, enable_deep: bool = False):
+    """Get PropertySpec for a specific scope."""
+    specs = []
+    
+    if scope == 'vms':
+        specs.append(vim.PropertyCollector.PropertySpec(
+            type=vim.VirtualMachine,
+            pathSet=_get_vm_properties(),
+            all=False
+        ))
+    elif scope == 'hosts':
+        specs.append(vim.PropertyCollector.PropertySpec(
+            type=vim.HostSystem,
+            pathSet=_get_host_properties(),
+            all=False
+        ))
+        # Also need clusters for host->cluster resolution
+        specs.append(vim.PropertyCollector.PropertySpec(
+            type=vim.ClusterComputeResource,
+            pathSet=["name"],
+            all=False
+        ))
+    elif scope == 'clusters':
+        specs.append(vim.PropertyCollector.PropertySpec(
+            type=vim.ClusterComputeResource,
+            pathSet=_get_cluster_properties(),
+            all=False
+        ))
+    elif scope == 'datastores':
+        specs.append(vim.PropertyCollector.PropertySpec(
+            type=vim.Datastore,
+            pathSet=_get_datastore_properties(enable_deep),
+            all=False
+        ))
+    elif scope == 'networks':
+        specs.append(vim.PropertyCollector.PropertySpec(
+            type=vim.Network,
+            pathSet=_get_network_properties(enable_deep),
+            all=False
+        ))
+        specs.append(vim.PropertyCollector.PropertySpec(
+            type=vim.dvs.DistributedVirtualPortgroup,
+            pathSet=_get_dvpg_properties(enable_deep),
+            all=False
+        ))
+        specs.append(vim.PropertyCollector.PropertySpec(
+            type=vim.DistributedVirtualSwitch,
+            pathSet=_get_dvs_properties(),
+            all=False
+        ))
+    
+    return specs
+
+
+def collect_vcenter_inventory_partial(
+    content,
+    sync_scope: str,
+    enable_deep: bool = None
+) -> Dict[str, Any]:
+    """
+    Collect PARTIAL inventory for a specific scope (vms, hosts, clusters, datastores, networks).
+    
+    Args:
+        content: vim.ServiceContent from si.RetrieveContent()
+        sync_scope: "vms", "hosts", "clusters", "datastores", or "networks"
+        enable_deep: Override ENABLE_DEEP_RELATIONSHIPS flag
+        
+    Returns:
+        Dict with the requested object type's raw tuples
+    """
+    if enable_deep is None:
+        enable_deep = ENABLE_DEEP_RELATIONSHIPS
+    
+    start_time = time.time()
+    errors = []
+    
+    vim_types = _get_type_for_scope(sync_scope)
+    if not vim_types:
+        return {"errors": [{"message": f"Unknown scope: {sync_scope}"}], "fetch_time_ms": 0}
+    
+    # For hosts, we also need clusters for resolution
+    if sync_scope == 'hosts':
+        vim_types.append(vim.ClusterComputeResource)
+    
+    view_ref = None
+    objects_raw = {}
+    
+    try:
+        view_ref = content.viewManager.CreateContainerView(
+            container=content.rootFolder,
+            type=vim_types,
+            recursive=True
+        )
+        
+        traversal_spec = _build_traversal_spec()
+        obj_spec = vim.PropertyCollector.ObjectSpec(
+            obj=view_ref,
+            selectSet=[traversal_spec],
+            skip=False
+        )
+        
+        property_specs = _get_property_spec_for_scope(sync_scope, enable_deep)
+        
+        filter_spec = vim.PropertyCollector.FilterSpec(
+            objectSet=[obj_spec],
+            propSet=property_specs
+        )
+        
+        pc = content.propertyCollector
+        options = vim.PropertyCollector.RetrieveOptions(maxObjects=1000)
+        
+        result = pc.RetrievePropertiesEx(specSet=[filter_spec], options=options)
+        
+        all_objects = result.objects or []
+        token = result.token
+        
+        while token:
+            result = pc.ContinueRetrievePropertiesEx(token)
+            all_objects.extend(result.objects or [])
+            token = result.token
+        
+        logger.info(f"Partial PropertyCollector fetched {len(all_objects)} objects for scope '{sync_scope}'")
+        
+        # Categorize objects
+        for obj_content in all_objects:
+            try:
+                obj, props = _parse_object_content(obj_content)
+                
+                if isinstance(obj, vim.VirtualMachine):
+                    objects_raw.setdefault('vms', []).append((obj, props))
+                elif isinstance(obj, vim.HostSystem):
+                    objects_raw.setdefault('hosts', []).append((obj, props))
+                elif isinstance(obj, vim.ClusterComputeResource):
+                    objects_raw.setdefault('clusters', []).append((obj, props))
+                elif isinstance(obj, vim.Datastore):
+                    objects_raw.setdefault('datastores', []).append((obj, props))
+                elif isinstance(obj, vim.dvs.DistributedVirtualPortgroup):
+                    objects_raw.setdefault('dvpgs', []).append((obj, props))
+                elif isinstance(obj, vim.DistributedVirtualSwitch):
+                    objects_raw.setdefault('dvswitches', []).append((obj, props))
+                elif isinstance(obj, vim.Network):
+                    objects_raw.setdefault('networks', []).append((obj, props))
+                    
+            except Exception as e:
+                errors.append({
+                    "object": str(obj_content.obj) if obj_content else "unknown",
+                    "message": str(e),
+                    "severity": "warning"
+                })
+                
+    except Exception as e:
+        errors.append({
+            "object": "PropertyCollector",
+            "message": f"Partial collection error: {str(e)}",
+            "severity": "error"
+        })
+        logger.error(f"Partial PropertyCollector error: {e}")
+        
+    finally:
+        if view_ref:
+            try:
+                view_ref.Destroy()
+            except:
+                pass
+    
+    fetch_time_ms = int((time.time() - start_time) * 1000)
+    
+    return {
+        **objects_raw,
+        "errors": errors,
+        "fetch_time_ms": fetch_time_ms,
+    }
+
+
+def sync_vcenter_partial(
+    content,
+    source_vcenter_id: Optional[str] = None,
+    sync_scope: str = "vms",
+    enable_deep: bool = None
+) -> Dict[str, Any]:
+    """
+    Partial sync for a specific entity type.
+    
+    Args:
+        content: vim.ServiceContent from si.RetrieveContent()
+        source_vcenter_id: vCenter ID for tracking
+        sync_scope: "vms", "hosts", "clusters", "datastores", or "networks"
+        enable_deep: Override ENABLE_DEEP_RELATIONSHIPS flag
+        
+    Returns:
+        {
+            "scope": str,
+            "items": [...],  # JSON-serializable list
+            "count": int,
+            "fetch_time_ms": int,
+            "process_time_ms": int,
+            "errors": [...]
+        }
+    """
+    inventory = collect_vcenter_inventory_partial(content, sync_scope, enable_deep)
+    
+    process_start = time.time()
+    errors = list(inventory.get("errors", []))
+    
+    # Build lookup maps (minimal for partial sync)
+    lookups = {
+        'host_moref_to_cluster': {},
+        'cluster_moref_to_name': {},
+        'host_moref_to_name': {},
+        'datastore_moref_to_name': {},
+        'cluster_moref_to_datastores': {},
+        'dvs_moref_to_name': {},
+    }
+    
+    # If we have clusters (always for hosts scope), build lookup
+    for obj, props in inventory.get('clusters', []):
+        moref = str(obj._moId)
+        name = props.get('name', '')
+        lookups['cluster_moref_to_name'][moref] = name
+    
+    # If we have hosts, build host lookups
+    for obj, props in inventory.get('hosts', []):
+        moref = str(obj._moId)
+        name = props.get('name', '')
+        lookups['host_moref_to_name'][moref] = name
+        
+        parent = props.get('parent')
+        if parent and isinstance(parent, vim.ClusterComputeResource):
+            cluster_moref = str(parent._moId)
+            lookups['host_moref_to_cluster'][moref] = lookups['cluster_moref_to_name'].get(cluster_moref, '')
+    
+    # Transform to JSON-serializable
+    items = []
+    
+    if sync_scope == 'vms':
+        for obj, props in inventory.get('vms', []):
+            try:
+                items.append(_vm_to_dict(obj, props, lookups))
+            except Exception as e:
+                errors.append({"object": str(obj._moId), "message": str(e)})
+                
+    elif sync_scope == 'hosts':
+        for obj, props in inventory.get('hosts', []):
+            try:
+                items.append(_host_to_dict(obj, props, lookups))
+            except Exception as e:
+                errors.append({"object": str(obj._moId), "message": str(e)})
+                
+    elif sync_scope == 'clusters':
+        for obj, props in inventory.get('clusters', []):
+            try:
+                items.append(_cluster_to_dict(obj, props, lookups))
+            except Exception as e:
+                errors.append({"object": str(obj._moId), "message": str(e)})
+                
+    elif sync_scope == 'datastores':
+        for obj, props in inventory.get('datastores', []):
+            try:
+                items.append(_datastore_to_dict(obj, props, lookups))
+            except Exception as e:
+                errors.append({"object": str(obj._moId), "message": str(e)})
+                
+    elif sync_scope == 'networks':
+        # Process standard networks, DVPGs, and DVSwitches
+        for obj, props in inventory.get('networks', []):
+            try:
+                items.append(_network_to_dict(obj, props, lookups))
+            except Exception as e:
+                errors.append({"object": str(obj._moId), "message": str(e)})
+        for obj, props in inventory.get('dvpgs', []):
+            try:
+                items.append(_dvpg_to_dict(obj, props, lookups))
+            except Exception as e:
+                errors.append({"object": str(obj._moId), "message": str(e)})
+    
+    process_time_ms = int((time.time() - process_start) * 1000)
+    
+    logger.info(f"sync_vcenter_partial completed: {len(items)} {sync_scope}, "
+                f"fetch={inventory.get('fetch_time_ms', 0)}ms, process={process_time_ms}ms")
+    
+    return {
+        "scope": sync_scope,
+        "items": items,
+        "count": len(items),
+        "source_vcenter_id": source_vcenter_id,
+        "fetch_time_ms": inventory.get("fetch_time_ms", 0),
+        "process_time_ms": process_time_ms,
+        "errors": errors,
+    }

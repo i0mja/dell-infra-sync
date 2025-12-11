@@ -893,6 +893,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
             'bios_config_read': self.boot_handler.execute_bios_config_read,
             'bios_config_write': self.boot_handler.execute_bios_config_write,
             'vcenter_sync': self.vcenter_handler.execute_vcenter_sync,
+            'partial_vcenter_sync': self.vcenter_handler.execute_partial_vcenter_sync,
             'vcenter_connectivity_test': self.vcenter_handler.execute_vcenter_connectivity_test,
             'openmanage_sync': self.vcenter_handler.execute_openmanage_sync,
             'cluster_safety_check': self.cluster_handler.execute_cluster_safety_check,
