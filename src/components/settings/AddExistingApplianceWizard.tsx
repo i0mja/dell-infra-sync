@@ -105,6 +105,37 @@ const WIZARD_STEPS = [
   { id: 5, label: 'Confirm', icon: CheckCircle2 },
 ];
 
+// Human-readable labels for Python handler step identifiers
+const DISCOVERY_STEP_LABELS: Record<string, string> = {
+  'initializing': 'Initializing...',
+  'vcenter_connect': 'Connecting to vCenter',
+  'find_template': 'Finding template',
+  'convert_template': 'Converting template to VM',
+  'power_on': 'Powering on VM',
+  'vmware_tools': 'Waiting for VMware Tools',
+  'wait_ip': 'Waiting for IP address',
+  'ssh_connect': 'Connecting via SSH',
+  'detect_os': 'Detecting OS',
+  'detect_zfs': 'Detecting ZFS configuration',
+  'detect_nfs': 'Scanning NFS exports',
+  'cleanup': 'Cleaning up',
+  'complete': 'Complete',
+};
+
+// Ordered list of discovery steps for the checklist
+const DISCOVERY_STEPS_ORDER = [
+  'vcenter_connect',
+  'find_template',
+  'power_on',
+  'vmware_tools',
+  'wait_ip',
+  'ssh_connect',
+  'detect_os',
+  'detect_zfs',
+  'detect_nfs',
+  'cleanup',
+];
+
 const PENDING_DISCOVERY_KEY = 'pending-zfs-discovery';
 
 interface PendingDiscovery {
@@ -668,97 +699,130 @@ export function AddExistingApplianceWizard({ open, onOpenChange }: AddExistingAp
             </div>
           )}
           
-          {/* Step 3: Discovery - Real-time progress from useJobProgress */}
-          {currentStep === 3 && (
-            <div className="space-y-4">
-              <div className="text-center mb-4">
-                <h3 className="text-lg font-medium">
-                  {discoveryStatus === 'completed' ? 'Discovery Complete' : 
-                   discoveryStatus === 'failed' ? 'Discovery Failed' : 
-                   isAddingToLibrary ? 'Adding to Library...' :
-                   'Inspecting Template'}
-                </h3>
-                <p className="text-sm text-muted-foreground">
-                  {discoveryStatus === 'completed' 
-                    ? 'ZFS configuration detected successfully'
-                    : discoveryStatus === 'failed'
-                    ? 'An error occurred during inspection'
-                    : isAddingToLibrary
-                    ? 'Saving appliance configuration...'
-                    : 'Detecting ZFS configuration and VM specifications...'}
-                </p>
+          {/* Step 3: Discovery - Real-time progress with step checklist */}
+          {currentStep === 3 && (() => {
+            // Extract progress data from job
+            const currentStepId = jobProgress?.currentStep || '';
+            const completedSteps: string[] = (jobProgress?.details as any)?.completed_steps || [];
+            const progressPercent = jobProgress?.progressPercent || 0;
+            const startedAt = jobProgress?.details?.started_at as string | undefined;
+            
+            return (
+              <div className="space-y-4">
+                <div className="text-center mb-4">
+                  <h3 className="text-lg font-medium">
+                    {discoveryStatus === 'completed' ? 'Discovery Complete' : 
+                     discoveryStatus === 'failed' ? 'Discovery Failed' : 
+                     isAddingToLibrary ? 'Adding to Library...' :
+                     'Inspecting Template'}
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    {discoveryStatus === 'completed' 
+                      ? 'ZFS configuration detected successfully'
+                      : discoveryStatus === 'failed'
+                      ? 'An error occurred during inspection'
+                      : isAddingToLibrary
+                      ? 'Saving appliance configuration...'
+                      : 'Detecting ZFS configuration and VM specifications...'}
+                  </p>
+                </div>
+                
+                <Progress value={progressPercent} className="h-2" />
+                
+                {/* Step Checklist */}
+                {discoveryStatus === 'running' && (
+                  <div className="rounded-lg border p-4 bg-muted/30">
+                    <div className="space-y-2">
+                      {DISCOVERY_STEPS_ORDER.map((stepId) => {
+                        const isCompleted = completedSteps.includes(stepId);
+                        const isCurrent = currentStepId === stepId;
+                        const isPending = !isCompleted && !isCurrent;
+                        
+                        return (
+                          <div key={stepId} className="flex items-center gap-3">
+                            {isCompleted && (
+                              <Check className="h-4 w-4 text-green-500 shrink-0" />
+                            )}
+                            {isCurrent && (
+                              <Loader2 className="h-4 w-4 text-primary animate-spin shrink-0" />
+                            )}
+                            {isPending && (
+                              <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/30 shrink-0" />
+                            )}
+                            <span className={cn(
+                              "text-sm",
+                              isCompleted && "text-green-600",
+                              isCurrent && "font-medium text-primary",
+                              isPending && "text-muted-foreground"
+                            )}>
+                              {DISCOVERY_STEP_LABELS[stepId] || stepId}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                
+                {/* Elapsed time */}
+                {startedAt && discoveryStatus === 'running' && (
+                  <div className="text-center text-sm text-muted-foreground">
+                    Elapsed: {formatElapsed(startedAt)}
+                  </div>
+                )}
+                
+                {/* Adding to library indicator */}
+                {isAddingToLibrary && (
+                  <div className="flex items-center gap-3 py-2 justify-center">
+                    <Loader2 className="h-5 w-5 text-primary animate-spin" />
+                    <span className="text-sm font-medium">Saving to library...</span>
+                  </div>
+                )}
+                
+                {discoveryStatus === "failed" && discoveryResult?.errors && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      {discoveryResult.errors[0]}
+                    </AlertDescription>
+                  </Alert>
+                )}
+                
+                {/* Failed state with details from job */}
+                {discoveryStatus === "failed" && !discoveryResult?.errors && jobRecord?.details && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      {(jobRecord.details as any)?.error || 'Discovery failed'}
+                    </AlertDescription>
+                  </Alert>
+                )}
+                
+                {discoveryStatus === "failed" && (
+                  <div className="flex justify-center gap-2">
+                    <Button onClick={startDiscovery} variant="outline">
+                      <Search className="h-4 w-4 mr-2" />
+                      Retry Discovery
+                    </Button>
+                  </div>
+                )}
+                
+                {/* Continue in background option */}
+                {discoveryStatus === "running" && !isAddingToLibrary && (
+                  <div className="flex justify-center pt-4">
+                    <Button
+                      variant="outline" 
+                      size="sm"
+                      onClick={handleContinueInBackground}
+                    >
+                      <Minimize2 className="h-4 w-4 mr-2" />
+                      Continue in Background
+                    </Button>
+                  </div>
+                )}
               </div>
-              
-              <Progress value={jobProgress?.progressPercent || 0} className="h-2" />
-              
-              {/* Current step from job progress */}
-              {jobProgress?.currentStep && discoveryStatus === 'running' && (
-                <div className="flex items-center gap-3 py-2 justify-center">
-                  <Loader2 className="h-5 w-5 text-primary animate-spin" />
-                  <span className="text-sm font-medium">
-                    {jobProgress.currentStep}
-                  </span>
-                </div>
-              )}
-              
-              {/* Elapsed time */}
-              {jobProgress?.elapsedMs && discoveryStatus === 'running' && (
-                <div className="text-center text-sm text-muted-foreground">
-                  Elapsed: {formatElapsed(new Date(Date.now() - jobProgress.elapsedMs).toISOString())}
-                </div>
-              )}
-              
-              {/* Adding to library indicator */}
-              {isAddingToLibrary && (
-                <div className="flex items-center gap-3 py-2 justify-center">
-                  <Loader2 className="h-5 w-5 text-primary animate-spin" />
-                  <span className="text-sm font-medium">Saving to library...</span>
-                </div>
-              )}
-              
-              {discoveryStatus === "failed" && discoveryResult?.errors && (
-                <Alert variant="destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>
-                    {discoveryResult.errors[0]}
-                  </AlertDescription>
-                </Alert>
-              )}
-              
-              {/* Failed state with details from job */}
-              {discoveryStatus === "failed" && !discoveryResult?.errors && jobRecord?.details && (
-                <Alert variant="destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>
-                    {(jobRecord.details as any)?.error || 'Discovery failed'}
-                  </AlertDescription>
-                </Alert>
-              )}
-              
-              {discoveryStatus === "failed" && (
-                <div className="flex justify-center gap-2">
-                  <Button onClick={startDiscovery} variant="outline">
-                    <Search className="h-4 w-4 mr-2" />
-                    Retry Discovery
-                  </Button>
-                </div>
-              )}
-              
-              {/* Continue in background option */}
-              {discoveryStatus === "running" && !isAddingToLibrary && (
-                <div className="flex justify-center pt-4">
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={handleContinueInBackground}
-                  >
-                    <Minimize2 className="h-4 w-4 mr-2" />
-                    Continue in Background
-                  </Button>
-                </div>
-              )}
-            </div>
-          )}
+            );
+          })()}
           
           {/* Step 4: Review & Customize */}
           {currentStep === 4 && (
