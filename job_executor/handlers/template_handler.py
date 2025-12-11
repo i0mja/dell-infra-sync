@@ -1930,11 +1930,13 @@ modprobe error: {result['stdout']} {result['stderr']}
         vm_obj = None
         
         try:
-            # Extract parameters
-            vcenter_id = details.get('vcenter_id')
+            # Extract parameters - vcenter_id comes from target_scope, rest from details
+            target_scope = job.get('target_scope', {}) or {}
+            vcenter_id = target_scope.get('vcenter_id')
             template_moref = details.get('template_moref')
             ssh_username = details.get('ssh_username', 'root')
-            ssh_auth_method = details.get('ssh_auth_method', 'password')
+            # Handle both 'auth_method' (from wizard) and 'ssh_auth_method' (legacy)
+            ssh_auth_method = details.get('auth_method') or details.get('ssh_auth_method', 'password')
             ssh_password = details.get('ssh_password')
             ssh_key_id = details.get('ssh_key_id')
             
