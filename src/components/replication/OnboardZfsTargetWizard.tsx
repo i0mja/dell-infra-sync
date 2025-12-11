@@ -34,6 +34,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { VMCombobox } from "./VMCombobox";
+import { ZfsApplianceSelector } from "./ZfsApplianceSelector";
+import { ZfsTargetTemplate } from "@/hooks/useZfsTemplates";
 import { VMMultiSelectList } from "./VMMultiSelectList";
 import { TemplateCloneConfig, CloneSettings } from "./TemplateCloneConfig";
 import {
@@ -183,6 +185,8 @@ export function OnboardZfsTargetWizard({
   const [jobId, setJobId] = useState<string | null>(null);
   
   // Page 1: Selection
+  const [sourceMode, setSourceMode] = useState<'library' | 'vcenter'>('library');
+  const [selectedTemplate, setSelectedTemplate] = useState<ZfsTargetTemplate | null>(null);
   const [selectedVCenterId, setSelectedVCenterId] = useState(preselectedVCenterId || "");
   const [selectedVMId, setSelectedVMId] = useState(preselectedVMId || "");
   const [targetName, setTargetName] = useState("");
@@ -367,6 +371,8 @@ export function OnboardZfsTargetWizard({
       setRollbackStatus('idle');
       setSuccessCallbackFired(false);
       setIsTemplateMode(false);
+      setSourceMode('library');
+      setSelectedTemplate(null);
       setCloneSettings({
         cloneName: '',
         targetDatastore: '',
@@ -382,6 +388,41 @@ export function OnboardZfsTargetWizard({
       });
     }
   }, [open, preselectedVCenterId, preselectedVMId]);
+
+  // Handle template selection from library
+  const handleTemplateSelect = useCallback((template: ZfsTargetTemplate | null) => {
+    setSelectedTemplate(template);
+    if (template) {
+      // Auto-populate from template
+      setSelectedVCenterId(template.vcenter_id || '');
+      setZfsPoolName(template.default_zfs_pool_name || 'tank');
+      setNfsNetwork(template.default_nfs_network || '10.0.0.0/8');
+      if (template.ssh_key_id) {
+        setAuthMethod('existing_key');
+        setSelectedSshKeyId(template.ssh_key_id);
+      }
+      setCloneSettings(prev => ({
+        ...prev,
+        targetCluster: template.default_cluster || '',
+        targetDatastore: template.default_datastore || '',
+      }));
+      // Find the VM with matching template_moref in the vCenter
+      // This will be done after VMs are loaded via the effect below
+    } else {
+      // Clear template-related settings
+      setSelectedVMId('');
+    }
+  }, []);
+
+  // Auto-select VM when template is selected and VMs are loaded
+  useEffect(() => {
+    if (selectedTemplate && vms.length > 0 && !selectedVMId) {
+      const templateVm = vms.find(vm => vm.vcenter_id === selectedTemplate.template_moref);
+      if (templateVm) {
+        setSelectedVMId(templateVm.id);
+      }
+    }
+  }, [selectedTemplate, vms, selectedVMId]);
   
   // Auto-generate names when vCenter is selected
   useEffect(() => {
@@ -1023,7 +1064,10 @@ export function OnboardZfsTargetWizard({
   const canProceedFromPage = (page: number): boolean => {
     switch (page) {
       case 1: 
-        const baseValid = !!selectedVCenterId && !!selectedVMId && !!targetName;
+        // Library mode requires template selection OR direct vcenter mode requires VM selection
+        const baseValid = sourceMode === 'library' 
+          ? !!selectedTemplate && !!selectedVMId && !!targetName
+          : !!selectedVCenterId && !!selectedVMId && !!targetName;
         // Templates require additional clone config validation
         if (isTemplateMode) {
           return baseValid && !!cloneSettings.cloneName && !!cloneSettings.targetCluster;
@@ -1117,38 +1161,94 @@ export function OnboardZfsTargetWizard({
           {/* Page 1: Select Target */}
           {currentPage === 1 && (
             <div className="space-y-4">
+              {/* Source Mode Toggle */}
               <div className="space-y-2">
-                <Label>vCenter</Label>
-                <Select value={selectedVCenterId} onValueChange={setSelectedVCenterId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={vcentersLoading ? "Loading..." : "Select vCenter"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {vcenters.map((vc) => (
-                      <SelectItem key={vc.id} value={vc.id}>
-                        {vc.name} ({vc.host})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label>How would you like to add a ZFS target?</Label>
+                <RadioGroup 
+                  value={sourceMode} 
+                  onValueChange={(v) => {
+                    setSourceMode(v as 'library' | 'vcenter');
+                    // Reset selections when switching modes
+                    setSelectedTemplate(null);
+                    setSelectedVCenterId('');
+                    setSelectedVMId('');
+                  }}
+                  className="grid grid-cols-2 gap-3"
+                >
+                  <div className={`flex items-start space-x-3 p-3 rounded-lg border cursor-pointer transition-colors ${sourceMode === 'library' ? 'border-primary bg-primary/5' : 'bg-card hover:border-muted-foreground/30'}`}>
+                    <RadioGroupItem value="library" id="source-library" className="mt-0.5" />
+                    <div className="flex-1">
+                      <Label htmlFor="source-library" className="text-sm font-medium cursor-pointer">
+                        From Appliance Library
+                      </Label>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Pre-configured templates ready for deployment
+                      </p>
+                    </div>
+                  </div>
+                  <div className={`flex items-start space-x-3 p-3 rounded-lg border cursor-pointer transition-colors ${sourceMode === 'vcenter' ? 'border-primary bg-primary/5' : 'bg-card hover:border-muted-foreground/30'}`}>
+                    <RadioGroupItem value="vcenter" id="source-vcenter" className="mt-0.5" />
+                    <div className="flex-1">
+                      <Label htmlFor="source-vcenter" className="text-sm font-medium cursor-pointer">
+                        From vCenter VM
+                      </Label>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Select any VM and configure manually
+                      </p>
+                    </div>
+                  </div>
+                </RadioGroup>
               </div>
-              
-              <div className="space-y-2">
-                <Label>VM or Template</Label>
-                <VMCombobox
-                  vms={vms}
-                  clusters={clusters}
-                  selectedVmId={selectedVMId}
-                  onSelectVm={(vm) => setSelectedVMId(vm.id)}
-                  disabled={!selectedVCenterId}
-                  isLoading={vmsLoading}
-                  placeholder={
-                    !selectedVCenterId 
-                      ? "Select vCenter first" 
-                      : "Select VM or Template"
-                  }
-                />
-              </div>
+
+              {/* Library Mode - ZFS Appliance Selector */}
+              {sourceMode === 'library' && (
+                <div className="space-y-2">
+                  <Label>Select Appliance</Label>
+                  <ZfsApplianceSelector
+                    selectedId={selectedTemplate?.id}
+                    onSelect={handleTemplateSelect}
+                    showOnlyReady={true}
+                  />
+                </div>
+              )}
+
+              {/* vCenter Mode - Manual Selection */}
+              {sourceMode === 'vcenter' && (
+                <>
+                  <div className="space-y-2">
+                    <Label>vCenter</Label>
+                    <Select value={selectedVCenterId} onValueChange={setSelectedVCenterId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder={vcentersLoading ? "Loading..." : "Select vCenter"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {vcenters.map((vc) => (
+                          <SelectItem key={vc.id} value={vc.id}>
+                            {vc.name} ({vc.host})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <Label>VM or Template</Label>
+                    <VMCombobox
+                      vms={vms}
+                      clusters={clusters}
+                      selectedVmId={selectedVMId}
+                      onSelectVm={(vm) => setSelectedVMId(vm.id)}
+                      disabled={!selectedVCenterId}
+                      isLoading={vmsLoading}
+                      placeholder={
+                        !selectedVCenterId 
+                          ? "Select vCenter first" 
+                          : "Select VM or Template"
+                      }
+                    />
+                  </div>
+                </>
+              )}
               
               {/* VM Preview Card */}
               {selectedVM && (
