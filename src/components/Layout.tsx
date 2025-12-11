@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import {
   Sheet,
   SheetContent,
+  SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
 import {
@@ -199,6 +200,7 @@ const Layout = () => {
                 </Button>
               </SheetTrigger>
               <SheetContent side="left" className="w-52 p-0">
+                <SheetTitle className="sr-only">Navigation Menu</SheetTitle>
                 <div className="flex h-full flex-col">
                   <div className="flex h-16 items-center border-b px-6 flex-shrink-0">
                     <Server className="h-6 w-6 text-primary mr-2" />
