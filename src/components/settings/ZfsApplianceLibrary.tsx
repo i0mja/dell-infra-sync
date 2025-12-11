@@ -2,11 +2,18 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Grid3x3, List, Plus, Search, HardDrive } from "lucide-react";
+import { Grid3x3, List, Plus, Search, HardDrive, ChevronDown, Wrench } from "lucide-react";
 import { useZfsTemplates } from "@/hooks/useZfsTemplates";
 import { ZfsApplianceCard } from "./ZfsApplianceCard";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { PrepareTemplateWizard } from "@/components/replication/PrepareTemplateWizard";
+import { AddExistingApplianceDialog } from "./AddExistingApplianceDialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface ZfsApplianceLibraryProps {
   onSelectAppliance?: (template: any) => void;
@@ -17,6 +24,7 @@ export const ZfsApplianceLibrary = ({ onSelectAppliance }: ZfsApplianceLibraryPr
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchQuery, setSearchQuery] = useState("");
   const [showPrepareWizard, setShowPrepareWizard] = useState(false);
+  const [showAddExistingDialog, setShowAddExistingDialog] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState<string[]>([]);
 
   // Filter templates by search and status
@@ -71,10 +79,25 @@ export const ZfsApplianceLibrary = ({ onSelectAppliance }: ZfsApplianceLibraryPr
             <span className="text-muted-foreground/50">·</span>
             <span>{totalCount} total appliances</span>
           </div>
-          <Button onClick={() => setShowPrepareWizard(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Prepare New Template
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button>
+                <Plus className="h-4 w-4 mr-2" />
+                Add Appliance
+                <ChevronDown className="h-4 w-4 ml-2" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setShowPrepareWizard(true)}>
+                <Wrench className="h-4 w-4 mr-2" />
+                Prepare New Template
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShowAddExistingDialog(true)}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add Existing Appliance
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         {/* Search and Filters */}
@@ -163,6 +186,11 @@ export const ZfsApplianceLibrary = ({ onSelectAppliance }: ZfsApplianceLibraryPr
       <PrepareTemplateWizard
         open={showPrepareWizard}
         onOpenChange={setShowPrepareWizard}
+      />
+
+      <AddExistingApplianceDialog
+        open={showAddExistingDialog}
+        onOpenChange={setShowAddExistingDialog}
       />
     </>
   );
