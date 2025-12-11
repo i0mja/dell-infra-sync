@@ -3,9 +3,10 @@ import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
-import { Copy, Terminal } from 'lucide-react';
+import { Copy, Terminal, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { formatDistanceToNow } from 'date-fns';
 
 interface JobTask {
   id: string;
@@ -65,9 +66,14 @@ type FilterType = 'all' | 'tasks' | 'activity' | 'errors' | 'executor';
 export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
   const [entries, setEntries] = useState<ConsoleEntry[]>([]);
   const [executorLogs, setExecutorLogs] = useState<ExecutorLogEntry[]>([]);
+  const [stepResults, setStepResults] = useState<StepResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterType>('all');
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Helper to detect time-only format (HH:MM:SS)
+  const isTimeOnly = (ts: string) => /^\d{2}:\d{2}:\d{2}$/.test(ts);
 
   const parseExecutorLog = (logLine: string, idx: number): ExecutorLogEntry | null => {
     // Format 1: [HH:MM:SS] [LEVEL] message
@@ -141,6 +147,10 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
             .map((line, idx) => parseExecutorLog(line, idx))
             .filter((e): e is ExecutorLogEntry => e !== null);
           setExecutorLogs(parsed);
+        }
+        // Parse step_results
+        if (details.step_results && Array.isArray(details.step_results)) {
+          setStepResults(details.step_results as StepResult[]);
         }
       }
 
@@ -262,11 +272,16 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
         },
         (payload) => {
           const job = payload.new as { details?: Record<string, unknown> };
+          setLastUpdate(new Date());
           if (job.details?.console_log && Array.isArray(job.details.console_log)) {
             const parsed = (job.details.console_log as string[])
               .map((line, idx) => parseExecutorLog(line, idx))
               .filter((e): e is ExecutorLogEntry => e !== null);
             setExecutorLogs(parsed);
+          }
+          // Update step_results
+          if (job.details?.step_results && Array.isArray(job.details.step_results)) {
+            setStepResults(job.details.step_results as StepResult[]);
           }
         }
       )
@@ -342,6 +357,16 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
     details: {}
   }));
 
+  // Convert step_results to console entries
+  const stepResultEntries: ConsoleEntry[] = stepResults.map((sr, idx) => ({
+    id: `step-${idx}`,
+    timestamp: sr.timestamp || new Date().toISOString(),
+    type: 'task' as const,
+    status: sr.status === 'success' ? 'completed' : sr.status === 'failed' ? 'failed' : sr.status === 'warning' ? 'pending' : 'running',
+    message: `${sr.step.replace(/_/g, ' ')}: ${sr.message}`,
+    details: {}
+  }));
+
   const filteredEntries = (() => {
     switch (filter) {
       case 'tasks':
@@ -356,12 +381,15 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
         return []; // Handled separately with executor-specific rendering
       case 'all':
       default:
-        // Merge entries with executor logs for "All" view
-        // If we have executor logs but no task entries, show executor logs
-        if (entries.length === 0 && executorLogs.length > 0) {
+        // For "All" view, show executor logs and step results
+        // Prefer executor logs if available (more detailed), otherwise show step results
+        if (executorLogs.length > 0) {
           return executorAsConsoleEntries;
         }
-        // Otherwise show normal entries (tasks + activity)
+        if (stepResults.length > 0) {
+          return stepResultEntries;
+        }
+        // Fallback to task/activity entries
         return entries;
     }
   })();
@@ -383,6 +411,12 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
           <div className="flex items-center gap-2">
             <Terminal className="h-5 w-5" />
             <CardTitle>Console Log</CardTitle>
+            {lastUpdate && (
+              <span className="text-xs text-muted-foreground flex items-center gap-1">
+                <RefreshCw className="h-3 w-3" />
+                {formatDistanceToNow(lastUpdate, { addSuffix: true })}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <div className="flex gap-1">
@@ -444,7 +478,7 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
               <div className="space-y-0.5">
                 {executorLogs.map((log, idx) => (
                   <div key={idx} className="leading-relaxed text-xs">
-                    <span className="text-muted-foreground/60">[{log.timestamp}]</span>
+                    <span className="text-muted-foreground/60">[{isTimeOnly(log.timestamp) ? log.timestamp : formatTimestamp(log.timestamp)}]</span>
                     {' '}
                     <span className={cn(getExecutorLogColor(log.level), 'font-medium')}>
                       [{log.level}]
@@ -472,7 +506,7 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
                   )}
                 >
                   <span className="text-muted-foreground/60">
-                    [{formatTimestamp(entry.timestamp)}]
+                    [{isTimeOnly(entry.timestamp) ? entry.timestamp : formatTimestamp(entry.timestamp)}]
                   </span>
                   {' '}
                   <span className={cn(getStatusColor(entry))}>
