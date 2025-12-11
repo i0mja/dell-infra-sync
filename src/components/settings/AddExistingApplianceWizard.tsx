@@ -12,7 +12,7 @@
  * 5. Confirm - Final summary and add to library
  */
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Dialog,
   DialogContent,
@@ -53,6 +53,7 @@ import {
   AlertTriangle,
   Check,
   X,
+  Minimize2,
 } from "lucide-react";
 import { useVCenters } from "@/hooks/useVCenters";
 import { useQuery } from "@tanstack/react-query";
@@ -61,6 +62,8 @@ import { useZfsTemplates } from "@/hooks/useZfsTemplates";
 import { useSshKeys } from "@/hooks/useSshKeys";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { useJobProgress, formatElapsed } from "@/hooks/useJobProgress";
+import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
 
 interface AddExistingApplianceWizardProps {
   open: boolean;
@@ -102,11 +105,24 @@ const WIZARD_STEPS = [
   { id: 5, label: 'Confirm', icon: CheckCircle2 },
 ];
 
+const PENDING_DISCOVERY_KEY = 'pending-zfs-discovery';
+
+interface PendingDiscovery {
+  jobId: string;
+  templateId: string;
+  vcenterId: string;
+  templateName: string;
+  sshUsername: string;
+  authMethod: 'password' | 'key';
+  selectedSshKeyId?: string;
+}
+
 export function AddExistingApplianceWizard({ open, onOpenChange }: AddExistingApplianceWizardProps) {
   const { toast } = useToast();
   const { vcenters } = useVCenters();
   const { createTemplate, isCreating } = useZfsTemplates();
   const { sshKeys = [] } = useSshKeys();
+  const { minimizeJob } = useMinimizedJobs();
   
   // Wizard state
   const [currentStep, setCurrentStep] = useState(1);
@@ -121,12 +137,37 @@ export function AddExistingApplianceWizard({ open, onOpenChange }: AddExistingAp
   const [sshPassword, setSshPassword] = useState("");
   const [selectedSshKeyId, setSelectedSshKeyId] = useState("");
   
-  // Step 3: Discovery
+  // Step 3: Discovery - use useJobProgress for real-time updates
   const [discoveryJobId, setDiscoveryJobId] = useState<string | null>(null);
-  const [discoveryStatus, setDiscoveryStatus] = useState<"idle" | "running" | "completed" | "failed">("idle");
-  const [discoveryProgress, setDiscoveryProgress] = useState(0);
   const [discoveryResult, setDiscoveryResult] = useState<DiscoveryResult | null>(null);
-  const [discoverySteps, setDiscoverySteps] = useState<Array<{ step: string; status: "pending" | "running" | "success" | "failed" }>>([]);
+  const [isAddingToLibrary, setIsAddingToLibrary] = useState(false);
+  
+  // Use the real-time job progress hook
+  const { data: jobProgress } = useJobProgress(discoveryJobId, !!discoveryJobId);
+  
+  // Track job status from Supabase subscription
+  const { data: jobRecord } = useQuery({
+    queryKey: ['discovery-job-status', discoveryJobId],
+    queryFn: async () => {
+      if (!discoveryJobId) return null;
+      const { data } = await supabase
+        .from('jobs')
+        .select('status, details')
+        .eq('id', discoveryJobId)
+        .single();
+      return data;
+    },
+    enabled: !!discoveryJobId,
+    refetchInterval: 2000,
+  });
+  
+  // Derive discovery status from job record
+  const discoveryStatus = discoveryJobId 
+    ? (jobRecord?.status === 'completed' ? 'completed' 
+       : jobRecord?.status === 'failed' ? 'failed'
+       : ['pending', 'running'].includes(jobRecord?.status || '') ? 'running' 
+       : 'idle')
+    : 'idle';
   
   // Step 4: Review & Customize
   const [formData, setFormData] = useState({
@@ -162,9 +203,29 @@ export function AddExistingApplianceWizard({ open, onOpenChange }: AddExistingAp
   const selectedTemplate = templateVMs?.find(t => t.id === selectedTemplateId);
   const activeSshKeys = useMemo(() => sshKeys.filter(k => k.status === 'active'), [sshKeys]);
   
-  // Reset wizard when dialog opens
+  // Check for pending discovery job when wizard opens
   useEffect(() => {
     if (open) {
+      const pending = localStorage.getItem(PENDING_DISCOVERY_KEY);
+      if (pending) {
+        try {
+          const data: PendingDiscovery = JSON.parse(pending);
+          // Restore state from pending discovery
+          setDiscoveryJobId(data.jobId);
+          setSelectedVcenterId(data.vcenterId);
+          setSelectedTemplateId(data.templateId);
+          setSshUsername(data.sshUsername);
+          setAuthMethod(data.authMethod);
+          if (data.selectedSshKeyId) setSelectedSshKeyId(data.selectedSshKeyId);
+          setCurrentStep(3); // Go directly to discovery step
+          setFormData(prev => ({ ...prev, name: data.templateName }));
+          return; // Skip normal reset
+        } catch {
+          localStorage.removeItem(PENDING_DISCOVERY_KEY);
+        }
+      }
+      
+      // Normal reset
       setCurrentStep(1);
       setSelectedVcenterId("");
       setSelectedTemplateId("");
@@ -173,10 +234,7 @@ export function AddExistingApplianceWizard({ open, onOpenChange }: AddExistingAp
       setSshPassword("");
       setSelectedSshKeyId("");
       setDiscoveryJobId(null);
-      setDiscoveryStatus("idle");
-      setDiscoveryProgress(0);
       setDiscoveryResult(null);
-      setDiscoverySteps([]);
       setFormData({
         name: "",
         description: "",
@@ -191,6 +249,67 @@ export function AddExistingApplianceWizard({ open, onOpenChange }: AddExistingAp
       });
     }
   }, [open]);
+  
+  // Handle job completion - auto-add to library
+  const handleAutoAdd = useCallback(async (result: DiscoveryResult, template: typeof selectedTemplate) => {
+    if (!template || isAddingToLibrary) return;
+    
+    setIsAddingToLibrary(true);
+    localStorage.removeItem(PENDING_DISCOVERY_KEY);
+    
+    const templateData = {
+      name: template.name,
+      description: `Auto-discovered from ${template.name}`,
+      vcenter_id: selectedVcenterId,
+      template_moref: template.vcenter_id || '',
+      template_name: template.name,
+      default_zfs_pool_name: result?.zfs_status?.pool_name || 'tank',
+      default_zfs_disk_path: result?.zfs_status?.disk_device || '/dev/sdb',
+      default_nfs_network: result?.nfs_exports?.network || '192.168.0.0/16',
+      default_ssh_username: sshUsername,
+      ssh_key_id: authMethod === 'key' ? selectedSshKeyId : undefined,
+      default_cpu_count: result?.vm_specs?.cpu_count || template.cpu_count || 2,
+      default_memory_gb: Math.round((result?.vm_specs?.memory_mb || template.memory_mb || 4096) / 1024),
+      default_zfs_disk_gb: result?.vm_specs?.disk_gb || Math.round(Number(template.disk_gb) || 100),
+      status: 'ready',
+      version: result?.os_info?.version || '1.0.0',
+    };
+    
+    try {
+      await createTemplate(templateData);
+      toast({ title: 'Appliance added to library', description: 'Discovery and registration completed successfully' });
+      onOpenChange(false);
+    } catch (err) {
+      toast({ 
+        title: 'Discovery succeeded but failed to add to library', 
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive' 
+      });
+    } finally {
+      setIsAddingToLibrary(false);
+    }
+  }, [selectedVcenterId, sshUsername, authMethod, selectedSshKeyId, createTemplate, toast, onOpenChange, isAddingToLibrary]);
+  
+  // Watch for job completion
+  useEffect(() => {
+    if (jobRecord?.status === 'completed' && !discoveryResult && selectedTemplate) {
+      const details = jobRecord.details as Record<string, unknown> | null;
+      const result = details?.discovery_result as DiscoveryResult;
+      if (result) {
+        setDiscoveryResult(result);
+        handleAutoAdd(result, selectedTemplate);
+      }
+    } else if (jobRecord?.status === 'failed') {
+      localStorage.removeItem(PENDING_DISCOVERY_KEY);
+      const details = jobRecord.details as Record<string, unknown> | null;
+      const errorMsg = details?.error as string || 'Discovery failed';
+      toast({ 
+        title: 'Discovery failed', 
+        description: errorMsg,
+        variant: 'destructive' 
+      });
+    }
+  }, [jobRecord?.status, jobRecord?.details, discoveryResult, selectedTemplate, handleAutoAdd, toast]);
   
   // Auto-populate form from template selection
   useEffect(() => {
@@ -225,18 +344,7 @@ export function AddExistingApplianceWizard({ open, onOpenChange }: AddExistingAp
   const startDiscovery = async () => {
     if (!selectedTemplate) return;
     
-    setDiscoveryStatus("running");
-    setDiscoveryProgress(0);
     setDiscoveryResult(null);
-    setDiscoverySteps([
-      { step: "Connecting to vCenter", status: "running" },
-      { step: "Powering on template", status: "pending" },
-      { step: "Waiting for IP address", status: "pending" },
-      { step: "Establishing SSH connection", status: "pending" },
-      { step: "Detecting ZFS configuration", status: "pending" },
-      { step: "Scanning NFS exports", status: "pending" },
-      { step: "Reading VM specifications", status: "pending" },
-    ]);
     
     try {
       const { data: user } = await supabase.auth.getUser();
@@ -268,98 +376,35 @@ export function AddExistingApplianceWizard({ open, onOpenChange }: AddExistingAp
       
       setDiscoveryJobId(job.id);
       
-      // Poll for job completion
-      let attempts = 0;
-      const pollInterval = setInterval(async () => {
-        attempts++;
-        const { data: jobResult } = await supabase
-          .from('jobs')
-          .select('status, details')
-          .eq('id', job.id)
-          .single();
-        
-        const details = jobResult?.details as Record<string, unknown> | null;
-        
-        // Update progress
-        if (details?.progress_percent) {
-          setDiscoveryProgress(details.progress_percent as number);
-        }
-        
-        // Update step statuses
-        if (details?.current_step) {
-          const currentStepName = details.current_step as string;
-          setDiscoverySteps(prev => prev.map(s => ({
-            ...s,
-            status: s.step === currentStepName ? "running" : 
-                   (details?.completed_steps as string[] || []).includes(s.step) ? "success" : 
-                   s.status
-          })));
-        }
-        
-        if (jobResult?.status === 'completed') {
-          clearInterval(pollInterval);
-          setDiscoveryProgress(100);
-          setDiscoveryStatus("completed");
-          setDiscoverySteps(prev => prev.map(s => ({ ...s, status: "success" })));
-          
-          const result = details?.discovery_result as DiscoveryResult;
-          setDiscoveryResult(result);
-          
-          // Auto-add to library after successful discovery
-          const templateData = {
-            name: selectedTemplate.name,
-            description: `Auto-discovered from ${selectedTemplate.name}`,
-            vcenter_id: selectedVcenterId,
-            template_moref: selectedTemplate.vcenter_id || '',
-            template_name: selectedTemplate.name,
-            default_zfs_pool_name: result?.zfs_status?.pool_name || 'tank',
-            default_zfs_disk_path: result?.zfs_status?.disk_device || '/dev/sdb',
-            default_nfs_network: result?.nfs_exports?.network || '192.168.0.0/16',
-            default_ssh_username: sshUsername,
-            ssh_key_id: authMethod === 'key' ? selectedSshKeyId : undefined,
-            default_cpu_count: result?.vm_specs?.cpu_count || selectedTemplate.cpu_count || 2,
-            default_memory_gb: Math.round((result?.vm_specs?.memory_mb || selectedTemplate.memory_mb || 4096) / 1024),
-            default_zfs_disk_gb: result?.vm_specs?.disk_gb || Math.round(Number(selectedTemplate.disk_gb) || 100),
-            status: 'ready',
-            version: result?.os_info?.version || '1.0.0',
-          };
-          
-          try {
-            await createTemplate(templateData);
-            toast({ title: 'Appliance added to library', description: 'Discovery and registration completed successfully' });
-            onOpenChange(false);
-          } catch (err) {
-            toast({ 
-              title: 'Discovery succeeded but failed to add to library', 
-              description: err instanceof Error ? err.message : 'Unknown error',
-              variant: 'destructive' 
-            });
-          }
-          
-        } else if (jobResult?.status === 'failed' || attempts >= 90) {
-          clearInterval(pollInterval);
-          setDiscoveryStatus("failed");
-          
-          const errorMsg = details?.error as string || 'Discovery timeout';
-          setDiscoveryResult({
-            ssh_connected: false,
-            errors: [errorMsg]
-          });
-          
-          toast({ 
-            title: 'Discovery failed', 
-            description: errorMsg,
-            variant: 'destructive' 
-          });
-        }
-      }, 2000);
+      // Store pending discovery for resume capability
+      const pendingData: PendingDiscovery = {
+        jobId: job.id,
+        templateId: selectedTemplateId,
+        vcenterId: selectedVcenterId,
+        templateName: selectedTemplate.name,
+        sshUsername,
+        authMethod,
+        selectedSshKeyId: authMethod === 'key' ? selectedSshKeyId : undefined,
+      };
+      localStorage.setItem(PENDING_DISCOVERY_KEY, JSON.stringify(pendingData));
       
     } catch (err) {
-      setDiscoveryStatus("failed");
       toast({ 
         title: 'Failed to start discovery', 
         description: err instanceof Error ? err.message : 'Unknown error',
         variant: 'destructive' 
+      });
+    }
+  };
+  
+  // Continue in background - minimize to floating monitor
+  const handleContinueInBackground = () => {
+    if (discoveryJobId) {
+      minimizeJob(discoveryJobId, 'inspect_zfs_appliance');
+      onOpenChange(false);
+      toast({ 
+        title: 'Running in background', 
+        description: 'Check the floating job monitor for progress' 
       });
     }
   };
@@ -623,43 +668,53 @@ export function AddExistingApplianceWizard({ open, onOpenChange }: AddExistingAp
             </div>
           )}
           
-          {/* Step 3: Discovery */}
+          {/* Step 3: Discovery - Real-time progress from useJobProgress */}
           {currentStep === 3 && (
             <div className="space-y-4">
               <div className="text-center mb-4">
-                <h3 className="text-lg font-medium">Inspecting Template</h3>
+                <h3 className="text-lg font-medium">
+                  {discoveryStatus === 'completed' ? 'Discovery Complete' : 
+                   discoveryStatus === 'failed' ? 'Discovery Failed' : 
+                   isAddingToLibrary ? 'Adding to Library...' :
+                   'Inspecting Template'}
+                </h3>
                 <p className="text-sm text-muted-foreground">
-                  Detecting ZFS configuration and VM specifications...
+                  {discoveryStatus === 'completed' 
+                    ? 'ZFS configuration detected successfully'
+                    : discoveryStatus === 'failed'
+                    ? 'An error occurred during inspection'
+                    : isAddingToLibrary
+                    ? 'Saving appliance configuration...'
+                    : 'Detecting ZFS configuration and VM specifications...'}
                 </p>
               </div>
               
-              <Progress value={discoveryProgress} className="h-2" />
+              <Progress value={jobProgress?.progressPercent || 0} className="h-2" />
               
-              <div className="space-y-2">
-                {discoverySteps.map((step, index) => (
-                  <div key={index} className="flex items-center gap-3 py-2">
-                    {step.status === "pending" && (
-                      <div className="h-5 w-5 rounded-full border-2 border-muted" />
-                    )}
-                    {step.status === "running" && (
-                      <Loader2 className="h-5 w-5 text-primary animate-spin" />
-                    )}
-                    {step.status === "success" && (
-                      <CheckCircle2 className="h-5 w-5 text-green-500" />
-                    )}
-                    {step.status === "failed" && (
-                      <X className="h-5 w-5 text-destructive" />
-                    )}
-                    <span className={cn(
-                      "text-sm",
-                      step.status === "running" && "font-medium",
-                      step.status === "pending" && "text-muted-foreground"
-                    )}>
-                      {step.step}
-                    </span>
-                  </div>
-                ))}
-              </div>
+              {/* Current step from job progress */}
+              {jobProgress?.currentStep && discoveryStatus === 'running' && (
+                <div className="flex items-center gap-3 py-2 justify-center">
+                  <Loader2 className="h-5 w-5 text-primary animate-spin" />
+                  <span className="text-sm font-medium">
+                    {jobProgress.currentStep}
+                  </span>
+                </div>
+              )}
+              
+              {/* Elapsed time */}
+              {jobProgress?.elapsedMs && discoveryStatus === 'running' && (
+                <div className="text-center text-sm text-muted-foreground">
+                  Elapsed: {formatElapsed(new Date(Date.now() - jobProgress.elapsedMs).toISOString())}
+                </div>
+              )}
+              
+              {/* Adding to library indicator */}
+              {isAddingToLibrary && (
+                <div className="flex items-center gap-3 py-2 justify-center">
+                  <Loader2 className="h-5 w-5 text-primary animate-spin" />
+                  <span className="text-sm font-medium">Saving to library...</span>
+                </div>
+              )}
               
               {discoveryStatus === "failed" && discoveryResult?.errors && (
                 <Alert variant="destructive">
@@ -670,11 +725,35 @@ export function AddExistingApplianceWizard({ open, onOpenChange }: AddExistingAp
                 </Alert>
               )}
               
+              {/* Failed state with details from job */}
+              {discoveryStatus === "failed" && !discoveryResult?.errors && jobRecord?.details && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    {(jobRecord.details as any)?.error || 'Discovery failed'}
+                  </AlertDescription>
+                </Alert>
+              )}
+              
               {discoveryStatus === "failed" && (
-                <div className="flex justify-center">
+                <div className="flex justify-center gap-2">
                   <Button onClick={startDiscovery} variant="outline">
                     <Search className="h-4 w-4 mr-2" />
                     Retry Discovery
+                  </Button>
+                </div>
+              )}
+              
+              {/* Continue in background option */}
+              {discoveryStatus === "running" && !isAddingToLibrary && (
+                <div className="flex justify-center pt-4">
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={handleContinueInBackground}
+                  >
+                    <Minimize2 className="h-4 w-4 mr-2" />
+                    Continue in Background
                   </Button>
                 </div>
               )}
@@ -856,12 +935,12 @@ export function AddExistingApplianceWizard({ open, onOpenChange }: AddExistingAp
           {currentStep < 5 ? (
             <Button 
               onClick={goNext} 
-              disabled={!canProceedFromStep(currentStep) || (currentStep === 3 && discoveryStatus === 'running')}
+              disabled={!canProceedFromStep(currentStep) || (currentStep === 3 && (discoveryStatus === 'running' || isAddingToLibrary))}
             >
-              {currentStep === 3 && discoveryStatus === 'running' ? (
+              {currentStep === 3 && (discoveryStatus === 'running' || isAddingToLibrary) ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Discovering...
+                  {isAddingToLibrary ? 'Adding...' : 'Discovering...'}
                 </>
               ) : (
                 <>
