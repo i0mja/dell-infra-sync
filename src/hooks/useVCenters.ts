@@ -20,6 +20,7 @@ export interface VCenter {
   color: string | null;
   site_code: string | null;
   vm_prefix: string | null;
+  default_zfs_template_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -37,6 +38,7 @@ export interface VCenterFormData {
   is_primary?: boolean;
   site_code?: string;
   vm_prefix?: string;
+  default_zfs_template_id?: string;
 }
 
 export function useVCenters() {
@@ -105,6 +107,7 @@ export function useVCenters() {
           is_primary: data.is_primary || false,
           site_code: data.site_code || null,
           vm_prefix: data.vm_prefix || null,
+          default_zfs_template_id: data.default_zfs_template_id || null,
         },
       ]).select().single();
 

@@ -176,43 +176,122 @@ export function PairedZfsDeployWizard({
     }
   }, [open]);
   
-  // Auto-generate names when source vCenter is selected
+  // Auto-generate names and load default template when source vCenter is selected
   useEffect(() => {
-    const generateSourceNames = async () => {
-      if (!sourceConfig.vcenterId || sourceConfig.targetName) return;
+    const initSourceConfig = async () => {
+      if (!sourceConfig.vcenterId) return;
       
-      const { siteCode, vmPrefix } = await getVCenterSiteCodes(sourceConfig.vcenterId);
-      if (siteCode) {
-        const { targetName, vmName, datastoreName } = await generateTargetNames(siteCode, vmPrefix || '');
-        setSourceConfig(prev => ({
-          ...prev,
-          targetName,
-          datastoreName,
-          cloneSettings: { ...prev.cloneSettings, cloneName: vmName },
-        }));
+      const vcenter = vcenters.find(v => v.id === sourceConfig.vcenterId);
+      
+      // If vCenter has a default template, auto-select it
+      if (vcenter?.default_zfs_template_id && !sourceConfig.vmId) {
+        try {
+          const { data: template } = await supabase
+            .from('zfs_target_templates')
+            .select('template_moref, ssh_key_id, default_zfs_pool_name, default_nfs_network, default_cluster, default_datastore')
+            .eq('id', vcenter.default_zfs_template_id)
+            .single();
+          
+          if (template) {
+            // Find VM with matching moref
+            const templateVm = sourceVms.find(vm => vm.vcenter_id === template.template_moref);
+            if (templateVm) {
+              setSourceConfig(prev => ({
+                ...prev,
+                vmId: templateVm.id,
+                authMethod: template.ssh_key_id ? 'existing_key' : 'password',
+                sshKeyId: template.ssh_key_id || '',
+                zfsPool: template.default_zfs_pool_name || 'tank',
+                nfsNetwork: template.default_nfs_network || '10.0.0.0/8',
+                cloneSettings: {
+                  ...prev.cloneSettings,
+                  targetCluster: template.default_cluster || '',
+                  targetDatastore: template.default_datastore || '',
+                },
+              }));
+              toast({ title: 'Gold image loaded', description: `Using default template for ${vcenter.name}` });
+              return; // Skip name generation since we loaded template
+            }
+          }
+        } catch (err) {
+          console.error('Failed to load default template:', err);
+        }
+      }
+      
+      // Generate names if no default template
+      if (!sourceConfig.targetName) {
+        const { siteCode, vmPrefix } = await getVCenterSiteCodes(sourceConfig.vcenterId);
+        if (siteCode) {
+          const { targetName, vmName, datastoreName } = await generateTargetNames(siteCode, vmPrefix || '');
+          setSourceConfig(prev => ({
+            ...prev,
+            targetName,
+            datastoreName,
+            cloneSettings: { ...prev.cloneSettings, cloneName: vmName },
+          }));
+        }
       }
     };
-    generateSourceNames();
-  }, [sourceConfig.vcenterId]);
+    initSourceConfig();
+  }, [sourceConfig.vcenterId, vcenters, sourceVms]);
   
-  // Auto-generate names when DR vCenter is selected
+  // Auto-generate names and load default template when DR vCenter is selected
   useEffect(() => {
-    const generateDrNames = async () => {
-      if (!drConfig.vcenterId || drConfig.targetName) return;
+    const initDrConfig = async () => {
+      if (!drConfig.vcenterId) return;
       
-      const { siteCode, vmPrefix } = await getVCenterSiteCodes(drConfig.vcenterId);
-      if (siteCode) {
-        const { targetName, vmName, datastoreName } = await generateTargetNames(siteCode, vmPrefix || '');
-        setDrConfig(prev => ({
-          ...prev,
-          targetName,
-          datastoreName,
-          cloneSettings: { ...prev.cloneSettings, cloneName: vmName },
-        }));
+      const vcenter = vcenters.find(v => v.id === drConfig.vcenterId);
+      
+      // If vCenter has a default template, auto-select it
+      if (vcenter?.default_zfs_template_id && !drConfig.vmId) {
+        try {
+          const { data: template } = await supabase
+            .from('zfs_target_templates')
+            .select('template_moref, ssh_key_id, default_zfs_pool_name, default_nfs_network, default_cluster, default_datastore')
+            .eq('id', vcenter.default_zfs_template_id)
+            .single();
+          
+          if (template) {
+            // Find VM with matching moref
+            const templateVm = drVms.find(vm => vm.vcenter_id === template.template_moref);
+            if (templateVm) {
+              setDrConfig(prev => ({
+                ...prev,
+                vmId: templateVm.id,
+                authMethod: template.ssh_key_id ? 'existing_key' : 'password',
+                sshKeyId: template.ssh_key_id || '',
+                zfsPool: template.default_zfs_pool_name || 'tank',
+                nfsNetwork: template.default_nfs_network || '10.0.0.0/8',
+                cloneSettings: {
+                  ...prev.cloneSettings,
+                  targetCluster: template.default_cluster || '',
+                  targetDatastore: template.default_datastore || '',
+                },
+              }));
+              return; // Skip name generation since we loaded template
+            }
+          }
+        } catch (err) {
+          console.error('Failed to load default template:', err);
+        }
+      }
+      
+      // Generate names if no default template
+      if (!drConfig.targetName) {
+        const { siteCode, vmPrefix } = await getVCenterSiteCodes(drConfig.vcenterId);
+        if (siteCode) {
+          const { targetName, vmName, datastoreName } = await generateTargetNames(siteCode, vmPrefix || '');
+          setDrConfig(prev => ({
+            ...prev,
+            targetName,
+            datastoreName,
+            cloneSettings: { ...prev.cloneSettings, cloneName: vmName },
+          }));
+        }
       }
     };
-    generateDrNames();
-  }, [drConfig.vcenterId]);
+    initDrConfig();
+  }, [drConfig.vcenterId, vcenters, drVms]);
   
   // Detect template mode for source VM
   useEffect(() => {
