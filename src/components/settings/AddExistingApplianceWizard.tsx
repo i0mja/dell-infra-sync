@@ -253,6 +253,7 @@ export function AddExistingApplianceWizard({ open, onOpenChange }: AddExistingAp
           details: {
             template_moref: selectedTemplate.vcenter_id,
             template_name: selectedTemplate.name,
+            cluster_name: selectedTemplate.cluster_name,
             ssh_username: sshUsername,
             auth_method: authMethod,
             ssh_password: authMethod === 'password' ? sshPassword : undefined,
