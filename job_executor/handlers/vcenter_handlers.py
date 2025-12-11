@@ -504,6 +504,120 @@ class VCenterHandlers(BaseHandler):
                 'error': str(e)
             }
     
+    def execute_partial_vcenter_sync(self, job: Dict):
+        """Execute partial vCenter sync - fetch only specific object types (hosts, vms, clusters, datastores, networks)"""
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        from job_executor.utils import _safe_json_parse
+        from pyVmomi import vim
+        import time
+        
+        sync_start = time.time()
+        job_details = job.get('details', {})
+        sync_scope = job_details.get('sync_scope', 'vms')  # vms, hosts, clusters, datastores, networks
+        target_vcenter_id = job_details.get('vcenter_id')
+        
+        self.log(f"Starting partial vCenter sync job: {job['id']} (scope: {sync_scope})")
+        
+        try:
+            self.update_job_status(
+                job['id'], 
+                'running', 
+                started_at=utc_now_iso(),
+                details={"current_step": f"Syncing {sync_scope} only", "sync_scope": sync_scope}
+            )
+            
+            # Fetch vCenter configuration
+            if target_vcenter_id:
+                vcenter_url = f"{DSM_URL}/rest/v1/vcenters?id=eq.{target_vcenter_id}&select=*"
+            else:
+                vcenter_url = f"{DSM_URL}/rest/v1/vcenters?sync_enabled=eq.true&order=created_at.asc"
+            
+            response = requests.get(
+                vcenter_url,
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL
+            )
+            
+            if response.status_code != 200:
+                raise Exception(f"Failed to fetch vCenter configuration: {response.status_code}")
+            
+            vcenters_list = _safe_json_parse(response)
+            if not vcenters_list:
+                raise Exception("No vCenter connection configured or sync is disabled")
+            
+            total_synced = 0
+            all_errors = []
+            
+            for vcenter_config in vcenters_list:
+                source_vcenter_id = vcenter_config['id']
+                vcenter_name = vcenter_config['name']
+                
+                self.log(f"Connecting to {vcenter_name} for partial sync ({sync_scope})...")
+                
+                # Connect to vCenter
+                vc = self.executor.connect_vcenter(vcenter_config)
+                if not vc:
+                    all_errors.append(f"Failed to connect to {vcenter_name}")
+                    continue
+                
+                content = vc.RetrieveContent()
+                
+                # Import partial sync function
+                from job_executor.mixins.vcenter_property_collector import sync_vcenter_partial
+                
+                # Collect only the requested scope
+                inventory_result = sync_vcenter_partial(content, source_vcenter_id, sync_scope)
+                
+                self.log(f"Fetched {inventory_result.get('count', 0)} {sync_scope} from {vcenter_name}")
+                
+                # Upsert only the requested entity type
+                upsert_result = self.executor.upsert_inventory_partial(
+                    inventory_result,
+                    source_vcenter_id,
+                    sync_scope,
+                    vcenter_name=vcenter_name,
+                    job_id=job['id']
+                )
+                
+                total_synced += upsert_result.get('synced', 0)
+                if upsert_result.get('error'):
+                    all_errors.append(upsert_result['error'])
+                
+                # Disconnect
+                try:
+                    from pyVim.connect import Disconnect
+                    Disconnect(vc)
+                except:
+                    pass
+            
+            sync_duration = int(time.time() - sync_start)
+            
+            self.update_job_status(
+                job['id'], 
+                'completed',
+                completed_at=utc_now_iso(),
+                details={
+                    "sync_scope": sync_scope,
+                    "synced_count": total_synced,
+                    "sync_duration_seconds": sync_duration,
+                    "errors": all_errors if all_errors else None
+                }
+            )
+            
+            self.log(f"Partial sync complete: {total_synced} {sync_scope} synced in {sync_duration}s")
+            
+        except Exception as e:
+            self.log(f"Partial vCenter sync failed: {e}", "ERROR")
+            self.update_job_status(
+                job['id'], 
+                'failed',
+                completed_at=utc_now_iso(),
+                details={'error': str(e), 'sync_scope': sync_scope}
+            )
+    
     def execute_vcenter_connectivity_test(self, job: Dict):
         """Test vCenter connectivity"""
         try:

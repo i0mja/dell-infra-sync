@@ -145,6 +145,82 @@ class VCenterDbUpsertMixin:
         
         return results
     
+    def upsert_inventory_partial(
+        self,
+        inventory: Dict[str, Any],
+        source_vcenter_id: str,
+        sync_scope: str,
+        vcenter_name: str = "",
+        job_id: str = None
+    ) -> Dict[str, Any]:
+        """
+        Upsert only a specific entity type from partial sync.
+        
+        Args:
+            inventory: Output from sync_vcenter_partial()
+            source_vcenter_id: vCenter UUID
+            sync_scope: "vms", "hosts", "clusters", "datastores", or "networks"
+            vcenter_name: Human-readable name for logging
+            job_id: Optional job ID
+            
+        Returns:
+            {"synced": int, "total": int, "error": Optional[str]}
+        """
+        prefix = f"[{vcenter_name}] " if vcenter_name else ""
+        items = inventory.get("items", [])
+        
+        self.log(f"{prefix}Partial upsert: {len(items)} {sync_scope}")
+        
+        if sync_scope == 'vms':
+            # Need to resolve host_id for VMs
+            return self._upsert_vms_partial(items, source_vcenter_id, job_id)
+        elif sync_scope == 'hosts':
+            return self._upsert_hosts_batch(items, source_vcenter_id, job_id)
+        elif sync_scope == 'clusters':
+            return self._upsert_clusters_batch(items, source_vcenter_id, job_id)
+        elif sync_scope == 'datastores':
+            return self._upsert_datastores_batch(items, source_vcenter_id, job_id)
+        elif sync_scope == 'networks':
+            return self._upsert_networks_batch(items, [], [], source_vcenter_id, job_id)
+        else:
+            return {"synced": 0, "total": 0, "error": f"Unknown scope: {sync_scope}"}
+    
+    def _upsert_vms_partial(
+        self,
+        vms: List[Dict],
+        source_vcenter_id: str,
+        job_id: str = None
+    ) -> Dict[str, int]:
+        """Upsert VMs for partial sync (resolves host_id internally)."""
+        if not vms:
+            return {"synced": 0, "total": 0}
+        
+        # Fetch existing hosts for this vCenter to resolve host_id
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_hosts?source_vcenter_id=eq.{source_vcenter_id}&select=id,vcenter_id,name",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=15
+            )
+            
+            host_id_map = {}
+            if response.status_code == 200:
+                for h in response.json():
+                    if h.get('vcenter_id'):
+                        host_id_map[h['vcenter_id']] = h['id']
+                    if h.get('name'):
+                        host_id_map[h['name']] = h['id']
+        except Exception as e:
+            self.log(f"Warning: Could not fetch hosts for VM resolution: {e}", "WARN")
+            host_id_map = {}
+        
+        # Now upsert VMs
+        return self._upsert_vms_batch(vms, source_vcenter_id, job_id, host_id_map)
+    
     def _upsert_clusters_batch(
         self, 
         clusters: List[Dict], 
