@@ -81,6 +81,8 @@ export interface ZfsTemplateFormData {
   ssh_key_id?: string;           // Reference to centralized SSH key
   ssh_private_key?: string;      // Legacy: for direct encryption
   use_template_disk?: boolean;   // Skip adding disk, use existing template disk
+  status?: string;               // Template status: 'draft', 'ready', etc.
+  version?: string;              // Appliance version from discovery
 }
 
 export function useZfsTemplates() {
@@ -127,7 +129,9 @@ export function useZfsTemplates() {
           default_ssh_username: template.default_ssh_username || 'zfsadmin',
           ssh_key_id: template.ssh_key_id || null,
           is_active: true,
-          created_by: user?.user?.id
+          created_by: user?.user?.id,
+          status: template.status || 'draft',
+          version: template.version || null
         })
         .select()
         .single();

@@ -210,6 +210,7 @@ export function AddExistingApplianceWizard({ open, onOpenChange }: AddExistingAp
     if (discoveryResult) {
       setFormData(prev => ({
         ...prev,
+        version: discoveryResult.os_info?.version || prev.version,
         default_zfs_pool_name: discoveryResult.zfs_status?.pool_name || prev.default_zfs_pool_name,
         default_zfs_disk_path: discoveryResult.zfs_status?.disk_device || prev.default_zfs_disk_path,
         default_nfs_network: discoveryResult.nfs_exports?.network || prev.default_nfs_network,
@@ -341,24 +342,34 @@ export function AddExistingApplianceWizard({ open, onOpenChange }: AddExistingAp
   const handleSubmit = async () => {
     if (!selectedVcenterId || !selectedTemplate) return;
     
-    await createTemplate({
-      name: formData.name,
-      description: formData.description,
-      vcenter_id: selectedVcenterId,
-      template_moref: selectedTemplate.vcenter_id || '',
-      template_name: selectedTemplate.name,
-      default_zfs_pool_name: formData.default_zfs_pool_name,
-      default_zfs_disk_path: formData.default_zfs_disk_path,
-      default_nfs_network: formData.default_nfs_network,
-      default_ssh_username: formData.default_ssh_username,
-      ssh_private_key: authMethod === 'key' && selectedSshKeyId ? undefined : undefined, // Key handled separately
-      default_cpu_count: formData.default_cpu_count,
-      default_memory_gb: formData.default_memory_gb,
-      default_zfs_disk_gb: formData.default_zfs_disk_gb,
-    });
-    
-    toast({ title: 'Appliance added to library' });
-    onOpenChange(false);
+    try {
+      await createTemplate({
+        name: formData.name,
+        description: formData.description,
+        vcenter_id: selectedVcenterId,
+        template_moref: selectedTemplate.vcenter_id || '',
+        template_name: selectedTemplate.name,
+        default_zfs_pool_name: formData.default_zfs_pool_name,
+        default_zfs_disk_path: formData.default_zfs_disk_path,
+        default_nfs_network: formData.default_nfs_network,
+        default_ssh_username: formData.default_ssh_username,
+        ssh_key_id: authMethod === 'key' ? selectedSshKeyId : undefined,
+        default_cpu_count: formData.default_cpu_count,
+        default_memory_gb: formData.default_memory_gb,
+        default_zfs_disk_gb: formData.default_zfs_disk_gb,
+        status: 'ready', // Already-prepared appliances are ready to use
+        version: formData.version,
+      });
+      
+      toast({ title: 'Appliance added to library' });
+      onOpenChange(false);
+    } catch (err) {
+      toast({ 
+        title: 'Failed to add appliance', 
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive' 
+      });
+    }
   };
   
   // Navigation validation
