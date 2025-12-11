@@ -663,79 +663,73 @@ export function PrepareTemplateWizard({
                 </AlertDescription>
               </Alert>
               
-              {!rootPassword && (
+              <div className="space-y-2">
+                <Label>Root Password (for pre-flight SSH)</Label>
+                <Input
+                  type="password"
+                  value={rootPassword}
+                  onChange={(e) => setRootPassword(e.target.value)}
+                  placeholder="Enter root password"
+                />
+              </div>
+              
+              <Button
+                onClick={runPreflightChecks}
+                disabled={preflightStatus === 'running' || !selectedVM?.ip_address || !rootPassword}
+                variant={preflightStatus === 'passed' ? 'outline' : 'default'}
+              >
+                {preflightStatus === 'running' ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : preflightStatus === 'passed' ? (
+                  <CheckCircle2 className="h-4 w-4 mr-2 text-green-500" />
+                ) : (
+                  <ShieldCheck className="h-4 w-4 mr-2" />
+                )}
+                {preflightStatus === 'running' ? 'Running Checks...' : 
+                 preflightStatus === 'passed' ? 'Re-run Checks' : 'Run Pre-flight Checks'}
+              </Button>
+              
+              {preflightChecks.length > 0 && (
                 <div className="space-y-2">
-                  <Label>Root Password (for pre-flight SSH)</Label>
-                  <Input
-                    type="password"
-                    value={rootPassword}
-                    onChange={(e) => setRootPassword(e.target.value)}
-                    placeholder="Enter root password"
-                  />
+                  <Label className="text-sm font-medium">Results</Label>
+                  <div className="space-y-1.5">
+                    {preflightChecks.map((check, idx) => (
+                      <div key={idx} className={`flex items-center justify-between p-2 rounded text-sm ${
+                        check.ok ? 'bg-green-500/10' : check.critical ? 'bg-destructive/10' : 'bg-yellow-500/10'
+                      }`}>
+                        <div className="flex items-center gap-2">
+                          {check.ok ? (
+                            <CheckCircle2 className="h-4 w-4 text-green-500" />
+                          ) : check.critical ? (
+                            <AlertCircle className="h-4 w-4 text-destructive" />
+                          ) : (
+                            <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                          )}
+                          <span className="capitalize">{check.check.replace(/_/g, ' ')}</span>
+                        </div>
+                        <span className="text-muted-foreground">{check.value}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
               
-              {rootPassword && (
-                <div className="space-y-4">
-                  <Button
-                    onClick={runPreflightChecks}
-                    disabled={preflightStatus === 'running' || !selectedVM?.ip_address}
-                    variant={preflightStatus === 'passed' ? 'outline' : 'default'}
-                  >
-                    {preflightStatus === 'running' ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : preflightStatus === 'passed' ? (
-                      <CheckCircle2 className="h-4 w-4 mr-2 text-green-500" />
-                    ) : (
-                      <ShieldCheck className="h-4 w-4 mr-2" />
-                    )}
-                    {preflightStatus === 'running' ? 'Running Checks...' : 
-                     preflightStatus === 'passed' ? 'Re-run Checks' : 'Run Pre-flight Checks'}
-                  </Button>
-                  
-                  {preflightChecks.length > 0 && (
-                    <div className="space-y-2">
-                      <Label className="text-sm font-medium">Results</Label>
-                      <div className="space-y-1.5">
-                        {preflightChecks.map((check, idx) => (
-                          <div key={idx} className={`flex items-center justify-between p-2 rounded text-sm ${
-                            check.ok ? 'bg-green-500/10' : check.critical ? 'bg-destructive/10' : 'bg-yellow-500/10'
-                          }`}>
-                            <div className="flex items-center gap-2">
-                              {check.ok ? (
-                                <CheckCircle2 className="h-4 w-4 text-green-500" />
-                              ) : check.critical ? (
-                                <AlertCircle className="h-4 w-4 text-destructive" />
-                              ) : (
-                                <AlertTriangle className="h-4 w-4 text-yellow-500" />
-                              )}
-                              <span className="capitalize">{check.check.replace(/_/g, ' ')}</span>
-                            </div>
-                            <span className="text-muted-foreground">{check.value}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  
-                  {preflightStatus === 'failed' && (
-                    <Alert variant="destructive">
-                      <AlertCircle className="h-4 w-4" />
-                      <AlertDescription>
-                        Critical pre-flight checks failed. Address the issues before proceeding.
-                      </AlertDescription>
-                    </Alert>
-                  )}
-                  
-                  {preflightStatus === 'passed' && (
-                    <Alert className="border-green-500/30 bg-green-500/5">
-                      <CheckCircle2 className="h-4 w-4 text-green-500" />
-                      <AlertDescription className="text-green-700 dark:text-green-400">
-                        All pre-flight checks passed. Ready to proceed.
-                      </AlertDescription>
-                    </Alert>
-                  )}
-                </div>
+              {preflightStatus === 'failed' && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    Critical pre-flight checks failed. Address the issues before proceeding.
+                  </AlertDescription>
+                </Alert>
+              )}
+              
+              {preflightStatus === 'passed' && (
+                <Alert className="border-green-500/30 bg-green-500/5">
+                  <CheckCircle2 className="h-4 w-4 text-green-500" />
+                  <AlertDescription className="text-green-700 dark:text-green-400">
+                    All pre-flight checks passed. Ready to proceed.
+                  </AlertDescription>
+                </Alert>
               )}
             </div>
           )}
