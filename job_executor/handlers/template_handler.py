@@ -183,6 +183,23 @@ class TemplateHandler(BaseHandler):
                     self._install_packages_debian(ssh_client, packages, job_id, job_details)
                 
                 self._add_step_result(job_id, job_details, 'install_packages', 'success', f'Installed {len(packages)} packages')
+                
+                # Step 4b: Reboot and verify ZFS module persists (critical for templates)
+                if details.get('reboot_after_install', True):
+                    self._add_step_result(job_id, job_details, 'reboot_verify', 'running', 'Rebooting to verify ZFS module persistence...')
+                    self._update_progress(job_id, job_details, 28)
+                    
+                    # Close current SSH connection before reboot
+                    ssh_client.close()
+                    self.ssh_client = None
+                    
+                    # Reconnect and verify
+                    ssh_client = self._reboot_and_verify_zfs(vm_ip, root_password, job_id, job_details)
+                    if not ssh_client:
+                        raise Exception('Failed to reconnect after reboot or ZFS module not loaded')
+                    
+                    self.ssh_client = ssh_client
+                    self._add_step_result(job_id, job_details, 'reboot_verify', 'success', 'ZFS module verified after reboot')
                 self._update_progress(job_id, job_details, 35)
             
             # Step 5: Apply ZFS tuning
@@ -1138,6 +1155,119 @@ PACKAGES={packages_str}
         """Update progress percentage"""
         job_details['progress_percent'] = percent
         self.update_job_status(job_id, 'running', details=job_details)
+    
+    def _reboot_and_verify_zfs(self, vm_ip: str, root_password: str, job_id: str, job_details: Dict, max_wait: int = 180) -> Optional[Any]:
+        """
+        Reboot the VM and verify ZFS module loads after cold boot.
+        
+        This is critical for template preparation - DKMS builds the module but 
+        it may not persist across reboots if not properly configured.
+        
+        Args:
+            vm_ip: IP address of the VM
+            root_password: Root password for SSH
+            job_id: Job ID for logging
+            job_details: Job details dict for logging
+            max_wait: Maximum seconds to wait for VM to come back (default 180)
+        
+        Returns:
+            SSH client if successful, None if failed
+        """
+        self._log_console(job_id, 'INFO', 'Initiating reboot to verify ZFS persistence...', job_details)
+        
+        # Connect and issue reboot command
+        try:
+            reboot_client = self._connect_ssh_password(vm_ip, 'root', root_password)
+            if not reboot_client:
+                self._log_console(job_id, 'ERROR', 'Cannot connect to issue reboot command', job_details)
+                return None
+            
+            # Issue async reboot (nohup to avoid blocking)
+            self._exec_ssh(reboot_client, 'nohup reboot &')
+            reboot_client.close()
+            
+        except Exception as e:
+            self._log_console(job_id, 'WARN', f'Reboot command error (expected): {e}', job_details)
+        
+        # Wait for VM to go down (SSH should fail)
+        self._log_console(job_id, 'INFO', 'Waiting for VM to shut down...', job_details)
+        time.sleep(15)  # Initial wait for shutdown
+        
+        # Wait for VM to come back up
+        self._log_console(job_id, 'INFO', f'Waiting up to {max_wait}s for VM to boot...', job_details)
+        start_time = time.time()
+        ssh_client = None
+        
+        while time.time() - start_time < max_wait:
+            elapsed = int(time.time() - start_time)
+            try:
+                ssh_client = self._connect_ssh_password(vm_ip, 'root', root_password)
+                if ssh_client:
+                    self._log_console(job_id, 'INFO', f'SSH reconnected after {elapsed}s', job_details)
+                    break
+            except Exception:
+                pass
+            
+            # Log progress every 30 seconds
+            if elapsed % 30 == 0 and elapsed > 0:
+                self._log_console(job_id, 'INFO', f'Still waiting for VM to boot... ({elapsed}s)', job_details)
+            
+            time.sleep(5)
+        
+        if not ssh_client:
+            self._log_console(job_id, 'ERROR', f'VM did not come back up within {max_wait}s', job_details)
+            return None
+        
+        # Give the system a moment to fully initialize services
+        time.sleep(5)
+        
+        # Verify ZFS module is loaded
+        self._log_console(job_id, 'INFO', 'Verifying ZFS kernel module after reboot...', job_details)
+        result = self._exec_ssh(ssh_client, 'lsmod | grep -E "^zfs\\s"')
+        
+        if result['exit_code'] == 0 and 'zfs' in result['stdout']:
+            self._log_console(job_id, 'INFO', 'ZFS module loaded successfully after reboot', job_details)
+            
+            # Also verify zpool/zfs commands work
+            zfs_check = self._exec_ssh(ssh_client, 'zfs version 2>/dev/null')
+            if zfs_check['exit_code'] == 0:
+                self._log_console(job_id, 'INFO', f'ZFS verified: {zfs_check["stdout"].strip().split(chr(10))[0]}', job_details)
+            
+            return ssh_client
+        else:
+            # ZFS module not loaded - try to load it manually
+            self._log_console(job_id, 'WARN', 'ZFS module not auto-loaded, attempting manual load...', job_details)
+            
+            # Try modprobe
+            result = self._exec_ssh(ssh_client, 'modprobe zfs')
+            if result['exit_code'] == 0:
+                # Check again
+                lsmod_result = self._exec_ssh(ssh_client, 'lsmod | grep -E "^zfs\\s"')
+                if lsmod_result['exit_code'] == 0:
+                    self._log_console(job_id, 'INFO', 'ZFS module loaded via modprobe after reboot', job_details)
+                    
+                    # Ensure it loads on next boot too
+                    self._exec_ssh(ssh_client, 'echo "zfs" >> /etc/modules-load.d/zfs.conf')
+                    self._log_console(job_id, 'INFO', 'Added zfs to /etc/modules-load.d/zfs.conf for future boots', job_details)
+                    
+                    return ssh_client
+            
+            # If still failing, try DKMS rebuild
+            self._log_console(job_id, 'WARN', 'modprobe failed, attempting DKMS rebuild...', job_details)
+            self._exec_ssh(ssh_client, 'dkms autoinstall')
+            result = self._exec_ssh(ssh_client, 'modprobe zfs')
+            
+            if result['exit_code'] == 0:
+                lsmod_result = self._exec_ssh(ssh_client, 'lsmod | grep -E "^zfs\\s"')
+                if lsmod_result['exit_code'] == 0:
+                    self._log_console(job_id, 'INFO', 'ZFS module loaded after DKMS rebuild', job_details)
+                    self._exec_ssh(ssh_client, 'echo "zfs" >> /etc/modules-load.d/zfs.conf')
+                    return ssh_client
+            
+            # Complete failure
+            self._log_console(job_id, 'ERROR', 'ZFS kernel module failed to load after reboot', job_details)
+            ssh_client.close()
+            return None
     
     def _connect_ssh_password(self, host: str, username: str, password: str) -> Optional[Any]:
         """Connect to SSH using password"""
