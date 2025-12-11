@@ -704,6 +704,7 @@ export function PairedZfsDeployWizard({
                 selectedId={config.selectedTemplate?.id}
                 onSelect={(template) => handleTemplateSelect(template, setConfig)}
                 showOnlyReady={true}
+                vcenterId={config.vcenterId || undefined}
               />
             </div>
           )}

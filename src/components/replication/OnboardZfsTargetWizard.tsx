@@ -1208,6 +1208,7 @@ export function OnboardZfsTargetWizard({
                     selectedId={selectedTemplate?.id}
                     onSelect={handleTemplateSelect}
                     showOnlyReady={true}
+                    vcenterId={selectedVCenterId || undefined}
                   />
                 </div>
               )}
