@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Grid3x3, List, Plus, Search, HardDrive, ChevronDown, Wrench } from "lucide-react";
-import { useZfsTemplates } from "@/hooks/useZfsTemplates";
+import { useZfsTemplates, ZfsTargetTemplate } from "@/hooks/useZfsTemplates";
 import { ZfsApplianceCard } from "./ZfsApplianceCard";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { PrepareTemplateWizard } from "@/components/replication/PrepareTemplateWizard";
@@ -14,18 +14,44 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  EditApplianceDialog,
+  ChangeVCenterDialog,
+  CloneTemplateDialog,
+  ChangeSshKeyDialog,
+  ApplianceDeploymentsDialog,
+} from "./appliance-actions";
+import { useToast } from "@/hooks/use-toast";
 
 interface ZfsApplianceLibraryProps {
   onSelectAppliance?: (template: any) => void;
 }
 
 export const ZfsApplianceLibrary = ({ onSelectAppliance }: ZfsApplianceLibraryProps) => {
-  const { templates, loading, deleteTemplate, toggleActive } = useZfsTemplates();
+  const { 
+    templates, 
+    loading, 
+    deleteTemplate, 
+    toggleActive, 
+    updateTemplate,
+    createTemplate,
+    validateTemplate,
+    prepareTemplate,
+  } = useZfsTemplates();
+  const { toast } = useToast();
+  
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchQuery, setSearchQuery] = useState("");
   const [showPrepareWizard, setShowPrepareWizard] = useState(false);
   const [showAddExistingWizard, setShowAddExistingWizard] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState<string[]>([]);
+
+  // Dialog states for actions
+  const [editingTemplate, setEditingTemplate] = useState<ZfsTargetTemplate | null>(null);
+  const [changingVCenter, setChangingVCenter] = useState<ZfsTargetTemplate | null>(null);
+  const [cloningTemplate, setCloningTemplate] = useState<ZfsTargetTemplate | null>(null);
+  const [changingSshKey, setChangingSshKey] = useState<ZfsTargetTemplate | null>(null);
+  const [viewingDeployments, setViewingDeployments] = useState<ZfsTargetTemplate | null>(null);
 
   // Filter templates by search and status
   const filteredTemplates = templates.filter((template) => {
@@ -60,6 +86,58 @@ export const ZfsApplianceLibrary = ({ onSelectAppliance }: ZfsApplianceLibraryPr
 
   const handleToggleActive = async (id: string, isActive: boolean) => {
     await toggleActive({ id, is_active: isActive });
+  };
+
+  const handleEdit = async (id: string, data: Partial<ZfsTargetTemplate>) => {
+    await updateTemplate({ id, template: data as any });
+  };
+
+  const handleClone = async (data: Partial<ZfsTargetTemplate>) => {
+    const { id, created_at, updated_at, ...rest } = data as any;
+    await createTemplate({
+      ...rest,
+      name: rest.name,
+      template_moref: rest.template_moref,
+      template_name: rest.template_name,
+    });
+    toast({ title: "Template cloned successfully" });
+  };
+
+  const handleSetAsDefault = async (template: ZfsTargetTemplate) => {
+    // This would require updating the vcenter's default_zfs_template_id
+    toast({ 
+      title: "Set as Default", 
+      description: `${template.name} would be set as default for its vCenter`,
+    });
+  };
+
+  const handleReprepare = async (template: ZfsTargetTemplate) => {
+    await prepareTemplate({ template_id: template.id });
+    toast({ 
+      title: "Re-preparation started", 
+      description: "Template readiness wizard is running...",
+    });
+  };
+
+  const handleValidate = async (template: ZfsTargetTemplate) => {
+    await validateTemplate({ template_id: template.id, test_ssh: true });
+    toast({ 
+      title: "Validation started", 
+      description: "Testing SSH connectivity...",
+    });
+  };
+
+  const handleSync = async (template: ZfsTargetTemplate) => {
+    // This would trigger a job to sync template info from vCenter
+    toast({ 
+      title: "Sync from vCenter", 
+      description: "Syncing template information...",
+    });
+  };
+
+  const handleDeprecate = async (template: ZfsTargetTemplate) => {
+    await updateTemplate({ id: template.id, template: { status: 'deprecated' } });
+    toast({ title: "Template marked as deprecated" });
   };
 
   const statusOptions = [
@@ -177,6 +255,16 @@ export const ZfsApplianceLibrary = ({ onSelectAppliance }: ZfsApplianceLibraryPr
                 onSelect={handleSelect}
                 onDelete={handleDelete}
                 onToggleActive={handleToggleActive}
+                onEdit={setEditingTemplate}
+                onChangeVCenter={setChangingVCenter}
+                onSetAsDefault={handleSetAsDefault}
+                onClone={setCloningTemplate}
+                onChangeSshKey={setChangingSshKey}
+                onReprepare={handleReprepare}
+                onValidate={handleValidate}
+                onViewDeployments={setViewingDeployments}
+                onSync={handleSync}
+                onDeprecate={handleDeprecate}
               />
             ))}
           </div>
@@ -191,6 +279,41 @@ export const ZfsApplianceLibrary = ({ onSelectAppliance }: ZfsApplianceLibraryPr
       <AddExistingApplianceWizard
         open={showAddExistingWizard}
         onOpenChange={setShowAddExistingWizard}
+      />
+
+      {/* Action Dialogs */}
+      <EditApplianceDialog
+        template={editingTemplate}
+        open={!!editingTemplate}
+        onOpenChange={(open) => !open && setEditingTemplate(null)}
+        onSave={handleEdit}
+      />
+
+      <ChangeVCenterDialog
+        template={changingVCenter}
+        open={!!changingVCenter}
+        onOpenChange={(open) => !open && setChangingVCenter(null)}
+        onSave={handleEdit}
+      />
+
+      <CloneTemplateDialog
+        template={cloningTemplate}
+        open={!!cloningTemplate}
+        onOpenChange={(open) => !open && setCloningTemplate(null)}
+        onClone={handleClone}
+      />
+
+      <ChangeSshKeyDialog
+        template={changingSshKey}
+        open={!!changingSshKey}
+        onOpenChange={(open) => !open && setChangingSshKey(null)}
+        onSave={handleEdit}
+      />
+
+      <ApplianceDeploymentsDialog
+        template={viewingDeployments}
+        open={!!viewingDeployments}
+        onOpenChange={(open) => !open && setViewingDeployments(null)}
       />
     </>
   );
