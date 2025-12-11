@@ -2521,94 +2521,164 @@ class ZfsTargetHandler(BaseHandler):
                 job_details['progress_percent'] = 35
                 
                 try:
-                    # Step 3a: Enable contrib repository (required for ZFS on Debian 13)
-                    add_step_result('apt_sources', 'running', 'Configuring repositories for ZFS...')
-                    self._log_console(job_id, 'INFO', 'Checking repository configuration...', job_details)
+                    # For template deployments, check if ZFS is already installed
+                    is_template_deploy = details.get('is_template_deploy', False)
+                    skip_package_install = False
                     
-                    # Check for deb822 format (.sources files) vs traditional format
-                    check_deb822 = self._ssh_exec('ls /etc/apt/sources.list.d/*.sources 2>/dev/null', job_id=job_id)
-                    
-                    if check_deb822['exit_code'] == 0 and check_deb822['stdout'].strip():
-                        # deb822 format (Debian 12+) - check if contrib is in Components line
-                        result = self._ssh_exec('grep -r "Components:.*contrib" /etc/apt/sources.list.d/*.sources 2>/dev/null', job_id=job_id)
-                        if result['exit_code'] != 0 or not result['stdout'].strip():
-                            self._log_console(job_id, 'INFO', 'Adding contrib to deb822 sources...', job_details)
-                            self._ssh_exec(r"sed -i 's/^Components: main$/Components: main contrib/' /etc/apt/sources.list.d/*.sources", job_id=job_id)
-                            add_step_result('apt_sources', 'success', 'Added contrib to deb822 sources')
+                    if is_template_deploy:
+                        self._log_console(job_id, 'INFO', 'Template deployment detected - checking for existing ZFS...', job_details)
+                        
+                        # Check if ZFS tools are already installed
+                        zfs_check = self._ssh_exec('which zfs && zfs version 2>/dev/null', job_id=job_id)
+                        if zfs_check['exit_code'] == 0 and 'zfs-' in zfs_check['stdout']:
+                            self._log_console(job_id, 'INFO', 'ZFS tools already installed (prepared template)', job_details)
+                            add_step_result('apt_sources', 'skipped', 'Template already prepared')
+                            add_step_result('kernel_headers', 'skipped', 'Template already prepared')
+                            add_step_result('zfs_packages', 'success', 'Already installed from template')
+                            
+                            # Check if NFS is also installed
+                            nfs_check = self._ssh_exec('which exportfs 2>/dev/null', job_id=job_id)
+                            if nfs_check['exit_code'] == 0:
+                                add_step_result('nfs_packages', 'success', 'Already installed from template')
+                            else:
+                                # Install NFS if missing
+                                self._log_console(job_id, 'INFO', 'Installing NFS packages...', job_details)
+                                add_step_result('nfs_packages', 'running', 'Installing NFS packages...')
+                                result = self._ssh_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nfs-kernel-server', job_id=job_id)
+                                if result['exit_code'] == 0:
+                                    add_step_result('nfs_packages', 'success', 'NFS packages installed')
+                                else:
+                                    add_step_result('nfs_packages', 'warning', 'NFS install failed, continuing')
+                            
+                            # Try to load the ZFS module
+                            add_step_result('zfs_module', 'running', 'Loading ZFS kernel module...')
+                            modprobe = self._ssh_exec('modprobe zfs 2>&1', job_id=job_id)
+                            
+                            if modprobe['exit_code'] != 0:
+                                # Module not loaded - might need DKMS rebuild after clone
+                                self._log_console(job_id, 'WARN', 'ZFS module not loaded, attempting DKMS rebuild...', job_details)
+                                add_step_result('zfs_module', 'running', 'Rebuilding ZFS DKMS module...')
+                                
+                                # Run DKMS autoinstall
+                                dkms_result = self._ssh_exec('dkms autoinstall 2>&1', job_id=job_id)
+                                self._log_console(job_id, 'DEBUG', f'DKMS autoinstall output: {dkms_result["stdout"][:500]}', job_details)
+                                
+                                # Retry modprobe
+                                modprobe = self._ssh_exec('modprobe zfs 2>&1', job_id=job_id)
+                                
+                                if modprobe['exit_code'] != 0:
+                                    # Still failing - check if module is maybe already loaded
+                                    lsmod = self._ssh_exec('lsmod | grep -q zfs', job_id=job_id)
+                                    if lsmod['exit_code'] != 0:
+                                        # Module really won't load - template may need re-preparation
+                                        self._log_console(job_id, 'ERROR', 'ZFS module failed to load after DKMS rebuild', job_details)
+                                        raise Exception(
+                                            "ZFS kernel module failed to load. The template may need to be "
+                                            "re-prepared with a reboot before converting to template, or the "
+                                            "kernel version may have changed. Try running 'dkms autoinstall && modprobe zfs' manually."
+                                        )
+                            
+                            # Verify module is loaded
+                            verify = self._ssh_exec('lsmod | grep zfs', job_id=job_id)
+                            if verify['exit_code'] == 0:
+                                add_step_result('zfs_module', 'success', 'ZFS module loaded from template')
+                                self._log_console(job_id, 'INFO', 'ZFS module loaded successfully', job_details)
+                            else:
+                                add_step_result('zfs_module', 'success', 'ZFS module appears loaded')
+                            
+                            skip_package_install = True
                         else:
-                            add_step_result('apt_sources', 'success', 'contrib already enabled (deb822)')
-                    else:
-                        # Traditional format - check sources.list
-                        result = self._ssh_exec('grep -E "^deb.*contrib" /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null', job_id=job_id)
-                        if result['exit_code'] != 0 or not result['stdout'].strip():
-                            self._log_console(job_id, 'INFO', 'Adding contrib to sources.list...', job_details)
-                            self._ssh_exec(r"sed -i 's/^\(deb.*main\)$/\1 contrib/' /etc/apt/sources.list", job_id=job_id)
-                            add_step_result('apt_sources', 'success', 'Added contrib repository')
+                            self._log_console(job_id, 'INFO', 'Template does not have ZFS pre-installed, proceeding with full install', job_details)
+                    
+                    if not skip_package_install:
+                        # Step 3a: Enable contrib repository (required for ZFS on Debian 13)
+                        add_step_result('apt_sources', 'running', 'Configuring repositories for ZFS...')
+                        self._log_console(job_id, 'INFO', 'Checking repository configuration...', job_details)
+                        
+                        # Check for deb822 format (.sources files) vs traditional format
+                        check_deb822 = self._ssh_exec('ls /etc/apt/sources.list.d/*.sources 2>/dev/null', job_id=job_id)
+                        
+                        if check_deb822['exit_code'] == 0 and check_deb822['stdout'].strip():
+                            # deb822 format (Debian 12+) - check if contrib is in Components line
+                            result = self._ssh_exec('grep -r "Components:.*contrib" /etc/apt/sources.list.d/*.sources 2>/dev/null', job_id=job_id)
+                            if result['exit_code'] != 0 or not result['stdout'].strip():
+                                self._log_console(job_id, 'INFO', 'Adding contrib to deb822 sources...', job_details)
+                                self._ssh_exec(r"sed -i 's/^Components: main$/Components: main contrib/' /etc/apt/sources.list.d/*.sources", job_id=job_id)
+                                add_step_result('apt_sources', 'success', 'Added contrib to deb822 sources')
+                            else:
+                                add_step_result('apt_sources', 'success', 'contrib already enabled (deb822)')
                         else:
-                            add_step_result('apt_sources', 'success', 'contrib already enabled')
-                    
-                    # Update apt sources after adding contrib
-                    self._log_console(job_id, 'INFO', 'Updating package lists...', job_details)
-                    result = self._ssh_exec('apt-get update -qq', job_id=job_id)
-                    
-                    # Step 3b: Install kernel headers (required for DKMS/ZFS module build)
-                    add_step_result('kernel_headers', 'running', 'Installing kernel headers...')
-                    result = self._ssh_exec('uname -r', job_id=job_id)
-                    kernel_version = result['stdout'].strip() if result['exit_code'] == 0 else None
-                    
-                    if kernel_version:
-                        self._log_console(job_id, 'INFO', f'Installing kernel headers for {kernel_version}...', job_details)
-                        result = self._ssh_exec(
-                            f'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dpkg-dev linux-headers-{kernel_version}',
-                            job_id=job_id
-                        )
-                        if result['exit_code'] != 0:
-                            self._log_console(job_id, 'WARN', f'Header install warning: {result["stderr"]}', job_details)
-                            add_step_result('kernel_headers', 'warning', 'Headers may not have installed correctly')
-                        else:
-                            add_step_result('kernel_headers', 'success', f'Headers installed for {kernel_version}')
-                    else:
-                        add_step_result('kernel_headers', 'skipped', 'Could not detect kernel version')
-                    
-                    # Step 3c: Install ZFS packages (zfs-dkms builds kernel module, zfsutils-linux provides tools)
-                    add_step_result('zfs_packages', 'running', 'Installing ZFS packages (DKMS build may take several minutes)...')
-                    self._log_console(job_id, 'INFO', 'Installing zfs-dkms and zfsutils-linux...', job_details)
-                    
-                    result = self._ssh_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y zfs-dkms zfsutils-linux', job_id=job_id)
-                    if result['exit_code'] != 0:
-                        raise Exception(f"Failed to install ZFS: {result['stderr']}")
-                    
-                    add_step_result('zfs_packages', 'success', 'ZFS packages installed')
-                    
-                    # Step 3d: Install NFS
-                    add_step_result('nfs_packages', 'running', 'Installing NFS packages...')
-                    result = self._ssh_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nfs-kernel-server', job_id=job_id)
-                    if result['exit_code'] != 0:
-                        raise Exception(f"Failed to install NFS: {result['stderr']}")
-                    
-                    add_step_result('nfs_packages', 'success', 'NFS packages installed')
-                    
-                    # Step 3e: Load ZFS module
-                    add_step_result('zfs_module', 'running', 'Loading ZFS kernel module...')
-                    result = self._ssh_exec('modprobe zfs', job_id=job_id)
-                    
-                    # If modprobe failed, try rebuilding DKMS modules
-                    if result['exit_code'] != 0:
-                        self._log_console(job_id, 'WARN', 'modprobe zfs failed, attempting DKMS rebuild...', job_details)
-                        add_step_result('zfs_module', 'running', 'Rebuilding ZFS DKMS module...')
-                        self._ssh_exec('dkms autoinstall', job_id=job_id)
-                        result = self._ssh_exec('modprobe zfs', job_id=job_id)
-                    
-                    # Final check - fail if module still won't load
-                    if result['exit_code'] != 0:
-                        check = self._ssh_exec('lsmod | grep -q zfs', job_id=job_id)
-                        if check['exit_code'] != 0:
-                            raise Exception(
-                                "ZFS kernel module failed to load. This may require a reboot "
-                                "or manual intervention. Try: 'dkms autoinstall && modprobe zfs'"
+                            # Traditional format - check sources.list
+                            result = self._ssh_exec('grep -E "^deb.*contrib" /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null', job_id=job_id)
+                            if result['exit_code'] != 0 or not result['stdout'].strip():
+                                self._log_console(job_id, 'INFO', 'Adding contrib to sources.list...', job_details)
+                                self._ssh_exec(r"sed -i 's/^\(deb.*main\)$/\1 contrib/' /etc/apt/sources.list", job_id=job_id)
+                                add_step_result('apt_sources', 'success', 'Added contrib repository')
+                            else:
+                                add_step_result('apt_sources', 'success', 'contrib already enabled')
+                        
+                        # Update apt sources after adding contrib
+                        self._log_console(job_id, 'INFO', 'Updating package lists...', job_details)
+                        result = self._ssh_exec('apt-get update -qq', job_id=job_id)
+                        
+                        # Step 3b: Install kernel headers (required for DKMS/ZFS module build)
+                        add_step_result('kernel_headers', 'running', 'Installing kernel headers...')
+                        result = self._ssh_exec('uname -r', job_id=job_id)
+                        kernel_version = result['stdout'].strip() if result['exit_code'] == 0 else None
+                        
+                        if kernel_version:
+                            self._log_console(job_id, 'INFO', f'Installing kernel headers for {kernel_version}...', job_details)
+                            result = self._ssh_exec(
+                                f'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dpkg-dev linux-headers-{kernel_version}',
+                                job_id=job_id
                             )
-                    
-                    add_step_result('zfs_module', 'success', 'ZFS module loaded')
+                            if result['exit_code'] != 0:
+                                self._log_console(job_id, 'WARN', f'Header install warning: {result["stderr"]}', job_details)
+                                add_step_result('kernel_headers', 'warning', 'Headers may not have installed correctly')
+                            else:
+                                add_step_result('kernel_headers', 'success', f'Headers installed for {kernel_version}')
+                        else:
+                            add_step_result('kernel_headers', 'skipped', 'Could not detect kernel version')
+                        
+                        # Step 3c: Install ZFS packages (zfs-dkms builds kernel module, zfsutils-linux provides tools)
+                        add_step_result('zfs_packages', 'running', 'Installing ZFS packages (DKMS build may take several minutes)...')
+                        self._log_console(job_id, 'INFO', 'Installing zfs-dkms and zfsutils-linux...', job_details)
+                        
+                        result = self._ssh_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y zfs-dkms zfsutils-linux', job_id=job_id)
+                        if result['exit_code'] != 0:
+                            raise Exception(f"Failed to install ZFS: {result['stderr']}")
+                        
+                        add_step_result('zfs_packages', 'success', 'ZFS packages installed')
+                        
+                        # Step 3d: Install NFS
+                        add_step_result('nfs_packages', 'running', 'Installing NFS packages...')
+                        result = self._ssh_exec('DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nfs-kernel-server', job_id=job_id)
+                        if result['exit_code'] != 0:
+                            raise Exception(f"Failed to install NFS: {result['stderr']}")
+                        
+                        add_step_result('nfs_packages', 'success', 'NFS packages installed')
+                        
+                        # Step 3e: Load ZFS module
+                        add_step_result('zfs_module', 'running', 'Loading ZFS kernel module...')
+                        result = self._ssh_exec('modprobe zfs', job_id=job_id)
+                        
+                        # If modprobe failed, try rebuilding DKMS modules
+                        if result['exit_code'] != 0:
+                            self._log_console(job_id, 'WARN', 'modprobe zfs failed, attempting DKMS rebuild...', job_details)
+                            add_step_result('zfs_module', 'running', 'Rebuilding ZFS DKMS module...')
+                            self._ssh_exec('dkms autoinstall', job_id=job_id)
+                            result = self._ssh_exec('modprobe zfs', job_id=job_id)
+                        
+                        # Final check - fail if module still won't load
+                        if result['exit_code'] != 0:
+                            check = self._ssh_exec('lsmod | grep -q zfs', job_id=job_id)
+                            if check['exit_code'] != 0:
+                                raise Exception(
+                                    "ZFS kernel module failed to load. This may require a reboot "
+                                    "or manual intervention. Try: 'dkms autoinstall && modprobe zfs'"
+                                )
+                        
+                        add_step_result('zfs_module', 'success', 'ZFS module loaded')
                     
                 except Exception as e:
                     add_step_result('zfs_packages', 'failed', str(e))
