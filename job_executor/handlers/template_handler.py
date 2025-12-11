@@ -1207,10 +1207,25 @@ class TemplateHandler(BaseHandler):
         tuning_lines = []
         
         # ARC size limit (default: 50% of RAM)
+        # CRITICAL: modprobe.d files do NOT evaluate shell expressions!
+        # We must calculate the value in Python and write the numeric result.
         arc_percent = tuning.get('arc_percent', 50)
         if arc_percent and arc_percent > 0:
-            tuning_lines.append(f'# Limit ARC to {arc_percent}% of RAM')
-            tuning_lines.append(f'options zfs zfs_arc_max=$(( $(grep MemTotal /proc/meminfo | awk \'{{print $2}}\') * 1024 * {arc_percent} / 100 ))')
+            # Query the VM's total memory via SSH
+            mem_result = self._exec_ssh(ssh_client, "grep MemTotal /proc/meminfo | awk '{print $2}'")
+            if mem_result['exit_code'] == 0 and mem_result['stdout'].strip():
+                try:
+                    mem_kb = int(mem_result['stdout'].strip())
+                    arc_max_bytes = mem_kb * 1024 * arc_percent // 100
+                    # Format for human readability (e.g., "8GB")
+                    arc_max_gb = arc_max_bytes / (1024 ** 3)
+                    self._log_console(job_id, 'INFO', f'Setting ZFS ARC max to {arc_percent}% of RAM = {arc_max_gb:.1f}GB ({arc_max_bytes} bytes)', job_details)
+                    tuning_lines.append(f'# Limit ARC to {arc_percent}% of RAM ({arc_max_gb:.1f}GB)')
+                    tuning_lines.append(f'options zfs zfs_arc_max={arc_max_bytes}')
+                except (ValueError, TypeError) as e:
+                    self._log_console(job_id, 'WARN', f'Could not parse memory info: {e}, skipping ARC tuning', job_details)
+            else:
+                self._log_console(job_id, 'WARN', f'Could not detect memory: {mem_result.get("stderr", "unknown error")}, skipping ARC tuning', job_details)
         
         # Enable prefetch (good for sequential workloads)
         if tuning.get('enable_prefetch', True):
