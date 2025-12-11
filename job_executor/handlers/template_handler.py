@@ -1407,6 +1407,7 @@ PACKAGES={packages_str}
         self._log_console(job_id, 'INFO', 'Initiating reboot to verify ZFS persistence...', job_details)
         
         vc_conn = None
+        reboot_initiated = False
         shutdown_confirmed = False
         shutdown_start = time.time()
         
@@ -1433,14 +1434,14 @@ PACKAGES={packages_str}
                             # Graceful reboot via VMware Tools
                             self._log_console(job_id, 'INFO', 'Sending reboot via VMware Tools (RebootGuest)...', job_details)
                             vm_obj.RebootGuest()
-                            shutdown_confirmed = True
+                            reboot_initiated = True  # Reboot initiated, but NOT confirmed yet
                         except Exception as e:
                             # Fall back to hard reset if graceful fails
                             self._log_console(job_id, 'WARN', f'Graceful reboot failed ({e}), using hard reset (ResetVM)...', job_details)
                             try:
                                 task = vm_obj.ResetVM_Task()
                                 self._wait_for_task(task, timeout=60)
-                                shutdown_confirmed = True
+                                reboot_initiated = True  # Reboot initiated, but NOT confirmed yet
                             except Exception as reset_err:
                                 self._log_console(job_id, 'ERROR', f'Hard reset also failed: {reset_err}', job_details)
                         
@@ -1457,7 +1458,7 @@ PACKAGES={packages_str}
                     vc_conn = None
         
         # Fallback to SSH reboot if VMware API not available or failed
-        if not shutdown_confirmed:
+        if not reboot_initiated:
             self._log_console(job_id, 'INFO', 'Using SSH reboot fallback...', job_details)
             try:
                 reboot_client = self._connect_ssh_password(vm_ip, 'root', root_password)
@@ -1467,11 +1468,14 @@ PACKAGES={packages_str}
                 
                 self._exec_ssh(reboot_client, 'nohup reboot &')
                 reboot_client.close()
+                reboot_initiated = True
             except Exception as e:
                 self._log_console(job_id, 'WARN', f'SSH reboot command error (expected): {e}', job_details)
-            
-            # Wait for SSH to fail (VM shutting down)
-            time.sleep(3)
+                reboot_initiated = True  # Command may have worked even if error
+        
+        # ALWAYS wait for SSH to fail after initiating reboot (confirms VM is actually rebooting)
+        if reboot_initiated:
+            time.sleep(3)  # Give reboot command time to start
             self._log_console(job_id, 'INFO', 'Waiting for VM to shut down...', job_details)
             consecutive_failures = 0
             
