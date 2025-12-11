@@ -1895,3 +1895,472 @@ modprobe error: {result['stdout']} {result['stderr']}
         except Exception as e:
             self.log(f'Failed to find resource pool for cluster {cluster_name}: {e}', 'ERROR')
             return None
+
+    def execute_inspect_zfs_appliance(self, job: Dict):
+        """
+        Inspect an existing VM/template to auto-detect ZFS configuration for library import.
+        
+        Steps:
+        1. Connect to vCenter and find the template
+        2. Power on if needed (convert from template if necessary)
+        3. Wait for IP and SSH
+        4. Auto-detect: OS, ZFS pools, NFS exports, VM specs
+        5. Clean up (power off, convert back to template if needed)
+        6. Return discovery results
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        
+        job_details = {
+            'console_log': [],
+            'progress_percent': 0,
+            'current_step': 'initializing',
+            'completed_steps': [],
+            'discovery_result': None,
+        }
+        
+        self._log_console(job_id, 'INFO', 'Starting ZFS appliance inspection', job_details)
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso(), details=job_details)
+        
+        # Track cleanup state
+        we_converted_from_template = False
+        we_powered_on = False
+        vcenter_conn = None
+        ssh_client = None
+        vm_obj = None
+        
+        try:
+            # Extract parameters
+            vcenter_id = details.get('vcenter_id')
+            template_moref = details.get('template_moref')
+            ssh_username = details.get('ssh_username', 'root')
+            ssh_auth_method = details.get('ssh_auth_method', 'password')
+            ssh_password = details.get('ssh_password')
+            ssh_key_id = details.get('ssh_key_id')
+            
+            if not vcenter_id or not template_moref:
+                raise Exception('Missing vcenter_id or template_moref')
+            
+            # Step 1: Connect to vCenter
+            job_details['current_step'] = 'vcenter_connect'
+            self._update_progress(job_id, job_details, 5)
+            self._log_console(job_id, 'INFO', 'Connecting to vCenter...', job_details)
+            
+            vc_settings = self._get_vcenter_settings(vcenter_id)
+            if not vc_settings:
+                raise Exception('vCenter settings not found')
+            
+            vcenter_conn = self._connect_vcenter(
+                vc_settings['host'],
+                vc_settings['username'],
+                vc_settings['password'],
+                vc_settings.get('port', 443),
+                vc_settings.get('verify_ssl', False),
+                job_id=job_id,
+                job_details=job_details
+            )
+            
+            if not vcenter_conn:
+                raise Exception('Failed to connect to vCenter')
+            
+            job_details['completed_steps'].append('vcenter_connect')
+            self._update_progress(job_id, job_details, 10)
+            
+            # Step 2: Find the template/VM
+            job_details['current_step'] = 'find_template'
+            self._log_console(job_id, 'INFO', f'Finding template: {template_moref}', job_details)
+            
+            vm_obj = self._find_vm_by_moref(vcenter_conn, template_moref)
+            if not vm_obj:
+                raise Exception(f'Template not found in vCenter: {template_moref}')
+            
+            vm_name = vm_obj.name
+            self._log_console(job_id, 'INFO', f'Found: {vm_name}', job_details)
+            
+            # Get VM specs from VMware
+            vm_specs = {
+                'cpu_count': vm_obj.config.hardware.numCPU if vm_obj.config else 0,
+                'memory_mb': vm_obj.config.hardware.memoryMB if vm_obj.config else 0,
+                'disk_gb': 0,
+            }
+            
+            # Calculate total disk size
+            if vm_obj.config and vm_obj.config.hardware:
+                for device in vm_obj.config.hardware.device:
+                    if isinstance(device, vim.vm.device.VirtualDisk):
+                        vm_specs['disk_gb'] += device.capacityInKB / 1024 / 1024
+            vm_specs['disk_gb'] = round(vm_specs['disk_gb'])
+            
+            job_details['completed_steps'].append('find_template')
+            self._update_progress(job_id, job_details, 15)
+            
+            # Step 3: Check if template needs conversion/power on
+            is_vmware_template = hasattr(vm_obj.config, 'template') and vm_obj.config.template
+            power_state = str(vm_obj.runtime.powerState)
+            vm_ip = vm_obj.guest.ipAddress if vm_obj.guest else None
+            
+            self._log_console(job_id, 'INFO', f'State: template={is_vmware_template}, power={power_state}', job_details)
+            
+            # Convert from template if needed
+            if is_vmware_template:
+                job_details['current_step'] = 'convert_template'
+                self._log_console(job_id, 'INFO', 'Converting template to VM...', job_details)
+                self._update_progress(job_id, job_details, 18)
+                
+                # Find a resource pool - try to find any available one
+                content = vcenter_conn.RetrieveContent()
+                resource_pool = None
+                for dc in content.rootFolder.childEntity:
+                    if hasattr(dc, 'hostFolder'):
+                        for compute_resource in dc.hostFolder.childEntity:
+                            if hasattr(compute_resource, 'resourcePool'):
+                                resource_pool = compute_resource.resourcePool
+                                break
+                    if resource_pool:
+                        break
+                
+                if not resource_pool:
+                    raise Exception('No resource pool found to convert template')
+                
+                vm_obj.MarkAsVirtualMachine(pool=resource_pool)
+                we_converted_from_template = True
+                self._log_console(job_id, 'INFO', 'Converted template to VM', job_details)
+                job_details['completed_steps'].append('convert_template')
+            
+            # Power on if needed
+            vm_obj = self._find_vm_by_moref(vcenter_conn, template_moref)  # Refresh
+            power_state = str(vm_obj.runtime.powerState)
+            
+            if power_state != 'poweredOn':
+                job_details['current_step'] = 'power_on'
+                self._log_console(job_id, 'INFO', 'Powering on VM...', job_details)
+                self._update_progress(job_id, job_details, 20)
+                
+                task = vm_obj.PowerOn()
+                self._wait_for_task(task, timeout=120)
+                we_powered_on = True
+                self._log_console(job_id, 'INFO', 'VM powered on', job_details)
+                job_details['completed_steps'].append('power_on')
+            
+            # Wait for VMware Tools
+            job_details['current_step'] = 'vmware_tools'
+            self._log_console(job_id, 'INFO', 'Waiting for VMware Tools...', job_details)
+            self._update_progress(job_id, job_details, 25)
+            
+            tools_timeout = 180
+            tools_start = time.time()
+            while time.time() - tools_start < tools_timeout:
+                vm_obj = self._find_vm_by_moref(vcenter_conn, template_moref)
+                if vm_obj and vm_obj.guest:
+                    tools_status = vm_obj.guest.toolsRunningStatus
+                    if tools_status == 'guestToolsRunning':
+                        break
+                time.sleep(5)
+            else:
+                raise Exception('VMware Tools did not start within timeout')
+            
+            self._log_console(job_id, 'INFO', 'VMware Tools running', job_details)
+            job_details['completed_steps'].append('vmware_tools')
+            
+            # Wait for IP address
+            job_details['current_step'] = 'wait_ip'
+            self._log_console(job_id, 'INFO', 'Waiting for IP address...', job_details)
+            self._update_progress(job_id, job_details, 30)
+            
+            ip_timeout = 120
+            ip_start = time.time()
+            while time.time() - ip_start < ip_timeout:
+                vm_obj = self._find_vm_by_moref(vcenter_conn, template_moref)
+                if vm_obj and vm_obj.guest:
+                    vm_ip = vm_obj.guest.ipAddress
+                    if vm_ip and not vm_ip.startswith('169.254') and not vm_ip.startswith('127.'):
+                        break
+                time.sleep(5)
+            else:
+                raise Exception('Failed to get IP address within timeout')
+            
+            self._log_console(job_id, 'INFO', f'IP: {vm_ip}', job_details)
+            job_details['completed_steps'].append('wait_ip')
+            self._update_progress(job_id, job_details, 35)
+            
+            # Step 4: SSH Connection
+            job_details['current_step'] = 'ssh_connect'
+            self._log_console(job_id, 'INFO', f'Connecting via SSH as {ssh_username}...', job_details)
+            self._update_progress(job_id, job_details, 40)
+            
+            if ssh_auth_method == 'password' and ssh_password:
+                ssh_client = self._connect_ssh_password(vm_ip, ssh_username, ssh_password)
+            elif ssh_auth_method == 'key' and ssh_key_id:
+                # Get SSH key from database and connect
+                ssh_key = self._get_ssh_key(ssh_key_id)
+                if ssh_key and ssh_key.get('private_key_encrypted'):
+                    private_key = self._decrypt_password(ssh_key['private_key_encrypted'])
+                    ssh_client = self._connect_ssh_key(vm_ip, ssh_username, private_key)
+                else:
+                    raise Exception('SSH key not found or not decryptable')
+            else:
+                raise Exception('No valid SSH credentials provided')
+            
+            if not ssh_client:
+                raise Exception('SSH connection failed')
+            
+            self._log_console(job_id, 'INFO', 'SSH connected', job_details)
+            job_details['completed_steps'].append('ssh_connect')
+            
+            # Step 5: Auto-detection
+            discovery_result = {
+                'ssh_connected': True,
+                'os_info': None,
+                'zfs_status': None,
+                'nfs_exports': None,
+                'vm_specs': vm_specs,
+            }
+            
+            # Detect OS
+            job_details['current_step'] = 'detect_os'
+            self._log_console(job_id, 'INFO', 'Detecting OS...', job_details)
+            self._update_progress(job_id, job_details, 50)
+            
+            os_info = {'family': 'unknown', 'version': '', 'hostname': ''}
+            
+            # Get hostname
+            result = self._exec_ssh(ssh_client, 'hostname')
+            if result['exit_code'] == 0:
+                os_info['hostname'] = result['stdout'].strip()
+            
+            # Parse /etc/os-release
+            result = self._exec_ssh(ssh_client, 'cat /etc/os-release 2>/dev/null')
+            if result['exit_code'] == 0:
+                os_release = result['stdout']
+                for line in os_release.split('\n'):
+                    if line.startswith('PRETTY_NAME='):
+                        os_info['version'] = line.split('=', 1)[1].strip().strip('"')
+                    elif line.startswith('ID='):
+                        os_id = line.split('=', 1)[1].strip().strip('"').lower()
+                        if os_id in ['debian', 'ubuntu']:
+                            os_info['family'] = 'debian'
+                        elif os_id in ['rhel', 'centos', 'rocky', 'almalinux', 'fedora']:
+                            os_info['family'] = 'rhel'
+            
+            discovery_result['os_info'] = os_info
+            self._log_console(job_id, 'INFO', f'OS: {os_info["version"]} ({os_info["family"]})', job_details)
+            job_details['completed_steps'].append('detect_os')
+            
+            # Detect ZFS
+            job_details['current_step'] = 'detect_zfs'
+            self._log_console(job_id, 'INFO', 'Detecting ZFS...', job_details)
+            self._update_progress(job_id, job_details, 60)
+            
+            zfs_status = {
+                'installed': False,
+                'pool_name': None,
+                'pool_size': None,
+                'pool_free': None,
+                'pool_health': None,
+                'disk_device': None,
+            }
+            
+            # Check if ZFS is installed
+            result = self._exec_ssh(ssh_client, 'which zpool 2>/dev/null')
+            if result['exit_code'] == 0:
+                zfs_status['installed'] = True
+                
+                # Get pool info
+                result = self._exec_ssh(ssh_client, 'zpool list -H -o name,size,alloc,free,health 2>/dev/null | head -1')
+                if result['exit_code'] == 0 and result['stdout'].strip():
+                    parts = result['stdout'].strip().split('\t')
+                    if len(parts) >= 5:
+                        zfs_status['pool_name'] = parts[0]
+                        zfs_status['pool_size'] = parts[1]
+                        zfs_status['pool_free'] = parts[3]
+                        zfs_status['pool_health'] = parts[4]
+                
+                # Get disk device from zpool status
+                if zfs_status['pool_name']:
+                    result = self._exec_ssh(ssh_client, f'zpool status {zfs_status["pool_name"]} 2>/dev/null')
+                    if result['exit_code'] == 0:
+                        # Parse output to find disk device (usually /dev/sdX)
+                        for line in result['stdout'].split('\n'):
+                            line = line.strip()
+                            if line.startswith('/dev/') or line.startswith('sd') or line.startswith('vd'):
+                                # Found a device
+                                device = line.split()[0]
+                                if not device.startswith('/dev/'):
+                                    device = f'/dev/{device}'
+                                zfs_status['disk_device'] = device
+                                break
+            
+            discovery_result['zfs_status'] = zfs_status
+            if zfs_status['installed'] and zfs_status['pool_name']:
+                self._log_console(job_id, 'INFO', f'ZFS: {zfs_status["pool_name"]} ({zfs_status["pool_size"]}, {zfs_status["pool_health"]})', job_details)
+            elif zfs_status['installed']:
+                self._log_console(job_id, 'WARN', 'ZFS installed but no pools found', job_details)
+            else:
+                self._log_console(job_id, 'WARN', 'ZFS not installed', job_details)
+            job_details['completed_steps'].append('detect_zfs')
+            
+            # Detect NFS exports
+            job_details['current_step'] = 'detect_nfs'
+            self._log_console(job_id, 'INFO', 'Detecting NFS exports...', job_details)
+            self._update_progress(job_id, job_details, 70)
+            
+            nfs_exports = {
+                'configured': False,
+                'network': None,
+            }
+            
+            # Try exportfs first, then /etc/exports
+            result = self._exec_ssh(ssh_client, 'exportfs -v 2>/dev/null')
+            if result['exit_code'] == 0 and result['stdout'].strip():
+                nfs_exports['configured'] = True
+                # Parse network from exports (e.g., "192.168.0.0/16" or "*")
+                for line in result['stdout'].split('\n'):
+                    if '(' in line:
+                        # Format: /export/path   192.168.0.0/16(rw,sync)
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            network_part = parts[1].split('(')[0]
+                            if network_part and network_part != '*':
+                                nfs_exports['network'] = network_part
+                                break
+            else:
+                # Fallback to /etc/exports
+                result = self._exec_ssh(ssh_client, 'cat /etc/exports 2>/dev/null')
+                if result['exit_code'] == 0 and result['stdout'].strip():
+                    for line in result['stdout'].split('\n'):
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            nfs_exports['configured'] = True
+                            # Parse network
+                            parts = line.split()
+                            if len(parts) >= 2:
+                                network_part = parts[1].split('(')[0]
+                                if network_part and network_part != '*':
+                                    nfs_exports['network'] = network_part
+                                    break
+            
+            discovery_result['nfs_exports'] = nfs_exports
+            if nfs_exports['configured']:
+                self._log_console(job_id, 'INFO', f'NFS: configured (network: {nfs_exports["network"] or "any"})', job_details)
+            else:
+                self._log_console(job_id, 'WARN', 'NFS not configured', job_details)
+            job_details['completed_steps'].append('detect_nfs')
+            
+            # Store discovery result
+            job_details['discovery_result'] = discovery_result
+            self._update_progress(job_id, job_details, 80)
+            
+            # Cleanup: Close SSH
+            if ssh_client:
+                ssh_client.close()
+                ssh_client = None
+            
+            # Cleanup: Power off and convert back to template
+            job_details['current_step'] = 'cleanup'
+            self._log_console(job_id, 'INFO', 'Cleaning up...', job_details)
+            self._update_progress(job_id, job_details, 85)
+            
+            vm_obj = self._find_vm_by_moref(vcenter_conn, template_moref)
+            
+            if we_powered_on and vm_obj:
+                self._log_console(job_id, 'INFO', 'Powering off VM...', job_details)
+                try:
+                    task = vm_obj.PowerOff()
+                    self._wait_for_task(task, timeout=60)
+                except:
+                    pass  # Already off or failed
+            
+            if we_converted_from_template and vm_obj:
+                self._log_console(job_id, 'INFO', 'Converting back to template...', job_details)
+                try:
+                    vm_obj = self._find_vm_by_moref(vcenter_conn, template_moref)
+                    if vm_obj:
+                        vm_obj.MarkAsTemplate()
+                except Exception as e:
+                    self._log_console(job_id, 'WARN', f'Failed to convert back to template: {e}', job_details)
+            
+            job_details['completed_steps'].append('cleanup')
+            self._update_progress(job_id, job_details, 100)
+            
+            # Disconnect vCenter
+            if vcenter_conn:
+                Disconnect(vcenter_conn)
+                vcenter_conn = None
+            
+            # Success
+            self._log_console(job_id, 'INFO', 'Inspection complete', job_details)
+            self.update_job_status(job_id, 'completed', completed_at=utc_now_iso(), details=job_details)
+            
+        except Exception as e:
+            error_msg = str(e)
+            self._log_console(job_id, 'ERROR', f'Inspection failed: {error_msg}', job_details)
+            
+            # Cleanup on error
+            try:
+                if ssh_client:
+                    ssh_client.close()
+            except:
+                pass
+            
+            try:
+                if vcenter_conn and template_moref:
+                    vm_obj = self._find_vm_by_moref(vcenter_conn, template_moref)
+                    if vm_obj:
+                        if we_powered_on:
+                            try:
+                                task = vm_obj.PowerOff()
+                                self._wait_for_task(task, timeout=30)
+                            except:
+                                pass
+                        if we_converted_from_template:
+                            try:
+                                vm_obj = self._find_vm_by_moref(vcenter_conn, template_moref)
+                                if vm_obj:
+                                    vm_obj.MarkAsTemplate()
+                            except:
+                                pass
+            except:
+                pass
+            
+            try:
+                if vcenter_conn:
+                    Disconnect(vcenter_conn)
+            except:
+                pass
+            
+            job_details['error'] = error_msg
+            self.update_job_status(job_id, 'failed', completed_at=utc_now_iso(), details=job_details)
+    
+    def _connect_ssh_key(self, host: str, username: str, private_key: str) -> Optional[Any]:
+        """Connect to SSH using private key"""
+        if not PARAMIKO_AVAILABLE:
+            raise Exception('Paramiko not available')
+        
+        try:
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            # Parse the private key
+            key_file = io.StringIO(private_key)
+            try:
+                pkey = paramiko.RSAKey.from_private_key(key_file)
+            except:
+                key_file = io.StringIO(private_key)
+                try:
+                    pkey = paramiko.Ed25519Key.from_private_key(key_file)
+                except:
+                    key_file = io.StringIO(private_key)
+                    pkey = paramiko.ECDSAKey.from_private_key(key_file)
+            
+            client.connect(
+                hostname=host,
+                username=username,
+                pkey=pkey,
+                timeout=30,
+                allow_agent=False,
+                look_for_keys=False
+            )
+            return client
+        except Exception as e:
+            self.log(f'SSH key connection failed: {e}', 'ERROR')
+            return None
