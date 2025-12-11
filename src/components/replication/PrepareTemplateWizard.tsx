@@ -168,6 +168,10 @@ export function PrepareTemplateWizard({
   const [setAsDefault, setSetAsDefault] = useState(true);
   const [settingAsDefault, setSettingAsDefault] = useState(false);
   
+  // Template/powered-off VM support
+  const [targetCluster, setTargetCluster] = useState("");
+  const [jobDetails, setJobDetails] = useState<Record<string, unknown> | null>(null);
+  
   // Fetch VMs from selected vCenter
   const { data: vms = [], isLoading: vmsLoading, clusters = [] } = useVCenterVMs(selectedVCenterId || undefined);
   
@@ -186,10 +190,20 @@ export function PrepareTemplateWizard({
   // Find selected VM details
   const selectedVM = vms.find(vm => vm.id === selectedVMId);
   
-  // Filter to only show powered-on VMs (templates cannot be prepared)
+  // Filter VMs - allow templates, powered-off, and powered-on VMs
   const eligibleVMs = useMemo(() => 
-    vms.filter(vm => !vm.is_template && vm.power_state === 'poweredOn'),
+    vms.filter(vm => 
+      vm.is_template || // Templates can be converted to VM first
+      vm.power_state === 'poweredOff' || // Powered off VMs can be powered on
+      vm.power_state === 'poweredOn' // Running VMs work as before
+    ),
     [vms]
+  );
+  
+  // Detect if preflight can be skipped (templates and powered-off VMs have no IP)
+  const canSkipPreflight = useMemo(() => 
+    selectedVM?.is_template || selectedVM?.power_state !== 'poweredOn',
+    [selectedVM]
   );
   
   // Reset when dialog opens
@@ -228,6 +242,8 @@ export function PrepareTemplateWizard({
       setConvertToTemplate(true);
       setPowerOffFirst(true);
       setCreateRollbackSnapshot(false);
+      setTargetCluster("");
+      setJobDetails(null);
     }
   }, [open, preselectedVCenterId]);
   
@@ -439,6 +455,10 @@ export function PrepareTemplateWizard({
             power_off_first: powerOffFirst,
             convert_to_template: convertToTemplate,
             create_rollback_snapshot: createRollbackSnapshot,
+            // Template/powered-off VM support
+            source_is_template: selectedVM?.is_template,
+            source_power_state: selectedVM?.power_state,
+            target_cluster: selectedVM?.is_template ? targetCluster : undefined,
           }
         };
       
@@ -465,6 +485,7 @@ export function PrepareTemplateWizard({
         
         setJobStatus(jobResult?.status || '');
         const details = jobResult?.details as Record<string, unknown> | null;
+        setJobDetails(details);
         if (details?.progress_percent) {
           setJobProgress(details.progress_percent as number);
         }
@@ -531,11 +552,21 @@ export function PrepareTemplateWizard({
   const canProceedFromStep = (step: number): boolean => {
     switch (step) {
       case 1: 
+        // If template selected, require target cluster
+        if (selectedVM?.is_template && !targetCluster) return false;
         return !!selectedVCenterId && !!selectedVMId && !!templateName && !!templateVersion;
       case 2:
-        // Pre-flight must pass or be skipped with SSH test success
+        // Pre-flight can be skipped for templates/powered-off VMs (just need password)
+        if (canSkipPreflight) {
+          return !!rootPassword;
+        }
+        // For running VMs, pre-flight must pass or be skipped with SSH test success
         return preflightStatus === 'passed' || sshTestResult === 'success';
       case 3: 
+        // For templates/powered-off, SSH test is optional (will happen after power on)
+        if (canSkipPreflight) {
+          return !!rootPassword;
+        }
         return !!rootPassword && sshTestResult === 'success';
       case 4: 
         return !installPackages || selectedPackages.length > 0;
@@ -634,20 +665,24 @@ export function PrepareTemplateWizard({
               </div>
               
               <div className="space-y-2">
-                <Label>VM to Convert (must be powered on)</Label>
+                <Label>VM or Template to Prepare</Label>
                 <div className="flex items-center gap-1">
                   <div className="flex-1">
                     <VMCombobox
                       vms={eligibleVMs}
                       clusters={clusters}
                       selectedVmId={selectedVMId}
-                      onSelectVm={(vm) => setSelectedVMId(vm.id)}
+                      onSelectVm={(vm) => {
+                        setSelectedVMId(vm.id);
+                        // Reset cluster if switching VM type
+                        if (!vm.is_template) setTargetCluster("");
+                      }}
                       disabled={!selectedVCenterId}
                       isLoading={vmsLoading}
                       placeholder={
                         !selectedVCenterId 
                           ? "Select vCenter first" 
-                          : "Select a powered-on VM"
+                          : "Select a VM or template"
                       }
                     />
                   </div>
@@ -661,20 +696,46 @@ export function PrepareTemplateWizard({
                 </div>
               </div>
               
-              {/* VM Preview */}
+              {/* VM Preview with state detection */}
               {selectedVM && (
-                <div className="p-3 rounded-lg bg-muted/50 space-y-2 text-sm">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="default" className="bg-green-500/10 text-green-600 border-green-500/30 text-xs">
-                      <Power className="h-3 w-3 mr-1" />
-                      Powered On
-                    </Badge>
+                <div className="p-3 rounded-lg bg-muted/50 space-y-3 text-sm">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {selectedVM.is_template ? (
+                      <Badge variant="secondary" className="text-xs">
+                        <FileBox className="h-3 w-3 mr-1" />
+                        Template
+                      </Badge>
+                    ) : selectedVM.power_state === 'poweredOn' ? (
+                      <Badge variant="default" className="bg-green-500/10 text-green-600 border-green-500/30 text-xs">
+                        <Power className="h-3 w-3 mr-1" />
+                        Powered On
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-xs">
+                        <Power className="h-3 w-3 mr-1" />
+                        Powered Off
+                      </Badge>
+                    )}
                     {selectedVM.cluster_name && (
                       <Badge variant="outline" className="text-xs">
                         {selectedVM.cluster_name}
                       </Badge>
                     )}
                   </div>
+                  
+                  {/* Show info for templates/powered-off VMs */}
+                  {canSkipPreflight && (
+                    <Alert className="py-2">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription className="text-xs">
+                        {selectedVM.is_template 
+                          ? "Template will be converted to VM, powered on, configured, then converted back to template."
+                          : "VM will be powered on for configuration, then powered off and converted to template."
+                        }
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Guest OS:</span>
                     <span>{selectedVM.guest_os || 'Unknown'}</span>
@@ -685,6 +746,28 @@ export function PrepareTemplateWizard({
                       <span className="font-mono text-xs">{selectedVM.ip_address}</span>
                     </div>
                   )}
+                </div>
+              )}
+              
+              {/* Cluster selection for templates */}
+              {selectedVM?.is_template && (
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-1">
+                    Target Cluster <span className="text-destructive">*</span>
+                  </Label>
+                  <Select value={targetCluster} onValueChange={setTargetCluster}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select cluster for temporary VM..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {clusters.map(cluster => (
+                        <SelectItem key={cluster} value={cluster}>{cluster}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Template will be temporarily converted to a VM in this cluster for configuration
+                  </p>
                 </div>
               )}
               
@@ -715,15 +798,28 @@ export function PrepareTemplateWizard({
           {/* Step 2: Pre-flight Checks */}
           {currentStep === 2 && (
             <div className="space-y-4">
-              <Alert>
-                <ShieldCheck className="h-4 w-4" />
-                <AlertDescription>
-                  Pre-flight checks validate disk space, repository access, and kernel headers before making changes.
-                </AlertDescription>
-              </Alert>
+              {canSkipPreflight ? (
+                <Alert>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    {selectedVM?.is_template 
+                      ? "Pre-flight checks will run automatically after the template is converted to a VM and powered on."
+                      : "Pre-flight checks will run automatically after the VM is powered on."
+                    }
+                    {" "}Please provide the root password for SSH access.
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <Alert>
+                  <ShieldCheck className="h-4 w-4" />
+                  <AlertDescription>
+                    Pre-flight checks validate disk space, repository access, and kernel headers before making changes.
+                  </AlertDescription>
+                </Alert>
+              )}
               
               <div className="space-y-2">
-                <Label>Root Password (for pre-flight SSH)</Label>
+                <Label>Root Password (for SSH access)</Label>
                 <Input
                   type="password"
                   value={rootPassword}
@@ -732,21 +828,23 @@ export function PrepareTemplateWizard({
                 />
               </div>
               
-              <Button
-                onClick={runPreflightChecks}
-                disabled={preflightStatus === 'running' || !selectedVM?.ip_address || !rootPassword}
-                variant={preflightStatus === 'passed' ? 'outline' : 'default'}
-              >
-                {preflightStatus === 'running' ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : preflightStatus === 'passed' ? (
-                  <CheckCircle2 className="h-4 w-4 mr-2 text-green-500" />
-                ) : (
-                  <ShieldCheck className="h-4 w-4 mr-2" />
-                )}
-                {preflightStatus === 'running' ? 'Running Checks...' : 
-                 preflightStatus === 'passed' ? 'Re-run Checks' : 'Run Pre-flight Checks'}
-              </Button>
+              {!canSkipPreflight && (
+                <Button
+                  onClick={runPreflightChecks}
+                  disabled={preflightStatus === 'running' || !selectedVM?.ip_address || !rootPassword}
+                  variant={preflightStatus === 'passed' ? 'outline' : 'default'}
+                >
+                  {preflightStatus === 'running' ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : preflightStatus === 'passed' ? (
+                    <CheckCircle2 className="h-4 w-4 mr-2 text-green-500" />
+                  ) : (
+                    <ShieldCheck className="h-4 w-4 mr-2" />
+                  )}
+                  {preflightStatus === 'running' ? 'Running Checks...' : 
+                   preflightStatus === 'passed' ? 'Re-run Checks' : 'Run Pre-flight Checks'}
+                </Button>
+              )}
               
               {preflightChecks.length > 0 && (
                 <div className="space-y-2">
@@ -790,6 +888,15 @@ export function PrepareTemplateWizard({
                   </AlertDescription>
                 </Alert>
               )}
+              
+              {canSkipPreflight && rootPassword && (
+                <Alert className="border-green-500/30 bg-green-500/5">
+                  <CheckCircle2 className="h-4 w-4 text-green-500" />
+                  <AlertDescription className="text-green-700 dark:text-green-400">
+                    Password configured. Pre-flight checks will run after VM is powered on.
+                  </AlertDescription>
+                </Alert>
+              )}
             </div>
           )}
           
@@ -813,7 +920,18 @@ export function PrepareTemplateWizard({
                 </div>
               )}
               
-              {selectedVM?.ip_address && rootPassword && (
+              {/* For templates/powered-off VMs, show info that SSH test will happen later */}
+              {canSkipPreflight && (
+                <Alert>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    SSH connection will be tested automatically after the VM is powered on during the preparation process.
+                  </AlertDescription>
+                </Alert>
+              )}
+              
+              {/* SSH test for powered-on VMs */}
+              {!canSkipPreflight && selectedVM?.ip_address && rootPassword && (
                 <div className="flex items-center gap-2">
                   <Button
                     variant="outline"
@@ -843,7 +961,8 @@ export function PrepareTemplateWizard({
                 </div>
               )}
               
-              {sshTestResult === 'success' && (
+              {/* SSH Key selection - show for all cases */}
+              {(sshTestResult === 'success' || canSkipPreflight) && (
                 <div className="space-y-4 pt-4 border-t">
                   <div className="space-y-2">
                     <Label>SSH Key for Deployments</Label>
