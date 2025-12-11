@@ -2528,9 +2528,9 @@ class ZfsTargetHandler(BaseHandler):
                     if is_template_deploy:
                         self._log_console(job_id, 'INFO', 'Template deployment detected - checking for existing ZFS...', job_details)
                         
-                        # Check if ZFS tools are already installed
-                        zfs_check = self._ssh_exec('which zfs && zfs version 2>/dev/null', job_id=job_id)
-                        if zfs_check['exit_code'] == 0 and 'zfs-' in zfs_check['stdout']:
+                        # Check if ZFS package is installed (not if module is loaded - module may not auto-load on boot)
+                        zfs_check = self._ssh_exec('dpkg -l zfsutils-linux 2>/dev/null | grep -q "^ii" && which zfs', job_id=job_id)
+                        if zfs_check['exit_code'] == 0:
                             self._log_console(job_id, 'INFO', 'ZFS tools already installed (prepared template)', job_details)
                             add_step_result('apt_sources', 'skipped', 'Template already prepared')
                             add_step_result('kernel_headers', 'skipped', 'Template already prepared')
