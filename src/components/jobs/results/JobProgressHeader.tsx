@@ -22,9 +22,12 @@ interface JobProgressHeaderProps {
 }
 
 export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
-  const { data: progress } = useJobProgress(job.id);
+  const { data: progress, isLoading: progressLoading } = useJobProgress(job.id);
   const [elapsed, setElapsed] = useState<string>('');
-
+  
+  // Use job.details as fallback while hook loads
+  const currentStep = progress?.currentStep || job.details?.current_step;
+  const progressPercent = progress?.progressPercent ?? job.details?.progress_percent ?? 0;
   // Update elapsed time every second for running jobs
   useEffect(() => {
     if (job.status === 'running' && job.started_at) {
@@ -151,24 +154,34 @@ export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
           </Badge>
         </div>
 
-        {/* Current Step */}
-        {progress?.currentStep && (
+        {/* Current Step - show immediately from job.details or progress */}
+        {currentStep && (
           <div className="space-y-2">
             <div className="flex items-center justify-between text-sm">
               <span className="text-muted-foreground font-medium">Current step:</span>
-              <span className="font-mono">{progress.currentStep}</span>
+              <span className="font-mono">{currentStep}</span>
             </div>
           </div>
         )}
 
-        {/* Progress Bar */}
-        {job.status === 'running' && progress && (
+        {/* Optimistic loading state while progress hook loads */}
+        {job.status === 'running' && progressLoading && !currentStep && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
+              <span>Initializing...</span>
+            </div>
+          </div>
+        )}
+
+        {/* Progress Bar - show immediately with fallback values */}
+        {job.status === 'running' && (
           <div className="space-y-2">
             <div className="flex items-center justify-between text-sm">
               <span className="text-muted-foreground">Progress</span>
-              <span className="font-medium">{progress.progressPercent}%</span>
+              <span className="font-medium">{progressPercent}%</span>
             </div>
-            <Progress value={progress.progressPercent} className="h-2" />
+            <Progress value={progressPercent} className="h-2" />
           </div>
         )}
 

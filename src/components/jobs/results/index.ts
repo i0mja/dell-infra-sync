@@ -15,3 +15,4 @@ export { MaintenanceFailureDetails } from './MaintenanceFailureDetails';
 export { StorageVMotionResults } from './StorageVMotionResults';
 export { VCenterSyncProgress } from './VCenterSyncProgress';
 export { ZfsDeploymentResults } from './ZfsDeploymentResults';
+export { ValidationPreflightResults } from './ValidationPreflightResults';

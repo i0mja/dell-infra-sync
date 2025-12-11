@@ -11,12 +11,49 @@ import { cn } from '@/lib/utils';
 
 interface ApiCallStreamProps {
   jobId: string;
+  jobType?: string;
 }
 
-export const ApiCallStream = ({ jobId }: ApiCallStreamProps) => {
+export const ApiCallStream = ({ jobId, jobType }: ApiCallStreamProps) => {
   const { apiCalls, loading, isLive, toggleLive, clearCalls, copyAllToClipboard } = useJobApiStream(jobId);
   const [expandedCall, setExpandedCall] = useState<string | null>(null);
   const [filterErrors, setFilterErrors] = useState(false);
+
+  // Job types that don't use iDRAC API
+  const nonIdracJobTypes = [
+    'vcenter_sync', 
+    'validate_zfs_template', 
+    'prepare_zfs_template', 
+    'clone_zfs_template',
+    'deploy_zfs_target',
+    'onboard_zfs_target',
+    'esxi_upgrade',
+    'esxi_preflight_check',
+    'storage_vmotion'
+  ];
+  
+  const getEmptyStateMessage = () => {
+    if (!jobType) {
+      return "No API calls captured yet. API calls will appear here as the job executes.";
+    }
+    
+    if (nonIdracJobTypes.includes(jobType)) {
+      const messages: Record<string, string> = {
+        'vcenter_sync': "vCenter Sync uses vSphere API instead of iDRAC. Check Console tab for progress.",
+        'validate_zfs_template': "Template validation uses SSH commands. Check Console tab for progress.",
+        'prepare_zfs_template': "Template preparation uses SSH commands. Check Console tab for progress.",
+        'clone_zfs_template': "Template cloning uses vSphere API. Check Console tab for progress.",
+        'deploy_zfs_target': "ZFS deployment uses SSH commands. Check Console tab for progress.",
+        'onboard_zfs_target': "ZFS onboarding uses SSH commands. Check Console tab for progress.",
+        'esxi_upgrade': "ESXi upgrade uses vSphere and SSH. Check Console tab for progress.",
+        'esxi_preflight_check': "Preflight checks use SSH commands. Check Console tab for progress.",
+        'storage_vmotion': "Storage vMotion uses vSphere API. Check Console tab for progress.",
+      };
+      return messages[jobType] || "This job type doesn't use iDRAC API. Check Console tab for progress.";
+    }
+    
+    return "No API calls captured yet. API calls will appear here as the job executes.";
+  };
 
   const filteredCalls = filterErrors 
     ? apiCalls.filter(call => !call.success || (call.status_code && call.status_code >= 400))
@@ -85,7 +122,7 @@ export const ApiCallStream = ({ jobId }: ApiCallStreamProps) => {
     return (
       <Card>
         <CardContent className="pt-6 text-center text-muted-foreground">
-          No API calls captured yet. API calls will appear here as the job executes.
+          {getEmptyStateMessage()}
         </CardContent>
       </Card>
     );

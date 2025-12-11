@@ -11,7 +11,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
 import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
 import { ApiCallStream } from "./ApiCallStream";
-import { DiscoveryScanResults, VCenterSyncResults, CredentialTestResults, ScpResults, MultiServerResults, GenericResults, JobTimingCard, EsxiUpgradeResults, EsxiPreflightResults, JobProgressHeader, JobTasksTimeline, JobConsoleLog, StorageVMotionResults, ZfsDeploymentResults } from "./results";
+import { DiscoveryScanResults, VCenterSyncResults, CredentialTestResults, ScpResults, MultiServerResults, GenericResults, JobTimingCard, EsxiUpgradeResults, EsxiPreflightResults, JobProgressHeader, JobTasksTimeline, JobConsoleLog, StorageVMotionResults, ZfsDeploymentResults, ValidationPreflightResults } from "./results";
 interface Job {
   id: string;
   job_type: string;
@@ -244,6 +244,9 @@ export const JobDetailDialog = ({
       case 'deploy_zfs_target':
       case 'onboard_zfs_target':
         return <ZfsDeploymentResults details={job.details} status={job.status} jobType={job.job_type} />;
+      case 'validate_zfs_template':
+      case 'prepare_zfs_template':
+        return <ValidationPreflightResults details={job.details} status={job.status} />;
       default:
         return <GenericResults details={job.details} />;
     }
@@ -457,7 +460,7 @@ export const JobDetailDialog = ({
             </TabsContent>
 
             <TabsContent value="api-calls" className="mt-4">
-              <ApiCallStream jobId={job.id} />
+              <ApiCallStream jobId={job.id} jobType={job.job_type} />
             </TabsContent>
           </Tabs>
         </DialogContent>}
