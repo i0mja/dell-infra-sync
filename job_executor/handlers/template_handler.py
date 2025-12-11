@@ -1228,16 +1228,59 @@ PACKAGES={packages_str}
             return None
     
     def _decrypt_password(self, encrypted: str) -> str:
-        """Decrypt password using Fernet"""
+        """Decrypt password using database RPC function (AES encryption)"""
+        if not encrypted:
+            return ''
         try:
-            from job_executor.config import get_encryption_key
-            from cryptography.fernet import Fernet
-            key = get_encryption_key()
-            if not key:
-                self.log('WARNING: No encryption key available - password decryption will fail', 'WARNING')
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            
+            # First get the encryption key
+            key_response = requests.get(
+                f'{DSM_URL}/rest/v1/rpc/get_encryption_key',
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json'
+                },
+                verify=VERIFY_SSL
+            )
+            
+            if key_response.status_code != 200:
+                self.log(f'Failed to get encryption key: {key_response.status_code}', 'ERROR')
                 return encrypted
-            f = Fernet(key.encode() if isinstance(key, str) else key)
-            return f.decrypt(encrypted.encode()).decode()
+                
+            encryption_key = key_response.json()
+            if not encryption_key:
+                self.log('WARNING: No encryption key available in database', 'WARNING')
+                return encrypted
+            
+            # Call the database decrypt_password RPC function
+            response = requests.post(
+                f'{DSM_URL}/rest/v1/rpc/decrypt_password',
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json'
+                },
+                json={
+                    'encrypted': encrypted,
+                    'key': encryption_key
+                },
+                verify=VERIFY_SSL
+            )
+            
+            if response.status_code == 200:
+                decrypted = response.json()
+                if decrypted:
+                    self.log('Password decrypted successfully via RPC', 'DEBUG')
+                    return decrypted
+                else:
+                    self.log('Decryption RPC returned null', 'WARNING')
+                    return encrypted
+            else:
+                self.log(f'Decryption RPC failed: {response.status_code} - {response.text}', 'ERROR')
+                return encrypted
+                
         except Exception as e:
             self.log(f'Password decryption failed: {e}', 'ERROR')
             return encrypted
