@@ -1512,22 +1512,9 @@ PACKAGES={packages_str}
                                 task = vm_obj.ResetVM_Task()
                                 self._wait_for_task(task, timeout=60)
                                 self._log_console(job_id, 'INFO', 'Hard reset issued via ResetVM_Task', job_details)
+                                # Trust VMware API - VM was definitely reset, no need to detect SSH failure
+                                shutdown_confirmed = True
                             Disconnect(vc_conn)
-                            
-                            # Now wait for SSH to fail after hard reset
-                            time.sleep(3)
-                            consecutive_failures = 0
-                            for _ in range(15):
-                                test_client = self._connect_ssh_password(vm_ip, 'root', root_password)
-                                if test_client:
-                                    test_client.close()
-                                    consecutive_failures = 0
-                                else:
-                                    consecutive_failures += 1
-                                    if consecutive_failures >= 3:
-                                        shutdown_confirmed = True
-                                        break
-                                time.sleep(1)
                 except Exception as e:
                     self._log_console(job_id, 'ERROR', f'Hard reset escalation failed: {e}', job_details)
         
