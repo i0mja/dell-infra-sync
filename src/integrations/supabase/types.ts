@@ -4303,13 +4303,16 @@ export type Database = {
           is_active: boolean | null
           last_deployed_at: string | null
           name: string
+          preparation_job_id: string | null
           ssh_key_encrypted: string | null
           ssh_key_id: string | null
+          status: string
           template_moref: string
           template_name: string
           updated_at: string | null
           use_template_disk: boolean | null
           vcenter_id: string | null
+          version: string | null
         }
         Insert: {
           created_at?: string | null
@@ -4332,13 +4335,16 @@ export type Database = {
           is_active?: boolean | null
           last_deployed_at?: string | null
           name: string
+          preparation_job_id?: string | null
           ssh_key_encrypted?: string | null
           ssh_key_id?: string | null
+          status?: string
           template_moref: string
           template_name: string
           updated_at?: string | null
           use_template_disk?: boolean | null
           vcenter_id?: string | null
+          version?: string | null
         }
         Update: {
           created_at?: string | null
@@ -4361,13 +4367,16 @@ export type Database = {
           is_active?: boolean | null
           last_deployed_at?: string | null
           name?: string
+          preparation_job_id?: string | null
           ssh_key_encrypted?: string | null
           ssh_key_id?: string | null
+          status?: string
           template_moref?: string
           template_name?: string
           updated_at?: string | null
           use_template_disk?: boolean | null
           vcenter_id?: string | null
+          version?: string | null
         }
         Relationships: [
           {
@@ -4375,6 +4384,13 @@ export type Database = {
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "zfs_target_templates_preparation_job_id_fkey"
+            columns: ["preparation_job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
             referencedColumns: ["id"]
           },
           {

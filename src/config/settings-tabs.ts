@@ -139,6 +139,12 @@ export const settingsTabs: SettingsTab[] = [
         icon: Server,
       },
       {
+        id: 'appliance-library',
+        name: 'ZFS Appliance Library',
+        description: 'Manage prepared ZFS storage appliances for DR',
+        icon: Server,
+      },
+      {
         id: 'virtual-media',
         name: 'Virtual Media & Backup',
         description: 'Configure ISO share and SCP backup defaults',
