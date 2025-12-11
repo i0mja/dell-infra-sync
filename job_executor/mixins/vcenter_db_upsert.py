@@ -733,7 +733,8 @@ class VCenterDbUpsertMixin:
         self, 
         vms: List[Dict], 
         source_vcenter_id: str,
-        job_id: str = None
+        job_id: str = None,
+        host_id_map: Dict[str, str] = None
     ) -> Dict[str, int]:
         """Batch upsert VMs."""
         if not vms:
@@ -746,20 +747,24 @@ class VCenterDbUpsertMixin:
             'Prefer': 'resolution=merge-duplicates,return=minimal'
         }
         
-        # Pre-fetch host lookup for this vCenter
-        hosts_response = requests.get(
-            f"{DSM_URL}/rest/v1/vcenter_hosts?source_vcenter_id=eq.{source_vcenter_id}&select=id,name",
-            headers={
-                'apikey': SERVICE_ROLE_KEY,
-                'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
-            },
-            verify=VERIFY_SSL
-        )
-        host_lookup = {}
-        if hosts_response.status_code == 200:
-            from job_executor.utils import _safe_json_parse
-            hosts_list = _safe_json_parse(hosts_response) or []
-            host_lookup = {h['name']: h['id'] for h in hosts_list}
+        # Use provided host_id_map or fetch if not provided
+        if host_id_map is not None:
+            host_lookup = host_id_map
+        else:
+            # Pre-fetch host lookup for this vCenter
+            hosts_response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_hosts?source_vcenter_id=eq.{source_vcenter_id}&select=id,name",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL
+            )
+            host_lookup = {}
+            if hosts_response.status_code == 200:
+                from job_executor.utils import _safe_json_parse
+                hosts_list = _safe_json_parse(hosts_response) or []
+                host_lookup = {h['name']: h['id'] for h in hosts_list}
         
         synced = 0
         batch_size = 50
