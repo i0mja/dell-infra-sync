@@ -316,7 +316,7 @@ class TemplateHandler(BaseHandler):
                     self.ssh_client = None
                     
                     # Reconnect and verify
-                    ssh_client = self._reboot_and_verify_zfs(vm_ip, root_password, job_id, job_details)
+                    ssh_client = self._reboot_and_verify_zfs(vm_ip, root_password, job_id, job_details, vcenter_id=vcenter_id, vm_moref=vm_moref)
                     if not ssh_client:
                         raise Exception('Failed to reconnect after reboot or ZFS module not loaded')
                     
@@ -1384,9 +1384,10 @@ PACKAGES={packages_str}
         job_details['progress_percent'] = percent
         self.update_job_status(job_id, 'running', details=job_details)
     
-    def _reboot_and_verify_zfs(self, vm_ip: str, root_password: str, job_id: str, job_details: Dict, max_wait: int = 180) -> Optional[Any]:
+    def _reboot_and_verify_zfs(self, vm_ip: str, root_password: str, job_id: str, job_details: Dict, 
+                                 vcenter_id: str = None, vm_moref: str = None, max_wait: int = 180) -> Optional[Any]:
         """
-        Reboot the VM and verify ZFS module loads after cold boot.
+        Reboot the VM using VMware API and verify ZFS module loads after cold boot.
         
         This is critical for template preparation - DKMS builds the module but 
         it may not persist across reboots if not properly configured.
@@ -1396,6 +1397,8 @@ PACKAGES={packages_str}
             root_password: Root password for SSH
             job_id: Job ID for logging
             job_details: Job details dict for logging
+            vcenter_id: vCenter ID for VMware API reboot
+            vm_moref: VM managed object reference
             max_wait: Maximum seconds to wait for VM to come back (default 180)
         
         Returns:
@@ -1403,40 +1406,86 @@ PACKAGES={packages_str}
         """
         self._log_console(job_id, 'INFO', 'Initiating reboot to verify ZFS persistence...', job_details)
         
-        # Connect and issue reboot command
-        try:
-            reboot_client = self._connect_ssh_password(vm_ip, 'root', root_password)
-            if not reboot_client:
-                self._log_console(job_id, 'ERROR', 'Cannot connect to issue reboot command', job_details)
-                return None
-            
-            # Issue async reboot (nohup to avoid blocking)
-            self._exec_ssh(reboot_client, 'nohup reboot &')
-            reboot_client.close()
-            
-        except Exception as e:
-            self._log_console(job_id, 'WARN', f'Reboot command error (expected): {e}', job_details)
-        
-        # Give reboot command time to initiate shutdown
-        time.sleep(3)
-        
-        # Wait for VM to actually go down (SSH must fail consistently)
-        self._log_console(job_id, 'INFO', 'Waiting for VM to shut down...', job_details)
+        vc_conn = None
         shutdown_confirmed = False
-        consecutive_failures = 0
         shutdown_start = time.time()
         
-        for _ in range(30):  # Up to 30 seconds to see shutdown
-            test_client = self._connect_ssh_password(vm_ip, 'root', root_password)
-            if test_client:
-                test_client.close()
-                consecutive_failures = 0  # Reset counter - VM still up
-            else:
-                consecutive_failures += 1
-                if consecutive_failures >= 3:  # Require 3 consecutive failures to confirm
-                    shutdown_confirmed = True
-                    break
-            time.sleep(1)
+        # Use VMware API for reliable reboot (preferred)
+        if vcenter_id and vm_moref:
+            try:
+                vc_settings = self._get_vcenter_settings(vcenter_id)
+                if not vc_settings:
+                    self._log_console(job_id, 'WARN', 'Cannot get vCenter settings, falling back to SSH reboot', job_details)
+                else:
+                    vc_conn = self._connect_vcenter(
+                        vc_settings['host'],
+                        vc_settings['username'],
+                        vc_settings['password'],
+                        vc_settings.get('port', 443),
+                        vc_settings.get('verify_ssl', False)
+                    )
+                    vm_obj = self._find_vm_by_moref(vc_conn, vm_moref)
+                    
+                    if not vm_obj:
+                        self._log_console(job_id, 'WARN', 'Cannot find VM by moref, falling back to SSH reboot', job_details)
+                    else:
+                        try:
+                            # Graceful reboot via VMware Tools
+                            self._log_console(job_id, 'INFO', 'Sending reboot via VMware Tools (RebootGuest)...', job_details)
+                            vm_obj.RebootGuest()
+                            shutdown_confirmed = True
+                        except Exception as e:
+                            # Fall back to hard reset if graceful fails
+                            self._log_console(job_id, 'WARN', f'Graceful reboot failed ({e}), using hard reset (ResetVM)...', job_details)
+                            try:
+                                task = vm_obj.ResetVM_Task()
+                                self._wait_for_task(task, timeout=60)
+                                shutdown_confirmed = True
+                            except Exception as reset_err:
+                                self._log_console(job_id, 'ERROR', f'Hard reset also failed: {reset_err}', job_details)
+                        
+                        if vc_conn:
+                            Disconnect(vc_conn)
+                            vc_conn = None
+            except Exception as e:
+                self._log_console(job_id, 'WARN', f'VMware API reboot failed: {e}, falling back to SSH', job_details)
+                if vc_conn:
+                    try:
+                        Disconnect(vc_conn)
+                    except:
+                        pass
+                    vc_conn = None
+        
+        # Fallback to SSH reboot if VMware API not available or failed
+        if not shutdown_confirmed:
+            self._log_console(job_id, 'INFO', 'Using SSH reboot fallback...', job_details)
+            try:
+                reboot_client = self._connect_ssh_password(vm_ip, 'root', root_password)
+                if not reboot_client:
+                    self._log_console(job_id, 'ERROR', 'Cannot connect to issue reboot command', job_details)
+                    return None
+                
+                self._exec_ssh(reboot_client, 'nohup reboot &')
+                reboot_client.close()
+            except Exception as e:
+                self._log_console(job_id, 'WARN', f'SSH reboot command error (expected): {e}', job_details)
+            
+            # Wait for SSH to fail (VM shutting down)
+            time.sleep(3)
+            self._log_console(job_id, 'INFO', 'Waiting for VM to shut down...', job_details)
+            consecutive_failures = 0
+            
+            for _ in range(30):
+                test_client = self._connect_ssh_password(vm_ip, 'root', root_password)
+                if test_client:
+                    test_client.close()
+                    consecutive_failures = 0
+                else:
+                    consecutive_failures += 1
+                    if consecutive_failures >= 3:
+                        shutdown_confirmed = True
+                        break
+                time.sleep(1)
         
         if not shutdown_confirmed:
             self._log_console(job_id, 'ERROR', 'VM did not shut down after 30s - reboot may have failed', job_details)
