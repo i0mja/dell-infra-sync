@@ -11,6 +11,14 @@ from job_executor.utils import utc_now_iso
 class VCenterHandlers(BaseHandler):
     """Handles vCenter sync and connectivity test operations"""
     
+    def _log_console(self, message: str, level: str, job_details: Dict):
+        """Add message to console log for UI display and log to stdout"""
+        timestamp = datetime.now(timezone.utc).strftime('%H:%M:%S')
+        if 'console_log' not in job_details:
+            job_details['console_log'] = []
+        job_details['console_log'].append(f'[{timestamp}] [{level}] {message}')
+        self.log(message, level)
+    
     def execute_vcenter_sync(self, job: Dict):
         """Execute vCenter sync - fetch ESXi hosts and auto-link to Dell servers
         
@@ -23,17 +31,23 @@ class VCenterHandlers(BaseHandler):
         sync_start = time.time()
         all_vcenter_results = []
         
+        # Initialize job details with console_log
+        job_details = {
+            "current_step": "Initializing",
+            "console_log": []
+        }
+        
         try:
-            self.log(f"Starting vCenter sync job: {job['id']}")
+            self._log_console(f"Starting vCenter sync job: {job['id']}", "INFO", job_details)
             self.update_job_status(
                 job['id'], 
                 'running', 
                 started_at=utc_now_iso(),
-                details={"current_step": "Initializing"}
+                details=job_details
             )
             
             # Fetch vCenter configuration(s)
-            self.log("📋 Fetching vCenter configuration...")
+            self._log_console("Fetching vCenter configuration...", "INFO", job_details)
             
             # Get target vCenter ID from job details or get ALL sync-enabled vCenters
             job_details = job.get('details', {})
@@ -62,17 +76,18 @@ class VCenterHandlers(BaseHandler):
                 raise Exception("No vCenter connection configured or sync is disabled")
             
             total_vcenters = len(vcenters_list)
-            self.log(f"Found {total_vcenters} vCenter(s) to sync")
+            self._log_console(f"Found {total_vcenters} vCenter(s) to sync", "INFO", job_details)
             
             # Update job with total vCenters count
+            job_details.update({
+                "current_step": f"Starting sync for {total_vcenters} vCenter(s)",
+                "total_vcenters": total_vcenters,
+                "current_vcenter_index": 0
+            })
             self.update_job_status(
                 job['id'],
                 'running',
-                details={
-                    "current_step": f"Starting sync for {total_vcenters} vCenter(s)",
-                    "total_vcenters": total_vcenters,
-                    "current_vcenter_index": 0
-                }
+                details=job_details
             )
             
             # Iterate through ALL vCenters
@@ -81,7 +96,8 @@ class VCenterHandlers(BaseHandler):
                     job=job,
                     vcenter_config=vcenter_config,
                     vcenter_index=vcenter_index,
-                    total_vcenters=total_vcenters
+                    total_vcenters=total_vcenters,
+                    job_details=job_details
                 )
                 
                 if vcenter_result:
@@ -133,7 +149,10 @@ class VCenterHandlers(BaseHandler):
             
             final_status = 'cancelled' if any_cancelled else ('failed' if any_failed else 'completed')
             
-            self.log(f"✓ vCenter sync {final_status} in {sync_duration}s - {len(all_vcenter_results)}/{total_vcenters} vCenters processed")
+            self._log_console(f"vCenter sync {final_status} in {sync_duration}s - {len(all_vcenter_results)}/{total_vcenters} vCenters processed", "INFO", job_details)
+            
+            # Include console_log in final summary
+            summary['console_log'] = job_details.get('console_log', [])
             
             self.update_job_status(
                 job['id'], 
@@ -143,15 +162,17 @@ class VCenterHandlers(BaseHandler):
             )
             
         except Exception as e:
-            self.log(f"vCenter sync failed: {e}", "ERROR")
+            self._log_console(f"vCenter sync failed: {e}", "ERROR", job_details)
+            job_details['error'] = str(e)
+            job_details['vcenter_results'] = all_vcenter_results
             self.update_job_status(
                 job['id'], 
                 'failed',
                 completed_at=utc_now_iso(),
-                details={'error': str(e), 'vcenter_results': all_vcenter_results}
+                details=job_details
             )
     
-    def _sync_single_vcenter(self, job: Dict, vcenter_config: Dict, vcenter_index: int, total_vcenters: int) -> Dict:
+    def _sync_single_vcenter(self, job: Dict, vcenter_config: Dict, vcenter_index: int, total_vcenters: int, job_details: Dict) -> Dict:
         """Sync a single vCenter and return results"""
         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
         
@@ -161,19 +182,20 @@ class VCenterHandlers(BaseHandler):
         vcenter_name = vcenter_config['name']
         sync_errors = []
         
-        self.log(f"━━━ Syncing vCenter {vcenter_index + 1}/{total_vcenters}: {vcenter_name} ({vcenter_host}) ━━━")
+        self._log_console(f"Syncing vCenter {vcenter_index + 1}/{total_vcenters}: {vcenter_name} ({vcenter_host})", "INFO", job_details)
         
         # Update job with current vCenter info
+        job_details.update({
+            "current_step": f"Connecting to {vcenter_name}",
+            "total_vcenters": total_vcenters,
+            "current_vcenter_index": vcenter_index,
+            "current_vcenter_name": vcenter_name,
+            "vcenter_host": vcenter_host
+        })
         self.update_job_status(
             job['id'],
             'running',
-            details={
-                "current_step": f"Connecting to {vcenter_name}",
-                "total_vcenters": total_vcenters,
-                "current_vcenter_index": vcenter_index,
-                "current_vcenter_name": vcenter_name,
-                "vcenter_host": vcenter_host
-            }
+            details=job_details
         )
         
         # Create tasks for each sync phase (prefixed with vCenter name if multi)
@@ -195,10 +217,12 @@ class VCenterHandlers(BaseHandler):
         
         try:
             # Connect to vCenter
-            self.log(f"🔌 Connecting to {vcenter_name}...")
+            self._log_console(f"Connecting to {vcenter_name}...", "INFO", job_details)
             vc = self.executor.connect_vcenter(vcenter_config)
             if not vc:
                 raise Exception(f"Failed to connect to vCenter {vcenter_name} - check credentials and network connectivity")
+            
+            self._log_console(f"Connected to {vcenter_name}", "INFO", job_details)
             
             # Mark connect phase complete
             if 'connect' in phase_tasks:
@@ -241,19 +265,20 @@ class VCenterHandlers(BaseHandler):
             # =====================================================================
             # PropertyCollector-based FAST sync (single ContainerView, batch upsert)
             # =====================================================================
-            self.log("🚀 Using PropertyCollector for fast inventory sync...")
+            self._log_console("Using PropertyCollector for fast inventory sync...", "INFO", job_details)
             
             if 'inventory' in phase_tasks:
                 self.update_task_status(phase_tasks['inventory'], 'running', 
                     log=f'{phase_prefix}Fetching inventory via PropertyCollector...', progress=0)
             
-            self.update_job_status(job['id'], 'running', details={
+            job_details.update({
                 'current_step': f'PropertyCollector inventory fetch from {vcenter_name}',
                 'total_vcenters': total_vcenters,
                 'current_vcenter_index': vcenter_index,
                 'current_vcenter_name': vcenter_name,
                 'sync_mode': 'property_collector'
             })
+            self.update_job_status(job['id'], 'running', details=job_details)
             
             # Import PropertyCollector module
             from job_executor.mixins.vcenter_property_collector import sync_vcenter_fast
@@ -263,7 +288,7 @@ class VCenterHandlers(BaseHandler):
             inventory_result = sync_vcenter_fast(content, source_vcenter_id)
             fetch_time = int((time.time() - inventory_start) * 1000)
             
-            self.log(f"✓ PropertyCollector fetched {inventory_result.get('total_objects', 0)} objects in {fetch_time}ms")
+            self._log_console(f"PropertyCollector fetched {inventory_result.get('total_objects', 0)} objects in {fetch_time}ms", "INFO", job_details)
             
             if 'inventory' in phase_tasks:
                 self.update_task_status(phase_tasks['inventory'], 'running',
@@ -280,16 +305,16 @@ class VCenterHandlers(BaseHandler):
                     # Scale progress from 50-100% for upsert phase
                     scaled_pct = 50 + int(pct * 0.5)
                     self.update_task_status(phase_tasks['inventory'], 'running', log=msg, progress=scaled_pct)
-                details = {
+                job_details.update({
                     'current_step': msg,
                     'total_vcenters': total_vcenters,
                     'current_vcenter_index': vcenter_index,
                     'current_vcenter_name': vcenter_name
-                }
+                })
                 # Add sync_phase for monotonic UI progress tracking
                 if phase_idx is not None:
-                    details['sync_phase'] = phase_idx
-                self.update_job_status(job['id'], 'running', details=details)
+                    job_details['sync_phase'] = phase_idx
+                self.update_job_status(job['id'], 'running', details=job_details)
             
             upsert_result = self.executor.upsert_inventory_fast(
                 inventory_result,
@@ -319,12 +344,12 @@ class VCenterHandlers(BaseHandler):
                     self.log(f"⚠️ {error_msg}", "WARN")
                     sync_errors.append(error_msg)
             
-            self.log(f"✓ Inventory upsert complete: "
+            self._log_console(f"Inventory upsert complete: "
                 f"{clusters_result.get('synced', 0)} clusters, "
                 f"{hosts_result.get('synced', 0)} hosts, "
                 f"{datastores_result.get('synced', 0)} datastores, "
                 f"{networks_result.get('synced', 0)} networks, "
-                f"{vms_result.get('synced', 0)} VMs")
+                f"{vms_result.get('synced', 0)} VMs", "INFO", job_details)
             
             if 'inventory' in phase_tasks:
                 self.update_task_status(
@@ -348,16 +373,17 @@ class VCenterHandlers(BaseHandler):
                 return {'vcenter_name': vcenter_name, 'vcenter_host': vcenter_host, 'cancelled': True}
             
             # Sync alarms
-            self.log("🚨 Syncing alarms...")
+            self._log_console("Syncing alarms...", "INFO", job_details)
             if 'alarms' in phase_tasks:
                 self.update_task_status(phase_tasks['alarms'], 'running', log=f'{phase_prefix}Syncing alarms...', progress=0)
             
-            self.update_job_status(job['id'], 'running', details={
+            job_details.update({
                 'current_step': f'Syncing alarms from {vcenter_name}',
                 'total_vcenters': total_vcenters,
                 'current_vcenter_index': vcenter_index,
                 'current_vcenter_name': vcenter_name
             })
+            self.update_job_status(job['id'], 'running', details=job_details)
             
             if not self.executor.check_vcenter_connection(content):
                 raise Exception("vCenter connection lost before alarm sync")
@@ -365,16 +391,17 @@ class VCenterHandlers(BaseHandler):
             def alarm_progress(pct, msg):
                 if 'alarms' in phase_tasks:
                     self.update_task_status(phase_tasks['alarms'], 'running', log=msg, progress=pct)
-                self.update_job_status(job['id'], 'running', details={
+                job_details.update({
                     'current_step': msg,
                     'total_vcenters': total_vcenters,
                     'current_vcenter_index': vcenter_index,
                     'current_vcenter_name': vcenter_name,
                     'sync_phase': 5  # Alarms phase
                 })
+                self.update_job_status(job['id'], 'running', details=job_details)
             
             alarms_result = self.executor.sync_vcenter_alarms(content, source_vcenter_id, progress_callback=alarm_progress, vcenter_name=vcenter_name, job_id=job['id'])
-            self.log(f"✓ Alarms synced: {alarms_result.get('synced', 0)}")
+            self._log_console(f"Alarms synced: {alarms_result.get('synced', 0)}", "INFO", job_details)
             
             if 'alarms' in phase_tasks:
                 self.update_task_status(
@@ -401,10 +428,10 @@ class VCenterHandlers(BaseHandler):
                     "This may indicate a vCenter permissions issue, empty network folder, "
                     "or networks organized in unsupported structures."
                 )
-                self.log(f"⚠️ {warning_msg}", "WARN")
+                self._log_console(warning_msg, "WARN", job_details)
                 sync_errors.append(warning_msg)
             
-            self.log(f"✓ {vcenter_name} sync completed in {vcenter_duration}s")
+            self._log_console(f"{vcenter_name} sync completed in {vcenter_duration}s", "INFO", job_details)
             
             # Determine final status - partial if any warnings/errors
             has_warnings = len(sync_errors) > 0
@@ -447,7 +474,7 @@ class VCenterHandlers(BaseHandler):
             }
             
         except Exception as e:
-            self.log(f"vCenter {vcenter_name} sync failed: {e}", "ERROR")
+            self._log_console(f"vCenter {vcenter_name} sync failed: {e}", "ERROR", job_details)
             
             # Update vCenter last_sync status on failure
             try:
