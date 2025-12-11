@@ -31,12 +31,15 @@ export interface JobProgress {
   isWorkflow?: boolean;
 }
 
+export type ToastLevel = 'errors_only' | 'errors_and_warnings' | 'all';
+
 export interface NotificationSettings {
   enabled: boolean;
   showProgress: boolean;
   soundEnabled: boolean;
   browserNotifications: boolean;
   maxRecentItems: number;
+  toastLevel: ToastLevel;
 }
 
 interface RecentlyCompletedJob {
@@ -76,21 +79,12 @@ const formatJobType = (type: string): string => {
   return typeMap[type] || type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 };
 
-// Helper to show job state toast notifications
-const showJobStateToast = (job: Job, previousStatus: string) => {
+// Helper to show job state toast notifications based on toast level
+const showJobStateToast = (job: Job, previousStatus: string, toastLevel: ToastLevel) => {
   const jobTypeName = formatJobType(job.job_type);
   
-  if (job.status === 'running' && previousStatus === 'pending') {
-    toast.info(`Job Started: ${jobTypeName}`, {
-      description: 'Job is now running',
-      duration: 4000,
-    });
-  } else if (job.status === 'completed' && previousStatus !== 'completed') {
-    toast.success(`Job Completed: ${jobTypeName}`, {
-      description: 'Job finished successfully',
-      duration: 5000,
-    });
-  } else if (job.status === 'failed' && previousStatus !== 'failed') {
+  // Always show errors
+  if (job.status === 'failed' && previousStatus !== 'failed') {
     const errorMsg = typeof job.details === 'object' && job.details !== null 
       ? (job.details as any).error 
       : undefined;
@@ -98,11 +92,33 @@ const showJobStateToast = (job: Job, previousStatus: string) => {
       description: errorMsg || 'Job encountered an error',
       duration: 8000,
     });
-  } else if (job.status === 'cancelled' && previousStatus !== 'cancelled') {
-    toast.warning(`Job Cancelled: ${jobTypeName}`, {
-      description: 'Job was cancelled',
-      duration: 4000,
-    });
+    return;
+  }
+  
+  // Show warnings only if level allows
+  if (toastLevel === 'errors_and_warnings' || toastLevel === 'all') {
+    if (job.status === 'cancelled' && previousStatus !== 'cancelled') {
+      toast.warning(`Job Cancelled: ${jobTypeName}`, {
+        description: 'Job was cancelled',
+        duration: 4000,
+      });
+      return;
+    }
+  }
+  
+  // Show info/success only if level is 'all'
+  if (toastLevel === 'all') {
+    if (job.status === 'running' && previousStatus === 'pending') {
+      toast.info(`Job Started: ${jobTypeName}`, {
+        description: 'Job is now running',
+        duration: 4000,
+      });
+    } else if (job.status === 'completed' && previousStatus !== 'completed') {
+      toast.success(`Job Completed: ${jobTypeName}`, {
+        description: 'Job finished successfully',
+        duration: 5000,
+      });
+    }
   }
 };
 
@@ -123,6 +139,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     soundEnabled: false,
     browserNotifications: false,
     maxRecentItems: 10,
+    toastLevel: 'errors_only',
   });
 
   // Use ref to avoid stale closures in subscription callbacks
@@ -130,6 +147,8 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const recentlyCompletedRef = useRef<RecentlyCompletedJob[]>([]);
   // Track recent toasts to prevent duplicates
   const recentToastsRef = useRef<Map<string, number>>(new Map());
+  // Settings ref for subscription callbacks
+  const settingsRef = useRef<NotificationSettings>(settings);
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -139,6 +158,10 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     recentlyCompletedRef.current = recentlyCompletedJobs;
   }, [recentlyCompletedJobs]);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
 
   // Cleanup recently completed jobs after duration
   useEffect(() => {
@@ -430,7 +453,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
             if (previousStatus !== newJob.status) {
               // Only show toast if job is NOT silent
               if (!isSilentJob(newJob)) {
-                showJobStateToast(newJob, previousStatus);
+                showJobStateToast(newJob, previousStatus, settingsRef.current.toastLevel);
               }
               setPreviousJobStatuses(prev => new Map(prev).set(newJob.id, newJob.status));
               
@@ -440,8 +463,8 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
               }
             }
           } else if (payload.eventType === 'INSERT' && newJob) {
-            // Only show toast if job is NOT silent
-            if (!isSilentJob(newJob)) {
+            // Only show toast if job is NOT silent and toast level is 'all'
+            if (!isSilentJob(newJob) && settingsRef.current.toastLevel === 'all') {
               // New job created - check for duplicate toasts
               const toastKey = `${newJob.id}-queued`;
               const now = Date.now();

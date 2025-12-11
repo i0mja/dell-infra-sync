@@ -7,11 +7,15 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { Mail, MessageSquare, Bell, Loader2 } from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useNotification } from "@/contexts/NotificationContext";
+import type { ToastLevel } from "@/contexts/NotificationContext";
 
 export function NotificationSettings() {
   const { toast } = useToast();
+  const { settings: notificationSettings, updateSettings } = useNotification();
   const [loading, setLoading] = useState(false);
   const [settingsId, setSettingsId] = useState<string | null>(null);
 
@@ -278,6 +282,31 @@ export function NotificationSettings() {
         icon={Bell}
       >
         <div className="space-y-4">
+          {/* Toast Notification Level */}
+          <div className="space-y-2">
+            <Label>In-App Toast Notifications</Label>
+            <Select
+              value={notificationSettings.toastLevel}
+              onValueChange={(value: ToastLevel) => updateSettings({ toastLevel: value })}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="errors_only">Errors only</SelectItem>
+                <SelectItem value="errors_and_warnings">Errors & warnings</SelectItem>
+                <SelectItem value="all">All notifications</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-sm text-muted-foreground">
+              Control which job status changes trigger toast notifications in the app
+            </p>
+          </div>
+
+          <div className="border-t pt-4 mt-4">
+            <p className="text-sm font-medium mb-3">External Notifications (Email/Teams)</p>
+          </div>
+          
           <div className="flex items-center justify-between">
             <div>
               <Label>Job Completed</Label>
