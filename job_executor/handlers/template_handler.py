@@ -1417,9 +1417,31 @@ PACKAGES={packages_str}
         except Exception as e:
             self._log_console(job_id, 'WARN', f'Reboot command error (expected): {e}', job_details)
         
-        # Wait for VM to go down (SSH should fail)
+        # Wait for VM to actually go down (SSH must fail to confirm shutdown)
         self._log_console(job_id, 'INFO', 'Waiting for VM to shut down...', job_details)
-        time.sleep(15)  # Initial wait for shutdown
+        shutdown_confirmed = False
+        shutdown_start = time.time()
+        
+        for _ in range(30):  # Up to 30 seconds to see shutdown
+            try:
+                test_client = self._connect_ssh_password(vm_ip, 'root', root_password, timeout=2)
+                if test_client:
+                    test_client.close()
+                    time.sleep(1)  # Still up, keep waiting
+                else:
+                    shutdown_confirmed = True
+                    break
+            except Exception:
+                # SSH failed - VM is going down
+                shutdown_confirmed = True
+                break
+        
+        if not shutdown_confirmed:
+            self._log_console(job_id, 'ERROR', 'VM did not shut down after 30s - reboot may have failed', job_details)
+            return None
+        
+        shutdown_time = int(time.time() - shutdown_start)
+        self._log_console(job_id, 'INFO', f'VM shutdown confirmed after {shutdown_time}s, waiting for boot...', job_details)
         
         # Wait for VM to come back up
         self._log_console(job_id, 'INFO', f'Waiting up to {max_wait}s for VM to boot...', job_details)
