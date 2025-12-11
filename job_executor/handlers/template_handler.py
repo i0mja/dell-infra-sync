@@ -1478,8 +1478,10 @@ PACKAGES={packages_str}
             time.sleep(3)  # Give reboot command time to start
             self._log_console(job_id, 'INFO', 'Waiting for VM to shut down...', job_details)
             consecutive_failures = 0
+            graceful_wait_seconds = 15  # Wait this long before escalating to hard reset
             
-            for _ in range(30):
+            # Phase 1: Wait for graceful reboot to take effect
+            for i in range(graceful_wait_seconds):
                 test_client = self._connect_ssh_password(vm_ip, 'root', root_password)
                 if test_client:
                     test_client.close()
@@ -1490,9 +1492,47 @@ PACKAGES={packages_str}
                         shutdown_confirmed = True
                         break
                 time.sleep(1)
+            
+            # Phase 2: If graceful didn't work, escalate to hard reset
+            if not shutdown_confirmed and vcenter_id and vm_moref:
+                self._log_console(job_id, 'WARN', 'Graceful reboot not effective after 15s, escalating to hard reset...', job_details)
+                try:
+                    vc_settings = self._get_vcenter_settings(vcenter_id)
+                    if vc_settings:
+                        vc_conn = self._connect_vcenter(
+                            vc_settings['host'],
+                            vc_settings['username'],
+                            vc_settings['password'],
+                            vc_settings.get('port', 443),
+                            vc_settings.get('verify_ssl', False)
+                        )
+                        if vc_conn:
+                            vm_obj = self._find_vm_by_moref(vc_conn, vm_moref)
+                            if vm_obj:
+                                task = vm_obj.ResetVM_Task()
+                                self._wait_for_task(task, timeout=60)
+                                self._log_console(job_id, 'INFO', 'Hard reset issued via ResetVM_Task', job_details)
+                            Disconnect(vc_conn)
+                            
+                            # Now wait for SSH to fail after hard reset
+                            time.sleep(3)
+                            consecutive_failures = 0
+                            for _ in range(15):
+                                test_client = self._connect_ssh_password(vm_ip, 'root', root_password)
+                                if test_client:
+                                    test_client.close()
+                                    consecutive_failures = 0
+                                else:
+                                    consecutive_failures += 1
+                                    if consecutive_failures >= 3:
+                                        shutdown_confirmed = True
+                                        break
+                                time.sleep(1)
+                except Exception as e:
+                    self._log_console(job_id, 'ERROR', f'Hard reset escalation failed: {e}', job_details)
         
         if not shutdown_confirmed:
-            self._log_console(job_id, 'ERROR', 'VM did not shut down after 30s - reboot may have failed', job_details)
+            self._log_console(job_id, 'ERROR', 'VM did not shut down after reboot attempts - check VMware Tools', job_details)
             return None
         
         shutdown_time = int(time.time() - shutdown_start)
