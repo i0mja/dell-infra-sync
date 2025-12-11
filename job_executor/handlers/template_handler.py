@@ -1204,6 +1204,11 @@ class TemplateHandler(BaseHandler):
         """Apply ZFS performance tuning for NFS workloads."""
         self._log_console(job_id, 'INFO', 'Applying ZFS tuning parameters...', job_details)
         
+        # Clear any existing ZFS modprobe configs from previous runs
+        # This ensures idempotent behavior when re-running prepare on the same VM
+        self._exec_ssh(ssh_client, "rm -f /etc/modprobe.d/zfs*.conf")
+        self._log_console(job_id, 'INFO', 'Cleared old ZFS modprobe configs', job_details)
+        
         tuning_lines = []
         
         # ARC size limit (default: 50% of RAM)
