@@ -698,14 +698,47 @@ export function PairedZfsDeployWizard({
 
           {/* Library Mode */}
           {config.sourceMode === 'library' && (
-            <div className="space-y-2">
-              <Label className="text-xs">Select Appliance</Label>
-              <ZfsApplianceSelector
-                selectedId={config.selectedTemplate?.id}
-                onSelect={(template) => handleTemplateSelect(template, setConfig)}
-                showOnlyReady={true}
-                vcenterId={config.vcenterId || undefined}
-              />
+            <div className="space-y-3">
+              {/* Step 1: Select vCenter first */}
+              <div className="space-y-2">
+                <Label className="text-xs">vCenter / Site</Label>
+                <Select 
+                  value={config.vcenterId} 
+                  onValueChange={(v) => setConfig(prev => ({ 
+                    ...prev, 
+                    vcenterId: v, 
+                    selectedTemplate: null // Clear template when vCenter changes
+                  }))}
+                >
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder={vcentersLoading ? "Loading..." : "Select site"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {vcenters.map((vc) => (
+                      <SelectItem key={vc.id} value={vc.id}>
+                        {vc.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              {/* Step 2: Show templates only after vCenter is selected */}
+              {config.vcenterId ? (
+                <div className="space-y-2">
+                  <Label className="text-xs">Select Appliance</Label>
+                  <ZfsApplianceSelector
+                    selectedId={config.selectedTemplate?.id}
+                    onSelect={(template) => handleTemplateSelect(template, setConfig)}
+                    showOnlyReady={true}
+                    vcenterId={config.vcenterId}
+                  />
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground italic">
+                  Select a vCenter to see available appliance templates
+                </p>
+              )}
             </div>
           )}
 
