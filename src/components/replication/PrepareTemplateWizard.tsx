@@ -62,6 +62,7 @@ import {
   Camera,
   Activity,
   AlertTriangle,
+  Star,
 } from "lucide-react";
 import { useVCenters } from "@/hooks/useVCenters";
 import { useVCenterVMs } from "@/hooks/useVCenterVMs";
@@ -161,6 +162,8 @@ export function PrepareTemplateWizard({
   const [convertToTemplate, setConvertToTemplate] = useState(true);
   const [powerOffFirst, setPowerOffFirst] = useState(true);
   const [createRollbackSnapshot, setCreateRollbackSnapshot] = useState(false);
+  const [setAsDefault, setSetAsDefault] = useState(true);
+  const [settingAsDefault, setSettingAsDefault] = useState(false);
   
   // Fetch VMs from selected vCenter
   const { data: vms = [], isLoading: vmsLoading, clusters = [] } = useVCenterVMs(selectedVCenterId || undefined);
@@ -456,7 +459,36 @@ export function PrepareTemplateWizard({
         if (jobResult?.status === 'completed') {
           clearInterval(pollInterval);
           setJobProgress(100);
-          toast({ title: 'Template preparation complete', description: 'VM is now ready as a ZFS appliance template' });
+          
+          // If "set as default" is checked, update the vCenter's default template
+          if (setAsDefault && selectedVCenterId) {
+            try {
+              setSettingAsDefault(true);
+              // First, get the created template ID from job details
+              const templateId = details?.created_template_id as string;
+              
+              if (templateId) {
+                await supabase
+                  .from('vcenters')
+                  .update({ default_zfs_template_id: templateId })
+                  .eq('id', selectedVCenterId);
+                
+                toast({ 
+                  title: 'Template preparation complete', 
+                  description: 'Template is now set as the default for this vCenter' 
+                });
+              } else {
+                toast({ title: 'Template preparation complete', description: 'VM is now ready as a ZFS appliance template' });
+              }
+            } catch (err) {
+              console.error('Failed to set as default:', err);
+              toast({ title: 'Template preparation complete', description: 'VM is now ready (but failed to set as default)' });
+            } finally {
+              setSettingAsDefault(false);
+            }
+          } else {
+            toast({ title: 'Template preparation complete', description: 'VM is now ready as a ZFS appliance template' });
+          }
         } else if (jobResult?.status === 'failed') {
           clearInterval(pollInterval);
           toast({ 
@@ -734,25 +766,25 @@ export function PrepareTemplateWizard({
             </div>
           )}
           
-          {/* Step 3: Connect */}
+          {/* Step 3: Connect - SSH Key Selection (password already entered in Step 2) */}
           {currentStep === 3 && (
             <div className="space-y-4">
               <Alert>
                 <Terminal className="h-4 w-4" />
                 <AlertDescription>
-                  Root access is required to install packages and configure the template.
+                  Select an SSH key to embed in the template for passwordless deployments.
                 </AlertDescription>
               </Alert>
               
-              <div className="space-y-2">
-                <Label>Root Password</Label>
-                <Input
-                  type="password"
-                  value={rootPassword}
-                  onChange={(e) => setRootPassword(e.target.value)}
-                  placeholder="Enter root password for SSH access"
-                />
-              </div>
+              {/* Show password status from Step 2 */}
+              {rootPassword && (
+                <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20 text-sm">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-green-500" />
+                    <span>Root password configured from pre-flight step</span>
+                  </div>
+                </div>
+              )}
               
               {selectedVM?.ip_address && rootPassword && (
                 <div className="flex items-center gap-2">
@@ -1043,9 +1075,28 @@ export function PrepareTemplateWizard({
                       Removes DHCP leases, persistent net rules, and NetworkManager connections
                     </p>
                   </div>
+                  </div>
+                </div>
+                
+                {/* Set as default option */}
+                <div className="flex items-center space-x-2 pt-4 border-t">
+                  <Checkbox
+                    id="set-as-default"
+                    checked={setAsDefault}
+                    onCheckedChange={(checked) => setSetAsDefault(!!checked)}
+                    disabled={!!jobId}
+                  />
+                  <div>
+                    <Label htmlFor="set-as-default" className="flex items-center gap-2">
+                      <Star className="h-4 w-4 text-yellow-500" />
+                      Set as default template for this vCenter
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Deployment wizards will auto-fill settings from this template
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
           )}
           
           {/* Step 6: Convert */}

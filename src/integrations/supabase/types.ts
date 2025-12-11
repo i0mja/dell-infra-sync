@@ -4015,6 +4015,7 @@ export type Database = {
           color: string | null
           created_at: string
           datacenter_location: string | null
+          default_zfs_template_id: string | null
           host: string
           id: string
           is_primary: boolean | null
@@ -4036,6 +4037,7 @@ export type Database = {
           color?: string | null
           created_at?: string
           datacenter_location?: string | null
+          default_zfs_template_id?: string | null
           host: string
           id?: string
           is_primary?: boolean | null
@@ -4057,6 +4059,7 @@ export type Database = {
           color?: string | null
           created_at?: string
           datacenter_location?: string | null
+          default_zfs_template_id?: string | null
           host?: string
           id?: string
           is_primary?: boolean | null
@@ -4074,7 +4077,15 @@ export type Database = {
           verify_ssl?: boolean
           vm_prefix?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "vcenters_default_zfs_template_id_fkey"
+            columns: ["default_zfs_template_id"]
+            isOneToOne: false
+            referencedRelation: "zfs_target_templates"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       virtual_media_sessions: {
         Row: {

@@ -5,10 +5,11 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Loader2 } from "lucide-react";
 import { z } from "zod";
-import type { VCenterFormData } from "@/hooks/useVCenters";
+import type { VCenterFormData, VCenter } from "@/hooks/useVCenters";
+import { GoldImageSelector } from "./GoldImageSelector";
 
 interface VCenterFormProps {
-  initialData?: Partial<VCenterFormData>;
+  initialData?: Partial<VCenterFormData> & { id?: string };
   onSubmit: (data: VCenterFormData) => Promise<boolean>;
   onCancel: () => void;
   submitLabel?: string;
@@ -27,6 +28,7 @@ const vCenterSchema = z.object({
   is_primary: z.boolean().optional(),
   site_code: z.string().trim().max(5).optional(),
   vm_prefix: z.string().trim().max(5).optional(),
+  default_zfs_template_id: z.string().uuid().optional().nullable(),
 });
 
 export function VCenterForm({
@@ -50,6 +52,7 @@ export function VCenterForm({
     is_primary: initialData?.is_primary ?? false,
     site_code: initialData?.site_code ?? "",
     vm_prefix: initialData?.vm_prefix ?? "",
+    default_zfs_template_id: (initialData as any)?.default_zfs_template_id ?? undefined,
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -229,6 +232,16 @@ export function VCenterForm({
           <Switch
             checked={formData.sync_enabled}
             onCheckedChange={(checked) => setFormData({ ...formData, sync_enabled: checked })}
+            disabled={loading}
+          />
+        </div>
+
+        {/* Gold Image Selector */}
+        <div className="pt-4 border-t">
+          <GoldImageSelector
+            vcenterId={initialData?.id}
+            selectedTemplateId={formData.default_zfs_template_id}
+            onTemplateChange={(templateId) => setFormData({ ...formData, default_zfs_template_id: templateId })}
             disabled={loading}
           />
         </div>
