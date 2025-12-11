@@ -1003,39 +1003,90 @@ class TemplateHandler(BaseHandler):
         self.update_job_status(job_id, 'running', details=job_details)
     
     def _install_packages_debian(self, ssh_client: Any, packages: list, job_id: str, job_details: Dict):
-        """Install packages on Debian/Ubuntu with proper ZFS repo setup."""
+        """Install packages on Debian/Ubuntu with proper ZFS repo setup and enhanced header detection."""
+        import re
+        
         self._log_and_update(job_id, 'INFO', 'Configuring Debian repositories...', job_details)
         
         # Detect repository format (deb822 vs traditional)
         check_deb822 = self._exec_ssh(ssh_client, 'ls /etc/apt/sources.list.d/*.sources 2>/dev/null')
         
+        # Detect codename early for repo setup
+        codename_result = self._exec_ssh(ssh_client, 'lsb_release -cs 2>/dev/null || grep VERSION_CODENAME /etc/os-release | cut -d= -f2')
+        codename = codename_result['stdout'].strip() or 'bookworm'
+        
+        # Get kernel version for later
+        kernel_result = self._exec_ssh(ssh_client, 'uname -r')
+        kernel_version = kernel_result['stdout'].strip() if kernel_result['exit_code'] == 0 else None
+        
         if check_deb822['exit_code'] == 0 and check_deb822['stdout'].strip():
-            # deb822 format - add contrib component to existing files
+            # deb822 format - add contrib (and non-free for Trixie+) component to existing files
             self._log_and_update(job_id, 'INFO', 'Using deb822 repository format', job_details)
-            self._exec_ssh(ssh_client, r"sed -i 's/Components: main$/Components: main contrib/' /etc/apt/sources.list.d/*.sources")
+            
+            # For Debian 13 (Trixie) and newer, also add non-free for some packages
+            if codename in ['trixie', 'forky', 'sid'] or (kernel_version and 'deb13' in kernel_version):
+                self._log_and_update(job_id, 'INFO', f'Detected {codename}/Debian 13+ - adding contrib non-free repos', job_details)
+                self._exec_ssh(ssh_client, r"sed -i 's/Components: main$/Components: main contrib non-free/' /etc/apt/sources.list.d/*.sources")
+            else:
+                self._exec_ssh(ssh_client, r"sed -i 's/Components: main$/Components: main contrib/' /etc/apt/sources.list.d/*.sources")
         else:
             # Traditional format - check if contrib is already present
             check_contrib = self._exec_ssh(ssh_client, 'grep -r "contrib" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null')
             if check_contrib['exit_code'] != 0:
                 self._log_and_update(job_id, 'INFO', 'Adding contrib repository', job_details)
-                # Detect codename
-                codename_result = self._exec_ssh(ssh_client, 'lsb_release -cs 2>/dev/null || grep VERSION_CODENAME /etc/os-release | cut -d= -f2')
-                codename = codename_result['stdout'].strip() or 'bookworm'
                 self._exec_ssh(ssh_client, f'echo "deb http://deb.debian.org/debian {codename} main contrib" > /etc/apt/sources.list.d/contrib.list')
         
         # Update package lists
         self._log_and_update(job_id, 'INFO', 'Updating package lists...', job_details)
         self._exec_ssh(ssh_client, 'apt-get update -qq')
         
-        # Install kernel headers first (required for DKMS to build ZFS module)
-        result = self._exec_ssh(ssh_client, 'uname -r')
-        kernel_version = result['stdout'].strip() if result['exit_code'] == 0 else None
-        
+        # Install kernel headers with fallback detection for newer kernels
+        header_installed = False
         if kernel_version:
             self._log_and_update(job_id, 'INFO', f'Installing kernel headers for {kernel_version}...', job_details)
-            result = self._exec_ssh(ssh_client, f'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dpkg-dev linux-headers-{kernel_version}')
-            if result['exit_code'] != 0:
-                self._log_and_update(job_id, 'WARN', f'Header install warning: {result["stderr"]}', job_details)
+            
+            # Attempt 1: Exact match
+            check_exact = self._exec_ssh(ssh_client, f'apt-cache show linux-headers-{kernel_version} 2>/dev/null | grep -q "Package:"')
+            if check_exact['exit_code'] == 0:
+                result = self._exec_ssh(ssh_client, f'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dpkg-dev linux-headers-{kernel_version}')
+                if result['exit_code'] == 0:
+                    header_installed = True
+                    self._log_and_update(job_id, 'INFO', f'Installed exact headers: linux-headers-{kernel_version}', job_details)
+            
+            # Attempt 2: Strip Debian suffix (e.g., 6.12.57+deb13-amd64 → 6.12.57-amd64)
+            if not header_installed:
+                stripped_version = re.sub(r'\+[^-]+', '', kernel_version)  # Remove +deb13 etc
+                if stripped_version != kernel_version:
+                    self._log_and_update(job_id, 'INFO', f'Trying stripped version: linux-headers-{stripped_version}', job_details)
+                    check_stripped = self._exec_ssh(ssh_client, f'apt-cache show linux-headers-{stripped_version} 2>/dev/null | grep -q "Package:"')
+                    if check_stripped['exit_code'] == 0:
+                        result = self._exec_ssh(ssh_client, f'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dpkg-dev linux-headers-{stripped_version}')
+                        if result['exit_code'] == 0:
+                            header_installed = True
+                            self._log_and_update(job_id, 'INFO', f'Installed headers: linux-headers-{stripped_version}', job_details)
+            
+            # Attempt 3: Generic architecture headers (linux-headers-amd64)
+            if not header_installed:
+                arch = 'amd64' if 'amd64' in kernel_version else 'arm64' if 'arm64' in kernel_version else None
+                if arch:
+                    self._log_and_update(job_id, 'INFO', f'Trying generic headers: linux-headers-{arch}', job_details)
+                    result = self._exec_ssh(ssh_client, f'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dpkg-dev linux-headers-{arch}')
+                    if result['exit_code'] == 0:
+                        header_installed = True
+                        self._log_and_update(job_id, 'INFO', f'Installed generic headers: linux-headers-{arch}', job_details)
+            
+            # Attempt 4: Any matching headers via apt search
+            if not header_installed:
+                self._log_and_update(job_id, 'WARN', 'Could not find exact kernel headers, searching for alternatives...', job_details)
+                # Extract base version (e.g., 6.12 from 6.12.57+deb13-amd64)
+                base_match = re.match(r'(\d+\.\d+)', kernel_version)
+                if base_match:
+                    base_version = base_match.group(1)
+                    search_result = self._exec_ssh(ssh_client, f'apt-cache search linux-headers | grep "{base_version}" | head -3')
+                    self._log_and_update(job_id, 'INFO', f'Available headers for {base_version}: {search_result["stdout"].strip()[:100]}', job_details)
+            
+            if not header_installed:
+                self._log_and_update(job_id, 'WARN', f'Could not install headers for kernel {kernel_version} - DKMS may fail', job_details)
         
         # Separate ZFS packages from others
         zfs_packages = [p for p in packages if 'zfs' in p.lower()]
@@ -1052,26 +1103,61 @@ class TemplateHandler(BaseHandler):
         # Install ZFS packages (zfs-dkms + zfsutils-linux)
         if zfs_packages or 'zfsutils-linux' in packages:
             self._log_and_update(job_id, 'INFO', 'Installing ZFS packages (this may take a few minutes for DKMS build)...', job_details)
-            result = self._exec_ssh(ssh_client, 'DEBIAN_FRONTEND=noninteractive apt-get install -y zfs-dkms zfsutils-linux')
+            result = self._exec_ssh(ssh_client, 'DEBIAN_FRONTEND=noninteractive apt-get install -y zfs-dkms zfsutils-linux 2>&1')
             if result['exit_code'] != 0:
                 self._log_and_update(job_id, 'WARN', f'ZFS install warning: {result["stderr"]}', job_details)
             
+            # Check DKMS build status for ZFS
+            dkms_status = self._exec_ssh(ssh_client, 'dkms status zfs 2>&1')
+            self._log_and_update(job_id, 'INFO', f'DKMS status: {dkms_status["stdout"].strip()}', job_details)
+            
+            # If not built/installed, try manual DKMS build with verbose output
+            if 'installed' not in dkms_status['stdout'].lower():
+                self._log_and_update(job_id, 'WARN', 'DKMS ZFS not installed, attempting manual build...', job_details)
+                
+                # Get ZFS DKMS version
+                zfs_ver_result = self._exec_ssh(ssh_client, 'ls /usr/src/ | grep zfs | head -1 | sed "s/zfs-//"')
+                zfs_dkms_ver = zfs_ver_result['stdout'].strip() or '2.2'
+                
+                # Attempt DKMS build with output capture
+                build_result = self._exec_ssh(ssh_client, f'dkms build -m zfs -v {zfs_dkms_ver} -k {kernel_version} 2>&1 | tail -30')
+                self._log_and_update(job_id, 'INFO', f'DKMS build output:\n{build_result["stdout"][-500:]}', job_details)
+                
+                # Install after build
+                self._exec_ssh(ssh_client, f'dkms install -m zfs -v {zfs_dkms_ver} -k {kernel_version} 2>&1')
+                
+                # Re-check status
+                dkms_recheck = self._exec_ssh(ssh_client, 'dkms status zfs 2>&1')
+                self._log_and_update(job_id, 'INFO', f'DKMS status after manual build: {dkms_recheck["stdout"].strip()}', job_details)
+            
             # Load ZFS kernel module
             self._log_and_update(job_id, 'INFO', 'Loading ZFS kernel module...', job_details)
-            result = self._exec_ssh(ssh_client, 'modprobe zfs')
+            result = self._exec_ssh(ssh_client, 'modprobe zfs 2>&1')
             if result['exit_code'] != 0:
-                self._log_and_update(job_id, 'WARN', 'modprobe zfs failed, trying dkms autoinstall...', job_details)
-                self._exec_ssh(ssh_client, 'dkms autoinstall')
-                result = self._exec_ssh(ssh_client, 'modprobe zfs')
+                self._log_and_update(job_id, 'WARN', f'modprobe zfs failed: {result["stdout"]} {result["stderr"]}', job_details)
+                self._log_and_update(job_id, 'INFO', 'Running dkms autoinstall...', job_details)
+                autoinstall_result = self._exec_ssh(ssh_client, 'dkms autoinstall 2>&1 | tail -20')
+                self._log_and_update(job_id, 'INFO', f'dkms autoinstall output: {autoinstall_result["stdout"][-300:]}', job_details)
+                
+                result = self._exec_ssh(ssh_client, 'modprobe zfs 2>&1')
                 if result['exit_code'] != 0:
-                    self._log_and_update(job_id, 'WARN', f'modprobe zfs still failed: {result["stderr"]}', job_details)
+                    # Get detailed diagnostics
+                    modinfo_result = self._exec_ssh(ssh_client, 'modinfo zfs 2>&1')
+                    self._log_and_update(job_id, 'WARN', f'modinfo zfs: {modinfo_result["stdout"][:200] or modinfo_result["stderr"][:200]}', job_details)
             
             # Verify ZFS is loaded
             result = self._exec_ssh(ssh_client, 'lsmod | grep zfs')
             if result['exit_code'] == 0:
                 self._log_and_update(job_id, 'INFO', 'ZFS kernel module loaded successfully', job_details)
             else:
-                self._log_and_update(job_id, 'WARN', 'ZFS kernel module not loaded - may work after reboot', job_details)
+                self._log_and_update(job_id, 'WARN', 'ZFS kernel module not loaded - will verify after reboot', job_details)
+            
+            # Pre-reboot validation: ensure DKMS shows ZFS installed
+            pre_reboot_dkms = self._exec_ssh(ssh_client, 'dkms status | grep zfs')
+            if 'installed' not in pre_reboot_dkms['stdout'].lower():
+                self._log_and_update(job_id, 'WARN', f'Pre-reboot DKMS check: ZFS may not persist. Status: {pre_reboot_dkms["stdout"].strip()}', job_details)
+            else:
+                self._log_and_update(job_id, 'INFO', f'Pre-reboot DKMS check passed: {pre_reboot_dkms["stdout"].strip()}', job_details)
     
     def _install_packages_rhel(self, ssh_client: Any, packages: list, job_id: str, job_details: Dict):
         """Install packages on RHEL/CentOS/Rocky."""
@@ -1361,7 +1447,7 @@ PACKAGES={packages_str}
             self._log_console(job_id, 'WARN', 'ZFS module not auto-loaded, attempting manual load...', job_details)
             
             # Try modprobe
-            result = self._exec_ssh(ssh_client, 'modprobe zfs')
+            result = self._exec_ssh(ssh_client, 'modprobe zfs 2>&1')
             if result['exit_code'] == 0:
                 # Check again
                 lsmod_result = self._exec_ssh(ssh_client, 'lsmod | grep -E "^zfs\\s"')
@@ -1374,10 +1460,30 @@ PACKAGES={packages_str}
                     
                     return ssh_client
             
-            # If still failing, try DKMS rebuild
+            # If still failing, try DKMS rebuild with detailed diagnostics
             self._log_console(job_id, 'WARN', 'modprobe failed, attempting DKMS rebuild...', job_details)
-            self._exec_ssh(ssh_client, 'dkms autoinstall')
-            result = self._exec_ssh(ssh_client, 'modprobe zfs')
+            
+            # Get kernel info for diagnostics
+            kernel_info = self._exec_ssh(ssh_client, 'uname -r')
+            kernel_version = kernel_info['stdout'].strip()
+            self._log_console(job_id, 'INFO', f'Current kernel: {kernel_version}', job_details)
+            
+            # Check DKMS status
+            dkms_status = self._exec_ssh(ssh_client, 'dkms status 2>&1')
+            self._log_console(job_id, 'INFO', f'DKMS status: {dkms_status["stdout"].strip()}', job_details)
+            
+            # Check if headers are installed for current kernel
+            headers_check = self._exec_ssh(ssh_client, f'ls -la /lib/modules/{kernel_version}/build 2>&1')
+            if headers_check['exit_code'] != 0:
+                self._log_console(job_id, 'ERROR', f'Kernel headers missing for {kernel_version}: {headers_check["stderr"]}', job_details)
+                # Try to install headers
+                self._exec_ssh(ssh_client, f'apt-get update && apt-get install -y linux-headers-{kernel_version} || apt-get install -y linux-headers-amd64')
+            
+            # Run dkms autoinstall with output
+            autoinstall_result = self._exec_ssh(ssh_client, 'dkms autoinstall 2>&1')
+            self._log_console(job_id, 'INFO', f'DKMS autoinstall output:\n{autoinstall_result["stdout"][-500:]}', job_details)
+            
+            result = self._exec_ssh(ssh_client, 'modprobe zfs 2>&1')
             
             if result['exit_code'] == 0:
                 lsmod_result = self._exec_ssh(ssh_client, 'lsmod | grep -E "^zfs\\s"')
@@ -1386,8 +1492,29 @@ PACKAGES={packages_str}
                     self._exec_ssh(ssh_client, 'echo "zfs" >> /etc/modules-load.d/zfs.conf')
                     return ssh_client
             
-            # Complete failure
+            # Complete failure - provide detailed diagnostics
             self._log_console(job_id, 'ERROR', 'ZFS kernel module failed to load after reboot', job_details)
+            
+            # Collect detailed diagnostic information
+            modinfo_result = self._exec_ssh(ssh_client, 'modinfo zfs 2>&1')
+            dmesg_result = self._exec_ssh(ssh_client, 'dmesg | grep -i zfs | tail -10 2>&1')
+            
+            error_details = f"""
+=== ZFS Module Diagnostics ===
+Kernel: {kernel_version}
+DKMS Status: {dkms_status['stdout'].strip()}
+modinfo zfs: {modinfo_result['stderr'].strip() if modinfo_result['exit_code'] != 0 else modinfo_result['stdout'][:200]}
+dmesg ZFS: {dmesg_result['stdout'].strip()[-300:]}
+modprobe error: {result['stdout']} {result['stderr']}
+"""
+            self._log_console(job_id, 'ERROR', error_details, job_details)
+            job_details['zfs_diagnostics'] = {
+                'kernel': kernel_version,
+                'dkms_status': dkms_status['stdout'].strip(),
+                'modinfo': modinfo_result['stderr'] if modinfo_result['exit_code'] != 0 else modinfo_result['stdout'][:200],
+                'dmesg': dmesg_result['stdout'].strip()[-300:],
+            }
+            
             ssh_client.close()
             return None
     
