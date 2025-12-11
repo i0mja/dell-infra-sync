@@ -2,7 +2,8 @@ import { SettingsSection } from "@/components/settings/SettingsSection";
 import { ServerGroupsManagement } from "@/components/settings/ServerGroupsManagement";
 import { IsoImageLibrary } from "@/components/settings/IsoImageLibrary";
 import { FirmwareLibrary } from "@/components/settings/FirmwareLibrary";
-import { Briefcase, Disc, Database, Server } from "lucide-react";
+import { ZfsApplianceLibrary } from "@/components/settings/ZfsApplianceLibrary";
+import { Briefcase, Disc, Database, Server, HardDrive } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -124,6 +125,16 @@ export function InfrastructureSettings() {
         icon={Briefcase}
       >
         <ServerGroupsManagement />
+      </SettingsSection>
+
+      {/* ZFS Appliance Library */}
+      <SettingsSection
+        id="appliance-library"
+        title="ZFS Appliance Library"
+        description="Manage prepared ZFS storage appliances for deployment"
+        icon={HardDrive}
+      >
+        <ZfsApplianceLibrary />
       </SettingsSection>
 
       {/* ISO Images */}

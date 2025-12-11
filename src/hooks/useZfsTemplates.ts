@@ -1,9 +1,8 @@
 /**
  * ZFS Target Templates Hook
  * 
- * @deprecated This hook is deprecated. Use OnboardZfsTargetWizard instead of template-based deployment.
- * The template-based approach has been replaced with direct VM onboarding via the OnboardZfsTargetWizard.
- * This file is kept for backward compatibility with existing data.
+ * Manages the ZFS Appliance Library - prepared VM templates for deploying
+ * ZFS storage targets for disaster recovery and replication.
  * 
  * CRUD operations for ZFS target templates used for automated deployment.
  */
@@ -46,6 +45,13 @@ export interface ZfsTargetTemplate {
   
   // Disk configuration
   use_template_disk?: boolean;   // Skip adding disk, use existing template disk
+  
+  // Appliance Library status
+  status?: 'draft' | 'preparing' | 'ready' | 'deprecated';
+  version?: string;
+  preparation_job_id?: string;
+  last_deployed_at?: string;
+  deployment_count?: number;
   
   // Metadata
   is_active: boolean;
