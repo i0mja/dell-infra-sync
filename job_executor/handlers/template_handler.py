@@ -72,6 +72,10 @@ class TemplateHandler(BaseHandler):
         self._log_console(job_id, 'INFO', 'Starting enhanced ZFS template preparation', job_details)
         self.update_job_status(job_id, 'running', started_at=utc_now_iso(), details=job_details)
         
+        # Track what we did for cleanup/rollback
+        we_converted_from_template = False
+        we_powered_on = False
+        
         try:
             # Get VM info
             vcenter_id = target_scope.get('vcenter_id')
@@ -85,16 +89,127 @@ class TemplateHandler(BaseHandler):
             if not vm_info:
                 raise Exception(f'VM not found: {vm_id}')
             
-            vm_ip = vm_info.get('ip_address')
-            if not vm_ip:
-                raise Exception('VM has no IP address - cannot SSH')
-            
             root_password = details.get('root_password')
             if not root_password:
                 raise Exception('Root password is required for template preparation')
             
-            # Optional: Create rollback snapshot before making changes
-            if details.get('create_rollback_snapshot', False):
+            # Check if this is a template or powered-off VM that needs special handling
+            source_is_template = details.get('source_is_template', False)
+            source_power_state = details.get('source_power_state', 'poweredOn')
+            target_cluster = details.get('target_cluster')
+            
+            vm_ip = vm_info.get('ip_address')
+            vm_moref = vm_info.get('vcenter_id') or details.get('vm_moref')
+            needs_power_conversion = source_is_template or source_power_state != 'poweredOn' or not vm_ip
+            
+            self._log_console(job_id, 'INFO', f'Source state: template={source_is_template}, power={source_power_state}, ip={vm_ip}', job_details)
+            
+            # If template or powered-off, connect to vCenter first to convert/power on
+            if needs_power_conversion:
+                self._add_step_result(job_id, job_details, 'vcenter_prep', 'running', 'Connecting to vCenter for VM preparation...')
+                self._update_progress(job_id, job_details, 2)
+                
+                vc_settings = self._get_vcenter_settings(vcenter_id)
+                if not vc_settings:
+                    raise Exception('vCenter settings not found')
+                
+                self.vcenter_conn = self._connect_vcenter(
+                    vc_settings['host'],
+                    vc_settings['username'],
+                    vc_settings['password'],
+                    vc_settings.get('port', 443),
+                    vc_settings.get('verify_ssl', False),
+                    job_id=job_id,
+                    job_details=job_details
+                )
+                
+                if not self.vcenter_conn:
+                    raise Exception('Failed to connect to vCenter')
+                
+                self._add_step_result(job_id, job_details, 'vcenter_prep', 'success', f'Connected to {vc_settings["host"]}')
+                
+                # Find VM by moref
+                vm_obj = self._find_vm_by_moref(self.vcenter_conn, vm_moref)
+                if not vm_obj:
+                    raise Exception(f'VM not found in vCenter: {vm_moref}')
+                
+                # Check if it's actually a VMware template
+                is_vmware_template = hasattr(vm_obj.config, 'template') and vm_obj.config.template
+                
+                # Convert template to VM if needed
+                if is_vmware_template:
+                    self._add_step_result(job_id, job_details, 'convert_to_vm', 'running', 'Converting template to VM...')
+                    self._update_progress(job_id, job_details, 4)
+                    
+                    # Find resource pool from target cluster
+                    resource_pool = self._find_resource_pool_for_cluster(self.vcenter_conn, target_cluster)
+                    if not resource_pool:
+                        raise Exception(f'No resource pool found for cluster: {target_cluster}')
+                    
+                    vm_obj.MarkAsVirtualMachine(pool=resource_pool)
+                    we_converted_from_template = True
+                    self._log_console(job_id, 'INFO', f'Converted template to VM in cluster {target_cluster}', job_details)
+                    self._add_step_result(job_id, job_details, 'convert_to_vm', 'success', f'Converted to VM in {target_cluster}')
+                
+                # Power on if needed
+                power_state = str(vm_obj.runtime.powerState)
+                if power_state != 'poweredOn':
+                    self._add_step_result(job_id, job_details, 'power_on', 'running', 'Powering on VM...')
+                    self._update_progress(job_id, job_details, 6)
+                    
+                    task = vm_obj.PowerOn()
+                    self._wait_for_task(task, timeout=120)
+                    we_powered_on = True
+                    self._log_console(job_id, 'INFO', 'VM powered on', job_details)
+                    self._add_step_result(job_id, job_details, 'power_on', 'success', 'VM powered on')
+                
+                # Wait for VMware Tools
+                self._add_step_result(job_id, job_details, 'vmware_tools', 'running', 'Waiting for VMware Tools...')
+                self._update_progress(job_id, job_details, 8)
+                
+                tools_timeout = 180
+                tools_start = time.time()
+                tools_running = False
+                while time.time() - tools_start < tools_timeout:
+                    vm_obj = self._find_vm_by_moref(self.vcenter_conn, vm_moref)
+                    if vm_obj and vm_obj.guest:
+                        tools_status = vm_obj.guest.toolsRunningStatus
+                        if tools_status == 'guestToolsRunning':
+                            tools_running = True
+                            break
+                    time.sleep(5)
+                
+                if not tools_running:
+                    raise Exception('VMware Tools did not start within timeout')
+                
+                self._add_step_result(job_id, job_details, 'vmware_tools', 'success', 'VMware Tools running')
+                
+                # Wait for IP address
+                self._add_step_result(job_id, job_details, 'wait_ip', 'running', 'Waiting for IP address...')
+                self._update_progress(job_id, job_details, 10)
+                
+                ip_timeout = 120
+                ip_start = time.time()
+                while time.time() - ip_start < ip_timeout:
+                    vm_obj = self._find_vm_by_moref(self.vcenter_conn, vm_moref)
+                    if vm_obj and vm_obj.guest:
+                        vm_ip = vm_obj.guest.ipAddress
+                        if vm_ip and not vm_ip.startswith('169.254') and not vm_ip.startswith('127.'):
+                            break
+                    time.sleep(5)
+                else:
+                    raise Exception('Failed to get IP address within timeout')
+                
+                job_details['vm_ip'] = vm_ip
+                self._log_console(job_id, 'INFO', f'VM IP address: {vm_ip}', job_details)
+                self._add_step_result(job_id, job_details, 'wait_ip', 'success', f'IP: {vm_ip}')
+                
+                # Disconnect vCenter for now (will reconnect later if needed)
+                Disconnect(self.vcenter_conn)
+                self.vcenter_conn = None
+            
+            # Handle rollback snapshot (only if VM is already powered on)
+            elif details.get('create_rollback_snapshot', False):
                 self._add_step_result(job_id, job_details, 'rollback_snapshot', 'running', 'Creating rollback snapshot...')
                 try:
                     vc_settings = self._get_vcenter_settings(vcenter_id)
@@ -107,7 +222,6 @@ class TemplateHandler(BaseHandler):
                             vc_settings.get('verify_ssl', False)
                         )
                         if self.vcenter_conn:
-                            vm_moref = vm_info.get('vcenter_id') or details.get('vm_moref')
                             vm_obj = self._find_vm_by_moref(self.vcenter_conn, vm_moref)
                             if vm_obj:
                                 snapshot_name = f"pre-template-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
@@ -126,9 +240,17 @@ class TemplateHandler(BaseHandler):
                     self._log_console(job_id, 'WARN', f'Rollback snapshot failed: {snap_err}', job_details)
                     self._add_step_result(job_id, job_details, 'rollback_snapshot', 'warning', str(snap_err))
             
+            # Now we should have vm_ip - verify it
+            if not vm_ip:
+                raise Exception('VM has no IP address - cannot SSH')
+            
+            # Store tracking info for cleanup
+            job_details['we_converted_from_template'] = we_converted_from_template
+            job_details['we_powered_on'] = we_powered_on
+            
             # Step 1: Connect to VM via SSH
             self._add_step_result(job_id, job_details, 'ssh_connect', 'running', 'Connecting via SSH...')
-            self._update_progress(job_id, job_details, 5)
+            self._update_progress(job_id, job_details, 12)
             
             ssh_client = self._connect_ssh_password(vm_ip, 'root', root_password)
             if not ssh_client:
@@ -1497,3 +1619,28 @@ PACKAGES={packages_str}
                 raise Exception(f'Task failed: {task.info.error}')
             time.sleep(2)
         raise Exception('Task timeout')
+    
+    def _find_resource_pool_for_cluster(self, si: Any, cluster_name: str) -> Optional[Any]:
+        """Find resource pool for a given cluster name"""
+        try:
+            if not cluster_name:
+                self.log('No cluster name provided for resource pool lookup', 'WARNING')
+                return None
+            
+            content = si.RetrieveContent()
+            
+            # Search all datacenters for the cluster
+            for dc in content.rootFolder.childEntity:
+                if hasattr(dc, 'hostFolder'):
+                    # Search compute resources (clusters and standalone hosts)
+                    for compute_resource in dc.hostFolder.childEntity:
+                        if hasattr(compute_resource, 'name') and compute_resource.name == cluster_name:
+                            if hasattr(compute_resource, 'resourcePool'):
+                                self.log(f'Found resource pool for cluster: {cluster_name}', 'DEBUG')
+                                return compute_resource.resourcePool
+            
+            self.log(f'No resource pool found for cluster: {cluster_name}', 'WARNING')
+            return None
+        except Exception as e:
+            self.log(f'Failed to find resource pool for cluster {cluster_name}: {e}', 'ERROR')
+            return None
