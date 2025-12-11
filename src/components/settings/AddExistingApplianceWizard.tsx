@@ -305,10 +305,36 @@ export function AddExistingApplianceWizard({ open, onOpenChange }: AddExistingAp
           const result = details?.discovery_result as DiscoveryResult;
           setDiscoveryResult(result);
           
-          toast({ title: 'Discovery completed', description: 'ZFS configuration detected successfully' });
+          // Auto-add to library after successful discovery
+          const templateData = {
+            name: selectedTemplate.name,
+            description: `Auto-discovered from ${selectedTemplate.name}`,
+            vcenter_id: selectedVcenterId,
+            template_moref: selectedTemplate.vcenter_id || '',
+            template_name: selectedTemplate.name,
+            default_zfs_pool_name: result?.zfs_status?.pool_name || 'tank',
+            default_zfs_disk_path: result?.zfs_status?.disk_device || '/dev/sdb',
+            default_nfs_network: result?.nfs_exports?.network || '192.168.0.0/16',
+            default_ssh_username: sshUsername,
+            ssh_key_id: authMethod === 'key' ? selectedSshKeyId : undefined,
+            default_cpu_count: result?.vm_specs?.cpu_count || selectedTemplate.cpu_count || 2,
+            default_memory_gb: Math.round((result?.vm_specs?.memory_mb || selectedTemplate.memory_mb || 4096) / 1024),
+            default_zfs_disk_gb: result?.vm_specs?.disk_gb || Math.round(Number(selectedTemplate.disk_gb) || 100),
+            status: 'ready',
+            version: result?.os_info?.version || '1.0.0',
+          };
           
-          // Auto-advance to review step
-          setTimeout(() => setCurrentStep(4), 500);
+          try {
+            await createTemplate(templateData);
+            toast({ title: 'Appliance added to library', description: 'Discovery and registration completed successfully' });
+            onOpenChange(false);
+          } catch (err) {
+            toast({ 
+              title: 'Discovery succeeded but failed to add to library', 
+              description: err instanceof Error ? err.message : 'Unknown error',
+              variant: 'destructive' 
+            });
+          }
           
         } else if (jobResult?.status === 'failed' || attempts >= 90) {
           clearInterval(pollInterval);
