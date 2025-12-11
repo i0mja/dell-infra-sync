@@ -303,16 +303,24 @@ class TemplateHandler(BaseHandler):
                 if not vc_settings:
                     raise Exception('vCenter settings not found')
                 
+                self._add_step_result(job_id, job_details, 'vcenter_connect', 'running', f'Connecting to vCenter {vc_settings["host"]}...')
+                self._log_and_update(job_id, 'INFO', f'Connecting to vCenter for power-off/convert...', job_details)
+                
                 self.vcenter_conn = self._connect_vcenter(
                     vc_settings['host'],
                     vc_settings['username'],
                     vc_settings['password'],
                     vc_settings.get('port', 443),
-                    vc_settings.get('verify_ssl', False)
+                    vc_settings.get('verify_ssl', False),
+                    job_id=job_id,
+                    job_details=job_details
                 )
                 
                 if not self.vcenter_conn:
-                    raise Exception('Failed to connect to vCenter')
+                    self._add_step_result(job_id, job_details, 'vcenter_connect', 'failed', f'Connection failed to {vc_settings["host"]} - check console for details')
+                    raise Exception(f'Failed to connect to vCenter at {vc_settings["host"]} - check network connectivity and credentials')
+                
+                self._add_step_result(job_id, job_details, 'vcenter_connect', 'success', f'Connected to {vc_settings["host"]}')
                 
                 vm_moref = vm_info.get('vcenter_id') or details.get('vm_moref')
                 vm_obj = self._find_vm_by_moref(self.vcenter_conn, vm_moref)
@@ -1244,8 +1252,9 @@ PACKAGES={packages_str}
             return None
     
     def _connect_vcenter(self, host: str, username: str, password: str, 
-                         port: int = 443, verify_ssl: bool = False) -> Optional[Any]:
-        """Connect to vCenter"""
+                         port: int = 443, verify_ssl: bool = False,
+                         job_id: str = None, job_details: Dict = None) -> Optional[Any]:
+        """Connect to vCenter with optional console logging"""
         try:
             ssl_context = None
             if not verify_ssl:
@@ -1253,15 +1262,28 @@ PACKAGES={packages_str}
                 ssl_context.check_hostname = False
                 ssl_context.verify_mode = ssl.CERT_NONE
             
-            return SmartConnect(
+            if job_details is not None and job_id:
+                self._log_console(job_id, 'INFO', f'Connecting to vCenter {host}:{port}...', job_details)
+                self.update_job_status(job_id, 'running', details=job_details)
+            
+            conn = SmartConnect(
                 host=host,
                 user=username,
                 pwd=password,
                 port=port,
                 sslContext=ssl_context
             )
+            
+            if job_details is not None and job_id:
+                self._log_console(job_id, 'INFO', f'Successfully connected to vCenter {host}', job_details)
+            
+            return conn
         except Exception as e:
-            self.log(f'vCenter connection failed: {e}', 'ERROR')
+            error_msg = f'vCenter connection failed: {e}'
+            self.log(error_msg, 'ERROR')
+            if job_details is not None and job_id:
+                self._log_console(job_id, 'ERROR', error_msg, job_details)
+                self.update_job_status(job_id, 'running', details=job_details)
             return None
     
     def _find_vm_by_moref(self, si: Any, moref: str) -> Optional[Any]:
