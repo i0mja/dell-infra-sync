@@ -12,7 +12,14 @@ import {
   PowerOff,
   Settings,
   Key,
-  Server
+  Server,
+  Pencil,
+  Copy,
+  RefreshCw,
+  RefreshCcw,
+  Archive,
+  List,
+  Star
 } from "lucide-react";
 import { ZfsTargetTemplate } from "@/hooks/useZfsTemplates";
 import { formatDistanceToNow } from "date-fns";
@@ -45,13 +52,34 @@ interface ZfsApplianceCardProps {
   onSelect: (template: ZfsTargetTemplate) => void;
   onDelete: (id: string) => void;
   onToggleActive: (id: string, isActive: boolean) => void;
+  // Extended actions
+  onEdit?: (template: ZfsTargetTemplate) => void;
+  onChangeVCenter?: (template: ZfsTargetTemplate) => void;
+  onSetAsDefault?: (template: ZfsTargetTemplate) => void;
+  onClone?: (template: ZfsTargetTemplate) => void;
+  onChangeSshKey?: (template: ZfsTargetTemplate) => void;
+  onReprepare?: (template: ZfsTargetTemplate) => void;
+  onValidate?: (template: ZfsTargetTemplate) => void;
+  onViewDeployments?: (template: ZfsTargetTemplate) => void;
+  onSync?: (template: ZfsTargetTemplate) => void;
+  onDeprecate?: (template: ZfsTargetTemplate) => void;
 }
 
 export const ZfsApplianceCard = ({ 
   template, 
   onSelect, 
   onDelete,
-  onToggleActive 
+  onToggleActive,
+  onEdit,
+  onChangeVCenter,
+  onSetAsDefault,
+  onClone,
+  onChangeSshKey,
+  onReprepare,
+  onValidate,
+  onViewDeployments,
+  onSync,
+  onDeprecate,
 }: ZfsApplianceCardProps) => {
   const getStatusBadge = () => {
     const status = template.status || 'draft';
@@ -157,7 +185,94 @@ export const ZfsApplianceCard = ({
                 <Settings className="h-3 w-3" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end" className="w-48">
+              {/* Edit */}
+              {onEdit && (
+                <DropdownMenuItem onClick={() => onEdit(template)}>
+                  <Pencil className="h-4 w-4 mr-2" />
+                  Edit Details
+                </DropdownMenuItem>
+              )}
+              
+              {/* Change vCenter/Site */}
+              {onChangeVCenter && (
+                <DropdownMenuItem onClick={() => onChangeVCenter(template)}>
+                  <Server className="h-4 w-4 mr-2" />
+                  Change Site
+                </DropdownMenuItem>
+              )}
+              
+              {/* Set as Default */}
+              {onSetAsDefault && (
+                <DropdownMenuItem onClick={() => onSetAsDefault(template)}>
+                  <Star className="h-4 w-4 mr-2" />
+                  Set as Default
+                </DropdownMenuItem>
+              )}
+              
+              {/* Clone */}
+              {onClone && (
+                <DropdownMenuItem onClick={() => onClone(template)}>
+                  <Copy className="h-4 w-4 mr-2" />
+                  Clone Template
+                </DropdownMenuItem>
+              )}
+              
+              <DropdownMenuSeparator />
+              
+              {/* SSH Key */}
+              {onChangeSshKey && (
+                <DropdownMenuItem onClick={() => onChangeSshKey(template)}>
+                  <Key className="h-4 w-4 mr-2" />
+                  Change SSH Key
+                </DropdownMenuItem>
+              )}
+              
+              {/* Re-prepare */}
+              {onReprepare && (
+                <DropdownMenuItem onClick={() => onReprepare(template)}>
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Re-prepare Template
+                </DropdownMenuItem>
+              )}
+              
+              {/* Validate */}
+              {onValidate && (
+                <DropdownMenuItem onClick={() => onValidate(template)}>
+                  <CheckCircle2 className="h-4 w-4 mr-2" />
+                  Validate (Test SSH)
+                </DropdownMenuItem>
+              )}
+              
+              <DropdownMenuSeparator />
+              
+              {/* View Deployments */}
+              {onViewDeployments && (
+                <DropdownMenuItem onClick={() => onViewDeployments(template)}>
+                  <List className="h-4 w-4 mr-2" />
+                  View Deployments {(template.deployment_count ?? 0) > 0 && `(${template.deployment_count})`}
+                </DropdownMenuItem>
+              )}
+              
+              {/* Sync from vCenter */}
+              {onSync && (
+                <DropdownMenuItem onClick={() => onSync(template)}>
+                  <RefreshCcw className="h-4 w-4 mr-2" />
+                  Sync from vCenter
+                </DropdownMenuItem>
+              )}
+              
+              <DropdownMenuSeparator />
+              
+              {/* Deprecate */}
+              {onDeprecate && template.status !== 'deprecated' && (
+                <DropdownMenuItem onClick={() => onDeprecate(template)}>
+                  <Archive className="h-4 w-4 mr-2" />
+                  Mark as Deprecated
+                </DropdownMenuItem>
+              )}
+              
+              {/* Activate/Deactivate */}
               <DropdownMenuItem onClick={() => onToggleActive(template.id, !template.is_active)}>
                 {template.is_active ? (
                   <>
@@ -171,7 +286,10 @@ export const ZfsApplianceCard = ({
                   </>
                 )}
               </DropdownMenuItem>
+              
               <DropdownMenuSeparator />
+              
+              {/* Delete */}
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <DropdownMenuItem 
