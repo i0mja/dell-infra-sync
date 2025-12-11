@@ -14,7 +14,7 @@ import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
 import { StaleJobWarning } from "@/components/activity/StaleJobWarning";
 import { ActivityTable } from "@/components/activity/ActivityTable";
 import { ActivityFilterToolbar } from "@/components/activity/ActivityFilterToolbar";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useActiveJobs } from "@/hooks/useActiveJobs";
@@ -856,6 +856,7 @@ export default function ActivityMonitor() {
         }}
       >
         <SheetContent side="bottom" className="h-[85vh] overflow-hidden p-0">
+          <SheetTitle className="sr-only">Command Details</SheetTitle>
           <CommandDetailsSidebar
             command={selectedCommand}
             onClose={handleCloseDetails}
