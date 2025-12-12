@@ -56,6 +56,7 @@ import {
   ChevronDown,
   Power,
   PowerOff,
+  Wand2,
 } from "lucide-react";
 import {
   Collapsible,
@@ -65,6 +66,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { VMCombobox } from "./VMCombobox";
 import { ZfsApplianceSelector } from "./ZfsApplianceSelector";
+import { PrepareTemplateWizard } from "./PrepareTemplateWizard";
 import { ZfsTargetTemplate, useZfsTemplates } from "@/hooks/useZfsTemplates";
 import { TemplateCloneConfig, CloneSettings } from "./TemplateCloneConfig";
 import { useVCenters } from "@/hooks/useVCenters";
@@ -239,6 +241,30 @@ export function PairedZfsDeployWizard({
   const [consoleOpen, setConsoleOpen] = useState<{ source: boolean; dr: boolean }>({ source: false, dr: false });
   const [deploying, setDeploying] = useState(false);
   const [deployComplete, setDeployComplete] = useState(false);
+  
+  // Fix Template wizard state
+  const [showPrepareWizard, setShowPrepareWizard] = useState(false);
+  const [prepareWizardConfig, setPrepareWizardConfig] = useState<{
+    vcenterId: string;
+    vmId: string;
+    templateName: string;
+    sshKeyId?: string;
+    password?: string;
+    errorMessage: string;
+  } | null>(null);
+  
+  // Helper to detect disk signature errors
+  const isDiskSignatureError = (error: string | undefined): boolean => {
+    if (!error) return false;
+    const patterns = [
+      'in use',
+      'unknown filesystem',
+      'contains a',
+      'wipefs',
+      'zpool create.*failed',
+    ];
+    return patterns.some(p => error.toLowerCase().includes(p.toLowerCase()));
+  };
   
   // Fetch VMs for each vCenter
   const { data: sourceVms = [], isLoading: sourceVmsLoading, clusters: sourceClusters = [] } = 
@@ -1164,6 +1190,34 @@ export function PairedZfsDeployWizard({
               <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
               <span>{progress.error}</span>
             </p>
+            
+            {/* Show "Fix Template" button for disk signature errors */}
+            {isDiskSignatureError(progress.error) && config.isTemplate && (
+              <div className="mt-2 pt-2 border-t border-destructive/20">
+                <p className="text-xs text-muted-foreground mb-2">
+                  The template's disk has leftover signatures. Re-run template preparation to clean the disk.
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs h-7"
+                  onClick={() => {
+                    setPrepareWizardConfig({
+                      vcenterId: config.vcenterId,
+                      vmId: config.vmId,
+                      templateName: config.selectedTemplate?.name || selectedVm?.name || 'Unknown Template',
+                      sshKeyId: config.authMethod === 'existing_key' ? config.sshKeyId : undefined,
+                      password: config.authMethod === 'password' ? config.password : undefined,
+                      errorMessage: progress.error || 'Disk signature error',
+                    });
+                    setShowPrepareWizard(true);
+                  }}
+                >
+                  <Wand2 className="h-3 w-3 mr-1" />
+                  Fix Template
+                </Button>
+              </div>
+            )}
           </div>
         )}
         
@@ -1403,6 +1457,19 @@ export function PairedZfsDeployWizard({
           </div>
         </DialogFooter>
       </DialogContent>
+      
+      {/* Prepare Template Wizard for fixing disk issues */}
+      <PrepareTemplateWizard
+        open={showPrepareWizard}
+        onOpenChange={setShowPrepareWizard}
+        preselectedVCenterId={prepareWizardConfig?.vcenterId}
+        preselectedVMId={prepareWizardConfig?.vmId}
+        preselectedTemplateName={prepareWizardConfig?.templateName}
+        preselectedSshKeyId={prepareWizardConfig?.sshKeyId}
+        preselectedPassword={prepareWizardConfig?.password}
+        startAtStep={5}
+        errorContext={`Disk has leftover signatures from previous use. Run the "Clean" step to wipe disk signatures before re-deploying.`}
+      />
     </Dialog>
   );
 }
