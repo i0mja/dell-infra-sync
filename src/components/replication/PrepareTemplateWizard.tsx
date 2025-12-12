@@ -83,6 +83,13 @@ interface PrepareTemplateWizardProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   preselectedVCenterId?: string;
+  // Additional pre-fill options for "Fix Template" flow
+  preselectedVMId?: string;
+  preselectedTemplateName?: string;
+  preselectedSshKeyId?: string;
+  preselectedPassword?: string;
+  startAtStep?: number;
+  errorContext?: string;
 }
 
 const WIZARD_STEPS = [
@@ -115,6 +122,12 @@ export function PrepareTemplateWizard({
   open,
   onOpenChange,
   preselectedVCenterId,
+  preselectedVMId,
+  preselectedTemplateName,
+  preselectedSshKeyId,
+  preselectedPassword,
+  startAtStep,
+  errorContext,
 }: PrepareTemplateWizardProps) {
   const { toast } = useToast();
   const { vcenters, loading: vcentersLoading } = useVCenters();
@@ -214,22 +227,23 @@ export function PrepareTemplateWizard({
     [selectedVM]
   );
   
-  // Reset when dialog opens
+  // Reset when dialog opens (with support for pre-fill)
   useEffect(() => {
     if (open) {
-      setCurrentStep(1);
+      // Use startAtStep if provided, otherwise start at step 1
+      setCurrentStep(startAtStep || 1);
       setJobId(null);
       setJobStatus('');
       setJobProgress(0);
       setSelectedVCenterId(preselectedVCenterId || "");
-      setSelectedVMId("");
-      setTemplateName("");
+      setSelectedVMId(preselectedVMId || "");
+      setTemplateName(preselectedTemplateName || "");
       setTemplateVersion("1.0.0");
       setPreflightChecks([]);
       setPreflightStatus('idle');
       setPreflightJobId(null);
-      setSelectedSshKeyId("");
-      setRootPassword("");
+      setSelectedSshKeyId(preselectedSshKeyId || "");
+      setRootPassword(preselectedPassword || "");
       setSshTestResult(null);
       setTestingSsh(false);
       setInstallPackages(true);
@@ -253,7 +267,7 @@ export function PrepareTemplateWizard({
       setTargetCluster("");
       setJobDetails(null);
     }
-  }, [open, preselectedVCenterId]);
+  }, [open, preselectedVCenterId, preselectedVMId, preselectedTemplateName, preselectedSshKeyId, preselectedPassword, startAtStep]);
   
   // Auto-refresh VMs when vCenter is selected
   useEffect(() => {
@@ -640,6 +654,16 @@ export function PrepareTemplateWizard({
             Configure a VM as a baseline ZFS appliance template with enhanced validation and tuning
           </DialogDescription>
         </DialogHeader>
+        
+        {/* Error context banner for "Fix Template" flow */}
+        {errorContext && (
+          <Alert className="mx-1 border-yellow-500/50 bg-yellow-500/10">
+            <AlertTriangle className="h-4 w-4 text-yellow-600" />
+            <AlertDescription className="text-sm text-yellow-700 dark:text-yellow-400">
+              {errorContext}
+            </AlertDescription>
+          </Alert>
+        )}
         
         {/* Step indicator */}
         <div className="flex items-center justify-center gap-0.5 py-3 border-b shrink-0">
