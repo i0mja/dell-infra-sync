@@ -970,11 +970,11 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                       <div className="flex items-center gap-2">
                         <Target className="h-4 w-4 text-primary" />
                         {target.name}
-                        {/* SSH key warning */}
-                        {!target.ssh_key_id && (
-                          <Badge variant="outline" className="text-xs text-amber-600 border-amber-500/30" title="No SSH key assigned - health checks may fail">
+                        {/* SSH warning - only show if SSH not established AND not healthy */}
+                        {!target.ssh_trust_established && target.health_status !== 'healthy' && (
+                          <Badge variant="outline" className="text-xs text-amber-600 border-amber-500/30" title="SSH not configured - health checks may fail">
                             <KeyRound className="h-3 w-3 mr-1" />
-                            No Key
+                            No SSH
                           </Badge>
                         )}
                       </div>
