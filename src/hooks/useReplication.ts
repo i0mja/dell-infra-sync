@@ -56,6 +56,22 @@ export interface ReplicationTarget {
   ssh_trust_established?: boolean;
   datastore_name?: string;
   nfs_export_path?: string;
+  hosting_vm_id?: string;
+  // Joined hosting VM info
+  hosting_vm?: {
+    id: string;
+    name: string;
+    ip_address?: string;
+    power_state?: string;
+  } | null;
+  // Joined linked datastore info
+  linked_datastore?: {
+    id: string;
+    name: string;
+    type?: string;
+    capacity_bytes?: number;
+    free_bytes?: number;
+  } | null;
   // Joined partner target info
   partner_target?: {
     id: string;
@@ -182,24 +198,39 @@ export function useReplicationTargets() {
         .order('name');
       if (error) throw error;
 
-      // Fetch partner target info
-      const targetsWithPartnerIds = (data || []).filter(t => t.partner_target_id);
-      let partnerMap: Record<string, ReplicationTarget['partner_target']> = {};
-      
-      if (targetsWithPartnerIds.length > 0) {
-        const partnerIds = targetsWithPartnerIds.map(t => t.partner_target_id);
-        const { data: partners } = await supabase
-          .from('replication_targets')
-          .select('id, name, hostname, zfs_pool, health_status, dr_vcenter_id, ssh_trust_established')
-          .in('id', partnerIds);
-        
-        if (partners) {
-          partnerMap = Object.fromEntries(partners.map(p => [p.id, p]));
-        }
-      }
+      const targetIds = (data || []).map(t => t.id);
+      const hostingVmIds = (data || []).filter(t => t.hosting_vm_id).map(t => t.hosting_vm_id);
+      const partnerIds = (data || []).filter(t => t.partner_target_id).map(t => t.partner_target_id);
+
+      // Fetch hosting VMs, linked datastores, and partner targets in parallel
+      const [hostingVmsResult, linkedDatastoresResult, partnersResult] = await Promise.all([
+        hostingVmIds.length > 0 
+          ? supabase.from('vcenter_vms').select('id, name, ip_address, power_state').in('id', hostingVmIds)
+          : { data: [] },
+        targetIds.length > 0
+          ? supabase.from('vcenter_datastores').select('id, name, type, capacity_bytes, free_bytes, replication_target_id').in('replication_target_id', targetIds)
+          : { data: [] },
+        partnerIds.length > 0
+          ? supabase.from('replication_targets').select('id, name, hostname, zfs_pool, health_status, dr_vcenter_id, ssh_trust_established').in('id', partnerIds)
+          : { data: [] }
+      ]);
+
+      // Build lookup maps
+      const vmMap: Record<string, ReplicationTarget['hosting_vm']> = {};
+      (hostingVmsResult.data || []).forEach(vm => { vmMap[vm.id] = vm; });
+
+      const datastoreMap: Record<string, ReplicationTarget['linked_datastore']> = {};
+      (linkedDatastoresResult.data || []).forEach(ds => { 
+        if (ds.replication_target_id) datastoreMap[ds.replication_target_id] = ds; 
+      });
+
+      const partnerMap: Record<string, ReplicationTarget['partner_target']> = {};
+      (partnersResult.data || []).forEach(p => { partnerMap[p.id] = p; });
 
       return (data || []).map(t => ({
         ...t,
+        hosting_vm: t.hosting_vm_id ? vmMap[t.hosting_vm_id] || null : null,
+        linked_datastore: datastoreMap[t.id] || null,
         partner_target: t.partner_target_id ? partnerMap[t.partner_target_id] || null : null
       })) as ReplicationTarget[];
     }

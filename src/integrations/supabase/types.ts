@@ -2283,6 +2283,7 @@ export type Database = {
           description: string | null
           dr_vcenter_id: string | null
           health_status: string | null
+          hosting_vm_id: string | null
           hostname: string
           id: string
           is_active: boolean | null
@@ -2314,6 +2315,7 @@ export type Database = {
           description?: string | null
           dr_vcenter_id?: string | null
           health_status?: string | null
+          hosting_vm_id?: string | null
           hostname: string
           id?: string
           is_active?: boolean | null
@@ -2345,6 +2347,7 @@ export type Database = {
           description?: string | null
           dr_vcenter_id?: string | null
           health_status?: string | null
+          hosting_vm_id?: string | null
           hostname?: string
           id?: string
           is_active?: boolean | null
@@ -2378,6 +2381,13 @@ export type Database = {
             columns: ["dr_vcenter_id"]
             isOneToOne: false
             referencedRelation: "vcenters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "replication_targets_hosting_vm_id_fkey"
+            columns: ["hosting_vm_id"]
+            isOneToOne: false
+            referencedRelation: "vcenter_vms"
             referencedColumns: ["id"]
           },
           {

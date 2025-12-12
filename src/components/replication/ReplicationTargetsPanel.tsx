@@ -248,6 +248,9 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
       // Get current user
       const { data: userData } = await supabase.auth.getUser();
       
+      // Use hosting VM IP if available, otherwise fall back to hostname
+      const sshHost = target.hosting_vm?.ip_address || target.hostname;
+      
       // Create a check_zfs_target_health job that the Job Executor will process
       const { error } = await supabase
         .from('jobs')
@@ -257,9 +260,10 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
           created_by: userData?.user?.id,
           details: { 
             target_id: target.id,
-            target_hostname: target.hostname,
+            target_hostname: sshHost,
             zfs_pool: target.zfs_pool,
-            target_name: target.name
+            target_name: target.name,
+            hosting_vm_name: target.hosting_vm?.name || null
           }
         });
       
@@ -267,7 +271,7 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
       
       toast({
         title: "Health check job created",
-        description: `Checking ${target.name}... See Jobs page for results`
+        description: `Checking ${target.name} via ${sshHost}... See Jobs page for results`
       });
       
     } catch (err: any) {
@@ -823,11 +827,11 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Site</TableHead>
+                  <TableHead>Hosting VM</TableHead>
+                  <TableHead>NFS Datastore</TableHead>
                   <TableHead>Partner</TableHead>
-                  <TableHead>Host</TableHead>
                   <TableHead>ZFS Pool</TableHead>
                   <TableHead>Health</TableHead>
-                  <TableHead>Last Check</TableHead>
                   <TableHead className="w-12"></TableHead>
                 </TableRow>
               </TableHeader>
@@ -847,6 +851,50 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                       {getSiteRoleBadge(target.site_role)}
                     </TableCell>
                     <TableCell>
+                      {target.hosting_vm ? (
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5">
+                            <Server className="h-3 w-3 text-primary" />
+                            <span className="font-medium text-sm">{target.hosting_vm.name}</span>
+                          </div>
+                          <div className="text-xs text-muted-foreground flex items-center gap-1">
+                            {target.hosting_vm.ip_address || target.hostname}
+                            {target.hosting_vm.power_state === 'poweredOn' && (
+                              <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" title="Powered On" />
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5 text-muted-foreground">
+                            <Server className="h-3 w-3" />
+                            <span className="text-sm italic">No VM linked</span>
+                          </div>
+                          <div className="text-xs text-muted-foreground">{target.hostname}:{target.port}</div>
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {target.linked_datastore ? (
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5">
+                            <Database className="h-3 w-3 text-blue-500" />
+                            <span className="font-medium text-sm">{target.linked_datastore.name}</span>
+                          </div>
+                          {target.linked_datastore.capacity_bytes && target.linked_datastore.free_bytes && (
+                            <div className="text-xs text-muted-foreground">
+                              {Math.round((1 - target.linked_datastore.free_bytes / target.linked_datastore.capacity_bytes) * 100)}% used
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5 text-muted-foreground">
+                          <Database className="h-3 w-3" />
+                          <span className="text-sm italic">No datastore</span>
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell>
                       {target.partner_target ? (
                         <div className="flex items-center gap-2">
                           <ArrowRightLeft className="h-3 w-3 text-muted-foreground" />
@@ -854,7 +902,7 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                           {target.partner_target.ssh_trust_established ? (
                             <Badge variant="outline" className="text-xs text-green-600 border-green-500/30">
                               <KeyRound className="h-3 w-3 mr-1" />
-                              SSH Ready
+                              SSH
                             </Badge>
                           ) : (
                             <Badge variant="outline" className="text-xs text-amber-600 border-amber-500/30">
@@ -877,23 +925,12 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        <Server className="h-3 w-3 text-muted-foreground" />
-                        {target.hostname}:{target.port}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
                         <HardDrive className="h-3 w-3 text-muted-foreground" />
                         {target.zfs_pool}
                       </div>
                     </TableCell>
                     <TableCell>
                       {getHealthBadge(target.health_status)}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground text-sm">
-                      {target.last_health_check
-                        ? formatDistanceToNow(new Date(target.last_health_check), { addSuffix: true })
-                        : 'Never'}
                     </TableCell>
                     <TableCell>
                       <DropdownMenu>
