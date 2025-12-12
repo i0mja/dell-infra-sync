@@ -52,6 +52,7 @@ import {
   Database,
 } from "lucide-react";
 import { useReplicationTargets, ReplicationTarget, TargetDependencies } from "@/hooks/useReplication";
+import { useSshKeys, SshKey } from "@/hooks/useSshKeys";
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -76,6 +77,7 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
     setPartner, 
     refetch 
   } = useReplicationTargets();
+  const { sshKeys } = useSshKeys();
   const { toast } = useToast();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
@@ -288,12 +290,19 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
     if (!editingTarget) return;
     
     try {
+      const updateData: Record<string, any> = {
+        name: editingTarget.name,
+        description: editingTarget.description
+      };
+      
+      // Include ssh_key_id if it was changed (can be null to unlink)
+      if ('ssh_key_id' in editingTarget) {
+        updateData.ssh_key_id = editingTarget.ssh_key_id || null;
+      }
+      
       const { error } = await supabase
         .from('replication_targets')
-        .update({
-          name: editingTarget.name,
-          description: editingTarget.description
-        })
+        .update(updateData)
         .eq('id', editingTarget.id);
       
       if (error) throw error;
@@ -310,6 +319,9 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
       });
     }
   };
+
+  // Filter only active SSH keys for the dropdown
+  const availableSshKeys = sshKeys?.filter(k => k.status === 'active' || k.status === 'pending') || [];
 
   const handleOpenPairDialog = (targetId: string) => {
     setPairingTargetId(targetId);
@@ -717,7 +729,7 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
           <DialogHeader>
             <DialogTitle>Edit Target</DialogTitle>
             <DialogDescription>
-              Update target name and description
+              Update target settings and SSH key assignment
             </DialogDescription>
           </DialogHeader>
           {editingTarget && (
@@ -735,6 +747,42 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                   value={editingTarget.description || ''}
                   onChange={(e) => setEditingTarget({ ...editingTarget, description: e.target.value })}
                 />
+              </div>
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2">
+                  <KeyRound className="h-4 w-4" />
+                  SSH Key
+                </Label>
+                <Select 
+                  value={editingTarget.ssh_key_id || 'none'} 
+                  onValueChange={(value) => setEditingTarget({ 
+                    ...editingTarget, 
+                    ssh_key_id: value === 'none' ? null : value 
+                  })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select SSH key..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">
+                      <span className="text-muted-foreground">No SSH key assigned</span>
+                    </SelectItem>
+                    {availableSshKeys.map(key => (
+                      <SelectItem key={key.id} value={key.id}>
+                        <div className="flex items-center gap-2">
+                          <KeyRound className="h-3 w-3" />
+                          {key.name}
+                          <Badge variant="outline" className="ml-1 text-xs">
+                            {key.status}
+                          </Badge>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Assign an SSH key for health checks and replication operations. Keys can be created in Settings → SSH Keys.
+                </p>
               </div>
             </div>
           )}

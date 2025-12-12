@@ -556,7 +556,7 @@ class ReplicationHandler(BaseHandler):
                 self.executor.log(f"Using provided password for {hostname}")
                 return creds
             
-            self.executor.log(f"No SSH credentials available for target {hostname}", "ERROR")
+            self.executor.log(f"No SSH credentials available for target {hostname}. Assign an SSH key in Edit Target or run SSH Key Exchange first.", "ERROR")
             return None
             
         except Exception as e:
@@ -1585,6 +1585,10 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
             self._update_replication_target(dest_target_id, ssh_trust_established=True)
             results['steps'].append('trust_established')
             
+            # Step 5: Auto-link an active SSH key if available and targets don't have one
+            self._auto_link_ssh_key_to_targets(source_target_id, dest_target_id)
+            results['steps'].append('ssh_key_linked')
+            
             self.update_job_status(job_id, 'completed', completed_at=utc_now_iso(), details=results)
             self.executor.log(f"[{job_id}] SSH key exchange completed successfully")
             
@@ -1612,6 +1616,63 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
         except Exception as e:
             self.executor.log(f"Error updating replication target: {e}", "ERROR")
             return False
+    
+    def _auto_link_ssh_key_to_targets(self, source_target_id: str, dest_target_id: str):
+        """
+        Auto-link an active SSH key to targets after successful key exchange.
+        Only links if targets don't already have an ssh_key_id.
+        """
+        try:
+            # Check if targets already have SSH keys linked
+            source_target = self._get_replication_target(source_target_id)
+            dest_target = self._get_replication_target(dest_target_id)
+            
+            source_needs_key = source_target and not source_target.get('ssh_key_id')
+            dest_needs_key = dest_target and not dest_target.get('ssh_key_id')
+            
+            if not source_needs_key and not dest_needs_key:
+                self.executor.log("Both targets already have SSH keys linked, skipping auto-link")
+                return
+            
+            # Find an active SSH key to use
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/ssh_keys",
+                params={
+                    'status': 'eq.active',
+                    'order': 'created_at.desc',
+                    'limit': '1'
+                },
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if not response.ok:
+                self.executor.log("Failed to fetch SSH keys for auto-linking", "WARNING")
+                return
+            
+            keys = response.json()
+            if not keys:
+                self.executor.log("No active SSH keys available for auto-linking", "WARNING")
+                return
+            
+            ssh_key_id = keys[0]['id']
+            ssh_key_name = keys[0].get('name', 'unknown')
+            
+            # Link the key to targets that need it
+            if source_needs_key:
+                self._update_replication_target(source_target_id, ssh_key_id=ssh_key_id)
+                self.executor.log(f"Auto-linked SSH key '{ssh_key_name}' to source target")
+            
+            if dest_needs_key:
+                self._update_replication_target(dest_target_id, ssh_key_id=ssh_key_id)
+                self.executor.log(f"Auto-linked SSH key '{ssh_key_name}' to destination target")
+                
+        except Exception as e:
+            self.executor.log(f"Error auto-linking SSH key: {e}", "WARNING")
     
     def _get_or_generate_ssh_key(self, target: Dict, password: str = None) -> Optional[str]:
         """Get existing SSH public key or generate a new one on the target
