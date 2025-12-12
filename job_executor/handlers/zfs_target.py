@@ -3820,13 +3820,13 @@ class ZfsTargetHandler(BaseHandler):
                         if vm:
                             # Ensure VM is powered off
                             if str(vm.runtime.powerState) == 'poweredOn':
-                                task = vm.PowerOffVM_Task()
-                                self._wait_for_task(task)
+                            task = vm.PowerOffVM_Task()
+                                self._wait_for_task_simple(task)
                             
                             # Delete VM from disk
                             vm_name = vm.name
                             task = vm.Destroy_Task()
-                            self._wait_for_task(task)
+                            self._wait_for_task_simple(task)
                             add_result('delete_vm', 'success', f'VM {vm_name} deleted')
                         else:
                             add_result('delete_vm', 'skipped', f'VM not found: {deployed_vm_moref}')
