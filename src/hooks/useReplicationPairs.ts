@@ -146,8 +146,25 @@ export function useReplicationPairs() {
 
   const testConnectionMutation = useMutation({
     mutationFn: async (id: string) => {
-      // Update status to indicate testing
-      const { error } = await supabase
+      // Get current user
+      const { data: userData } = await supabase.auth.getUser();
+      
+      // Create a test_replication_pair job that the Job Executor will process
+      const { data, error } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'test_replication_pair' as any,
+          status: 'pending',
+          created_by: userData?.user?.id,
+          details: { pair_id: id }
+        })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      
+      // Also update the pair to show testing is in progress
+      await supabase
         .from('replication_pairs')
         .update({
           connection_status: 'unknown',
@@ -155,14 +172,10 @@ export function useReplicationPairs() {
         })
         .eq('id', id);
       
-      if (error) throw error;
-      
-      // In production, this would call the Job Executor to test the connection
-      // For now, just return success after updating the timestamp
-      return { id, status: 'test_started' };
+      return data;
     },
     onSuccess: () => {
-      toast({ title: 'Connection test started' });
+      toast({ title: 'Connection test started', description: 'Check Jobs page for progress' });
       queryClient.invalidateQueries({ queryKey: ['replication-pairs'] });
     },
     onError: (err: Error) => {
