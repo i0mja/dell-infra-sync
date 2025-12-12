@@ -1942,6 +1942,7 @@ export type Database = {
           last_test_at: string | null
           name: string
           next_replication_at: string | null
+          next_scheduled_sync: string | null
           pause_reason: string | null
           paused_at: string | null
           priority: string | null
@@ -1952,6 +1953,7 @@ export type Database = {
           rpo_minutes: number | null
           source_vcenter_id: string | null
           status: string | null
+          sync_in_progress: boolean | null
           target_id: string | null
           test_reminder_days: number | null
           updated_at: string | null
@@ -1971,6 +1973,7 @@ export type Database = {
           last_test_at?: string | null
           name: string
           next_replication_at?: string | null
+          next_scheduled_sync?: string | null
           pause_reason?: string | null
           paused_at?: string | null
           priority?: string | null
@@ -1981,6 +1984,7 @@ export type Database = {
           rpo_minutes?: number | null
           source_vcenter_id?: string | null
           status?: string | null
+          sync_in_progress?: boolean | null
           target_id?: string | null
           test_reminder_days?: number | null
           updated_at?: string | null
@@ -2000,6 +2004,7 @@ export type Database = {
           last_test_at?: string | null
           name?: string
           next_replication_at?: string | null
+          next_scheduled_sync?: string | null
           pause_reason?: string | null
           paused_at?: string | null
           priority?: string | null
@@ -2010,6 +2015,7 @@ export type Database = {
           rpo_minutes?: number | null
           source_vcenter_id?: string | null
           status?: string | null
+          sync_in_progress?: boolean | null
           target_id?: string | null
           test_reminder_days?: number | null
           updated_at?: string | null
@@ -2288,6 +2294,7 @@ export type Database = {
           source_template_id: string | null
           ssh_key_encrypted: string | null
           ssh_key_id: string | null
+          ssh_trust_established: boolean | null
           ssh_username: string | null
           target_type: string
           updated_at: string | null
@@ -2316,6 +2323,7 @@ export type Database = {
           source_template_id?: string | null
           ssh_key_encrypted?: string | null
           ssh_key_id?: string | null
+          ssh_trust_established?: boolean | null
           ssh_username?: string | null
           target_type?: string
           updated_at?: string | null
@@ -2344,6 +2352,7 @@ export type Database = {
           source_template_id?: string | null
           ssh_key_encrypted?: string | null
           ssh_key_id?: string | null
+          ssh_trust_established?: boolean | null
           ssh_username?: string | null
           target_type?: string
           updated_at?: string | null

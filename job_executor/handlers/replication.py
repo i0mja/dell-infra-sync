@@ -1388,3 +1388,258 @@ SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 {schedule} root /usr/sbin/syncoid --no-privilege-elevation --no-sync-snap {source_dataset} root@{dr_host}:{dr_dataset} >> /var/log/zerfaux-sync.log 2>&1
 """
+
+    # =========================================================================
+    # SSH Key Exchange Handler
+    # =========================================================================
+    
+    def execute_exchange_ssh_keys(self, job: Dict):
+        """
+        Exchange SSH keys between paired replication targets.
+        
+        Steps:
+        1. Get source and destination target from pair
+        2. Generate SSH key pair on source if needed
+        3. Copy public key to destination's authorized_keys
+        4. Verify bidirectional SSH connectivity
+        5. Mark both targets as ssh_trust_established
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        
+        self.executor.log(f"[{job_id}] Starting SSH key exchange")
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso())
+        
+        try:
+            source_target_id = details.get('source_target_id')
+            dest_target_id = details.get('destination_target_id')
+            
+            if not source_target_id or not dest_target_id:
+                raise ValueError("Both source_target_id and destination_target_id are required")
+            
+            source_target = self._get_replication_target(source_target_id)
+            dest_target = self._get_replication_target(dest_target_id)
+            
+            if not source_target:
+                raise ValueError(f"Source target not found: {source_target_id}")
+            if not dest_target:
+                raise ValueError(f"Destination target not found: {dest_target_id}")
+            
+            results = {
+                'source_target': source_target.get('name'),
+                'destination_target': dest_target.get('name'),
+                'steps': []
+            }
+            
+            # Step 1: Get/generate SSH key on source
+            self.executor.log(f"[{job_id}] Getting SSH key from source: {source_target.get('hostname')}")
+            source_pub_key = self._get_or_generate_ssh_key(source_target)
+            if not source_pub_key:
+                raise Exception("Failed to get/generate SSH key on source target")
+            results['steps'].append('source_key_obtained')
+            
+            # Step 2: Copy public key to destination
+            self.executor.log(f"[{job_id}] Copying public key to destination: {dest_target.get('hostname')}")
+            copy_result = self._copy_ssh_key_to_target(dest_target, source_pub_key, source_target.get('hostname', 'zerfaux'))
+            if not copy_result.get('success'):
+                raise Exception(f"Failed to copy key to destination: {copy_result.get('error')}")
+            results['steps'].append('key_copied_to_destination')
+            
+            # Step 3: Test SSH connection from source to destination
+            self.executor.log(f"[{job_id}] Testing SSH connection from source to destination")
+            test_result = self._test_ssh_connection(source_target, dest_target)
+            if not test_result.get('success'):
+                raise Exception(f"SSH connection test failed: {test_result.get('error')}")
+            results['steps'].append('connection_tested')
+            
+            # Step 4: Mark both targets as ssh_trust_established
+            self._update_replication_target(source_target_id, ssh_trust_established=True)
+            self._update_replication_target(dest_target_id, ssh_trust_established=True)
+            results['steps'].append('trust_established')
+            
+            self.update_job_status(job_id, 'completed', completed_at=utc_now_iso(), details=results)
+            self.executor.log(f"[{job_id}] SSH key exchange completed successfully")
+            
+        except Exception as e:
+            self.executor.log(f"[{job_id}] Error in SSH key exchange: {e}", "ERROR")
+            self.update_job_status(job_id, 'failed', completed_at=utc_now_iso(), details={'error': str(e)})
+    
+    def _update_replication_target(self, target_id: str, **kwargs) -> bool:
+        """Update replication target fields"""
+        try:
+            response = requests.patch(
+                f"{DSM_URL}/rest/v1/replication_targets",
+                params={'id': f'eq.{target_id}'},
+                json={**kwargs, 'updated_at': utc_now_iso()},
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            return response.ok
+        except Exception as e:
+            self.executor.log(f"Error updating replication target: {e}", "ERROR")
+            return False
+    
+    def _get_or_generate_ssh_key(self, target: Dict) -> Optional[str]:
+        """Get existing SSH public key or generate a new one on the target"""
+        if not PARAMIKO_AVAILABLE:
+            self.executor.log("Paramiko not available for SSH operations", "ERROR")
+            return None
+        
+        try:
+            creds = self._get_target_ssh_creds(target)
+            if not creds:
+                return None
+            
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            pkey = None
+            if creds.get('key_path') and creds['key_path'].strip():
+                pkey = paramiko.RSAKey.from_private_key_file(creds['key_path'])
+            elif creds.get('key_data'):
+                pkey = paramiko.RSAKey.from_private_key(io.StringIO(creds['key_data']))
+            
+            ssh.connect(
+                hostname=creds['hostname'],
+                port=creds['port'],
+                username=creds['username'],
+                pkey=pkey,
+                password=creds.get('password'),
+                timeout=30
+            )
+            
+            # Check if key exists
+            stdin, stdout, stderr = ssh.exec_command('cat ~/.ssh/id_rsa.pub 2>/dev/null')
+            exit_status = stdout.channel.recv_exit_status()
+            pub_key = stdout.read().decode().strip()
+            
+            if exit_status == 0 and pub_key:
+                ssh.close()
+                return pub_key
+            
+            # Generate new key pair
+            self.executor.log("Generating new SSH key pair on target")
+            cmd = 'ssh-keygen -t rsa -b 4096 -N "" -f ~/.ssh/id_rsa -q <<< y 2>/dev/null || true'
+            stdin, stdout, stderr = ssh.exec_command(cmd)
+            stdout.channel.recv_exit_status()
+            
+            # Read the new public key
+            stdin, stdout, stderr = ssh.exec_command('cat ~/.ssh/id_rsa.pub')
+            exit_status = stdout.channel.recv_exit_status()
+            pub_key = stdout.read().decode().strip()
+            
+            ssh.close()
+            
+            if exit_status == 0 and pub_key:
+                return pub_key
+            return None
+            
+        except Exception as e:
+            self.executor.log(f"Error getting/generating SSH key: {e}", "ERROR")
+            return None
+    
+    def _copy_ssh_key_to_target(self, target: Dict, pub_key: str, source_hostname: str) -> Dict:
+        """Copy a public key to the target's authorized_keys"""
+        if not PARAMIKO_AVAILABLE:
+            return {'success': False, 'error': 'Paramiko not available'}
+        
+        try:
+            creds = self._get_target_ssh_creds(target)
+            if not creds:
+                return {'success': False, 'error': 'Could not get SSH credentials'}
+            
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            pkey = None
+            if creds.get('key_path') and creds['key_path'].strip():
+                pkey = paramiko.RSAKey.from_private_key_file(creds['key_path'])
+            elif creds.get('key_data'):
+                pkey = paramiko.RSAKey.from_private_key(io.StringIO(creds['key_data']))
+            
+            ssh.connect(
+                hostname=creds['hostname'],
+                port=creds['port'],
+                username=creds['username'],
+                pkey=pkey,
+                password=creds.get('password'),
+                timeout=30
+            )
+            
+            # Ensure .ssh directory exists
+            ssh.exec_command('mkdir -p ~/.ssh && chmod 700 ~/.ssh')
+            
+            # Add key to authorized_keys if not already present
+            comment = f"# Added by Zerfaux from {source_hostname}"
+            cmd = f'''
+grep -qxF "{pub_key}" ~/.ssh/authorized_keys 2>/dev/null || echo "{comment}
+{pub_key}" >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+'''
+            stdin, stdout, stderr = ssh.exec_command(cmd)
+            exit_status = stdout.channel.recv_exit_status()
+            
+            ssh.close()
+            
+            if exit_status == 0:
+                return {'success': True}
+            else:
+                error = stderr.read().decode().strip()
+                return {'success': False, 'error': error or 'Unknown error'}
+                
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+    
+    def _test_ssh_connection(self, source_target: Dict, dest_target: Dict) -> Dict:
+        """Test SSH connection from source to destination"""
+        if not PARAMIKO_AVAILABLE:
+            return {'success': False, 'error': 'Paramiko not available'}
+        
+        try:
+            creds = self._get_target_ssh_creds(source_target)
+            if not creds:
+                return {'success': False, 'error': 'Could not get source SSH credentials'}
+            
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            pkey = None
+            if creds.get('key_path') and creds['key_path'].strip():
+                pkey = paramiko.RSAKey.from_private_key_file(creds['key_path'])
+            elif creds.get('key_data'):
+                pkey = paramiko.RSAKey.from_private_key(io.StringIO(creds['key_data']))
+            
+            ssh.connect(
+                hostname=creds['hostname'],
+                port=creds['port'],
+                username=creds['username'],
+                pkey=pkey,
+                password=creds.get('password'),
+                timeout=30
+            )
+            
+            # Test connection from source to destination
+            dest_host = dest_target.get('hostname')
+            dest_port = dest_target.get('port', 22)
+            cmd = f'ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no -p {dest_port} root@{dest_host} "echo SUCCESS"'
+            
+            stdin, stdout, stderr = ssh.exec_command(cmd)
+            exit_status = stdout.channel.recv_exit_status()
+            output = stdout.read().decode().strip()
+            
+            ssh.close()
+            
+            if exit_status == 0 and 'SUCCESS' in output:
+                return {'success': True}
+            else:
+                error = stderr.read().decode().strip()
+                return {'success': False, 'error': error or f'Connection test returned exit code {exit_status}'}
+                
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
