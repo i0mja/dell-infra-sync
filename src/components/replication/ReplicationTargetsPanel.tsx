@@ -97,6 +97,14 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
   const [showDatastoreDialog, setShowDatastoreDialog] = useState(false);
   const [datastoreTarget, setDatastoreTarget] = useState<ReplicationTarget | null>(null);
   
+  // SSH password dialog state
+  const [sshPasswordDialog, setSshPasswordDialog] = useState<{
+    open: boolean;
+    target: ReplicationTarget | null;
+  }>({ open: false, target: null });
+  const [sshPassword, setSshPassword] = useState('');
+  const [submittingSshExchange, setSubmittingSshExchange] = useState(false);
+  
   // Form for creating paired targets (source + DR)
   const [formData, setFormData] = useState({
     // Source site (Point A)
@@ -351,14 +359,22 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
     }
   };
 
-  const handleReestablishSsh = async (target: ReplicationTarget) => {
+  const handleReestablishSsh = (target: ReplicationTarget) => {
     if (!target.partner_target_id) return;
+    setSshPasswordDialog({ open: true, target });
+    setSshPassword('');
+  };
+
+  const submitSshKeyExchange = async () => {
+    const target = sshPasswordDialog.target;
+    if (!target || !target.partner_target_id) return;
     
+    setSubmittingSshExchange(true);
     try {
       // Get current user
       const { data: { user } } = await supabase.auth.getUser();
       
-      // Create SSH key exchange job
+      // Create SSH key exchange job with password
       const { error } = await supabase
         .from('jobs')
         .insert({
@@ -368,6 +384,7 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
           details: {
             source_target_id: target.id,
             destination_target_id: target.partner_target_id,
+            admin_password: sshPassword,
           },
         });
       
@@ -377,12 +394,17 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
         title: 'SSH key exchange job created',
         description: 'Check Jobs page for progress',
       });
+      
+      setSshPasswordDialog({ open: false, target: null });
+      setSshPassword('');
     } catch (err: any) {
       toast({
         title: 'Error',
         description: err.message,
         variant: 'destructive',
       });
+    } finally {
+      setSubmittingSshExchange(false);
     }
   };
 
@@ -994,6 +1016,72 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
           dr_vcenter_id: datastoreTarget.dr_vcenter_id,
         } : null}
       />
+
+      {/* SSH Password Dialog for Key Exchange */}
+      <Dialog 
+        open={sshPasswordDialog.open} 
+        onOpenChange={(open) => {
+          if (!open) {
+            setSshPasswordDialog({ open: false, target: null });
+            setSshPassword('');
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5" />
+              SSH Authentication Required
+            </DialogTitle>
+            <DialogDescription>
+              Enter the root password for <strong>{sshPasswordDialog.target?.name}</strong> to establish SSH key trust between paired targets.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="ssh-password">Root Password</Label>
+              <Input 
+                id="ssh-password"
+                type="password" 
+                value={sshPassword} 
+                onChange={(e) => setSshPassword(e.target.value)}
+                placeholder="Enter root password"
+                autoComplete="off"
+              />
+              <p className="text-xs text-muted-foreground">
+                This password is used once to establish SSH key-based authentication between targets.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setSshPasswordDialog({ open: false, target: null });
+                setSshPassword('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={submitSshKeyExchange} 
+              disabled={submittingSshExchange || !sshPassword.trim()}
+            >
+              {submittingSshExchange ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Creating Job...
+                </>
+              ) : (
+                <>
+                  <KeyRound className="h-4 w-4 mr-2" />
+                  Establish Trust
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

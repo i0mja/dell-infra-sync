@@ -443,10 +443,14 @@ class ReplicationHandler(BaseHandler):
         except Exception as e:
             return {'success': False, 'error': str(e)}
     
-    def _get_target_ssh_creds(self, target: Dict) -> Optional[Dict]:
+    def _get_target_ssh_creds(self, target: Dict, password: str = None) -> Optional[Dict]:
         """
         Get SSH credentials for connecting to a replication target.
         Returns dict with hostname, port, username, and key_path/key_data/password.
+        
+        Args:
+            target: The replication target dict
+            password: Optional password to use for authentication (e.g., from job details)
         """
         try:
             hostname = target.get('hostname')
@@ -538,13 +542,19 @@ class ReplicationHandler(BaseHandler):
                         
                         # Check for encrypted password
                         if settings.get('ssh_password_encrypted'):
-                            password = self.executor.decrypt_password(settings['ssh_password_encrypted'])
-                            if password:
-                                creds['password'] = password
-                                self.executor.log(f"Using SSH password for {hostname}")
+                            password_from_settings = self.executor.decrypt_password(settings['ssh_password_encrypted'])
+                            if password_from_settings:
+                                creds['password'] = password_from_settings
+                                self.executor.log(f"Using SSH password from settings for {hostname}")
                                 return creds
             except Exception as e:
                 self.executor.log(f"Error fetching activity_settings: {e}", "WARNING")
+            
+            # Use provided password as fallback (from job details)
+            if password:
+                creds['password'] = password
+                self.executor.log(f"Using provided password for {hostname}")
+                return creds
             
             self.executor.log(f"No SSH credentials available for target {hostname}", "ERROR")
             return None
@@ -1523,6 +1533,7 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
         try:
             source_target_id = details.get('source_target_id')
             dest_target_id = details.get('destination_target_id')
+            admin_password = details.get('admin_password')
             
             if not source_target_id or not dest_target_id:
                 raise ValueError("Both source_target_id and destination_target_id are required")
@@ -1541,16 +1552,16 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
                 'steps': []
             }
             
-            # Step 1: Get/generate SSH key on source
+            # Step 1: Get/generate SSH key on source (use admin_password if provided)
             self.executor.log(f"[{job_id}] Getting SSH key from source: {source_target.get('hostname')}")
-            source_pub_key = self._get_or_generate_ssh_key(source_target)
+            source_pub_key = self._get_or_generate_ssh_key(source_target, password=admin_password)
             if not source_pub_key:
                 raise Exception("Failed to get/generate SSH key on source target")
             results['steps'].append('source_key_obtained')
             
-            # Step 2: Copy public key to destination
+            # Step 2: Copy public key to destination (use admin_password for dest too)
             self.executor.log(f"[{job_id}] Copying public key to destination: {dest_target.get('hostname')}")
-            copy_result = self._copy_ssh_key_to_target(dest_target, source_pub_key, source_target.get('hostname', 'zerfaux'))
+            copy_result = self._copy_ssh_key_to_target(dest_target, source_pub_key, source_target.get('hostname', 'zerfaux'), password=admin_password)
             if not copy_result.get('success'):
                 raise Exception(f"Failed to copy key to destination: {copy_result.get('error')}")
             results['steps'].append('key_copied_to_destination')
@@ -1595,14 +1606,19 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
             self.executor.log(f"Error updating replication target: {e}", "ERROR")
             return False
     
-    def _get_or_generate_ssh_key(self, target: Dict) -> Optional[str]:
-        """Get existing SSH public key or generate a new one on the target"""
+    def _get_or_generate_ssh_key(self, target: Dict, password: str = None) -> Optional[str]:
+        """Get existing SSH public key or generate a new one on the target
+        
+        Args:
+            target: The replication target dict
+            password: Optional password for initial SSH authentication
+        """
         if not PARAMIKO_AVAILABLE:
             self.executor.log("Paramiko not available for SSH operations", "ERROR")
             return None
         
         try:
-            creds = self._get_target_ssh_creds(target)
+            creds = self._get_target_ssh_creds(target, password=password)
             if not creds:
                 return None
             
@@ -1654,13 +1670,20 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
             self.executor.log(f"Error getting/generating SSH key: {e}", "ERROR")
             return None
     
-    def _copy_ssh_key_to_target(self, target: Dict, pub_key: str, source_hostname: str) -> Dict:
-        """Copy a public key to the target's authorized_keys"""
+    def _copy_ssh_key_to_target(self, target: Dict, pub_key: str, source_hostname: str, password: str = None) -> Dict:
+        """Copy a public key to the target's authorized_keys
+        
+        Args:
+            target: The destination replication target
+            pub_key: The public key to copy
+            source_hostname: The hostname of the source for comment
+            password: Optional password for initial SSH authentication
+        """
         if not PARAMIKO_AVAILABLE:
             return {'success': False, 'error': 'Paramiko not available'}
         
         try:
-            creds = self._get_target_ssh_creds(target)
+            creds = self._get_target_ssh_creds(target, password=password)
             if not creds:
                 return {'success': False, 'error': 'Could not get SSH credentials'}
             
