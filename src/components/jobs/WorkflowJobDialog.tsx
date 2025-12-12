@@ -274,12 +274,15 @@ export const WorkflowJobDialog = ({
 
               <div className="space-y-2">
                 <Label htmlFor="vcenterHost">vCenter Host (Optional)</Label>
-                <Select value={selectedVCenterHostId} onValueChange={setSelectedVCenterHostId}>
+                <Select 
+                  value={selectedVCenterHostId || "__none__"} 
+                  onValueChange={(v) => setSelectedVCenterHostId(v === "__none__" ? "" : v)}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Select vCenter host or leave empty" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None</SelectItem>
+                    <SelectItem value="__none__">None</SelectItem>
                     {vcenterHosts.map(host => (
                       <SelectItem key={host.id} value={host.id}>
                         {host.name} {host.cluster && `(${host.cluster})`}
@@ -336,12 +339,15 @@ export const WorkflowJobDialog = ({
 
               <div className="space-y-2">
                 <Label htmlFor="vcenterHost">vCenter Host (Optional)</Label>
-                <Select value={selectedVCenterHostId} onValueChange={setSelectedVCenterHostId}>
+                <Select 
+                  value={selectedVCenterHostId || "__none__"} 
+                  onValueChange={(v) => setSelectedVCenterHostId(v === "__none__" ? "" : v)}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Select vCenter host or leave empty" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None</SelectItem>
+                    <SelectItem value="__none__">None</SelectItem>
                     {vcenterHosts.map(host => (
                       <SelectItem key={host.id} value={host.id}>
                         {host.name} {host.cluster && `(${host.cluster})`}
