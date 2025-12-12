@@ -474,6 +474,37 @@ class ReplicationHandler(BaseHandler):
                     self.executor.log(f"Using target-specific SSH key for {hostname}")
                     return creds
             
+            # Check if target has an ssh_key_id reference to ssh_keys table
+            if target.get('ssh_key_id'):
+                try:
+                    response = requests.get(
+                        f"{DSM_URL}/rest/v1/ssh_keys",
+                        params={
+                            'id': f"eq.{target['ssh_key_id']}",
+                            'select': 'private_key_encrypted,status'
+                        },
+                        headers={
+                            'apikey': SERVICE_ROLE_KEY,
+                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                        },
+                        verify=VERIFY_SSL,
+                        timeout=10
+                    )
+                    if response.ok:
+                        keys = response.json()
+                        if keys and keys[0].get('private_key_encrypted'):
+                            # Only use active keys
+                            if keys[0].get('status') in ('active', 'pending'):
+                                key_data = self.executor.decrypt_password(keys[0]['private_key_encrypted'])
+                                if key_data:
+                                    creds['key_data'] = key_data
+                                    self.executor.log(f"Using SSH key from ssh_keys table for {hostname}")
+                                    return creds
+                            else:
+                                self.executor.log(f"SSH key {target['ssh_key_id']} is not active", "WARNING")
+                except Exception as e:
+                    self.executor.log(f"Error fetching SSH key from ssh_keys table: {e}", "WARNING")
+            
             # Fallback to activity_settings SSH configuration
             try:
                 response = requests.get(
