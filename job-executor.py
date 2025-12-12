@@ -951,6 +951,9 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
             'clone_zfs_template': self.template_handler.execute_clone_zfs_template,
             'validate_zfs_template': self.template_handler.execute_validate_zfs_template,
             'inspect_zfs_appliance': self.template_handler.execute_inspect_zfs_appliance,
+            # Datastore management
+            'manage_datastore': self.zfs_target_handler.execute_manage_datastore,
+            'scan_datastore_status': self.zfs_target_handler.execute_scan_datastore_status,
         }
         
         handler = handler_map.get(job_type)
