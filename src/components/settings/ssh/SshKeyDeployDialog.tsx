@@ -119,6 +119,19 @@ export function SshKeyDeployDialog({ open, onOpenChange, sshKey, onDeployComplet
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
+      // Encrypt password before storing in job details
+      let encryptedPassword: string | undefined;
+      if (adminPassword) {
+        const { data: encryptData, error: encryptError } = await supabase.functions.invoke('encrypt-credentials', {
+          body: {
+            password: adminPassword,
+            type: 'return_only'
+          }
+        });
+        if (encryptError) throw encryptError;
+        encryptedPassword = encryptData?.encrypted;
+      }
+
       const { data: job, error } = await supabase
         .from('jobs')
         .insert({
@@ -128,7 +141,7 @@ export function SshKeyDeployDialog({ open, onOpenChange, sshKey, onDeployComplet
           details: {
             ssh_key_id: sshKey.id,
             target_ids: selectedTargets,
-            admin_password: adminPassword || undefined,
+            admin_password_encrypted: encryptedPassword,
           },
         })
         .select()

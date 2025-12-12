@@ -374,7 +374,20 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
       // Get current user
       const { data: { user } } = await supabase.auth.getUser();
       
-      // Create SSH key exchange job with password
+      // Encrypt password before storing in job details
+      let encryptedPassword: string | undefined;
+      if (sshPassword) {
+        const { data: encryptData, error: encryptError } = await supabase.functions.invoke('encrypt-credentials', {
+          body: {
+            password: sshPassword,
+            type: 'return_only'
+          }
+        });
+        if (encryptError) throw encryptError;
+        encryptedPassword = encryptData?.encrypted;
+      }
+      
+      // Create SSH key exchange job with encrypted password
       const { error } = await supabase
         .from('jobs')
         .insert({
@@ -384,7 +397,7 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
           details: {
             source_target_id: target.id,
             destination_target_id: target.partner_target_id,
-            admin_password: sshPassword,
+            admin_password_encrypted: encryptedPassword,
           },
         });
       

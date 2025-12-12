@@ -548,7 +548,14 @@ class SshKeyHandler(BaseHandler):
         
         ssh_key_id = details.get('ssh_key_id')
         target_ids = details.get('target_ids', [])
-        admin_password = details.get('admin_password')
+        
+        # Decrypt admin password if provided (stored encrypted for security)
+        admin_password = None
+        admin_password_encrypted = details.get('admin_password_encrypted')
+        if admin_password_encrypted:
+            admin_password = self.executor.decrypt_password(admin_password_encrypted)
+            if admin_password:
+                self.log("Successfully decrypted admin password")
         
         if not ssh_key_id:
             self.mark_job_failed(job, "ssh_key_id is required")
@@ -742,7 +749,14 @@ class SshKeyHandler(BaseHandler):
         
         ssh_key_id = details.get('ssh_key_id')
         target_ids = details.get('target_ids')
-        admin_password = details.get('admin_password')
+        
+        # Decrypt admin password if provided (stored encrypted for security)
+        admin_password = None
+        admin_password_encrypted = details.get('admin_password_encrypted')
+        if admin_password_encrypted:
+            admin_password = self.executor.decrypt_password(admin_password_encrypted)
+            if admin_password:
+                self.log("Successfully decrypted admin password")
         
         if not ssh_key_id:
             self.mark_job_failed(job, "ssh_key_id is required")
