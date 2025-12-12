@@ -48,6 +48,7 @@ import {
   Unlink,
   ArrowRightLeft,
   Wand2,
+  KeyRound,
 } from "lucide-react";
 import { useReplicationTargets, ReplicationTarget, TargetDependencies } from "@/hooks/useReplication";
 import { formatDistanceToNow } from "date-fns";
@@ -312,6 +313,71 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
   const handleUnpairTarget = async (targetId: string) => {
     if (!confirm('Remove pairing between these ZFS targets?')) return;
     await setPartner({ sourceId: targetId, partnerId: null });
+  };
+
+  const handleSwapRoles = async (target: ReplicationTarget) => {
+    if (!target.partner_target_id) return;
+    if (!confirm('Swap primary and DR roles between these targets?')) return;
+    
+    try {
+      // Swap the site_role values
+      const newSourceRole = target.site_role === 'primary' ? 'dr' : 'primary';
+      const newPartnerRole = newSourceRole === 'primary' ? 'dr' : 'primary';
+      
+      await supabase
+        .from('replication_targets')
+        .update({ site_role: newSourceRole })
+        .eq('id', target.id);
+        
+      await supabase
+        .from('replication_targets')
+        .update({ site_role: newPartnerRole })
+        .eq('id', target.partner_target_id);
+      
+      toast({ title: 'Roles swapped successfully' });
+      refetch();
+    } catch (err: any) {
+      toast({
+        title: 'Error swapping roles',
+        description: err.message,
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleReestablishSsh = async (target: ReplicationTarget) => {
+    if (!target.partner_target_id) return;
+    
+    try {
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      // Create SSH key exchange job
+      const { error } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'exchange_ssh_keys' as any,
+          status: 'pending',
+          created_by: user?.id,
+          details: {
+            source_target_id: target.id,
+            dest_target_id: target.partner_target_id,
+          },
+        });
+      
+      if (error) throw error;
+      
+      toast({
+        title: 'SSH key exchange job created',
+        description: 'Check Jobs page for progress',
+      });
+    } catch (err: any) {
+      toast({
+        title: 'Error',
+        description: err.message,
+        variant: 'destructive',
+      });
+    }
   };
 
   // Get available targets for pairing (exclude self and already paired)
@@ -689,9 +755,17 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                         <div className="flex items-center gap-2">
                           <ArrowRightLeft className="h-3 w-3 text-muted-foreground" />
                           <span className="text-sm">{target.partner_target.name}</span>
-                          <Badge variant="outline" className="text-xs">
-                            {target.partner_target.hostname}
-                          </Badge>
+                          {target.partner_target.ssh_trust_established ? (
+                            <Badge variant="outline" className="text-xs text-green-600 border-green-500/30">
+                              <KeyRound className="h-3 w-3 mr-1" />
+                              SSH Ready
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-xs text-amber-600 border-amber-500/30">
+                              <KeyRound className="h-3 w-3 mr-1" />
+                              No SSH
+                            </Badge>
+                          )}
                         </div>
                       ) : (
                         <Button 
@@ -747,10 +821,24 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           {target.partner_target ? (
-                            <DropdownMenuItem onClick={() => handleUnpairTarget(target.id)}>
-                              <Unlink className="h-4 w-4 mr-2" />
-                              Remove Pairing
-                            </DropdownMenuItem>
+                            <>
+                              <DropdownMenuItem onClick={() => handleSwapRoles(target)}>
+                                <ArrowRightLeft className="h-4 w-4 mr-2" />
+                                Swap Primary/DR Roles
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleReestablishSsh(target)}>
+                                <KeyRound className="h-4 w-4 mr-2" />
+                                Re-establish SSH Trust
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleOpenPairDialog(target.id)}>
+                                <Link2 className="h-4 w-4 mr-2" />
+                                Change Partner
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleUnpairTarget(target.id)}>
+                                <Unlink className="h-4 w-4 mr-2" />
+                                Remove Pairing
+                              </DropdownMenuItem>
+                            </>
                           ) : (
                             <DropdownMenuItem onClick={() => handleOpenPairDialog(target.id)}>
                               <Link2 className="h-4 w-4 mr-2" />
