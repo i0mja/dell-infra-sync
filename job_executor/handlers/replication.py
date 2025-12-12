@@ -1575,7 +1575,7 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
             
             # Step 3: Test SSH connection from source to destination
             self.executor.log(f"[{job_id}] Testing SSH connection from source to destination")
-            test_result = self._test_ssh_connection(source_target, dest_target)
+            test_result = self._test_ssh_connection(source_target, dest_target, password=admin_password)
             if not test_result.get('success'):
                 raise Exception(f"SSH connection test failed: {test_result.get('error')}")
             results['steps'].append('connection_tested')
@@ -1736,13 +1736,13 @@ chmod 600 ~/.ssh/authorized_keys
         except Exception as e:
             return {'success': False, 'error': str(e)}
     
-    def _test_ssh_connection(self, source_target: Dict, dest_target: Dict) -> Dict:
+    def _test_ssh_connection(self, source_target: Dict, dest_target: Dict, password: str = None) -> Dict:
         """Test SSH connection from source to destination"""
         if not PARAMIKO_AVAILABLE:
             return {'success': False, 'error': 'Paramiko not available'}
         
         try:
-            creds = self._get_target_ssh_creds(source_target)
+            creds = self._get_target_ssh_creds(source_target, password=password)
             if not creds:
                 return {'success': False, 'error': 'Could not get source SSH credentials'}
             
