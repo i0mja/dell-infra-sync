@@ -243,24 +243,31 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
   const handleHealthCheck = async (target: any) => {
     setHealthCheckingId(target.id);
     try {
-      // Update last health check timestamp for now
-      // Full health check job can be added when the job type is available
+      // Get current user
+      const { data: userData } = await supabase.auth.getUser();
+      
+      // Create a check_zfs_target_health job that the Job Executor will process
       const { error } = await supabase
-        .from('replication_targets')
-        .update({ 
-          last_health_check: new Date().toISOString(),
-          health_status: 'healthy' // Placeholder - actual check would verify SSH/ZFS
-        })
-        .eq('id', target.id);
+        .from('jobs')
+        .insert({
+          job_type: 'check_zfs_target_health' as any,
+          status: 'pending',
+          created_by: userData?.user?.id,
+          details: { 
+            target_id: target.id,
+            target_hostname: target.hostname,
+            zfs_pool: target.zfs_pool,
+            target_name: target.name
+          }
+        });
       
       if (error) throw error;
       
       toast({
-        title: "Health check complete",
-        description: `${target.name} is healthy`
+        title: "Health check job created",
+        description: `Checking ${target.name}... See Jobs page for results`
       });
       
-      refetch();
     } catch (err: any) {
       toast({
         title: "Error",

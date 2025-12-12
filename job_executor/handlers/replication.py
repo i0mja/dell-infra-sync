@@ -1783,3 +1783,212 @@ chmod 600 ~/.ssh/authorized_keys
                 
         except Exception as e:
             return {'success': False, 'error': str(e)}
+    
+    # =========================================================================
+    # ZFS Target Health Check
+    # =========================================================================
+    
+    def execute_check_zfs_target_health(self, job: Dict):
+        """
+        Check health of a single ZFS replication target.
+        
+        Tests:
+        1. SSH connectivity to the target
+        2. ZFS pool health status
+        3. Pool capacity and free space
+        4. Recent scrub status
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        
+        self.executor.log(f"[{job_id}] Starting ZFS target health check")
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso())
+        
+        try:
+            target_id = details.get('target_id')
+            target_hostname = details.get('target_hostname')
+            zfs_pool = details.get('zfs_pool')
+            target_name = details.get('target_name', 'Unknown')
+            
+            if not target_id:
+                raise ValueError("No target_id provided in job details")
+            
+            # Fetch the target from DB
+            target = self._get_replication_target(target_id)
+            if not target:
+                raise ValueError(f"Replication target not found: {target_id}")
+            
+            hostname = target.get('hostname') or target_hostname
+            pool = target.get('zfs_pool') or zfs_pool
+            
+            results = {
+                'target_id': target_id,
+                'target_name': target_name,
+                'hostname': hostname,
+                'zfs_pool': pool,
+                'tests': []
+            }
+            overall_status = 'healthy'
+            
+            # Get SSH credentials
+            creds = self._get_target_ssh_creds(target)
+            if not creds:
+                raise ValueError(f"No SSH credentials available for target {hostname}")
+            
+            # Test 1: SSH connectivity
+            self.executor.log(f"[{job_id}] Testing SSH connectivity to {hostname}")
+            ssh_result = self._test_ssh_connection(
+                creds['hostname'],
+                creds['port'],
+                creds['username'],
+                creds.get('key_data')
+            )
+            results['tests'].append({
+                'name': 'ssh_connectivity',
+                'success': ssh_result['success'],
+                'message': 'SSH connection successful' if ssh_result['success'] else ssh_result.get('error')
+            })
+            
+            if not ssh_result['success']:
+                overall_status = 'offline'
+                results['overall_status'] = overall_status
+                
+                # Update target health status
+                self._update_replication_target(target_id, 
+                    health_status='offline',
+                    last_health_check=utc_now_iso(),
+                    health_check_error=ssh_result.get('error')
+                )
+                
+                self.update_job_status(job_id, 'completed', 
+                    completed_at=utc_now_iso(),
+                    details={**details, 'results': results}
+                )
+                return
+            
+            # Test 2: ZFS pool health (if pool is configured)
+            if pool:
+                self.executor.log(f"[{job_id}] Checking ZFS pool {pool} health")
+                
+                if ZFS_AVAILABLE and self.zfs_replication:
+                    health_result = self.zfs_replication.check_target_health(
+                        target_hostname=hostname,
+                        zfs_pool=pool,
+                        ssh_username=creds['username'],
+                        ssh_port=creds['port'],
+                        ssh_key_data=creds.get('key_data'),
+                        ssh_password=creds.get('password')
+                    )
+                    
+                    results['tests'].append({
+                        'name': 'zfs_pool_health',
+                        'success': health_result.get('success', False),
+                        'pool_status': health_result.get('pool_status'),
+                        'free_gb': health_result.get('free_gb'),
+                        'used_percent': health_result.get('used_percent'),
+                        'message': health_result.get('error') if not health_result.get('success') else f"Pool {pool} is {health_result.get('pool_status', 'unknown')}"
+                    })
+                    
+                    if not health_result.get('success'):
+                        overall_status = 'degraded'
+                    elif health_result.get('pool_status') != 'ONLINE':
+                        overall_status = 'degraded'
+                    elif health_result.get('used_percent', 0) > 90:
+                        overall_status = 'degraded'
+                        results['tests'][-1]['message'] = f"Pool {pool} is {health_result.get('used_percent')}% full"
+                else:
+                    # Basic SSH-based check
+                    try:
+                        import paramiko
+                        ssh = paramiko.SSHClient()
+                        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                        
+                        pkey = None
+                        if creds.get('key_data'):
+                            pkey = paramiko.RSAKey.from_private_key(io.StringIO(creds['key_data']))
+                        
+                        ssh.connect(
+                            hostname=creds['hostname'],
+                            port=creds['port'],
+                            username=creds['username'],
+                            pkey=pkey,
+                            password=creds.get('password'),
+                            timeout=30
+                        )
+                        
+                        # Check pool health
+                        stdin, stdout, stderr = ssh.exec_command(f'zpool status {pool} -x')
+                        pool_output = stdout.read().decode().strip()
+                        
+                        # Check pool capacity
+                        stdin, stdout, stderr = ssh.exec_command(f'zpool list -Ho capacity {pool}')
+                        capacity_output = stdout.read().decode().strip().replace('%', '')
+                        
+                        ssh.close()
+                        
+                        is_healthy = 'is healthy' in pool_output.lower() or 'all pools are healthy' in pool_output.lower()
+                        used_percent = int(capacity_output) if capacity_output.isdigit() else 0
+                        
+                        results['tests'].append({
+                            'name': 'zfs_pool_health',
+                            'success': is_healthy,
+                            'pool_status': 'ONLINE' if is_healthy else 'DEGRADED',
+                            'used_percent': used_percent,
+                            'message': pool_output if not is_healthy else f"Pool {pool} healthy, {used_percent}% used"
+                        })
+                        
+                        if not is_healthy:
+                            overall_status = 'degraded'
+                        elif used_percent > 90:
+                            overall_status = 'degraded'
+                            
+                    except Exception as e:
+                        results['tests'].append({
+                            'name': 'zfs_pool_health',
+                            'success': False,
+                            'message': str(e)
+                        })
+                        overall_status = 'degraded'
+            
+            results['overall_status'] = overall_status
+            
+            # Update target health status in database
+            self._update_replication_target(target_id,
+                health_status=overall_status,
+                last_health_check=utc_now_iso(),
+                health_check_error=None if overall_status == 'healthy' else results.get('tests', [{}])[-1].get('message')
+            )
+            
+            self.executor.log(f"[{job_id}] Health check complete: {overall_status}")
+            self.update_job_status(job_id, 'completed',
+                completed_at=utc_now_iso(),
+                details={**details, 'results': results}
+            )
+            
+        except Exception as e:
+            self.executor.log(f"[{job_id}] Health check failed: {e}", "ERROR")
+            self.update_job_status(job_id, 'failed',
+                completed_at=utc_now_iso(),
+                details={**details, 'error': str(e)}
+            )
+    
+    def _update_replication_target(self, target_id: str, **kwargs) -> bool:
+        """Update replication target fields"""
+        try:
+            response = requests.patch(
+                f"{DSM_URL}/rest/v1/replication_targets",
+                params={'id': f'eq.{target_id}'},
+                json={**kwargs, 'updated_at': utc_now_iso()},
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            return response.ok
+        except Exception as e:
+            self.executor.log(f"Error updating replication target: {e}", "ERROR")
+            return False

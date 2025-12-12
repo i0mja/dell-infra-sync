@@ -4621,6 +4621,7 @@ export type Database = {
         | "manage_datastore"
         | "scan_datastore_status"
         | "exchange_ssh_keys"
+        | "check_zfs_target_health"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -4835,6 +4836,7 @@ export const Constants = {
         "manage_datastore",
         "scan_datastore_status",
         "exchange_ssh_keys",
+        "check_zfs_target_health",
       ],
       operation_type: [
         "idrac_api",
