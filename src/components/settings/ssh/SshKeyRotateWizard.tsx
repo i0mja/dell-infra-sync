@@ -190,6 +190,19 @@ export function SshKeyRotateWizard({ open, onOpenChange, oldKey, deployments, on
     try {
       const { data: { user } } = await supabase.auth.getUser();
       
+      // Encrypt password before storing in job details
+      let encryptedPassword: string | undefined;
+      if (adminPassword) {
+        const { data: encryptData, error: encryptError } = await supabase.functions.invoke('encrypt-credentials', {
+          body: {
+            password: adminPassword,
+            type: 'return_only'
+          }
+        });
+        if (encryptError) throw encryptError;
+        encryptedPassword = encryptData?.encrypted;
+      }
+      
       const { data: job, error } = await supabase
         .from('jobs')
         .insert({
@@ -199,7 +212,7 @@ export function SshKeyRotateWizard({ open, onOpenChange, oldKey, deployments, on
           details: {
             ssh_key_id: newKey.id,
             target_ids: targetIds,
-            admin_password: adminPassword || undefined,
+            admin_password_encrypted: encryptedPassword,
           },
         })
         .select()

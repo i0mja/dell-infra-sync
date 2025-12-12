@@ -1533,7 +1533,14 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
         try:
             source_target_id = details.get('source_target_id')
             dest_target_id = details.get('destination_target_id')
-            admin_password = details.get('admin_password')
+            
+            # Decrypt admin password if provided (stored encrypted for security)
+            admin_password = None
+            admin_password_encrypted = details.get('admin_password_encrypted')
+            if admin_password_encrypted:
+                admin_password = self.executor.decrypt_password(admin_password_encrypted)
+                if admin_password:
+                    self.executor.log(f"[{job_id}] Successfully decrypted admin password")
             
             if not source_target_id or not dest_target_id:
                 raise ValueError("Both source_target_id and destination_target_id are required")
