@@ -367,7 +367,7 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
           created_by: user?.id,
           details: {
             source_target_id: target.id,
-            dest_target_id: target.partner_target_id,
+            destination_target_id: target.partner_target_id,
           },
         });
       
