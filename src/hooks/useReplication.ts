@@ -54,6 +54,8 @@ export interface ReplicationTarget {
   site_role?: string;
   partner_target_id?: string;
   ssh_trust_established?: boolean;
+  datastore_name?: string;
+  nfs_export_path?: string;
   // Joined partner target info
   partner_target?: {
     id: string;

@@ -3953,3 +3953,325 @@ class ZfsTargetHandler(BaseHandler):
         except Exception as e:
             self.log(f'Failed to fetch replication target: {e}', 'WARN')
             return None
+    
+    # =========================================================================
+    # Datastore Management Handler
+    # =========================================================================
+    
+    def execute_manage_datastore(self, job: Dict):
+        """
+        Manage NFS datastore mounts on ESXi hosts.
+        
+        Supported operations (job.details.operation):
+        - 'status': Return mount status per host (read-only)
+        - 'mount_all': Mount datastore on all connected hosts
+        - 'mount_hosts': Mount on specific hosts (details.host_names)
+        - 'unmount_hosts': Unmount from specific hosts
+        - 'unmount_all': Unmount from all hosts
+        - 'refresh': Unmount and remount on all hosts
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        
+        target_id = details.get('target_id')
+        operation = details.get('operation', 'status')
+        host_names = details.get('host_names', [])
+        
+        job_details = {
+            'operation': operation,
+            'target_id': target_id,
+            'host_names': host_names,
+            'console_log': [],
+            'results': {}
+        }
+        
+        self._log_console(job_id, 'INFO', f'Starting datastore management: {operation}', job_details)
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso(), details=job_details)
+        
+        try:
+            # Fetch target info
+            target = self._fetch_replication_target(target_id)
+            if not target:
+                raise Exception(f'Replication target not found: {target_id}')
+            
+            job_details['target_name'] = target.get('name')
+            job_details['hostname'] = target.get('hostname')
+            
+            # Get datastore info
+            pool_name = target.get('zfs_pool', 'tank')
+            datastore_name = target.get('datastore_name') or f"nfs-{target.get('name')}"
+            nfs_path = target.get('nfs_export_path') or f'/{pool_name}/nfs'
+            nfs_host = target.get('hostname')
+            
+            job_details['datastore_name'] = datastore_name
+            job_details['nfs_path'] = nfs_path
+            
+            self._log_console(job_id, 'INFO', f'Datastore: {datastore_name} @ {nfs_host}:{nfs_path}', job_details)
+            
+            # Connect to vCenter
+            vcenter_id = target.get('dr_vcenter_id')
+            if not vcenter_id:
+                raise Exception('No vCenter associated with this target')
+            
+            vcenter = self._fetch_vcenter(vcenter_id)
+            if not vcenter:
+                raise Exception(f'vCenter not found: {vcenter_id}')
+            
+            self._log_console(job_id, 'INFO', f'Connecting to vCenter: {vcenter["host"]}', job_details)
+            
+            # Connect to vCenter
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            
+            self.vcenter_conn = SmartConnect(
+                host=vcenter['host'],
+                user=vcenter['username'],
+                pwd=vcenter['password'],
+                port=vcenter.get('port', 443),
+                sslContext=context
+            )
+            
+            content = self.vcenter_conn.RetrieveContent()
+            
+            # Get all hosts
+            container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.HostSystem], True
+            )
+            all_hosts = list(container.view)
+            container.Destroy()
+            
+            self._log_console(job_id, 'INFO', f'Found {len(all_hosts)} ESXi hosts', job_details)
+            
+            # Filter hosts based on operation and host_names
+            if operation in ['mount_hosts', 'unmount_hosts'] and host_names:
+                target_hosts = [h for h in all_hosts if h.name in host_names]
+            else:
+                target_hosts = [h for h in all_hosts if h.runtime.connectionState == 'connected']
+            
+            job_details['target_host_count'] = len(target_hosts)
+            
+            results = {
+                'datastore_name': datastore_name,
+                'nfs_path': nfs_path,
+                'hosts': [],
+                'mounted_count': 0,
+                'unmounted_count': 0,
+                'failed_count': 0
+            }
+            
+            if operation == 'status':
+                # Just check status, don't modify anything
+                for host in all_hosts:
+                    try:
+                        has_datastore = any(
+                            ds.name == datastore_name 
+                            for ds in host.datastore if ds
+                        )
+                        results['hosts'].append({
+                            'host_name': host.name,
+                            'cluster': host.parent.name if hasattr(host.parent, 'name') else None,
+                            'connected': host.runtime.connectionState == 'connected',
+                            'mounted': has_datastore
+                        })
+                        if has_datastore:
+                            results['mounted_count'] += 1
+                    except Exception as e:
+                        results['hosts'].append({
+                            'host_name': host.name,
+                            'error': str(e)
+                        })
+                
+                self._log_console(job_id, 'INFO', f'Status: {results["mounted_count"]}/{len(all_hosts)} hosts have datastore', job_details)
+                
+            elif operation in ['mount_all', 'mount_hosts']:
+                # Mount datastore on target hosts
+                for host in target_hosts:
+                    try:
+                        # Check if already mounted
+                        has_datastore = any(
+                            ds.name == datastore_name 
+                            for ds in host.datastore if ds
+                        )
+                        
+                        if has_datastore:
+                            self._log_console(job_id, 'INFO', f'{host.name}: Already mounted', job_details)
+                            results['hosts'].append({
+                                'host_name': host.name,
+                                'status': 'already_mounted'
+                            })
+                            results['mounted_count'] += 1
+                        else:
+                            # Mount NFS datastore
+                            spec = vim.host.NasVolume.Specification()
+                            spec.remoteHost = nfs_host
+                            spec.remotePath = nfs_path
+                            spec.localPath = datastore_name
+                            spec.accessMode = 'readWrite'
+                            spec.type = 'NFS'
+                            
+                            host.configManager.datastoreSystem.CreateNasDatastore(spec)
+                            self._log_console(job_id, 'INFO', f'{host.name}: Mounted successfully', job_details)
+                            results['hosts'].append({
+                                'host_name': host.name,
+                                'status': 'mounted'
+                            })
+                            results['mounted_count'] += 1
+                    except vim.fault.DuplicateName:
+                        self._log_console(job_id, 'INFO', f'{host.name}: Already exists', job_details)
+                        results['hosts'].append({
+                            'host_name': host.name,
+                            'status': 'already_mounted'
+                        })
+                        results['mounted_count'] += 1
+                    except Exception as e:
+                        self._log_console(job_id, 'ERROR', f'{host.name}: Mount failed - {e}', job_details)
+                        results['hosts'].append({
+                            'host_name': host.name,
+                            'status': 'failed',
+                            'error': str(e)
+                        })
+                        results['failed_count'] += 1
+                
+                self._log_console(job_id, 'INFO', f'Mount complete: {results["mounted_count"]} succeeded, {results["failed_count"]} failed', job_details)
+                
+            elif operation in ['unmount_all', 'unmount_hosts']:
+                # Unmount datastore from target hosts
+                for host in target_hosts:
+                    try:
+                        # Find the datastore
+                        ds_to_unmount = None
+                        for ds in host.datastore:
+                            if ds and ds.name == datastore_name:
+                                ds_to_unmount = ds
+                                break
+                        
+                        if not ds_to_unmount:
+                            self._log_console(job_id, 'INFO', f'{host.name}: Not mounted', job_details)
+                            results['hosts'].append({
+                                'host_name': host.name,
+                                'status': 'not_mounted'
+                            })
+                        else:
+                            # Check for VMs using the datastore on this host
+                            host.configManager.datastoreSystem.RemoveDatastore(ds_to_unmount)
+                            self._log_console(job_id, 'INFO', f'{host.name}: Unmounted successfully', job_details)
+                            results['hosts'].append({
+                                'host_name': host.name,
+                                'status': 'unmounted'
+                            })
+                            results['unmounted_count'] += 1
+                    except Exception as e:
+                        self._log_console(job_id, 'ERROR', f'{host.name}: Unmount failed - {e}', job_details)
+                        results['hosts'].append({
+                            'host_name': host.name,
+                            'status': 'failed',
+                            'error': str(e)
+                        })
+                        results['failed_count'] += 1
+                
+                self._log_console(job_id, 'INFO', f'Unmount complete: {results["unmounted_count"]} succeeded, {results["failed_count"]} failed', job_details)
+                
+            elif operation == 'refresh':
+                # Unmount and remount on all hosts
+                self._log_console(job_id, 'INFO', 'Refreshing datastore mounts...', job_details)
+                
+                for host in target_hosts:
+                    try:
+                        # Find and unmount
+                        ds_to_unmount = None
+                        for ds in host.datastore:
+                            if ds and ds.name == datastore_name:
+                                ds_to_unmount = ds
+                                break
+                        
+                        if ds_to_unmount:
+                            host.configManager.datastoreSystem.RemoveDatastore(ds_to_unmount)
+                            self._log_console(job_id, 'INFO', f'{host.name}: Unmounted for refresh', job_details)
+                        
+                        # Remount
+                        spec = vim.host.NasVolume.Specification()
+                        spec.remoteHost = nfs_host
+                        spec.remotePath = nfs_path
+                        spec.localPath = datastore_name
+                        spec.accessMode = 'readWrite'
+                        spec.type = 'NFS'
+                        
+                        host.configManager.datastoreSystem.CreateNasDatastore(spec)
+                        self._log_console(job_id, 'INFO', f'{host.name}: Remounted successfully', job_details)
+                        results['hosts'].append({
+                            'host_name': host.name,
+                            'status': 'refreshed'
+                        })
+                        results['mounted_count'] += 1
+                    except Exception as e:
+                        self._log_console(job_id, 'ERROR', f'{host.name}: Refresh failed - {e}', job_details)
+                        results['hosts'].append({
+                            'host_name': host.name,
+                            'status': 'failed',
+                            'error': str(e)
+                        })
+                        results['failed_count'] += 1
+                
+                self._log_console(job_id, 'INFO', f'Refresh complete: {results["mounted_count"]} succeeded, {results["failed_count"]} failed', job_details)
+            
+            else:
+                raise Exception(f'Unknown operation: {operation}')
+            
+            job_details['results'] = results
+            
+            # Determine job status
+            if results['failed_count'] > 0 and results['mounted_count'] == 0:
+                self.update_job_status(job_id, 'failed', completed_at=utc_now_iso(), details=job_details)
+            else:
+                self._log_console(job_id, 'INFO', 'Datastore management completed', job_details)
+                self.update_job_status(job_id, 'completed', completed_at=utc_now_iso(), details=job_details)
+                
+        except Exception as e:
+            self._log_console(job_id, 'ERROR', f'Failed: {str(e)}', job_details)
+            job_details['error'] = str(e)
+            self.update_job_status(job_id, 'failed', completed_at=utc_now_iso(), details=job_details)
+        finally:
+            if self.vcenter_conn:
+                try:
+                    Disconnect(self.vcenter_conn)
+                except:
+                    pass
+                self.vcenter_conn = None
+    
+    def _fetch_vcenter(self, vcenter_id: str) -> Optional[Dict]:
+        """Fetch vCenter info and decrypt password."""
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            }
+            
+            resp = requests.get(
+                f'{DSM_URL}/rest/v1/vcenters',
+                params={'id': f'eq.{vcenter_id}', 'select': '*'},
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if resp.status_code != 200:
+                return None
+            
+            data = resp.json()
+            if not data:
+                return None
+            
+            vcenter = data[0]
+            
+            # Decrypt password
+            if vcenter.get('password_encrypted'):
+                enc_key = self._get_encryption_key()
+                if enc_key:
+                    password = self._decrypt_password(vcenter['password_encrypted'], enc_key)
+                    vcenter['password'] = password
+            
+            return vcenter
+        except Exception as e:
+            self.log(f'Failed to fetch vCenter: {e}', 'WARN')
+            return None
