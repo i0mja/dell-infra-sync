@@ -2812,57 +2812,26 @@ class ZfsTargetHandler(BaseHandler):
                 add_step_result('register_target', 'failed', str(e))
                 raise
             
-            # ========== Step 7: Register Datastore ==========
+            # ========== Step 7: Register Datastore on ALL Hosts ==========
             job_details['progress_percent'] = 90
-            add_step_result('register_datastore', 'running', 'Registering vCenter datastore...')
+            add_step_result('register_datastore', 'running', 'Registering vCenter datastore on all ESXi hosts...')
             
             try:
-                pool_name = details.get('zfs_pool_name', 'tank')
-                nfs_path = f'/{pool_name}/nfs'
-                datastore_name = details.get('datastore_name') or f'NFS-{target_name}'
+                datastore_name = self._register_datastore(job_id, {
+                    'detected_ip': vm_ip,
+                    'vm_name': target_name,
+                    'zfs_pool_name': details.get('zfs_pool_name', 'tank'),
+                    'datastore_name': details.get('datastore_name'),
+                    # Empty datastore_hosts = mount on ALL connected hosts
+                    'datastore_hosts': details.get('datastore_hosts', []),
+                })
                 
-                # Find a host to mount the datastore
-                content = self.vcenter_conn.RetrieveContent()
-                host = None
-                
-                for dc in content.rootFolder.childEntity:
-                    if not isinstance(dc, vim.Datacenter):
-                        continue
-                    for entity in dc.hostFolder.childEntity:
-                        if isinstance(entity, vim.ClusterComputeResource):
-                            if entity.host:
-                                host = entity.host[0]
-                                break
-                        elif isinstance(entity, vim.ComputeResource):
-                            if entity.host:
-                                host = entity.host[0]
-                                break
-                    if host:
-                        break
-                
-                if not host:
-                    add_step_result('register_datastore', 'warning', 'No host found to mount datastore')
+                if datastore_name:
+                    job_details['datastore_name'] = datastore_name
+                    add_step_result('register_datastore', 'success', f'Datastore mounted on all hosts: {datastore_name}')
                 else:
-                    # Create NFS datastore
-                    ds_system = host.configManager.datastoreSystem
+                    add_step_result('register_datastore', 'warning', 'No hosts available for datastore mount')
                     
-                    nfs_spec = vim.host.NasVolume.Specification()
-                    nfs_spec.remoteHost = vm_ip
-                    nfs_spec.remotePath = nfs_path
-                    nfs_spec.localPath = datastore_name
-                    nfs_spec.accessMode = 'readWrite'
-                    nfs_spec.type = 'NFS'
-                    
-                    try:
-                        ds = ds_system.CreateNasDatastore(nfs_spec)
-                        add_step_result('register_datastore', 'success', f'Datastore created: {datastore_name}')
-                        job_details['datastore_name'] = datastore_name
-                    except vim.fault.DuplicateName:
-                        add_step_result('register_datastore', 'success', f'Datastore already exists: {datastore_name}')
-                        job_details['datastore_name'] = datastore_name
-                    except Exception as ds_err:
-                        add_step_result('register_datastore', 'warning', f'Datastore creation failed: {ds_err}')
-                
             except Exception as e:
                 add_step_result('register_datastore', 'warning', str(e))
                 # Don't fail the whole job for datastore issues
