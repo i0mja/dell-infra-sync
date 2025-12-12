@@ -50,9 +50,12 @@ import {
   Wand2,
   KeyRound,
   Database,
+  RefreshCw,
+  MonitorCheck,
 } from "lucide-react";
 import { useReplicationTargets, ReplicationTarget, TargetDependencies } from "@/hooks/useReplication";
 import { useSshKeys, SshKey } from "@/hooks/useSshKeys";
+import { useVCenterVMs, VCenterVM } from "@/hooks/useVCenterVMs";
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -88,6 +91,10 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
   const [selectedPartnerId, setSelectedPartnerId] = useState<string>("");
   const [editingTarget, setEditingTarget] = useState<any>(null);
   const [healthCheckingId, setHealthCheckingId] = useState<string | null>(null);
+  const [scanningVmForId, setScanningVmForId] = useState<string | null>(null);
+  
+  // Fetch VMs for the editing target's vCenter (for VM selector)
+  const { data: vcenterVms = [], isLoading: loadingVms } = useVCenterVMs(editingTarget?.dr_vcenter_id);
   
   // Decommission dialog state
   const [showDecommissionDialog, setShowDecommissionDialog] = useState(false);
@@ -286,7 +293,10 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
   };
 
   const handleEdit = (target: any) => {
-    setEditingTarget(target);
+    setEditingTarget({
+      ...target,
+      hosting_vm_id: target.hosting_vm_id || target.hosting_vm?.id || null
+    });
     setShowEditDialog(true);
   };
 
@@ -302,6 +312,19 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
       // Include ssh_key_id if it was changed (can be null to unlink)
       if ('ssh_key_id' in editingTarget) {
         updateData.ssh_key_id = editingTarget.ssh_key_id || null;
+      }
+      
+      // Include hosting_vm_id if changed
+      if ('hosting_vm_id' in editingTarget) {
+        updateData.hosting_vm_id = editingTarget.hosting_vm_id || null;
+        
+        // If VM selected, also update hostname to VM's IP
+        if (editingTarget.hosting_vm_id) {
+          const selectedVm = vcenterVms.find(vm => vm.id === editingTarget.hosting_vm_id);
+          if (selectedVm?.ip_address) {
+            updateData.hostname = selectedVm.ip_address;
+          }
+        }
       }
       
       const { error } = await supabase
@@ -323,6 +346,60 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
       });
     }
   };
+
+  // Scan for hosting VM (trigger vcenter_sync for VMs only)
+  const handleScanForVm = async (target: ReplicationTarget) => {
+    if (!target.dr_vcenter_id) {
+      toast({
+        title: "No vCenter linked",
+        description: "This target doesn't have a DR vCenter configured",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    setScanningVmForId(target.id);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      const { error } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'vcenter_sync' as any,
+          status: 'pending',
+          created_by: user?.id,
+          details: {
+            vcenter_id: target.dr_vcenter_id,
+            sync_type: 'vms_only',
+            reason: `Scan for hosting VM for ${target.name}`
+          }
+        });
+      
+      if (error) throw error;
+      
+      toast({
+        title: "VM scan job created",
+        description: "Scanning vCenter for VMs. Refresh after completion."
+      });
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err.message,
+        variant: "destructive"
+      });
+    } finally {
+      setScanningVmForId(null);
+    }
+  };
+
+  // Filter VMs for dropdown - show VREP-like VMs first
+  const sortedVcenterVms = [...vcenterVms].sort((a, b) => {
+    const aIsVrep = a.name?.toLowerCase().includes('vrep') || a.name?.toLowerCase().includes('zfs');
+    const bIsVrep = b.name?.toLowerCase().includes('vrep') || b.name?.toLowerCase().includes('zfs');
+    if (aIsVrep && !bIsVrep) return -1;
+    if (!aIsVrep && bIsVrep) return 1;
+    return (a.name || '').localeCompare(b.name || '');
+  });
 
   // Filter only active SSH keys for the dropdown
   const availableSshKeys = sshKeys?.filter(k => k.status === 'active' || k.status === 'pending') || [];
@@ -729,11 +806,11 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
       
       {/* Edit Dialog */}
       <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
-        <DialogContent>
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Edit Target</DialogTitle>
             <DialogDescription>
-              Update target settings and SSH key assignment
+              Update target settings, hosting VM, and SSH key assignment
             </DialogDescription>
           </DialogHeader>
           {editingTarget && (
@@ -752,6 +829,57 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                   onChange={(e) => setEditingTarget({ ...editingTarget, description: e.target.value })}
                 />
               </div>
+              
+              {/* Hosting VM Selector */}
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2">
+                  <MonitorCheck className="h-4 w-4" />
+                  Hosting VM
+                </Label>
+                {editingTarget.dr_vcenter_id ? (
+                  <>
+                    <Select 
+                      value={editingTarget.hosting_vm_id || 'none'} 
+                      onValueChange={(value) => setEditingTarget({ 
+                        ...editingTarget, 
+                        hosting_vm_id: value === 'none' ? null : value 
+                      })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={loadingVms ? "Loading VMs..." : "Select hosting VM..."} />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-60">
+                        <SelectItem value="none">
+                          <span className="text-muted-foreground">No VM linked</span>
+                        </SelectItem>
+                        {sortedVcenterVms.map(vm => (
+                          <SelectItem key={vm.id} value={vm.id}>
+                            <div className="flex items-center gap-2">
+                              <Server className="h-3 w-3" />
+                              <span>{vm.name}</span>
+                              {vm.ip_address && (
+                                <span className="text-xs text-muted-foreground">({vm.ip_address})</span>
+                              )}
+                              {vm.power_state === 'poweredOn' && (
+                                <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
+                              )}
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Select the VM that hosts this ZFS appliance. This will be used for health checks.
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    No DR vCenter configured. Set a vCenter to select a hosting VM.
+                  </p>
+                )}
+              </div>
+              
+              {/* SSH Key Selector */}
               <div className="space-y-2">
                 <Label className="flex items-center gap-2">
                   <KeyRound className="h-4 w-4" />
@@ -785,7 +913,7 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Assign an SSH key for health checks and replication operations. Keys can be created in Settings → SSH Keys.
+                  Assign an SSH key for health checks and replication operations.
                 </p>
               </div>
             </div>
@@ -959,6 +1087,20 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                             <Database className="h-4 w-4 mr-2" />
                             Manage Datastore
                           </DropdownMenuItem>
+                          {/* Scan for VM option - useful when VM not linked */}
+                          {!target.hosting_vm && target.dr_vcenter_id && (
+                            <DropdownMenuItem 
+                              onClick={() => handleScanForVm(target)}
+                              disabled={scanningVmForId === target.id}
+                            >
+                              {scanningVmForId === target.id ? (
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              ) : (
+                                <RefreshCw className="h-4 w-4 mr-2" />
+                              )}
+                              Scan for Hosting VM
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuSeparator />
                           {target.partner_target ? (
                             <>

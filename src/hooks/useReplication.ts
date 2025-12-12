@@ -201,23 +201,37 @@ export function useReplicationTargets() {
       const targetIds = (data || []).map(t => t.id);
       const hostingVmIds = (data || []).filter(t => t.hosting_vm_id).map(t => t.hosting_vm_id);
       const partnerIds = (data || []).filter(t => t.partner_target_id).map(t => t.partner_target_id);
+      
+      // Collect deployed_vm_morefs for targets without hosting_vm_id (fallback lookup)
+      const morefTargets = (data || []).filter(t => !t.hosting_vm_id && t.deployed_vm_moref);
+      const morefs = morefTargets.map(t => t.deployed_vm_moref);
 
-      // Fetch hosting VMs, linked datastores, and partner targets in parallel
-      const [hostingVmsResult, linkedDatastoresResult, partnersResult] = await Promise.all([
+      // Fetch hosting VMs, linked datastores, partner targets, and moref fallback VMs in parallel
+      const [hostingVmsResult, linkedDatastoresResult, partnersResult, morefVmsResult] = await Promise.all([
         hostingVmIds.length > 0 
-          ? supabase.from('vcenter_vms').select('id, name, ip_address, power_state').in('id', hostingVmIds)
+          ? supabase.from('vcenter_vms').select('id, name, ip_address, power_state, vcenter_id').in('id', hostingVmIds)
           : { data: [] },
         targetIds.length > 0
           ? supabase.from('vcenter_datastores').select('id, name, type, capacity_bytes, free_bytes, replication_target_id').in('replication_target_id', targetIds)
           : { data: [] },
         partnerIds.length > 0
           ? supabase.from('replication_targets').select('id, name, hostname, zfs_pool, health_status, dr_vcenter_id, ssh_trust_established').in('id', partnerIds)
+          : { data: [] },
+        // Fallback: look up VMs by deployed_vm_moref (stored in vcenter_id column)
+        morefs.length > 0
+          ? supabase.from('vcenter_vms').select('id, name, ip_address, power_state, vcenter_id').in('vcenter_id', morefs)
           : { data: [] }
       ]);
 
       // Build lookup maps
-      const vmMap: Record<string, ReplicationTarget['hosting_vm']> = {};
+      const vmMap: Record<string, ReplicationTarget['hosting_vm'] & { vcenter_id?: string }> = {};
       (hostingVmsResult.data || []).forEach(vm => { vmMap[vm.id] = vm; });
+      
+      // Build moref -> VM lookup for fallback
+      const morefVmMap: Record<string, ReplicationTarget['hosting_vm'] & { vcenter_id?: string }> = {};
+      (morefVmsResult.data || []).forEach(vm => { 
+        if (vm.vcenter_id) morefVmMap[vm.vcenter_id] = vm; 
+      });
 
       const datastoreMap: Record<string, ReplicationTarget['linked_datastore']> = {};
       (linkedDatastoresResult.data || []).forEach(ds => { 
@@ -227,12 +241,36 @@ export function useReplicationTargets() {
       const partnerMap: Record<string, ReplicationTarget['partner_target']> = {};
       (partnersResult.data || []).forEach(p => { partnerMap[p.id] = p; });
 
-      return (data || []).map(t => ({
-        ...t,
-        hosting_vm: t.hosting_vm_id ? vmMap[t.hosting_vm_id] || null : null,
-        linked_datastore: datastoreMap[t.id] || null,
-        partner_target: t.partner_target_id ? partnerMap[t.partner_target_id] || null : null
-      })) as ReplicationTarget[];
+      // Map targets with VM lookup fallback via moref
+      const enrichedTargets = (data || []).map(t => {
+        let hosting_vm: ReplicationTarget['hosting_vm'] = null;
+        
+        // First try hosting_vm_id
+        if (t.hosting_vm_id && vmMap[t.hosting_vm_id]) {
+          hosting_vm = vmMap[t.hosting_vm_id];
+        } 
+        // Fallback: try deployed_vm_moref
+        else if (t.deployed_vm_moref && morefVmMap[t.deployed_vm_moref]) {
+          hosting_vm = morefVmMap[t.deployed_vm_moref];
+          // Auto-update hosting_vm_id in background (fire and forget)
+          if (hosting_vm?.id) {
+            supabase
+              .from('replication_targets')
+              .update({ hosting_vm_id: hosting_vm.id })
+              .eq('id', t.id)
+              .then(() => console.log(`[useReplicationTargets] Auto-linked VM ${hosting_vm?.name} to target ${t.name}`));
+          }
+        }
+        
+        return {
+          ...t,
+          hosting_vm,
+          linked_datastore: datastoreMap[t.id] || null,
+          partner_target: t.partner_target_id ? partnerMap[t.partner_target_id] || null : null
+        };
+      }) as ReplicationTarget[];
+      
+      return enrichedTargets;
     }
   });
 
@@ -439,15 +477,20 @@ export function useReplicationTargets() {
 
   const updateTargetMutation = useMutation({
     mutationFn: async ({ id, updates }: { id: string; updates: Partial<ReplicationTarget> }) => {
+      const updatePayload: Record<string, any> = {};
+      
+      // Only include fields that are explicitly provided
+      if (updates.name !== undefined) updatePayload.name = updates.name;
+      if (updates.description !== undefined) updatePayload.description = updates.description;
+      if (updates.partner_target_id !== undefined) updatePayload.partner_target_id = updates.partner_target_id;
+      if (updates.site_role !== undefined) updatePayload.site_role = updates.site_role;
+      if (updates.dr_vcenter_id !== undefined) updatePayload.dr_vcenter_id = updates.dr_vcenter_id;
+      if (updates.hosting_vm_id !== undefined) updatePayload.hosting_vm_id = updates.hosting_vm_id;
+      if (updates.hostname !== undefined) updatePayload.hostname = updates.hostname;
+      
       const { data, error } = await supabase
         .from('replication_targets')
-        .update({
-          name: updates.name,
-          description: updates.description,
-          partner_target_id: updates.partner_target_id,
-          site_role: updates.site_role,
-          dr_vcenter_id: updates.dr_vcenter_id,
-        })
+        .update(updatePayload)
         .eq('id', id)
         .select()
         .single();
