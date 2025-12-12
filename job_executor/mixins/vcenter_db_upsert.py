@@ -813,7 +813,7 @@ class VCenterDbUpsertMixin:
             errors = []
             try:
                 response = requests.post(
-                    f"{DSM_URL}/rest/v1/vcenter_vms?on_conflict=name,source_vcenter_id",
+                    f"{DSM_URL}/rest/v1/vcenter_vms?on_conflict=vcenter_id,source_vcenter_id",
                     headers=headers,
                     json=batch,
                     verify=VERIFY_SSL,
