@@ -2276,6 +2276,7 @@ export type Database = {
           archived_at: string | null
           created_at: string | null
           created_by: string | null
+          datastore_name: string | null
           deployed_ip_source: string | null
           deployed_job_id: string | null
           deployed_vm_moref: string | null
@@ -2287,6 +2288,7 @@ export type Database = {
           is_active: boolean | null
           last_health_check: string | null
           name: string
+          nfs_export_path: string | null
           partner_target_id: string | null
           port: number | null
           site_location: string | null
@@ -2305,6 +2307,7 @@ export type Database = {
           archived_at?: string | null
           created_at?: string | null
           created_by?: string | null
+          datastore_name?: string | null
           deployed_ip_source?: string | null
           deployed_job_id?: string | null
           deployed_vm_moref?: string | null
@@ -2316,6 +2319,7 @@ export type Database = {
           is_active?: boolean | null
           last_health_check?: string | null
           name: string
+          nfs_export_path?: string | null
           partner_target_id?: string | null
           port?: number | null
           site_location?: string | null
@@ -2334,6 +2338,7 @@ export type Database = {
           archived_at?: string | null
           created_at?: string | null
           created_by?: string | null
+          datastore_name?: string | null
           deployed_ip_source?: string | null
           deployed_job_id?: string | null
           deployed_vm_moref?: string | null
@@ -2345,6 +2350,7 @@ export type Database = {
           is_active?: boolean | null
           last_health_check?: string | null
           name?: string
+          nfs_export_path?: string | null
           partner_target_id?: string | null
           port?: number | null
           site_location?: string | null
@@ -4612,6 +4618,7 @@ export type Database = {
         | "partial_vcenter_sync"
         | "inspect_zfs_appliance"
         | "decommission_zfs_target"
+        | "manage_datastore"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -4823,6 +4830,7 @@ export const Constants = {
         "partial_vcenter_sync",
         "inspect_zfs_appliance",
         "decommission_zfs_target",
+        "manage_datastore",
       ],
       operation_type: [
         "idrac_api",

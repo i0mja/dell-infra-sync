@@ -49,6 +49,7 @@ import {
   ArrowRightLeft,
   Wand2,
   KeyRound,
+  Database,
 } from "lucide-react";
 import { useReplicationTargets, ReplicationTarget, TargetDependencies } from "@/hooks/useReplication";
 import { formatDistanceToNow } from "date-fns";
@@ -57,6 +58,7 @@ import { useToast } from "@/hooks/use-toast";
 import { PrepareTemplateWizard } from "./PrepareTemplateWizard";
 import { PairedZfsDeployWizard } from "./PairedZfsDeployWizard";
 import { DecommissionTargetDialog, DecommissionOption } from "./DecommissionTargetDialog";
+import { DatastoreManagementDialog } from "./DatastoreManagementDialog";
 
 interface ReplicationTargetsPanelProps {
   onAddTarget?: () => void;
@@ -90,6 +92,10 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
   const [targetToDecommission, setTargetToDecommission] = useState<ReplicationTarget | null>(null);
   const [decommissionDeps, setDecommissionDeps] = useState<TargetDependencies | null>(null);
   const [loadingDeps, setLoadingDeps] = useState(false);
+  
+  // Datastore management dialog state
+  const [showDatastoreDialog, setShowDatastoreDialog] = useState(false);
+  const [datastoreTarget, setDatastoreTarget] = useState<ReplicationTarget | null>(null);
   
   // Form for creating paired targets (source + DR)
   const [formData, setFormData] = useState({
@@ -819,6 +825,13 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                             <Pencil className="h-4 w-4 mr-2" />
                             Edit
                           </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => {
+                            setDatastoreTarget(target);
+                            setShowDatastoreDialog(true);
+                          }}>
+                            <Database className="h-4 w-4 mr-2" />
+                            Manage Datastore
+                          </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           {target.partner_target ? (
                             <>
@@ -965,6 +978,21 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
         dependencies={decommissionDeps}
         loading={loadingDeps}
         onConfirm={handleDecommissionConfirm}
+      />
+
+      {/* Datastore Management Dialog */}
+      <DatastoreManagementDialog
+        open={showDatastoreDialog}
+        onOpenChange={setShowDatastoreDialog}
+        target={datastoreTarget ? {
+          id: datastoreTarget.id,
+          name: datastoreTarget.name,
+          hostname: datastoreTarget.hostname,
+          zfs_pool: datastoreTarget.zfs_pool,
+          datastore_name: datastoreTarget.datastore_name,
+          nfs_export_path: datastoreTarget.nfs_export_path,
+          dr_vcenter_id: datastoreTarget.dr_vcenter_id,
+        } : null}
       />
     </Card>
   );
