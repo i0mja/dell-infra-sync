@@ -68,7 +68,7 @@ class ZerfauxAPIRouter:
     
     def can_handle(self, path: str) -> bool:
         """Check if this router can handle the given path"""
-        return path.startswith('/api/replication')
+        return path.startswith('/api/replication') or path.startswith('/api/zerfaux')
     
     def route_get(self, path: str, handler) -> bool:
         """
@@ -182,6 +182,10 @@ class ZerfauxAPIRouter:
             match = re.match(r'/api/replication/protected-vms/([a-f0-9-]+)/create-dr-shell$', path)
             if match:
                 return self._create_dr_shell(handler, match.group(1), data)
+            
+            # Batch storage vMotion for multiple VMs
+            if path == '/api/zerfaux/batch-storage-vmotion':
+                return self._batch_storage_vmotion(handler, data)
             
             return False
             
@@ -1007,5 +1011,69 @@ class ZerfauxAPIRouter:
             'disks_attached': len(disk_paths),
             'disk_paths': disk_paths,
             'message': result.get('message')
+        })
+        return True
+    
+    def _batch_storage_vmotion(self, handler, data: Dict) -> bool:
+        """
+        Create storage vMotion jobs for multiple VMs.
+        
+        Expected data:
+            vm_ids: List of protected VM IDs to migrate
+        
+        Returns:
+            JSON response with created job IDs
+        """
+        vm_ids = data.get('vm_ids', [])
+        if not vm_ids:
+            handler._send_error('vm_ids is required', 400)
+            return True
+        
+        logger.info(f"Creating batch storage vMotion for {len(vm_ids)} VMs")
+        
+        # Fetch protected VMs
+        vm_ids_str = ','.join(vm_ids)
+        vms = self._db_query('protected_vms', {
+            'id': f"in.({vm_ids_str})",
+            'select': '*'
+        })
+        
+        if not vms:
+            handler._send_error('No VMs found', 404)
+            return True
+        
+        # Create a storage_vmotion job for each VM
+        jobs_created = []
+        errors = []
+        
+        for vm in vms:
+            try:
+                job = self._db_insert('jobs', {
+                    'job_type': 'storage_vmotion',
+                    'status': 'pending',
+                    'details': {
+                        'protected_vm_id': vm['id'],
+                        'vm_name': vm['vm_name'],
+                        'source_datastore': vm.get('current_datastore'),
+                        'target_datastore': vm.get('target_datastore'),
+                        'protection_group_id': vm.get('protection_group_id')
+                    }
+                })
+                if job:
+                    jobs_created.append(job)
+                    # Update the protected_vm status
+                    self._db_update('protected_vms', vm['id'], {
+                        'replication_status': 'migrating'
+                    })
+                    logger.info(f"Created storage vMotion job for VM {vm['vm_name']}")
+            except Exception as e:
+                logger.error(f"Failed to create job for VM {vm['vm_name']}: {e}")
+                errors.append({'vm_id': vm['id'], 'vm_name': vm['vm_name'], 'error': str(e)})
+        
+        handler._send_json({
+            'success': len(jobs_created) > 0,
+            'jobs_created': len(jobs_created),
+            'job_ids': [j['id'] for j in jobs_created],
+            'errors': errors if errors else None
         })
         return True
