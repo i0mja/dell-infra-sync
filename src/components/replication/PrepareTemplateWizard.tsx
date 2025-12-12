@@ -63,6 +63,8 @@ import {
   Activity,
   AlertTriangle,
   Star,
+  Copy,
+  Zap,
 } from "lucide-react";
 import { useVCenters } from "@/hooks/useVCenters";
 import { useVCenterVMs } from "@/hooks/useVCenterVMs";
@@ -75,6 +77,7 @@ import type { Database } from "@/integrations/supabase/types";
 import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
+import { CopyTemplateCrossVCenterDialog } from "@/components/settings/appliance-actions/CopyTemplateCrossVCenterDialog";
 
 interface PrepareTemplateWizardProps {
   open: boolean;
@@ -89,6 +92,7 @@ const WIZARD_STEPS = [
   { id: 4, label: 'Configure', icon: Package },
   { id: 5, label: 'Clean', icon: Trash2 },
   { id: 6, label: 'Convert', icon: FileBox },
+  { id: 7, label: 'Copy', icon: Copy },
 ];
 
 const DEFAULT_PACKAGES = [
@@ -171,6 +175,10 @@ export function PrepareTemplateWizard({
   // Template/powered-off VM support
   const [targetCluster, setTargetCluster] = useState("");
   const [jobDetails, setJobDetails] = useState<Record<string, unknown> | null>(null);
+  
+  // Step 7: Copy to other site
+  const [showCopyDialog, setShowCopyDialog] = useState(false);
+  const [skipCopy, setSkipCopy] = useState(false);
   
   // Fetch VMs from selected vCenter
   const { data: vms = [], isLoading: vmsLoading, clusters = [] } = useVCenterVMs(selectedVCenterId || undefined);
@@ -574,6 +582,8 @@ export function PrepareTemplateWizard({
         return true; // All optional
       case 6: 
         return !jobId || jobStatus === 'completed' || jobStatus === 'failed';
+      case 7:
+        return true; // Optional - can skip or copy
       default: 
         return false;
     }
@@ -582,9 +592,30 @@ export function PrepareTemplateWizard({
   const isJobRunning = jobStatus === 'running' || jobStatus === 'pending';
   const isJobComplete = jobStatus === 'completed';
   
+  // Other vCenters for cross-site copy
+  const otherVCenters = useMemo(
+    () => vcenters.filter(vc => vc.id !== selectedVCenterId),
+    [vcenters, selectedVCenterId]
+  );
+  
+  // Get created template info from job details for cross-site copy
+  const createdTemplateMoref = jobDetails?.created_template_moref as string | undefined;
+  const createdTemplateName = jobDetails?.created_template_name as string | undefined;
+  
+  // Selected vCenter name for display
+  const selectedVCenterName = useMemo(
+    () => vcenters.find(vc => vc.id === selectedVCenterId)?.name || 'Unknown',
+    [vcenters, selectedVCenterId]
+  );
+  
   const handleNext = () => {
-    if (currentStep < 6 && canProceedFromStep(currentStep)) {
-      setCurrentStep(currentStep + 1);
+    if (currentStep < 7 && canProceedFromStep(currentStep)) {
+      // Auto-advance to step 7 when job completes
+      if (currentStep === 6 && isJobComplete) {
+        setCurrentStep(7);
+      } else if (currentStep < 6) {
+        setCurrentStep(currentStep + 1);
+      }
     }
   };
   
@@ -1365,6 +1396,84 @@ export function PrepareTemplateWizard({
               )}
             </div>
           )}
+          
+          {/* Step 7: Copy to Other Site */}
+          {currentStep === 7 && (
+            <div className="space-y-4">
+              <div className="p-4 rounded-lg border bg-green-500/10 border-green-500/30">
+                <div className="flex items-center gap-2 text-green-600">
+                  <CheckCircle2 className="h-5 w-5" />
+                  <span className="font-medium">Template prepared successfully!</span>
+                </div>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {createdTemplateName || templateName} is ready for deployment
+                </p>
+              </div>
+              
+              {otherVCenters.length > 0 ? (
+                <div className="space-y-4">
+                  <Alert className="py-2">
+                    <Zap className="h-4 w-4" />
+                    <AlertDescription className="text-xs">
+                      Copy this template to another site using direct ESXi-to-ESXi transfer.
+                      This is faster than downloading and re-uploading the template.
+                    </AlertDescription>
+                  </Alert>
+                  
+                  <div className="p-4 rounded-lg border space-y-3">
+                    <h4 className="text-sm font-medium flex items-center gap-2">
+                      <Copy className="h-4 w-4" />
+                      Copy to Another Site
+                    </h4>
+                    <p className="text-sm text-muted-foreground">
+                      Select a destination site to copy this template:
+                    </p>
+                    <div className="grid gap-2">
+                      {otherVCenters.map((vc) => (
+                        <Button
+                          key={vc.id}
+                          variant="outline"
+                          className="justify-start"
+                          onClick={() => {
+                            setShowCopyDialog(true);
+                          }}
+                        >
+                          <Server className="h-4 w-4 mr-2" />
+                          {vc.name}
+                          <span className="text-xs text-muted-foreground ml-2">({vc.host})</span>
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                    <span>or</span>
+                  </div>
+                  
+                  <Button
+                    variant="ghost"
+                    className="w-full"
+                    onClick={() => onOpenChange(false)}
+                  >
+                    Skip - I'll copy later if needed
+                  </Button>
+                </div>
+              ) : (
+                <div className="p-4 rounded-lg border bg-muted/30 text-center">
+                  <p className="text-sm text-muted-foreground">
+                    No other vCenters configured. Add another vCenter in Settings to enable cross-site template copying.
+                  </p>
+                  <Button
+                    variant="default"
+                    className="mt-4"
+                    onClick={() => onOpenChange(false)}
+                  >
+                    Done
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
         
         {/* Footer */}
@@ -1373,7 +1482,7 @@ export function PrepareTemplateWizard({
             <Button
               variant="outline"
               onClick={handleBack}
-              disabled={currentStep === 1 || isJobRunning}
+              disabled={currentStep === 1 || isJobRunning || currentStep === 7}
             >
               <ArrowLeft className="h-4 w-4 mr-2" />
               Back
@@ -1381,7 +1490,7 @@ export function PrepareTemplateWizard({
             
             <div className="flex gap-2">
               <Button variant="ghost" onClick={() => onOpenChange(false)}>
-                {isJobComplete ? 'Close' : 'Cancel'}
+                {currentStep === 7 || isJobComplete ? 'Close' : 'Cancel'}
               </Button>
               {currentStep < 6 && (
                 <Button
@@ -1392,9 +1501,35 @@ export function PrepareTemplateWizard({
                   <ArrowRight className="h-4 w-4 ml-2" />
                 </Button>
               )}
+              {currentStep === 6 && isJobComplete && (
+                <Button onClick={() => setCurrentStep(7)}>
+                  Next
+                  <ArrowRight className="h-4 w-4 ml-2" />
+                </Button>
+              )}
             </div>
           </div>
         </DialogFooter>
+        
+        {/* Copy to Site B Dialog */}
+        <CopyTemplateCrossVCenterDialog
+          open={showCopyDialog}
+          onOpenChange={setShowCopyDialog}
+          sourceVCenterId={selectedVCenterId}
+          sourceVCenterName={selectedVCenterName}
+          sourceTemplateMoref={createdTemplateMoref || (selectedVM as unknown as Record<string, unknown>)?.vcenter_id as string || ''}
+          sourceTemplateName={createdTemplateName || templateName}
+          templateSettings={{
+            name: templateName,
+            default_ssh_username: username,
+            default_zfs_pool_name: 'tank',
+            default_zfs_disk_path: '/dev/sdb',
+            default_nfs_network: '10.0.0.0/8',
+          }}
+          onSuccess={() => {
+            toast({ title: 'Template copied to other site!' });
+          }}
+        />
       </DialogContent>
     </Dialog>
   );
