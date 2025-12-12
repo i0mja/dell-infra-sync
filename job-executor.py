@@ -934,6 +934,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
             'test_ssh_connection': self.zfs_target_handler.execute_test_ssh_connection,
             'retry_onboard_step': self.zfs_target_handler.execute_retry_onboard_step,
             'rollback_zfs_onboard': self.zfs_target_handler.execute_rollback_zfs_onboard,
+            'decommission_zfs_target': self.zfs_target_handler.execute_decommission_zfs_target,
             # Replication handlers
             'test_replication_pair': self.replication_handler.execute_test_replication_pair,
             'run_replication_sync': self.replication_handler.execute_run_replication_sync,
