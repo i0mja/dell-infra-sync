@@ -54,6 +54,7 @@ class VCenterDbUpsertMixin:
             "vms": {"synced": 0, "total": 0},
             "datastores": {"synced": 0, "total": 0},
             "datastore_hosts": {"synced": 0, "total": 0},
+            "datastore_vms": {"synced": 0, "total": 0},
             "networks": {"synced": 0, "total": 0},
             "network_vms": {"synced": 0, "total": 0},
             "errors": []
@@ -126,12 +127,22 @@ class VCenterDbUpsertMixin:
         # 6. Upsert Network-VM relationships (phase 5)
         self.log(f"{prefix}Upserting network-VM relationships...")
         if progress_callback:
-            progress_callback(90, f"{prefix}Syncing network-VM relationships...", 5)
+            progress_callback(85, f"{prefix}Syncing network-VM relationships...", 5)
         
         network_vm_result = self._upsert_network_vms_batch(
             inventory["vms"], source_vcenter_id, job_id
         )
         results["network_vms"] = network_vm_result
+        
+        # 7. Upsert Datastore-VM relationships (phase 6) - for decommission safety
+        self.log(f"{prefix}Upserting datastore-VM relationships...")
+        if progress_callback:
+            progress_callback(92, f"{prefix}Syncing datastore-VM relationships...", 6)
+        
+        datastore_vm_result = self._upsert_datastore_vms_batch(
+            inventory["vms"], source_vcenter_id, job_id
+        )
+        results["datastore_vms"] = datastore_vm_result
         
         # 7. Update network VM counts from relationships
         self._update_network_vm_counts(source_vcenter_id)
@@ -1013,3 +1024,146 @@ class VCenterDbUpsertMixin:
             
         except Exception as e:
             self.log(f"  Failed to update network VM counts: {e}", "WARN")
+    
+    def _upsert_datastore_vms_batch(
+        self,
+        vms: List[Dict],
+        source_vcenter_id: str,
+        job_id: str = None
+    ) -> Dict[str, int]:
+        """
+        Batch upsert datastore-VM relationships from VM datastore usage.
+        
+        This enables:
+        - Tracking which VMs are stored on which datastores
+        - Safe decommissioning of ZFS targets (knows which VMs would be affected)
+        - Proactive discovery of unprotected VMs on replication datastores
+        """
+        if not vms:
+            return {"synced": 0, "total": 0}
+        
+        headers = {
+            'apikey': SERVICE_ROLE_KEY,
+            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            'Content-Type': 'application/json',
+            'Prefer': 'resolution=merge-duplicates,return=minimal'
+        }
+        
+        # Fetch datastore lookup (vcenter_id -> id mapping)
+        try:
+            datastores_response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_datastores?source_vcenter_id=eq.{source_vcenter_id}&select=id,vcenter_id",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+            datastore_lookup = {}
+            if datastores_response.status_code == 200:
+                from job_executor.utils import _safe_json_parse
+                datastores_list = _safe_json_parse(datastores_response) or []
+                datastore_lookup = {d['vcenter_id']: d['id'] for d in datastores_list if d.get('vcenter_id')}
+        except Exception as e:
+            self.log(f"  Failed to fetch datastore mappings: {e}", "ERROR")
+            return {"synced": 0, "total": 0, "error": str(e)}
+        
+        # Fetch VM lookup (vcenter_id -> id mapping)
+        try:
+            vms_response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_vms?source_vcenter_id=eq.{source_vcenter_id}&select=id,vcenter_id",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+            vm_lookup = {}
+            if vms_response.status_code == 200:
+                from job_executor.utils import _safe_json_parse
+                vms_list = _safe_json_parse(vms_response) or []
+                vm_lookup = {v['vcenter_id']: v['id'] for v in vms_list if v.get('vcenter_id')}
+        except Exception as e:
+            self.log(f"  Failed to fetch VM mappings: {e}", "ERROR")
+            return {"synced": 0, "total": 0, "error": str(e)}
+        
+        # Build relationship records from VM datastore_usage
+        relationships = []
+        for v in vms:
+            vm_vcenter_id = v.get('id', '')
+            vm_id = vm_lookup.get(vm_vcenter_id)
+            if not vm_id:
+                continue
+            
+            datastore_usage = v.get('datastore_usage', [])
+            for ds_usage in datastore_usage:
+                ds_moref = ds_usage.get('datastore_moref')
+                datastore_id = datastore_lookup.get(ds_moref)
+                
+                if not datastore_id:
+                    continue  # Can't resolve datastore
+                
+                relationships.append({
+                    'datastore_id': datastore_id,
+                    'vm_id': vm_id,
+                    'source_vcenter_id': source_vcenter_id,
+                    'committed_bytes': ds_usage.get('committed_bytes', 0),
+                    'uncommitted_bytes': ds_usage.get('uncommitted_bytes', 0),
+                    'is_primary_datastore': ds_usage.get('is_primary', False),
+                    'last_sync': utc_now_iso()
+                })
+        
+        if not relationships:
+            self.log(f"  No datastore-VM relationships found")
+            return {"synced": 0, "total": 0}
+        
+        # Clear old relationships for this vCenter before inserting new ones
+        try:
+            requests.delete(
+                f"{DSM_URL}/rest/v1/vcenter_datastore_vms?source_vcenter_id=eq.{source_vcenter_id}",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+        except Exception as e:
+            self.log(f"  Failed to clear old datastore-VM relationships: {e}", "WARN")
+        
+        # Batch upsert relationships
+        synced = 0
+        batch_size = 100
+        errors = []
+        
+        for i in range(0, len(relationships), batch_size):
+            batch = relationships[i:i+batch_size]
+            
+            try:
+                response = requests.post(
+                    f"{DSM_URL}/rest/v1/vcenter_datastore_vms?on_conflict=datastore_id,vm_id",
+                    headers=headers,
+                    json=batch,
+                    verify=VERIFY_SSL,
+                    timeout=30
+                )
+                
+                if response.status_code in [200, 201, 204]:
+                    synced += len(batch)
+                else:
+                    error_msg = f"Batch {i//batch_size + 1}: HTTP {response.status_code}: {response.text[:200]}"
+                    self.log(f"  Datastore-VM batch upsert failed: {error_msg}", "WARN")
+                    errors.append(error_msg)
+                    
+            except Exception as e:
+                error_msg = f"Batch {i//batch_size + 1}: {str(e)}"
+                self.log(f"  Datastore-VM batch upsert error: {e}", "ERROR")
+                errors.append(error_msg)
+        
+        self.log(f"  ✓ Batch upserted {synced}/{len(relationships)} datastore-VM relationships")
+        result = {"synced": synced, "total": len(relationships)}
+        if errors:
+            result["error"] = "; ".join(errors)
+        return result

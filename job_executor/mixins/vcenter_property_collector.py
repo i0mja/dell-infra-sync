@@ -1030,13 +1030,42 @@ def _vm_to_dict(obj, props: Dict[str, Any], lookups: Dict[str, Any]) -> Dict[str
         tools_version = ""
     
     # Phase 7: Calculate disk_gb from storage usage
+    # Phase 9: Extract per-datastore usage for vcenter_datastore_vms table
     disk_gb = 0.0
+    datastore_usage = []  # List of {datastore_moref, committed_bytes, uncommitted_bytes, is_primary}
     storage_usage = props.get("storage.perDatastoreUsage", [])
+    vm_path_name = props.get("summary.config.vmPathName", "")
+    
+    # Extract primary datastore from vmPathName (format: "[datastore_name] path/to/vm.vmx")
+    primary_datastore_name = ""
+    if vm_path_name and vm_path_name.startswith("["):
+        try:
+            primary_datastore_name = vm_path_name[1:vm_path_name.index("]")]
+        except (ValueError, IndexError):
+            pass
+    
     if storage_usage:
         try:
             for usage in storage_usage:
                 committed = getattr(usage, 'committed', 0) or 0
+                uncommitted = getattr(usage, 'uncommitted', 0) or 0
                 disk_gb += committed / (1024**3)
+                
+                # Get datastore reference
+                ds_ref = getattr(usage, 'datastore', None)
+                if ds_ref and hasattr(ds_ref, '_moId'):
+                    ds_moref = str(ds_ref._moId)
+                    ds_name = getattr(ds_ref, 'name', '') if hasattr(ds_ref, 'name') else ''
+                    
+                    # Check if this is the primary datastore (where .vmx lives)
+                    is_primary = (ds_name == primary_datastore_name) if primary_datastore_name and ds_name else False
+                    
+                    datastore_usage.append({
+                        'datastore_moref': ds_moref,
+                        'committed_bytes': committed,
+                        'uncommitted_bytes': uncommitted,
+                        'is_primary': is_primary,
+                    })
             disk_gb = round(disk_gb, 2)
         except Exception:
             disk_gb = 0.0
@@ -1147,6 +1176,9 @@ def _vm_to_dict(obj, props: Dict[str, Any], lookups: Dict[str, Any]) -> Dict[str
         
         # Phase 8: Network interfaces
         "network_interfaces": network_interfaces,
+        
+        # Phase 9: Datastore usage (for vcenter_datastore_vms table)
+        "datastore_usage": datastore_usage,
     }
 
 

@@ -3614,6 +3614,64 @@ export type Database = {
           },
         ]
       }
+      vcenter_datastore_vms: {
+        Row: {
+          committed_bytes: number | null
+          created_at: string | null
+          datastore_id: string
+          id: string
+          is_primary_datastore: boolean | null
+          last_sync: string | null
+          source_vcenter_id: string | null
+          uncommitted_bytes: number | null
+          vm_id: string
+        }
+        Insert: {
+          committed_bytes?: number | null
+          created_at?: string | null
+          datastore_id: string
+          id?: string
+          is_primary_datastore?: boolean | null
+          last_sync?: string | null
+          source_vcenter_id?: string | null
+          uncommitted_bytes?: number | null
+          vm_id: string
+        }
+        Update: {
+          committed_bytes?: number | null
+          created_at?: string | null
+          datastore_id?: string
+          id?: string
+          is_primary_datastore?: boolean | null
+          last_sync?: string | null
+          source_vcenter_id?: string | null
+          uncommitted_bytes?: number | null
+          vm_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vcenter_datastore_vms_datastore_id_fkey"
+            columns: ["datastore_id"]
+            isOneToOne: false
+            referencedRelation: "vcenter_datastores"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vcenter_datastore_vms_source_vcenter_id_fkey"
+            columns: ["source_vcenter_id"]
+            isOneToOne: false
+            referencedRelation: "vcenters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vcenter_datastore_vms_vm_id_fkey"
+            columns: ["vm_id"]
+            isOneToOne: false
+            referencedRelation: "vcenter_vms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vcenter_datastores: {
         Row: {
           accessible: boolean | null
