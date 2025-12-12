@@ -1130,6 +1130,33 @@ class TemplateHandler(BaseHandler):
                 dkms_recheck = self._exec_ssh(ssh_client, 'dkms status zfs 2>&1')
                 self._log_and_update(job_id, 'INFO', f'DKMS status after manual build: {dkms_recheck["stdout"].strip()}', job_details)
             
+            # === CRITICAL: Prepare system for ZFS module loading (Debian 13 fix) ===
+            
+            # 1. Remove any ZFS blacklist entries that might block loading
+            self._log_and_update(job_id, 'INFO', 'Checking for ZFS blacklist entries...', job_details)
+            self._exec_ssh(ssh_client, 'rm -f /etc/modprobe.d/*blacklist*zfs* 2>/dev/null || true')
+            self._exec_ssh(ssh_client, 'sed -i "/blacklist zfs/d" /etc/modprobe.d/*.conf 2>/dev/null || true')
+            self._exec_ssh(ssh_client, 'sed -i "/blacklist spl/d" /etc/modprobe.d/*.conf 2>/dev/null || true')
+            
+            # 2. Run depmod to update module dependency database (critical for Debian 13)
+            self._log_and_update(job_id, 'INFO', 'Updating kernel module dependencies (depmod -a)...', job_details)
+            depmod_result = self._exec_ssh(ssh_client, 'depmod -a 2>&1')
+            if depmod_result['exit_code'] != 0:
+                self._log_and_update(job_id, 'WARN', f'depmod warning: {depmod_result["stderr"]}', job_details)
+            
+            # 3. Ensure ZFS loads on boot by creating modules-load.d entry
+            self._exec_ssh(ssh_client, 'mkdir -p /etc/modules-load.d')
+            self._exec_ssh(ssh_client, 'echo "zfs" > /etc/modules-load.d/zfs.conf')
+            self._log_and_update(job_id, 'INFO', 'Created /etc/modules-load.d/zfs.conf for boot-time loading', job_details)
+            
+            # 4. Update initramfs to include ZFS modules (ensures ZFS available early in boot)
+            self._log_and_update(job_id, 'INFO', 'Updating initramfs with ZFS modules...', job_details)
+            initramfs_result = self._exec_ssh(ssh_client, 'update-initramfs -u -k all 2>&1 | tail -5')
+            if initramfs_result['exit_code'] == 0:
+                self._log_and_update(job_id, 'INFO', f'initramfs updated: {initramfs_result["stdout"].strip()[-100:]}', job_details)
+            else:
+                self._log_and_update(job_id, 'WARN', f'initramfs update warning: {initramfs_result["stderr"][-100:]}', job_details)
+            
             # Load ZFS kernel module
             self._log_and_update(job_id, 'INFO', 'Loading ZFS kernel module...', job_details)
             result = self._exec_ssh(ssh_client, 'modprobe zfs 2>&1')
@@ -1138,6 +1165,9 @@ class TemplateHandler(BaseHandler):
                 self._log_and_update(job_id, 'INFO', 'Running dkms autoinstall...', job_details)
                 autoinstall_result = self._exec_ssh(ssh_client, 'dkms autoinstall 2>&1 | tail -20')
                 self._log_and_update(job_id, 'INFO', f'dkms autoinstall output: {autoinstall_result["stdout"][-300:]}', job_details)
+                
+                # Re-run depmod after autoinstall
+                self._exec_ssh(ssh_client, 'depmod -a')
                 
                 result = self._exec_ssh(ssh_client, 'modprobe zfs 2>&1')
                 if result['exit_code'] != 0:
@@ -1567,45 +1597,75 @@ PACKAGES={packages_str}
             
             return ssh_client
         else:
-            # ZFS module not loaded - try to load it manually
-            self._log_console(job_id, 'WARN', 'ZFS module not auto-loaded, attempting manual load...', job_details)
+            # ZFS module not loaded - try aggressive recovery (Debian 13 fix)
+            self._log_console(job_id, 'WARN', 'ZFS module not auto-loaded, attempting recovery...', job_details)
             
-            # Try modprobe
-            result = self._exec_ssh(ssh_client, 'modprobe zfs 2>&1')
-            if result['exit_code'] == 0:
-                # Check again
-                lsmod_result = self._exec_ssh(ssh_client, 'lsmod | grep -E "^zfs\\s"')
-                if lsmod_result['exit_code'] == 0:
-                    self._log_console(job_id, 'INFO', 'ZFS module loaded via modprobe after reboot', job_details)
-                    
-                    # Ensure it loads on next boot too
-                    self._exec_ssh(ssh_client, 'echo "zfs" >> /etc/modules-load.d/zfs.conf')
-                    self._log_console(job_id, 'INFO', 'Added zfs to /etc/modules-load.d/zfs.conf for future boots', job_details)
-                    
-                    return ssh_client
-            
-            # If still failing, try DKMS rebuild with detailed diagnostics
-            self._log_console(job_id, 'WARN', 'modprobe failed, attempting DKMS rebuild...', job_details)
-            
-            # Get kernel info for diagnostics
+            # Get kernel version for diagnostics
             kernel_info = self._exec_ssh(ssh_client, 'uname -r')
             kernel_version = kernel_info['stdout'].strip()
             self._log_console(job_id, 'INFO', f'Current kernel: {kernel_version}', job_details)
             
-            # Check DKMS status
-            dkms_status = self._exec_ssh(ssh_client, 'dkms status 2>&1')
-            self._log_console(job_id, 'INFO', f'DKMS status: {dkms_status["stdout"].strip()}', job_details)
+            # 1. Remove any blacklist entries (might have been restored)
+            self._log_console(job_id, 'INFO', 'Removing any ZFS blacklist entries...', job_details)
+            self._exec_ssh(ssh_client, 'rm -f /etc/modprobe.d/*blacklist*zfs* 2>/dev/null || true')
+            self._exec_ssh(ssh_client, 'sed -i "/blacklist zfs/d" /etc/modprobe.d/*.conf 2>/dev/null || true')
+            self._exec_ssh(ssh_client, 'sed -i "/blacklist spl/d" /etc/modprobe.d/*.conf 2>/dev/null || true')
+            
+            # 2. Re-run depmod to update module dependency database
+            self._log_console(job_id, 'INFO', 'Running depmod -a to update module dependencies...', job_details)
+            self._exec_ssh(ssh_client, 'depmod -a')
+            
+            # 3. Check if ZFS module file actually exists
+            find_module = self._exec_ssh(ssh_client, f'find /lib/modules/{kernel_version} -name "zfs.ko*" 2>/dev/null | head -3')
+            module_files = find_module['stdout'].strip()
+            self._log_console(job_id, 'INFO', f'ZFS module files: {module_files or "NONE FOUND"}', job_details)
+            
+            # 4. If no module file exists, force DKMS rebuild
+            if not module_files:
+                self._log_console(job_id, 'WARN', 'ZFS module not found, forcing DKMS rebuild...', job_details)
+                zfs_ver = self._exec_ssh(ssh_client, 'ls /usr/src/ | grep zfs | head -1 | sed "s/zfs-//"')
+                zfs_dkms_ver = zfs_ver['stdout'].strip()
+                if zfs_dkms_ver:
+                    self._log_console(job_id, 'INFO', f'Rebuilding ZFS DKMS module version {zfs_dkms_ver}...', job_details)
+                    self._exec_ssh(ssh_client, f'dkms remove zfs/{zfs_dkms_ver} --all 2>/dev/null || true')
+                    self._exec_ssh(ssh_client, f'dkms add -m zfs -v {zfs_dkms_ver} 2>/dev/null || true')
+                    build_result = self._exec_ssh(ssh_client, f'dkms build -m zfs -v {zfs_dkms_ver} -k {kernel_version} 2>&1 | tail -10')
+                    self._log_console(job_id, 'INFO', f'DKMS build: {build_result["stdout"][-200:]}', job_details)
+                    self._exec_ssh(ssh_client, f'dkms install -m zfs -v {zfs_dkms_ver} -k {kernel_version} 2>&1')
+                    self._exec_ssh(ssh_client, 'depmod -a')
+            
+            # 5. Try modprobe with verbose output for diagnostics
+            modprobe_verbose = self._exec_ssh(ssh_client, 'modprobe -v zfs 2>&1')
+            self._log_console(job_id, 'INFO', f'modprobe -v zfs: {modprobe_verbose["stdout"][-200:]} {modprobe_verbose["stderr"][-100:]}', job_details)
+            
+            if modprobe_verbose['exit_code'] == 0:
+                # Check again
+                lsmod_result = self._exec_ssh(ssh_client, 'lsmod | grep -E "^zfs\\s"')
+                if lsmod_result['exit_code'] == 0:
+                    self._log_console(job_id, 'INFO', 'ZFS module loaded successfully after recovery', job_details)
+                    
+                    # Ensure it loads on next boot
+                    self._exec_ssh(ssh_client, 'mkdir -p /etc/modules-load.d')
+                    self._exec_ssh(ssh_client, 'echo "zfs" > /etc/modules-load.d/zfs.conf')
+                    self._log_console(job_id, 'INFO', 'Ensured zfs in /etc/modules-load.d/zfs.conf for future boots', job_details)
+                    
+                    return ssh_client
+            
+            # 6. Try DKMS autoinstall as last resort
+            self._log_console(job_id, 'WARN', 'modprobe failed, trying dkms autoinstall...', job_details)
             
             # Check if headers are installed for current kernel
             headers_check = self._exec_ssh(ssh_client, f'ls -la /lib/modules/{kernel_version}/build 2>&1')
             if headers_check['exit_code'] != 0:
-                self._log_console(job_id, 'ERROR', f'Kernel headers missing for {kernel_version}: {headers_check["stderr"]}', job_details)
-                # Try to install headers
+                self._log_console(job_id, 'ERROR', f'Kernel headers missing for {kernel_version}', job_details)
                 self._exec_ssh(ssh_client, f'apt-get update && apt-get install -y linux-headers-{kernel_version} || apt-get install -y linux-headers-amd64')
             
             # Run dkms autoinstall with output
             autoinstall_result = self._exec_ssh(ssh_client, 'dkms autoinstall 2>&1')
             self._log_console(job_id, 'INFO', f'DKMS autoinstall output:\n{autoinstall_result["stdout"][-500:]}', job_details)
+            
+            # Re-run depmod after autoinstall
+            self._exec_ssh(ssh_client, 'depmod -a')
             
             result = self._exec_ssh(ssh_client, 'modprobe zfs 2>&1')
             
@@ -1613,30 +1673,34 @@ PACKAGES={packages_str}
                 lsmod_result = self._exec_ssh(ssh_client, 'lsmod | grep -E "^zfs\\s"')
                 if lsmod_result['exit_code'] == 0:
                     self._log_console(job_id, 'INFO', 'ZFS module loaded after DKMS rebuild', job_details)
-                    self._exec_ssh(ssh_client, 'echo "zfs" >> /etc/modules-load.d/zfs.conf')
+                    self._exec_ssh(ssh_client, 'mkdir -p /etc/modules-load.d')
+                    self._exec_ssh(ssh_client, 'echo "zfs" > /etc/modules-load.d/zfs.conf')
                     return ssh_client
             
             # Complete failure - provide detailed diagnostics
-            self._log_console(job_id, 'ERROR', 'ZFS kernel module failed to load after reboot', job_details)
+            self._log_console(job_id, 'ERROR', 'ZFS kernel module failed to load after all recovery attempts', job_details)
             
             # Collect detailed diagnostic information
+            dkms_status = self._exec_ssh(ssh_client, 'dkms status 2>&1')
             modinfo_result = self._exec_ssh(ssh_client, 'modinfo zfs 2>&1')
-            dmesg_result = self._exec_ssh(ssh_client, 'dmesg | grep -i zfs | tail -10 2>&1')
+            dmesg_result = self._exec_ssh(ssh_client, 'dmesg | grep -iE "(zfs|spl|module)" | tail -15 2>&1')
             
             error_details = f"""
 === ZFS Module Diagnostics ===
 Kernel: {kernel_version}
 DKMS Status: {dkms_status['stdout'].strip()}
+Module files found: {module_files or 'NONE'}
 modinfo zfs: {modinfo_result['stderr'].strip() if modinfo_result['exit_code'] != 0 else modinfo_result['stdout'][:200]}
-dmesg ZFS: {dmesg_result['stdout'].strip()[-300:]}
+dmesg: {dmesg_result['stdout'].strip()[-400:]}
 modprobe error: {result['stdout']} {result['stderr']}
 """
             self._log_console(job_id, 'ERROR', error_details, job_details)
             job_details['zfs_diagnostics'] = {
                 'kernel': kernel_version,
                 'dkms_status': dkms_status['stdout'].strip(),
+                'module_files': module_files,
                 'modinfo': modinfo_result['stderr'] if modinfo_result['exit_code'] != 0 else modinfo_result['stdout'][:200],
-                'dmesg': dmesg_result['stdout'].strip()[-300:],
+                'dmesg': dmesg_result['stdout'].strip()[-400:],
             }
             
             ssh_client.close()
