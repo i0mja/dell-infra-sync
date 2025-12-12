@@ -4239,6 +4239,225 @@ class ZfsTargetHandler(BaseHandler):
                     pass
                 self.vcenter_conn = None
     
+    # =========================================================================
+    # Scan Datastore Status Handler
+    # =========================================================================
+    
+    def execute_scan_datastore_status(self, job: Dict):
+        """
+        Scan vCenter for datastore mount status and auto-detect linked datastores.
+        
+        This job:
+        1. Connects to vCenter
+        2. Finds NFS datastores where remoteHost matches target's hostname
+        3. Returns per-host mount status
+        4. Optionally links the datastore to the replication target
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        
+        target_id = details.get('target_id')
+        auto_detect = details.get('auto_detect', True)
+        
+        job_details = {
+            'target_id': target_id,
+            'auto_detect': auto_detect,
+            'console_log': [],
+            'results': {}
+        }
+        
+        self._log_console(job_id, 'INFO', 'Starting datastore status scan', job_details)
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso(), details=job_details)
+        
+        try:
+            # Fetch target info
+            target = self._fetch_replication_target(target_id)
+            if not target:
+                raise Exception(f'Replication target not found: {target_id}')
+            
+            job_details['target_name'] = target.get('name')
+            job_details['hostname'] = target.get('hostname')
+            
+            target_hostname = target.get('hostname')
+            target_name = target.get('name')
+            existing_ds_name = target.get('datastore_name')
+            
+            # Connect to vCenter
+            vcenter_id = target.get('dr_vcenter_id')
+            if not vcenter_id:
+                raise Exception('No vCenter associated with this target')
+            
+            vcenter = self._fetch_vcenter(vcenter_id)
+            if not vcenter:
+                raise Exception(f'vCenter not found: {vcenter_id}')
+            
+            self._log_console(job_id, 'INFO', f'Connecting to vCenter: {vcenter["host"]}', job_details)
+            
+            # Connect to vCenter
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            
+            self.vcenter_conn = SmartConnect(
+                host=vcenter['host'],
+                user=vcenter['username'],
+                pwd=vcenter['password'],
+                port=vcenter.get('port', 443),
+                sslContext=context
+            )
+            
+            content = self.vcenter_conn.RetrieveContent()
+            
+            # Get all datastores
+            container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.Datastore], True
+            )
+            all_datastores = list(container.view)
+            container.Destroy()
+            
+            self._log_console(job_id, 'INFO', f'Found {len(all_datastores)} datastores', job_details)
+            
+            # Find matching NFS datastores
+            detected_datastore = None
+            detected_ds_name = None
+            
+            for ds in all_datastores:
+                try:
+                    # Check if this is an NFS datastore
+                    if not hasattr(ds.info, 'nas') or not ds.info.nas:
+                        continue
+                    
+                    nas_info = ds.info.nas
+                    remote_host = nas_info.remoteHost
+                    remote_path = nas_info.remotePath
+                    ds_name = ds.name
+                    
+                    # Check if remote host matches our target
+                    if remote_host == target_hostname:
+                        self._log_console(job_id, 'INFO', f'Found matching NFS datastore: {ds_name} @ {remote_host}:{remote_path}', job_details)
+                        detected_datastore = ds
+                        detected_ds_name = ds_name
+                        break
+                    
+                    # Also check by name pattern if no exact host match
+                    if not detected_datastore:
+                        name_patterns = [
+                            f'nfs-{target_name}',
+                            f'NFS-{target_name}',
+                            target_name,
+                        ]
+                        if any(pattern.lower() == ds_name.lower() for pattern in name_patterns):
+                            self._log_console(job_id, 'INFO', f'Found datastore by name pattern: {ds_name}', job_details)
+                            detected_datastore = ds
+                            detected_ds_name = ds_name
+                            
+                except Exception as e:
+                    self.log(f'Error checking datastore {ds.name}: {e}', 'WARN')
+                    continue
+            
+            results = {
+                'detected': detected_datastore is not None,
+                'datastore_name': detected_ds_name,
+                'hosts': [],
+                'mounted_count': 0,
+                'total_hosts': 0
+            }
+            
+            if detected_datastore:
+                # Get mount status per host
+                container = content.viewManager.CreateContainerView(
+                    content.rootFolder, [vim.HostSystem], True
+                )
+                all_hosts = list(container.view)
+                container.Destroy()
+                
+                results['total_hosts'] = len(all_hosts)
+                
+                for host in all_hosts:
+                    try:
+                        has_datastore = any(
+                            ds.name == detected_ds_name 
+                            for ds in host.datastore if ds
+                        )
+                        results['hosts'].append({
+                            'host_name': host.name,
+                            'cluster': host.parent.name if hasattr(host.parent, 'name') else None,
+                            'connected': host.runtime.connectionState == 'connected',
+                            'mounted': has_datastore
+                        })
+                        if has_datastore:
+                            results['mounted_count'] += 1
+                    except Exception as e:
+                        results['hosts'].append({
+                            'host_name': host.name,
+                            'error': str(e)
+                        })
+                
+                self._log_console(job_id, 'INFO', f'Mount status: {results["mounted_count"]}/{results["total_hosts"]} hosts', job_details)
+                
+                # Auto-link if requested and not already linked
+                if auto_detect and detected_ds_name and not existing_ds_name:
+                    try:
+                        headers = {
+                            'apikey': SERVICE_ROLE_KEY,
+                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=minimal'
+                        }
+                        
+                        # Update replication_targets.datastore_name
+                        resp = requests.patch(
+                            f'{DSM_URL}/rest/v1/replication_targets',
+                            params={'id': f'eq.{target_id}'},
+                            json={'datastore_name': detected_ds_name},
+                            headers=headers,
+                            verify=VERIFY_SSL,
+                            timeout=10
+                        )
+                        
+                        if resp.status_code in [200, 204]:
+                            self._log_console(job_id, 'INFO', f'Linked datastore: {detected_ds_name} to target', job_details)
+                            results['linked'] = True
+                        else:
+                            self._log_console(job_id, 'WARN', f'Failed to link datastore: {resp.status_code}', job_details)
+                            
+                        # Also try to link vcenter_datastores.replication_target_id
+                        ds_resp = requests.patch(
+                            f'{DSM_URL}/rest/v1/vcenter_datastores',
+                            params={
+                                'source_vcenter_id': f'eq.{vcenter_id}',
+                                'name': f'eq.{detected_ds_name}'
+                            },
+                            json={'replication_target_id': target_id},
+                            headers=headers,
+                            verify=VERIFY_SSL,
+                            timeout=10
+                        )
+                        
+                        if ds_resp.status_code in [200, 204]:
+                            self._log_console(job_id, 'INFO', f'Updated vcenter_datastores link', job_details)
+                            
+                    except Exception as e:
+                        self._log_console(job_id, 'WARN', f'Failed to auto-link: {e}', job_details)
+            else:
+                self._log_console(job_id, 'WARN', f'No matching NFS datastore found for {target_hostname}', job_details)
+            
+            job_details['results'] = results
+            self._log_console(job_id, 'INFO', 'Scan completed', job_details)
+            self.update_job_status(job_id, 'completed', completed_at=utc_now_iso(), details=job_details)
+            
+        except Exception as e:
+            self._log_console(job_id, 'ERROR', f'Scan failed: {str(e)}', job_details)
+            job_details['error'] = str(e)
+            self.update_job_status(job_id, 'failed', completed_at=utc_now_iso(), details=job_details)
+        finally:
+            if self.vcenter_conn:
+                try:
+                    Disconnect(self.vcenter_conn)
+                except:
+                    pass
+                self.vcenter_conn = None
+    
     def _fetch_vcenter(self, vcenter_id: str) -> Optional[Dict]:
         """Fetch vCenter info and decrypt password."""
         try:

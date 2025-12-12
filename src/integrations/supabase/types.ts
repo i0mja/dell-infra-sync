@@ -4619,6 +4619,7 @@ export type Database = {
         | "inspect_zfs_appliance"
         | "decommission_zfs_target"
         | "manage_datastore"
+        | "scan_datastore_status"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -4831,6 +4832,7 @@ export const Constants = {
         "inspect_zfs_appliance",
         "decommission_zfs_target",
         "manage_datastore",
+        "scan_datastore_status",
       ],
       operation_type: [
         "idrac_api",
