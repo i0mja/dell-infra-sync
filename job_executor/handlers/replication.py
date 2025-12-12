@@ -509,6 +509,52 @@ class ReplicationHandler(BaseHandler):
                 except Exception as e:
                     self.executor.log(f"Error fetching SSH key from ssh_keys table: {e}", "WARNING")
             
+            # Check ssh_key_deployments table for keys deployed to this target
+            if target.get('id'):
+                try:
+                    response = requests.get(
+                        f"{DSM_URL}/rest/v1/ssh_key_deployments",
+                        params={
+                            'replication_target_id': f"eq.{target['id']}",
+                            'status': 'eq.deployed',
+                            'select': 'ssh_key_id'
+                        },
+                        headers={
+                            'apikey': SERVICE_ROLE_KEY,
+                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                        },
+                        verify=VERIFY_SSL,
+                        timeout=10
+                    )
+                    if response.ok:
+                        deployments = response.json()
+                        if deployments:
+                            # Found a deployed key, fetch it
+                            key_response = requests.get(
+                                f"{DSM_URL}/rest/v1/ssh_keys",
+                                params={
+                                    'id': f"eq.{deployments[0]['ssh_key_id']}",
+                                    'select': 'id,private_key_encrypted,status'
+                                },
+                                headers={
+                                    'apikey': SERVICE_ROLE_KEY,
+                                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                                },
+                                verify=VERIFY_SSL,
+                                timeout=10
+                            )
+                            if key_response.ok:
+                                keys = key_response.json()
+                                if keys and keys[0].get('private_key_encrypted'):
+                                    if keys[0].get('status') in ('active', 'pending'):
+                                        key_data = self.executor.decrypt_password(keys[0]['private_key_encrypted'])
+                                        if key_data:
+                                            creds['key_data'] = key_data
+                                            self.executor.log(f"Using deployed SSH key for {hostname}")
+                                            return creds
+                except Exception as e:
+                    self.executor.log(f"Error checking ssh_key_deployments: {e}", "WARNING")
+            
             # Fallback to activity_settings SSH configuration
             try:
                 response = requests.get(
@@ -556,7 +602,12 @@ class ReplicationHandler(BaseHandler):
                 self.executor.log(f"Using provided password for {hostname}")
                 return creds
             
-            self.executor.log(f"No SSH credentials available for target {hostname}. Assign an SSH key in Edit Target or run SSH Key Exchange first.", "ERROR")
+            # Build a helpful error message with VM name if available
+            vm_name = target.get('hosting_vm_name') or target.get('hosting_vm', {}).get('name')
+            if vm_name:
+                self.executor.log(f"No SSH credentials available for VM {vm_name} ({hostname}). Assign an SSH key in Edit Target or run SSH Key Exchange first.", "ERROR")
+            else:
+                self.executor.log(f"No SSH credentials available for {hostname}. Assign an SSH key in Edit Target or run SSH Key Exchange first.", "ERROR")
             return None
             
         except Exception as e:
