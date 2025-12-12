@@ -3552,3 +3552,435 @@ class ZfsTargetHandler(BaseHandler):
             return {'success': False, 'error': str(e)}
         finally:
             self._cleanup()
+    
+    def execute_decommission_zfs_target(self, job: Dict) -> Dict:
+        """
+        Full decommission of a ZFS replication target.
+        
+        Actions (from job.details.actions):
+        - destroy_zfs_pool: SSH to appliance, export/destroy pool
+        - remove_nfs_datastore: Remove NFS datastore from all vCenter hosts
+        - power_off_vm: Power off the appliance VM
+        - delete_vm: Delete the appliance VM from vCenter
+        
+        Then: Update database (clear partner, delete target record)
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        
+        job_details = {
+            'console_log': [],
+            'decommission_results': [],
+            'progress_percent': 0
+        }
+        
+        def add_result(step: str, status: str, message: str):
+            job_details['decommission_results'].append({
+                'step': step,
+                'status': status,
+                'message': message
+            })
+            self._log_console(job_id, 'INFO' if status == 'success' else 'WARN', f'{step}: {message}', job_details)
+        
+        self._log_console(job_id, 'INFO', 'Starting ZFS target decommission...', job_details)
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso(), details=job_details)
+        
+        try:
+            # Extract parameters
+            target_id = details.get('target_id')
+            target_name = details.get('target_name', 'unknown')
+            hostname = details.get('hostname')
+            zfs_pool = details.get('zfs_pool', 'tank')
+            dr_vcenter_id = details.get('dr_vcenter_id')
+            deployed_vm_moref = details.get('deployed_vm_moref')
+            actions = details.get('actions', [])
+            
+            self._log_console(job_id, 'INFO', f'Target: {target_name} ({target_id})', job_details)
+            self._log_console(job_id, 'INFO', f'Actions to perform: {", ".join(actions)}', job_details)
+            
+            # ========== Phase 1: Pre-flight VM Check ==========
+            job_details['progress_percent'] = 5
+            self._log_console(job_id, 'INFO', 'Phase 1: Checking for VMs on datastore...', job_details)
+            
+            # Check for VMs on the target's datastore
+            vms_on_datastore = self._check_vms_on_target_datastore(target_id)
+            if vms_on_datastore:
+                vm_names = [vm.get('name', 'Unknown') for vm in vms_on_datastore[:5]]
+                error_msg = f"Cannot decommission: {len(vms_on_datastore)} VM(s) on datastore: {', '.join(vm_names)}"
+                if len(vms_on_datastore) > 5:
+                    error_msg += f" and {len(vms_on_datastore) - 5} more..."
+                add_result('preflight_check', 'failed', error_msg)
+                raise Exception(error_msg)
+            
+            add_result('preflight_check', 'success', 'No VMs found on target datastore')
+            job_details['progress_percent'] = 10
+            
+            # ========== Phase 2: Destroy ZFS Pool (if selected) ==========
+            if 'destroy_zfs_pool' in actions and hostname:
+                job_details['progress_percent'] = 15
+                self._log_console(job_id, 'INFO', f'Phase 2: Destroying ZFS pool on {hostname}...', job_details)
+                
+                ssh_connected = False
+                try:
+                    # Try to connect via SSH using target's stored credentials
+                    target_info = self._fetch_replication_target(target_id)
+                    if target_info:
+                        ssh_key_id = target_info.get('ssh_key_id')
+                        ssh_username = target_info.get('ssh_username', 'root')
+                        
+                        if ssh_key_id:
+                            key_data = self._get_ssh_key(ssh_key_id)
+                            if key_data:
+                                private_key = self._decrypt_ssh_key(key_data.get('private_key_encrypted'))
+                                if private_key:
+                                    self.ssh_client = paramiko.SSHClient()
+                                    self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                                    
+                                    key_file = io.StringIO(private_key)
+                                    pkey = None
+                                    for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                                        try:
+                                            key_file.seek(0)
+                                            pkey = key_class.from_private_key(key_file)
+                                            break
+                                        except:
+                                            continue
+                                    
+                                    if pkey:
+                                        self.ssh_client.connect(
+                                            hostname=hostname,
+                                            username=ssh_username,
+                                            pkey=pkey,
+                                            timeout=15,
+                                            allow_agent=False,
+                                            look_for_keys=False
+                                        )
+                                        ssh_connected = True
+                                        self._log_console(job_id, 'INFO', f'SSH connected to {hostname}', job_details)
+                    
+                    if ssh_connected:
+                        # Export the pool first (safer than destroy)
+                        export_result = self._ssh_exec(f'zpool export {zfs_pool} 2>&1', job_id)
+                        if export_result['exit_code'] == 0:
+                            add_result('destroy_zfs_pool', 'success', f'Pool {zfs_pool} exported successfully')
+                        else:
+                            # Pool might be busy or not exist - try force destroy
+                            destroy_result = self._ssh_exec(f'zpool destroy -f {zfs_pool} 2>&1', job_id)
+                            if destroy_result['exit_code'] == 0:
+                                add_result('destroy_zfs_pool', 'success', f'Pool {zfs_pool} destroyed')
+                            else:
+                                # Pool might not exist
+                                check_result = self._ssh_exec(f'zpool list {zfs_pool} 2>&1', job_id, log_command=False)
+                                if check_result['exit_code'] != 0:
+                                    add_result('destroy_zfs_pool', 'skipped', f'Pool {zfs_pool} does not exist')
+                                else:
+                                    add_result('destroy_zfs_pool', 'warning', f'Could not destroy pool: {destroy_result["stderr"][:100]}')
+                    else:
+                        add_result('destroy_zfs_pool', 'skipped', 'Could not establish SSH connection')
+                        
+                except Exception as ssh_err:
+                    add_result('destroy_zfs_pool', 'warning', f'SSH operation failed: {str(ssh_err)[:100]}')
+                finally:
+                    if self.ssh_client:
+                        try:
+                            self.ssh_client.close()
+                        except:
+                            pass
+                        self.ssh_client = None
+            
+            job_details['progress_percent'] = 30
+            
+            # ========== Phase 3: Remove NFS Datastore (if selected) ==========
+            if 'remove_nfs_datastore' in actions and dr_vcenter_id:
+                job_details['progress_percent'] = 35
+                self._log_console(job_id, 'INFO', 'Phase 3: Removing NFS datastore from vCenter...', job_details)
+                
+                try:
+                    vc_settings = self._get_vcenter_settings(dr_vcenter_id)
+                    if vc_settings:
+                        self.vcenter_conn = self._connect_vcenter(
+                            vc_settings['host'],
+                            vc_settings['username'],
+                            vc_settings['password'],
+                            vc_settings.get('port', 443),
+                            vc_settings.get('verify_ssl', False)
+                        )
+                        
+                        if self.vcenter_conn:
+                            # Find the datastore by name (typically same as target name or NFS-targetname)
+                            datastore_names = [target_name, f'NFS-{target_name}']
+                            content = self.vcenter_conn.RetrieveContent()
+                            
+                            for ds in content.viewManager.CreateContainerView(
+                                content.rootFolder, [vim.Datastore], True
+                            ).view:
+                                if ds.name in datastore_names:
+                                    self._log_console(job_id, 'INFO', f'Found datastore: {ds.name}', job_details)
+                                    
+                                    # Unmount from all hosts
+                                    unmount_count = 0
+                                    for host in ds.host:
+                                        try:
+                                            host_system = host.key
+                                            ds_system = host_system.configManager.datastoreSystem
+                                            ds_system.RemoveDatastore(ds)
+                                            unmount_count += 1
+                                        except Exception as unmount_err:
+                                            self._log_console(job_id, 'WARN', f'Failed to unmount from host: {unmount_err}', job_details)
+                                    
+                                    add_result('remove_nfs_datastore', 'success', f'Datastore {ds.name} removed from {unmount_count} host(s)')
+                                    break
+                            else:
+                                add_result('remove_nfs_datastore', 'skipped', 'Datastore not found in vCenter')
+                        else:
+                            add_result('remove_nfs_datastore', 'warning', 'Could not connect to vCenter')
+                    else:
+                        add_result('remove_nfs_datastore', 'warning', 'vCenter settings not found')
+                        
+                except Exception as vc_err:
+                    add_result('remove_nfs_datastore', 'warning', f'vCenter operation failed: {str(vc_err)[:100]}')
+            
+            job_details['progress_percent'] = 50
+            
+            # ========== Phase 4: Power Off VM (if selected) ==========
+            if 'power_off_vm' in actions and deployed_vm_moref and dr_vcenter_id:
+                job_details['progress_percent'] = 55
+                self._log_console(job_id, 'INFO', f'Phase 4: Powering off VM {deployed_vm_moref}...', job_details)
+                
+                try:
+                    if not self.vcenter_conn:
+                        vc_settings = self._get_vcenter_settings(dr_vcenter_id)
+                        if vc_settings:
+                            self.vcenter_conn = self._connect_vcenter(
+                                vc_settings['host'],
+                                vc_settings['username'],
+                                vc_settings['password'],
+                                vc_settings.get('port', 443),
+                                vc_settings.get('verify_ssl', False)
+                            )
+                    
+                    if self.vcenter_conn:
+                        vm = self._find_vm_by_moref(self.vcenter_conn, deployed_vm_moref)
+                        if vm:
+                            power_state = str(vm.runtime.powerState)
+                            if power_state == 'poweredOn':
+                                # Try graceful shutdown first
+                                try:
+                                    vm.ShutdownGuest()
+                                    self._log_console(job_id, 'INFO', 'Initiated graceful shutdown, waiting...', job_details)
+                                    
+                                    # Wait up to 60 seconds for graceful shutdown
+                                    for _ in range(12):
+                                        time.sleep(5)
+                                        if str(vm.runtime.powerState) == 'poweredOff':
+                                            break
+                                    
+                                    if str(vm.runtime.powerState) != 'poweredOff':
+                                        # Force power off
+                                        task = vm.PowerOffVM_Task()
+                                        self._wait_for_task(task)
+                                        
+                                except:
+                                    # Guest tools not available, force power off
+                                    task = vm.PowerOffVM_Task()
+                                    self._wait_for_task(task)
+                                
+                                add_result('power_off_vm', 'success', f'VM {vm.name} powered off')
+                            else:
+                                add_result('power_off_vm', 'skipped', f'VM already {power_state}')
+                        else:
+                            add_result('power_off_vm', 'warning', f'VM not found: {deployed_vm_moref}')
+                    else:
+                        add_result('power_off_vm', 'warning', 'Could not connect to vCenter')
+                        
+                except Exception as vm_err:
+                    add_result('power_off_vm', 'warning', f'Power off failed: {str(vm_err)[:100]}')
+            
+            job_details['progress_percent'] = 70
+            
+            # ========== Phase 5: Delete VM (if selected) ==========
+            if 'delete_vm' in actions and deployed_vm_moref and dr_vcenter_id:
+                job_details['progress_percent'] = 75
+                self._log_console(job_id, 'INFO', f'Phase 5: Deleting VM {deployed_vm_moref}...', job_details)
+                
+                try:
+                    if not self.vcenter_conn:
+                        vc_settings = self._get_vcenter_settings(dr_vcenter_id)
+                        if vc_settings:
+                            self.vcenter_conn = self._connect_vcenter(
+                                vc_settings['host'],
+                                vc_settings['username'],
+                                vc_settings['password'],
+                                vc_settings.get('port', 443),
+                                vc_settings.get('verify_ssl', False)
+                            )
+                    
+                    if self.vcenter_conn:
+                        vm = self._find_vm_by_moref(self.vcenter_conn, deployed_vm_moref)
+                        if vm:
+                            # Ensure VM is powered off
+                            if str(vm.runtime.powerState) == 'poweredOn':
+                                task = vm.PowerOffVM_Task()
+                                self._wait_for_task(task)
+                            
+                            # Delete VM from disk
+                            vm_name = vm.name
+                            task = vm.Destroy_Task()
+                            self._wait_for_task(task)
+                            add_result('delete_vm', 'success', f'VM {vm_name} deleted')
+                        else:
+                            add_result('delete_vm', 'skipped', f'VM not found: {deployed_vm_moref}')
+                    else:
+                        add_result('delete_vm', 'warning', 'Could not connect to vCenter')
+                        
+                except Exception as del_err:
+                    add_result('delete_vm', 'warning', f'VM deletion failed: {str(del_err)[:100]}')
+            
+            job_details['progress_percent'] = 85
+            
+            # ========== Phase 6: Database Cleanup ==========
+            self._log_console(job_id, 'INFO', 'Phase 6: Cleaning up database records...', job_details)
+            
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            }
+            
+            # Clear partner_target_id on any paired target
+            try:
+                resp = requests.patch(
+                    f'{DSM_URL}/rest/v1/replication_targets',
+                    params={'partner_target_id': f'eq.{target_id}'},
+                    json={'partner_target_id': None},
+                    headers=headers,
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+                if resp.ok:
+                    add_result('clear_partner', 'success', 'Partner reference cleared')
+                else:
+                    add_result('clear_partner', 'skipped', 'No partner found or already cleared')
+            except Exception as e:
+                add_result('clear_partner', 'warning', f'Failed to clear partner: {str(e)[:50]}')
+            
+            # Clear replication_target_id from vcenter_datastores
+            try:
+                resp = requests.patch(
+                    f'{DSM_URL}/rest/v1/vcenter_datastores',
+                    params={'replication_target_id': f'eq.{target_id}'},
+                    json={'replication_target_id': None},
+                    headers=headers,
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+                if resp.ok:
+                    add_result('clear_datastore_link', 'success', 'Datastore link cleared')
+            except Exception as e:
+                add_result('clear_datastore_link', 'warning', f'Failed to clear datastore link: {str(e)[:50]}')
+            
+            # Delete the replication_target record
+            try:
+                resp = requests.delete(
+                    f'{DSM_URL}/rest/v1/replication_targets',
+                    params={'id': f'eq.{target_id}'},
+                    headers=headers,
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+                if resp.ok:
+                    add_result('delete_target', 'success', f'Target {target_name} deleted from database')
+                else:
+                    add_result('delete_target', 'warning', f'Delete response: {resp.status_code}')
+            except Exception as e:
+                add_result('delete_target', 'warning', f'Failed to delete target: {str(e)[:50]}')
+            
+            # ========== Complete ==========
+            job_details['progress_percent'] = 100
+            self._log_console(job_id, 'INFO', f'✓ ZFS target {target_name} decommissioned successfully', job_details)
+            self.update_job_status(job_id, 'completed', completed_at=utc_now_iso(), details=job_details)
+            return {'success': True, 'results': job_details['decommission_results']}
+            
+        except Exception as e:
+            self.log(f'Decommission failed: {e}', 'ERROR')
+            job_details['error'] = str(e)
+            self._log_console(job_id, 'ERROR', f'Decommission failed: {str(e)}', job_details)
+            self.update_job_status(job_id, 'failed', completed_at=utc_now_iso(), details=job_details)
+            return {'success': False, 'error': str(e)}
+        finally:
+            self._cleanup()
+    
+    def _check_vms_on_target_datastore(self, target_id: str) -> list:
+        """Check for VMs on the target's linked datastore using vcenter_datastore_vms table."""
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            }
+            
+            # First get the datastore linked to this target
+            ds_resp = requests.get(
+                f'{DSM_URL}/rest/v1/vcenter_datastores',
+                params={
+                    'replication_target_id': f'eq.{target_id}',
+                    'select': 'id,name'
+                },
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if ds_resp.status_code != 200 or not ds_resp.json():
+                return []  # No linked datastore
+            
+            datastore_id = ds_resp.json()[0]['id']
+            
+            # Now check for VMs on this datastore
+            vm_resp = requests.get(
+                f'{DSM_URL}/rest/v1/vcenter_datastore_vms',
+                params={
+                    'datastore_id': f'eq.{datastore_id}',
+                    'select': 'id,vm_id,vcenter_vms(id,name,power_state)'
+                },
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if vm_resp.status_code == 200:
+                vms = vm_resp.json()
+                # Flatten to just VM info
+                return [
+                    {'id': v.get('vm_id'), 'name': v.get('vcenter_vms', {}).get('name', 'Unknown')}
+                    for v in vms if v.get('vcenter_vms')
+                ]
+            
+            return []
+        except Exception as e:
+            self.log(f'Error checking VMs on datastore: {e}', 'WARN')
+            return []
+    
+    def _fetch_replication_target(self, target_id: str) -> Optional[Dict]:
+        """Fetch replication target info from database."""
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            }
+            
+            resp = requests.get(
+                f'{DSM_URL}/rest/v1/replication_targets',
+                params={'id': f'eq.{target_id}', 'select': '*'},
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                return data[0] if data else None
+            return None
+        except Exception as e:
+            self.log(f'Failed to fetch replication target: {e}', 'WARN')
+            return None
