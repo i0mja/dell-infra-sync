@@ -54,6 +54,7 @@ export interface ReplicationTarget {
   site_role?: string;
   partner_target_id?: string;
   ssh_trust_established?: boolean;
+  ssh_key_id?: string;
   datastore_name?: string;
   nfs_export_path?: string;
   hosting_vm_id?: string;
