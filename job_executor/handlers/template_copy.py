@@ -150,6 +150,9 @@ class TemplateCopyHandler(BaseHandler):
                 self._fail_job(job_id, f'Failed to connect to destination vCenter: {dest_vc["host"]}', job_details)
                 return
             
+            # Store destination vCenter info for ServiceLocator
+            self._dest_vc_info = dest_vc
+            
             # Step 5: Find destination resources
             job_details['current_step'] = 'Finding destination resources'
             job_details['progress_percent'] = 25
@@ -169,10 +172,10 @@ class TemplateCopyHandler(BaseHandler):
             if dest_resources.get('cluster'):
                 self._log_console(job_id, 'INFO', f'Found cluster: {dest_resources["cluster"].name}', job_details)
             
-            # Step 6: Clone template using Cross-vCenter Clone
-            job_details['current_step'] = 'Cloning template to destination'
+            # Step 6: Clone template using Cross-vCenter Clone (ServiceLocator for direct ESXi-to-ESXi)
+            job_details['current_step'] = 'Cloning template to destination (direct ESXi-to-ESXi)'
             job_details['progress_percent'] = 30
-            self._log_console(job_id, 'INFO', 'Starting template clone (this may take several minutes)...', job_details)
+            self._log_console(job_id, 'INFO', 'Starting template clone with direct transfer...', job_details)
             self._update_details(job_id, job_details)
             
             # Use cross-vCenter clone if possible, otherwise fall back to OVF
@@ -411,12 +414,26 @@ class TemplateCopyHandler(BaseHandler):
                                        dest_resources: Dict, new_name: str,
                                        job_id: str, job_details: Dict):
         """
-        Try to clone template directly (works if vCenters are in same SSO domain).
-        Returns None if cross-vCenter clone is not supported.
+        Clone template across vCenters using vim.ServiceLocator for direct
+        ESXi-to-ESXi transfer. This bypasses the need to download data through
+        the job executor server.
+        
+        Transfer methods (in order of preference):
+        1. ServiceLocator: Direct ESXi-to-ESXi (fastest, requires vSphere 6.0+)
+        2. Same SSO domain: Direct clone through linked vCenters
+        3. OVF export/import: Fallback method (slowest)
         """
+        # First try ServiceLocator-based cross-vCenter clone
+        result = self._try_service_locator_clone(
+            source_conn, dest_conn, source_vm, dest_resources,
+            new_name, job_id, job_details
+        )
+        if result:
+            return result
+        
+        # Fall back to same-SSO-domain direct clone
         try:
-            # For cross-vCenter in same SSO domain, we can use regular clone
-            # with linked clone disabled
+            self._log_console(job_id, 'INFO', 'Attempting same-SSO-domain clone...', job_details)
             
             # Create clone spec
             relocate_spec = vim.vm.RelocateSpec()
@@ -429,12 +446,9 @@ class TemplateCopyHandler(BaseHandler):
             clone_spec.powerOn = False
             clone_spec.template = True
             
-            # Try the clone
             folder = dest_resources.get('folder')
             if not folder:
                 return None
-            
-            self._log_console(job_id, 'INFO', 'Attempting direct clone...', job_details)
             
             task = source_vm.Clone(folder=folder, name=new_name, spec=clone_spec)
             
@@ -447,15 +461,111 @@ class TemplateCopyHandler(BaseHandler):
                 time.sleep(5)
             
             if task.info.state == vim.TaskInfo.State.success:
-                self._log_console(job_id, 'INFO', 'Clone completed successfully', job_details)
+                self._log_console(job_id, 'INFO', 'Same-SSO clone completed successfully', job_details)
                 return task.info.result
             else:
-                self._log_console(job_id, 'WARN', f'Clone failed: {task.info.error}', job_details)
+                self._log_console(job_id, 'WARN', f'Same-SSO clone failed: {task.info.error}', job_details)
                 return None
                 
         except Exception as e:
             self._log_console(job_id, 'INFO', f'Direct clone not available: {e}', job_details)
             return None
+    
+    def _try_service_locator_clone(self, source_conn, dest_conn, source_vm,
+                                    dest_resources: Dict, new_name: str,
+                                    job_id: str, job_details: Dict):
+        """
+        Attempt cross-vCenter clone using vim.ServiceLocator.
+        
+        This allows direct ESXi-to-ESXi data transfer without going through
+        an intermediary server. Requires vSphere 6.0 or later.
+        
+        Data flow: Source ESXi → Destination ESXi (direct!)
+        """
+        try:
+            self._log_console(job_id, 'INFO', 'Attempting ServiceLocator-based cross-vCenter clone (direct ESXi-to-ESXi)...', job_details)
+            
+            # Get destination vCenter content and credentials
+            dest_content = dest_conn.RetrieveContent()
+            dest_vc = self._get_destination_vcenter_info(dest_resources)
+            
+            if not dest_vc:
+                self._log_console(job_id, 'WARN', 'Could not get destination vCenter credentials for ServiceLocator', job_details)
+                return None
+            
+            # Create ServiceLocator pointing to destination vCenter
+            service_locator = vim.ServiceLocator()
+            service_locator.instanceUuid = dest_content.about.instanceUuid
+            service_locator.url = f"https://{dest_vc['host']}/sdk"
+            
+            # Set credentials for destination vCenter
+            cred = vim.ServiceLocatorNamePassword()
+            cred.username = dest_vc['username']
+            cred.password = dest_vc['password']
+            service_locator.credential = cred
+            
+            # Build relocate spec with service locator for direct transfer
+            relocate_spec = vim.vm.RelocateSpec()
+            relocate_spec.service = service_locator  # KEY: This enables direct transfer!
+            relocate_spec.datastore = dest_resources.get('datastore')
+            relocate_spec.pool = dest_resources.get('resource_pool')
+            relocate_spec.folder = dest_resources.get('folder')
+            
+            # Clone spec - create as VM first, then convert to template
+            clone_spec = vim.vm.CloneSpec()
+            clone_spec.location = relocate_spec
+            clone_spec.powerOn = False
+            clone_spec.template = False  # Create as VM, convert later
+            
+            folder = dest_resources.get('folder')
+            if not folder:
+                self._log_console(job_id, 'WARN', 'No destination folder found', job_details)
+                return None
+            
+            self._log_console(job_id, 'INFO', f'Starting cross-vCenter clone with ServiceLocator to {dest_vc["host"]}...', job_details)
+            
+            # Execute the clone - data flows directly between ESXi hosts!
+            task = source_vm.Clone(folder=folder, name=new_name, spec=clone_spec)
+            
+            # Monitor task progress
+            last_progress = 0
+            while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+                if task.info.progress and task.info.progress != last_progress:
+                    last_progress = task.info.progress
+                    progress = 30 + int(task.info.progress * 0.5)  # 30-80%
+                    job_details['progress_percent'] = progress
+                    self._log_console(job_id, 'INFO', f'Clone progress: {task.info.progress}%', job_details)
+                    self._update_details(job_id, job_details)
+                time.sleep(5)
+            
+            if task.info.state == vim.TaskInfo.State.success:
+                self._log_console(job_id, 'INFO', '✓ ServiceLocator cross-vCenter clone completed (direct ESXi-to-ESXi transfer)', job_details)
+                return task.info.result
+            else:
+                error_msg = str(task.info.error) if task.info.error else 'Unknown error'
+                self._log_console(job_id, 'WARN', f'ServiceLocator clone failed: {error_msg}', job_details)
+                return None
+                
+        except vim.fault.NotSupported as e:
+            self._log_console(job_id, 'INFO', f'ServiceLocator not supported (requires vSphere 6.0+): {e.msg}', job_details)
+            return None
+        except vim.fault.InvalidArgument as e:
+            self._log_console(job_id, 'INFO', f'ServiceLocator clone invalid argument: {e.msg}', job_details)
+            return None
+        except Exception as e:
+            self._log_console(job_id, 'INFO', f'ServiceLocator clone not available: {e}', job_details)
+            return None
+    
+    def _get_destination_vcenter_info(self, dest_resources: Dict) -> Optional[Dict]:
+        """
+        Get destination vCenter connection info for ServiceLocator.
+        This info is needed to authenticate the cross-vCenter clone.
+        """
+        # The dest_resources should have been populated with vcenter info
+        # from the _find_destination_resources call
+        if hasattr(self, '_dest_vc_info'):
+            return self._dest_vc_info
+        return None
     
     def _export_ovf(self, conn, vm, temp_dir: str, job_id: str, job_details: Dict) -> Optional[str]:
         """Export VM as OVF to temporary directory."""
