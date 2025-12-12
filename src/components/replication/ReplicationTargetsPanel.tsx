@@ -953,9 +953,8 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
+                  <TableHead>VM / Target</TableHead>
                   <TableHead>Site</TableHead>
-                  <TableHead>Hosting VM</TableHead>
                   <TableHead>NFS Datastore</TableHead>
                   <TableHead>Partner</TableHead>
                   <TableHead>ZFS Pool</TableHead>
@@ -967,47 +966,48 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                 {targets.map((target) => (
                   <TableRow key={target.id}>
                     <TableCell className="font-medium">
-                      <div className="flex items-center gap-2">
-                        <Target className="h-4 w-4 text-primary" />
-                        {target.name}
-                        {/* SSH warning - only show if SSH not established AND not healthy */}
-                        {!target.ssh_trust_established && target.health_status !== 'healthy' && (
-                          <Badge variant="outline" className="text-xs text-amber-600 border-amber-500/30" title="SSH not configured - health checks may fail">
-                            <KeyRound className="h-3 w-3 mr-1" />
-                            No SSH
-                          </Badge>
-                        )}
-                      </div>
-                      {target.description && (
-                        <p className="text-xs text-muted-foreground">{target.description}</p>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {getSiteRoleBadge(target.site_role)}
-                    </TableCell>
-                    <TableCell>
                       {target.hosting_vm ? (
                         <div className="space-y-0.5">
-                          <div className="flex items-center gap-1.5">
-                            <Server className="h-3 w-3 text-primary" />
-                            <span className="font-medium text-sm">{target.hosting_vm.name}</span>
-                          </div>
-                          <div className="text-xs text-muted-foreground flex items-center gap-1">
-                            {target.hosting_vm.ip_address || target.hostname}
+                          <div className="flex items-center gap-2">
+                            <Server className="h-4 w-4 text-primary" />
+                            <span className="font-medium">{target.hosting_vm.name}</span>
                             {target.hosting_vm.power_state === 'poweredOn' && (
                               <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" title="Powered On" />
                             )}
+                            {/* SSH warning - only show if SSH not established AND not healthy */}
+                            {!target.ssh_trust_established && target.health_status !== 'healthy' && (
+                              <Badge variant="outline" className="text-xs text-amber-600 border-amber-500/30" title="SSH not configured - health checks may fail">
+                                <KeyRound className="h-3 w-3 mr-1" />
+                                No SSH
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {target.hosting_vm.ip_address || target.hostname}
+                          </div>
+                          <div className="text-xs text-muted-foreground/60">
+                            {target.name}
                           </div>
                         </div>
                       ) : (
                         <div className="space-y-0.5">
-                          <div className="flex items-center gap-1.5 text-muted-foreground">
-                            <Server className="h-3 w-3" />
-                            <span className="text-sm italic">No VM linked</span>
+                          <div className="flex items-center gap-2">
+                            <Target className="h-4 w-4 text-muted-foreground" />
+                            <span className="italic text-muted-foreground">No VM linked</span>
+                            {!target.ssh_trust_established && target.health_status !== 'healthy' && (
+                              <Badge variant="outline" className="text-xs text-amber-600 border-amber-500/30" title="SSH not configured - health checks may fail">
+                                <KeyRound className="h-3 w-3 mr-1" />
+                                No SSH
+                              </Badge>
+                            )}
                           </div>
                           <div className="text-xs text-muted-foreground">{target.hostname}:{target.port}</div>
+                          <div className="text-xs text-muted-foreground/60">{target.name}</div>
                         </div>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      {getSiteRoleBadge(target.site_role)}
                     </TableCell>
                     <TableCell>
                       {target.linked_datastore ? (
@@ -1033,7 +1033,9 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                       {target.partner_target ? (
                         <div className="flex items-center gap-2">
                           <ArrowRightLeft className="h-3 w-3 text-muted-foreground" />
-                          <span className="text-sm">{target.partner_target.name}</span>
+                          <span className="text-sm">
+                            {target.partner_target.name}
+                          </span>
                           {target.partner_target.ssh_trust_established ? (
                             <Badge variant="outline" className="text-xs text-green-600 border-green-500/30">
                               <KeyRound className="h-3 w-3 mr-1" />
