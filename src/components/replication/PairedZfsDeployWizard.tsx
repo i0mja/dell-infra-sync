@@ -224,6 +224,10 @@ export function PairedZfsDeployWizard({
   const [sourceConfig, setSourceConfig] = useState<SiteConfig>(defaultSiteConfig());
   const [drConfig, setDrConfig] = useState<SiteConfig>(defaultSiteConfig());
   
+  // Track previous vCenter IDs to detect changes and regenerate names
+  const [lastSourceVcenterId, setLastSourceVcenterId] = useState<string>('');
+  const [lastDrVcenterId, setLastDrVcenterId] = useState<string>('');
+  
   // Deployment state
   const defaultJobProgress = (): JobProgress => ({
     jobId: null, status: '', progress: 0, currentStep: '',
@@ -264,6 +268,9 @@ export function PairedZfsDeployWizard({
       setDeploying(false);
       setDeployComplete(false);
       setConsoleOpen({ source: false, dr: false });
+      // Reset vCenter tracking so names regenerate fresh
+      setLastSourceVcenterId('');
+      setLastDrVcenterId('');
     }
   }, [open]);
   
@@ -285,10 +292,17 @@ export function PairedZfsDeployWizard({
     const initSourceConfig = async () => {
       if (!sourceConfig.vcenterId) return;
       
+      const vCenterChanged = sourceConfig.vcenterId !== lastSourceVcenterId;
+      
+      // Update tracking
+      if (vCenterChanged && sourceConfig.vcenterId) {
+        setLastSourceVcenterId(sourceConfig.vcenterId);
+      }
+      
       const vcenter = vcenters.find(v => v.id === sourceConfig.vcenterId);
       
-      // If vCenter has a default template, auto-select it
-      if (vcenter?.default_zfs_template_id && !sourceConfig.vmId) {
+      // If vCenter has a default template, auto-select it (only on vCenter change or initial load)
+      if (vcenter?.default_zfs_template_id && (!sourceConfig.vmId || vCenterChanged)) {
         try {
           const { data: template } = await supabase
             .from('zfs_target_templates')
@@ -314,7 +328,7 @@ export function PairedZfsDeployWizard({
                 },
               }));
               toast({ title: 'Gold image loaded', description: `Using default template for ${vcenter.name}` });
-              return; // Skip name generation since we loaded template
+              // Continue to generate names below
             }
           }
         } catch (err) {
@@ -322,8 +336,8 @@ export function PairedZfsDeployWizard({
         }
       }
       
-      // Generate names if no default template
-      if (!sourceConfig.targetName) {
+      // Generate names if no targetName OR vCenter changed
+      if (!sourceConfig.targetName || vCenterChanged) {
         const { siteCode, vmPrefix } = await getVCenterSiteCodes(sourceConfig.vcenterId);
         if (siteCode) {
           const { targetName, vmName, datastoreName } = await generateTargetNames(siteCode, vmPrefix || '');
@@ -337,17 +351,24 @@ export function PairedZfsDeployWizard({
       }
     };
     initSourceConfig();
-  }, [sourceConfig.vcenterId, vcenters, sourceVms]);
+  }, [sourceConfig.vcenterId, vcenters, sourceVms, lastSourceVcenterId]);
   
   // Auto-generate names and load default template when DR vCenter is selected
   useEffect(() => {
     const initDrConfig = async () => {
       if (!drConfig.vcenterId) return;
       
+      const vCenterChanged = drConfig.vcenterId !== lastDrVcenterId;
+      
+      // Update tracking
+      if (vCenterChanged && drConfig.vcenterId) {
+        setLastDrVcenterId(drConfig.vcenterId);
+      }
+      
       const vcenter = vcenters.find(v => v.id === drConfig.vcenterId);
       
-      // If vCenter has a default template, auto-select it
-      if (vcenter?.default_zfs_template_id && !drConfig.vmId) {
+      // If vCenter has a default template, auto-select it (only on vCenter change or initial load)
+      if (vcenter?.default_zfs_template_id && (!drConfig.vmId || vCenterChanged)) {
         try {
           const { data: template } = await supabase
             .from('zfs_target_templates')
@@ -372,7 +393,7 @@ export function PairedZfsDeployWizard({
                   targetDatastore: template.default_datastore || '',
                 },
               }));
-              return; // Skip name generation since we loaded template
+              // Continue to generate names below
             }
           }
         } catch (err) {
@@ -380,8 +401,8 @@ export function PairedZfsDeployWizard({
         }
       }
       
-      // Generate names if no default template
-      if (!drConfig.targetName) {
+      // Generate names if no targetName OR vCenter changed
+      if (!drConfig.targetName || vCenterChanged) {
         const { siteCode, vmPrefix } = await getVCenterSiteCodes(drConfig.vcenterId);
         if (siteCode) {
           const { targetName, vmName, datastoreName } = await generateTargetNames(siteCode, vmPrefix || '');
@@ -395,7 +416,7 @@ export function PairedZfsDeployWizard({
       }
     };
     initDrConfig();
-  }, [drConfig.vcenterId, vcenters, drVms]);
+  }, [drConfig.vcenterId, vcenters, drVms, lastDrVcenterId]);
   
   // Detect template mode for source VM
   useEffect(() => {
