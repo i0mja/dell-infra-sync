@@ -28,6 +28,7 @@ import { ProtectionGroup, useReplicationTargets } from "@/hooks/useReplication";
 import { useVCenters } from "@/hooks/useVCenters";
 import { useAccessibleDatastores } from "@/hooks/useAccessibleDatastores";
 import { supabase } from "@/integrations/supabase/client";
+import { Loader2 } from "lucide-react";
 import { 
   ArrowRight, 
   Target, 
@@ -40,7 +41,13 @@ import {
   RefreshCw,
   KeyRound,
   Link2,
+  Plus,
+  Settings2,
 } from "lucide-react";
+import { toast } from "sonner";
+
+// Sentinel value for "none" selection in Select components (Radix UI disallows empty string)
+const NONE_VALUE = "__none__";
 
 interface EditProtectionGroupDialogProps {
   group: ProtectionGroup | null;
@@ -100,10 +107,10 @@ export function EditProtectionGroupDialog({
   const [retentionMonthly, setRetentionMonthly] = useState(12);
 
   // Fetch data for sites tab
-  const { vcenters } = useVCenters();
-  const { data: sourceDatastores = [] } = useAccessibleDatastores(sourceVCenterId || undefined);
-  const { data: drDatastores = [] } = useAccessibleDatastores(drVCenterId || undefined);
-  const { targets: replicationTargets } = useReplicationTargets();
+  const { vcenters, loading: vcentersLoading } = useVCenters();
+  const { data: sourceDatastores = [], isLoading: sourceDatastoresLoading } = useAccessibleDatastores(sourceVCenterId || undefined);
+  const { data: drDatastores = [], isLoading: drDatastoresLoading } = useAccessibleDatastores(drVCenterId || undefined);
+  const { targets: replicationTargets, loading: targetsLoading } = useReplicationTargets();
 
   // Query for pending sync jobs for this protection group
   const { data: pendingSyncJobs = [] } = useQuery({
@@ -176,8 +183,32 @@ export function EditProtectionGroupDialog({
   const sourceTarget = directSelectedTarget || sourceDatastoreInfo?.replication_target;
   const drTarget = directSelectedTarget?.partner_target || drDatastoreInfo?.replication_target;
   
-  // Get paired targets for direct selection
-  const pairedTargets = replicationTargets.filter(t => t.partner_target_id && t.site_role === 'primary');
+  // Get paired targets for direct selection (primary sites with partners)
+  const pairedTargets = useMemo(() => 
+    replicationTargets.filter(t => t.partner_target_id && t.site_role === 'primary'),
+    [replicationTargets]
+  );
+  
+  // Get unpaired targets for "Quick Pair" feature
+  const unpairedTargets = useMemo(() => 
+    replicationTargets.filter(t => !t.partner_target_id),
+    [replicationTargets]
+  );
+  
+  // Auto-select the only available paired target
+  useEffect(() => {
+    if (!selectedTargetId && pairedTargets.length === 1 && !targetsLoading) {
+      setSelectedTargetId(pairedTargets[0].id);
+    }
+  }, [pairedTargets, selectedTargetId, targetsLoading]);
+  
+  // Check if SSH trust needs attention
+  const sshTrustWarning = useMemo(() => {
+    if (directSelectedTarget?.partner_target && !directSelectedTarget.partner_target.ssh_trust_established) {
+      return true;
+    }
+    return false;
+  }, [directSelectedTarget]);
 
   // Initialize form from group
   useEffect(() => {
@@ -344,54 +375,114 @@ export function EditProtectionGroupDialog({
           <TabsContent value="sites" className="space-y-4 mt-4">
             {/* Direct ZFS Target Pair Selection */}
             <div className="p-4 rounded-lg border bg-card">
-              <div className="flex items-center gap-2 mb-3">
-                <Link2 className="h-4 w-4 text-primary" />
-                <h4 className="font-medium">ZFS Target Pair</h4>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Link2 className="h-4 w-4 text-primary" />
+                  <h4 className="font-medium">ZFS Target Pair</h4>
+                </div>
+                {targetsLoading && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Loading targets...
+                  </div>
+                )}
               </div>
               
               <div className="space-y-3">
-                <Select 
-                  value={selectedTargetId || ""} 
-                  onValueChange={(v) => setSelectedTargetId(v || null)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a paired ZFS target..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="">
-                      <span className="text-muted-foreground">None (use datastore-based linking)</span>
-                    </SelectItem>
-                    {pairedTargets.map(target => (
-                      <SelectItem key={target.id} value={target.id}>
-                        <div className="flex items-center gap-2">
-                          <Target className="h-4 w-4 text-primary" />
-                          <span>{target.name}</span>
-                          <ArrowRight className="h-3 w-3 text-muted-foreground" />
-                          <span>{target.partner_target?.name}</span>
-                          {target.partner_target?.ssh_trust_established ? (
-                            <Badge variant="outline" className="text-xs text-green-600 border-green-500/30 ml-2">
-                              <KeyRound className="h-3 w-3 mr-1" />
-                              SSH Ready
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-xs text-amber-600 border-amber-500/30 ml-2">
-                              <KeyRound className="h-3 w-3 mr-1" />
-                              No SSH
-                            </Badge>
-                          )}
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                
-                {pairedTargets.length === 0 && (
-                  <Alert>
-                    <AlertTriangle className="h-4 w-4" />
-                    <AlertDescription>
-                      No paired ZFS targets found. Create and pair targets in the ZFS Targets section first.
-                    </AlertDescription>
-                  </Alert>
+                {targetsLoading ? (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  </div>
+                ) : replicationTargets.length === 0 ? (
+                  /* No ZFS Targets at all - empty state */
+                  <div className="text-center py-6 space-y-3">
+                    <div className="mx-auto w-12 h-12 rounded-full bg-muted flex items-center justify-center">
+                      <Target className="h-6 w-6 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <p className="font-medium">No ZFS Targets Configured</p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Create ZFS replication targets to enable VM protection
+                      </p>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Go to ZFS Targets
+                    </Button>
+                  </div>
+                ) : pairedTargets.length === 0 ? (
+                  /* Unpaired targets exist - offer to pair them */
+                  <div className="space-y-3">
+                    <Alert variant="default">
+                      <Settings2 className="h-4 w-4" />
+                      <AlertDescription>
+                        <span className="font-medium">{unpairedTargets.length} unpaired target{unpairedTargets.length !== 1 ? 's' : ''} available.</span>
+                        {' '}Pair a primary and DR target to enable replication.
+                      </AlertDescription>
+                    </Alert>
+                    <div className="flex flex-wrap gap-2">
+                      {unpairedTargets.slice(0, 4).map(t => (
+                        <Badge key={t.id} variant="outline" className="text-xs">
+                          {t.name} ({t.site_role || 'unassigned'})
+                        </Badge>
+                      ))}
+                      {unpairedTargets.length > 4 && (
+                        <Badge variant="outline" className="text-xs">+{unpairedTargets.length - 4} more</Badge>
+                      )}
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+                      <Link2 className="h-4 w-4 mr-2" />
+                      Pair Targets in ZFS Section
+                    </Button>
+                  </div>
+                ) : (
+                  /* Normal select with paired targets */
+                  <>
+                    <Select 
+                      value={selectedTargetId || NONE_VALUE} 
+                      onValueChange={(v) => setSelectedTargetId(v === NONE_VALUE ? null : v)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a paired ZFS target..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={NONE_VALUE}>
+                          <span className="text-muted-foreground">None (use datastore-based linking)</span>
+                        </SelectItem>
+                        {pairedTargets.map(target => (
+                          <SelectItem key={target.id} value={target.id}>
+                            <div className="flex items-center gap-2">
+                              <Target className="h-4 w-4 text-primary" />
+                              <span>{target.name}</span>
+                              <ArrowRight className="h-3 w-3 text-muted-foreground" />
+                              <span>{target.partner_target?.name}</span>
+                              {target.partner_target?.ssh_trust_established ? (
+                                <Badge variant="outline" className="text-xs text-green-600 border-green-500/30 ml-2">
+                                  <KeyRound className="h-3 w-3 mr-1" />
+                                  SSH Ready
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-xs text-amber-600 border-amber-500/30 ml-2">
+                                  <KeyRound className="h-3 w-3 mr-1" />
+                                  No SSH
+                                </Badge>
+                              )}
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    
+                    {/* SSH Trust Warning */}
+                    {sshTrustWarning && (
+                      <Alert variant="default" className="border-amber-500/50 bg-amber-500/10">
+                        <KeyRound className="h-4 w-4 text-amber-600" />
+                        <AlertDescription className="text-amber-700">
+                          SSH trust not established between this target pair. Replication will fail until keys are exchanged.
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  </>
                 )}
                 
                 {directSelectedTarget && (
