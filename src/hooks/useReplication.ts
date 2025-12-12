@@ -567,23 +567,85 @@ export function useProtectionGroups() {
     }
   });
 
-  // This operation requires Job Executor
+  // Run replication now - creates a job directly in Supabase
   const runReplicationNow = async (groupId: string) => {
     try {
-      const data = await fetchJobExecutor<{ message: string; jobs: ReplicationJob[] }>(
-        `/api/replication/protection-groups/${groupId}/run-now`,
-        { method: 'POST' }
-      );
-      toast({ title: 'Replication started', description: data.message });
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      // Mark group as sync in progress
+      await supabase
+        .from('protection_groups')
+        .update({ sync_in_progress: true, status: 'syncing' })
+        .eq('id', groupId);
+      
+      // Create a run_replication_sync job
+      const { data: job, error } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'run_replication_sync' as any,
+          status: 'pending',
+          created_by: user?.id,
+          target_scope: { protection_group_id: groupId },
+          details: {
+            protection_group_id: groupId,
+            triggered_by: 'manual',
+          },
+        })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      
+      toast({ 
+        title: 'Replication sync started', 
+        description: 'Check the Jobs page for progress' 
+      });
       queryClient.invalidateQueries({ queryKey: ['protection-groups'] });
-      queryClient.invalidateQueries({ queryKey: ['replication-jobs'] });
-      return data;
+      queryClient.invalidateQueries({ queryKey: ['jobs'] });
+      return { message: 'Sync job created', job };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to start replication';
       toast({ title: 'Error', description: message, variant: 'destructive' });
       throw err;
     }
   };
+
+  // Exchange SSH keys between paired targets
+  const exchangeSshKeysMutation = useMutation({
+    mutationFn: async ({ sourceTargetId, destTargetId }: { sourceTargetId: string; destTargetId: string }) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      const { data: job, error } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'exchange_ssh_keys' as any,
+          status: 'pending',
+          created_by: user?.id,
+          target_scope: { source_target_id: sourceTargetId, destination_target_id: destTargetId },
+          details: {
+            source_target_id: sourceTargetId,
+            destination_target_id: destTargetId,
+          },
+        })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      return job;
+    },
+    onSuccess: () => {
+      toast({ 
+        title: 'SSH key exchange started', 
+        description: 'Check Jobs page for progress' 
+      });
+      queryClient.invalidateQueries({ queryKey: ['replication-targets'] });
+      queryClient.invalidateQueries({ queryKey: ['jobs'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  });
 
   const updateGroupMutation = useMutation({
     mutationFn: async ({ id, updates, originalGroup }: { id: string; updates: Partial<ProtectionGroup>; originalGroup?: ProtectionGroup }) => {
@@ -698,7 +760,8 @@ export function useProtectionGroups() {
     updateGroup: updateGroupMutation.mutateAsync,
     deleteGroup: deleteGroupMutation.mutateAsync, 
     pauseGroup: pauseGroupMutation.mutateAsync,
-    runReplicationNow 
+    runReplicationNow,
+    exchangeSshKeys: exchangeSshKeysMutation.mutateAsync,
   };
 }
 

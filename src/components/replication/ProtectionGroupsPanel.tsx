@@ -1,8 +1,10 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { 
   Shield, 
   Plus, 
@@ -18,12 +20,16 @@ import {
   AlertTriangle,
   XCircle,
   AlertCircle,
+  RefreshCw,
+  KeyRound,
+  Link2,
 } from "lucide-react";
-import { useProtectionGroups, useProtectedVMs, ProtectionGroup } from "@/hooks/useReplication";
+import { useProtectionGroups, useProtectedVMs, ProtectionGroup, useReplicationTargets } from "@/hooks/useReplication";
 import { formatDistanceToNow, differenceInDays } from "date-fns";
 import { ProtectedVMsTable } from "./ProtectedVMsTable";
 import { EditProtectionGroupDialog } from "./EditProtectionGroupDialog";
 import { CreateProtectionGroupWizard } from "./CreateProtectionGroupWizard";
+import { supabase } from "@/integrations/supabase/client";
 
 function formatBytes(bytes: number | null): string {
   if (!bytes) return "N/A";
@@ -98,24 +104,58 @@ function PriorityBadge({ priority }: { priority?: string }) {
 }
 
 export function ProtectionGroupsPanel() {
-  const { groups, loading, updateGroup, deleteGroup, pauseGroup, runReplicationNow, refetch } = useProtectionGroups();
+  const { groups, loading, updateGroup, deleteGroup, pauseGroup, runReplicationNow, exchangeSshKeys, refetch } = useProtectionGroups();
+  const { targets } = useReplicationTargets();
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [showCreateWizard, setShowCreateWizard] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [runningReplication, setRunningReplication] = useState<string | null>(null);
   const [pausingGroup, setPausingGroup] = useState<string | null>(null);
+  const [exchangingKeys, setExchangingKeys] = useState(false);
 
   const { vms, loading: vmsLoading, refetch: refetchVMs, addVMs, removeVM, batchMigrate } = useProtectedVMs(
     selectedGroupId || undefined
   );
 
   const selectedGroup = groups.find(g => g.id === selectedGroupId);
+  
+  // Get target info for selected group
+  const selectedTarget = selectedGroup?.target_id 
+    ? targets.find(t => t.id === selectedGroup.target_id) 
+    : null;
+  const partnerTarget = selectedTarget?.partner_target;
+
+  // Query for active sync jobs
+  const { data: activeSyncJobs = [] } = useQuery({
+    queryKey: ['active-sync-jobs', selectedGroupId],
+    queryFn: async () => {
+      if (!selectedGroupId) return [];
+      const { data } = await supabase
+        .from('jobs')
+        .select('id, status, created_at, started_at')
+        .eq('job_type', 'run_replication_sync')
+        .contains('details', { protection_group_id: selectedGroupId })
+        .in('status', ['pending', 'running'])
+        .order('created_at', { ascending: false })
+        .limit(1);
+      return data || [];
+    },
+    enabled: !!selectedGroupId,
+    refetchInterval: 3000,
+  });
+
+  const isSyncing = activeSyncJobs.length > 0;
 
   // Check if test is overdue
   const isTestOverdue = (group: ProtectionGroup): boolean => {
     if (!group.test_reminder_days || !group.last_test_at) return false;
     const daysSinceTest = differenceInDays(new Date(), new Date(group.last_test_at));
     return daysSinceTest > group.test_reminder_days;
+  };
+
+  // Check if group has target configured
+  const hasTargetConfigured = (group: ProtectionGroup): boolean => {
+    return !!group.target_id;
   };
 
   const handleRunNow = async (groupId: string) => {
@@ -125,6 +165,19 @@ export function ProtectionGroupsPanel() {
       await refetchVMs();
     } finally {
       setRunningReplication(null);
+    }
+  };
+
+  const handleExchangeSshKeys = async () => {
+    if (!selectedTarget?.id || !partnerTarget?.id) return;
+    setExchangingKeys(true);
+    try {
+      await exchangeSshKeys({
+        sourceTargetId: selectedTarget.id,
+        destTargetId: partnerTarget.id,
+      });
+    } finally {
+      setExchangingKeys(false);
     }
   };
 
@@ -283,15 +336,34 @@ export function ProtectionGroupsPanel() {
                     </>
                   )}
                 </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleRunNow(selectedGroup.id)}
-                  disabled={runningReplication === selectedGroup.id || vms.length === 0 || !!selectedGroup.paused_at}
-                >
-                  <Play className={`h-4 w-4 mr-1 ${runningReplication === selectedGroup.id ? 'animate-pulse' : ''}`} />
-                  {runningReplication === selectedGroup.id ? 'Running...' : 'Run Now'}
-                </Button>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant={isSyncing ? "secondary" : "outline"}
+                        onClick={() => handleRunNow(selectedGroup.id)}
+                        disabled={runningReplication === selectedGroup.id || isSyncing || vms.length === 0 || !!selectedGroup.paused_at || !hasTargetConfigured(selectedGroup)}
+                      >
+                        {isSyncing ? (
+                          <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                        ) : (
+                          <Play className={`h-4 w-4 mr-1 ${runningReplication === selectedGroup.id ? 'animate-pulse' : ''}`} />
+                        )}
+                        {isSyncing ? 'Syncing...' : runningReplication === selectedGroup.id ? 'Starting...' : 'Sync Now'}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {!hasTargetConfigured(selectedGroup) 
+                        ? 'Configure a ZFS target in Edit first'
+                        : vms.length === 0 
+                        ? 'Add VMs to this group first'
+                        : selectedGroup.paused_at
+                        ? 'Resume the group first'
+                        : 'Trigger immediate ZFS replication sync'}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
                 <Button
                   size="sm"
                   variant="ghost"
@@ -303,6 +375,63 @@ export function ProtectionGroupsPanel() {
               </div>
             )}
           </div>
+
+          {/* Target Link Status */}
+          {selectedGroup && (
+            <div className="mt-4 p-3 rounded-lg bg-muted/50 border">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  {selectedTarget ? (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <Link2 className="h-4 w-4 text-primary" />
+                        <span className="text-sm font-medium">{selectedTarget.name}</span>
+                        <Badge variant={selectedTarget.health_status === 'healthy' ? 'default' : 'secondary'} className="text-xs">
+                          {selectedTarget.health_status}
+                        </Badge>
+                      </div>
+                      {partnerTarget && (
+                        <>
+                          <span className="text-muted-foreground">→</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium">{partnerTarget.name}</span>
+                            <Badge variant={partnerTarget.health_status === 'healthy' ? 'default' : 'secondary'} className="text-xs">
+                              {partnerTarget.health_status}
+                            </Badge>
+                          </div>
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <div className="flex items-center gap-2 text-amber-600">
+                      <AlertTriangle className="h-4 w-4" />
+                      <span className="text-sm">No ZFS target configured - Edit group to link one</span>
+                    </div>
+                  )}
+                </div>
+                {selectedTarget && partnerTarget && (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={handleExchangeSshKeys}
+                          disabled={exchangingKeys}
+                        >
+                          <KeyRound className={`h-4 w-4 mr-1 ${exchangingKeys ? 'animate-spin' : ''}`} />
+                          {exchangingKeys ? 'Exchanging...' : 'Exchange SSH Keys'}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Set up passwordless SSH between source and DR targets for ZFS replication
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
+              </div>
+            </div>
+          )}
         </CardHeader>
         <CardContent>
           {!selectedGroup ? (

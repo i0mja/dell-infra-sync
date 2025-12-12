@@ -945,6 +945,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
             'commit_failover': self.replication_handler.execute_commit_failover,
             'rollback_failover': self.replication_handler.execute_rollback_failover,
             'collect_replication_metrics': self.replication_handler.execute_collect_replication_metrics,
+            'exchange_ssh_keys': self.replication_handler.execute_exchange_ssh_keys,
             # Template handlers
             'prepare_zfs_template': self.template_handler.execute_prepare_zfs_template,
             'clone_zfs_template': self.template_handler.execute_clone_zfs_template,
