@@ -53,6 +53,7 @@ export interface ReplicationTarget {
   created_at: string;
   site_role?: string;
   partner_target_id?: string;
+  ssh_trust_established?: boolean;
   // Joined partner target info
   partner_target?: {
     id: string;
@@ -61,6 +62,7 @@ export interface ReplicationTarget {
     zfs_pool: string;
     health_status: string;
     dr_vcenter_id?: string;
+    ssh_trust_established?: boolean;
   } | null;
 }
 
@@ -186,7 +188,7 @@ export function useReplicationTargets() {
         const partnerIds = targetsWithPartnerIds.map(t => t.partner_target_id);
         const { data: partners } = await supabase
           .from('replication_targets')
-          .select('id, name, hostname, zfs_pool, health_status, dr_vcenter_id')
+          .select('id, name, hostname, zfs_pool, health_status, dr_vcenter_id, ssh_trust_established')
           .in('id', partnerIds);
         
         if (partners) {

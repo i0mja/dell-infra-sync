@@ -286,6 +286,12 @@ export function ProtectionGroupsPanel() {
                       Test overdue ({differenceInDays(new Date(), new Date(group.last_test_at!))} days)
                     </div>
                   )}
+                  {!hasTargetConfigured(group) && (
+                    <div className="flex items-center gap-1 mt-2 text-xs text-amber-600">
+                      <Link2 className="h-3 w-3" />
+                      Not linked to ZFS target
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -405,29 +411,48 @@ export function ProtectionGroupsPanel() {
                   ) : (
                     <div className="flex items-center gap-2 text-amber-600">
                       <AlertTriangle className="h-4 w-4" />
-                      <span className="text-sm">No ZFS target configured - Edit group to link one</span>
+                      <span className="text-sm">No ZFS target configured</span>
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        onClick={() => setShowEditDialog(true)}
+                        className="ml-2"
+                      >
+                        <Link2 className="h-3 w-3 mr-1" />
+                        Link Now
+                      </Button>
                     </div>
                   )}
                 </div>
                 {selectedTarget && partnerTarget && (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={handleExchangeSshKeys}
-                          disabled={exchangingKeys}
-                        >
-                          <KeyRound className={`h-4 w-4 mr-1 ${exchangingKeys ? 'animate-spin' : ''}`} />
-                          {exchangingKeys ? 'Exchanging...' : 'Exchange SSH Keys'}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        Set up passwordless SSH between source and DR targets for ZFS replication
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                  <div className="flex items-center gap-2">
+                    {(selectedTarget as any).ssh_trust_established || (partnerTarget as any).ssh_trust_established ? (
+                      <Badge variant="outline" className="text-green-600 border-green-500/30">
+                        <CheckCircle2 className="h-3 w-3 mr-1" />
+                        SSH Ready
+                      </Badge>
+                    ) : (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={handleExchangeSshKeys}
+                              disabled={exchangingKeys}
+                              className="text-amber-600 border-amber-500/30"
+                            >
+                              <KeyRound className={`h-4 w-4 mr-1 ${exchangingKeys ? 'animate-spin' : ''}`} />
+                              {exchangingKeys ? 'Exchanging...' : 'Exchange SSH Keys'}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            Set up passwordless SSH between source and DR targets for ZFS replication
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
+                  </div>
                 )}
               </div>
             </div>

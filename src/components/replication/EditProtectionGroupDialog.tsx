@@ -37,7 +37,9 @@ import {
   Info,
   CheckCircle2,
   XCircle,
-  RefreshCw
+  RefreshCw,
+  KeyRound,
+  Link2,
 } from "lucide-react";
 
 interface EditProtectionGroupDialogProps {
@@ -82,6 +84,7 @@ export function EditProtectionGroupDialog({
   const [sourceDatastore, setSourceDatastore] = useState("");
   const [drVCenterId, setDrVCenterId] = useState("");
   const [drDatastore, setDrDatastore] = useState("");
+  const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   
   // Form state - SLA
   const [rpoMinutes, setRpoMinutes] = useState(60);
@@ -164,8 +167,17 @@ export function EditProtectionGroupDialog({
     return drDatastores.find(ds => ds.name === drDatastore);
   }, [drDatastores, drDatastore]);
 
-  const sourceTarget = sourceDatastoreInfo?.replication_target;
-  const drTarget = drDatastoreInfo?.replication_target;
+  // Get selected target and its partner (for direct target selection)
+  const directSelectedTarget = selectedTargetId 
+    ? replicationTargets.find(t => t.id === selectedTargetId) 
+    : null;
+  
+  // Use direct selection if available, otherwise fall back to datastore-derived
+  const sourceTarget = directSelectedTarget || sourceDatastoreInfo?.replication_target;
+  const drTarget = directSelectedTarget?.partner_target || drDatastoreInfo?.replication_target;
+  
+  // Get paired targets for direct selection
+  const pairedTargets = replicationTargets.filter(t => t.partner_target_id && t.site_role === 'primary');
 
   // Initialize form from group
   useEffect(() => {
@@ -183,6 +195,7 @@ export function EditProtectionGroupDialog({
       setSourceVCenterId(group.source_vcenter_id || "");
       setSourceDatastore(group.protection_datastore || "");
       setDrDatastore(group.dr_datastore || "");
+      setSelectedTargetId(group.target_id || null);
       
       // Parse RPO
       const rpo = group.rpo_minutes || 60;
@@ -249,7 +262,7 @@ export function EditProtectionGroupDialog({
         source_vcenter_id: sourceVCenterId || undefined,
         protection_datastore: sourceDatastore || undefined,
         dr_datastore: drDatastore || undefined,
-        target_id: sourceTarget?.id || undefined,
+        target_id: selectedTargetId || sourceTarget?.id || undefined,
       }, group);
       onOpenChange(false);
     } finally {
@@ -329,6 +342,91 @@ export function EditProtectionGroupDialog({
           </TabsContent>
 
           <TabsContent value="sites" className="space-y-4 mt-4">
+            {/* Direct ZFS Target Pair Selection */}
+            <div className="p-4 rounded-lg border bg-card">
+              <div className="flex items-center gap-2 mb-3">
+                <Link2 className="h-4 w-4 text-primary" />
+                <h4 className="font-medium">ZFS Target Pair</h4>
+              </div>
+              
+              <div className="space-y-3">
+                <Select 
+                  value={selectedTargetId || ""} 
+                  onValueChange={(v) => setSelectedTargetId(v || null)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a paired ZFS target..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">
+                      <span className="text-muted-foreground">None (use datastore-based linking)</span>
+                    </SelectItem>
+                    {pairedTargets.map(target => (
+                      <SelectItem key={target.id} value={target.id}>
+                        <div className="flex items-center gap-2">
+                          <Target className="h-4 w-4 text-primary" />
+                          <span>{target.name}</span>
+                          <ArrowRight className="h-3 w-3 text-muted-foreground" />
+                          <span>{target.partner_target?.name}</span>
+                          {target.partner_target?.ssh_trust_established ? (
+                            <Badge variant="outline" className="text-xs text-green-600 border-green-500/30 ml-2">
+                              <KeyRound className="h-3 w-3 mr-1" />
+                              SSH Ready
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-xs text-amber-600 border-amber-500/30 ml-2">
+                              <KeyRound className="h-3 w-3 mr-1" />
+                              No SSH
+                            </Badge>
+                          )}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                
+                {pairedTargets.length === 0 && (
+                  <Alert>
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>
+                      No paired ZFS targets found. Create and pair targets in the ZFS Targets section first.
+                    </AlertDescription>
+                  </Alert>
+                )}
+                
+                {directSelectedTarget && (
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                    <div className="flex items-center gap-4">
+                      <div className="text-center">
+                        <p className="text-xs text-muted-foreground">Source</p>
+                        <p className="font-medium text-sm">{directSelectedTarget.name}</p>
+                        <p className="text-xs text-muted-foreground">{directSelectedTarget.hostname}</p>
+                      </div>
+                      <ArrowRight className="h-5 w-5 text-muted-foreground" />
+                      <div className="text-center">
+                        <p className="text-xs text-muted-foreground">DR</p>
+                        <p className="font-medium text-sm">{directSelectedTarget.partner_target?.name}</p>
+                        <p className="text-xs text-muted-foreground">{directSelectedTarget.partner_target?.hostname}</p>
+                      </div>
+                    </div>
+                    <div>
+                      {directSelectedTarget.partner_target?.ssh_trust_established ? (
+                        <div className="flex items-center gap-1 text-green-600">
+                          <CheckCircle2 className="h-4 w-4" />
+                          <span className="text-xs">Replication Ready</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1 text-amber-600">
+                          <AlertTriangle className="h-4 w-4" />
+                          <span className="text-xs">SSH keys not exchanged</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+            
             <div className="grid grid-cols-2 gap-6">
               {/* Source Site (Point A) */}
               <div className="space-y-4">
