@@ -2267,6 +2267,7 @@ export type Database = {
       }
       replication_targets: {
         Row: {
+          archived_at: string | null
           created_at: string | null
           created_by: string | null
           deployed_ip_source: string | null
@@ -2294,6 +2295,7 @@ export type Database = {
           zfs_pool: string
         }
         Insert: {
+          archived_at?: string | null
           created_at?: string | null
           created_by?: string | null
           deployed_ip_source?: string | null
@@ -2321,6 +2323,7 @@ export type Database = {
           zfs_pool: string
         }
         Update: {
+          archived_at?: string | null
           created_at?: string | null
           created_by?: string | null
           deployed_ip_source?: string | null
@@ -4541,6 +4544,7 @@ export type Database = {
         | "clone_zfs_template"
         | "partial_vcenter_sync"
         | "inspect_zfs_appliance"
+        | "decommission_zfs_target"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -4751,6 +4755,7 @@ export const Constants = {
         "clone_zfs_template",
         "partial_vcenter_sync",
         "inspect_zfs_appliance",
+        "decommission_zfs_target",
       ],
       operation_type: [
         "idrac_api",

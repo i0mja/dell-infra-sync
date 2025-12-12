@@ -49,19 +49,30 @@ import {
   ArrowRightLeft,
   Wand2,
 } from "lucide-react";
-import { useReplicationTargets } from "@/hooks/useReplication";
+import { useReplicationTargets, ReplicationTarget, TargetDependencies } from "@/hooks/useReplication";
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { PrepareTemplateWizard } from "./PrepareTemplateWizard";
 import { PairedZfsDeployWizard } from "./PairedZfsDeployWizard";
+import { DecommissionTargetDialog, DecommissionOption } from "./DecommissionTargetDialog";
 
 interface ReplicationTargetsPanelProps {
   onAddTarget?: () => void;
 }
 
 export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanelProps) {
-  const { targets, loading, createTarget, deleteTarget, setPartner, refetch } = useReplicationTargets();
+  const { 
+    targets, 
+    loading, 
+    createTarget, 
+    deleteTarget, 
+    archiveTarget,
+    decommissionTarget: runDecommission,
+    checkTargetDependencies,
+    setPartner, 
+    refetch 
+  } = useReplicationTargets();
   const { toast } = useToast();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
@@ -72,6 +83,12 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
   const [selectedPartnerId, setSelectedPartnerId] = useState<string>("");
   const [editingTarget, setEditingTarget] = useState<any>(null);
   const [healthCheckingId, setHealthCheckingId] = useState<string | null>(null);
+  
+  // Decommission dialog state
+  const [showDecommissionDialog, setShowDecommissionDialog] = useState(false);
+  const [targetToDecommission, setTargetToDecommission] = useState<ReplicationTarget | null>(null);
+  const [decommissionDeps, setDecommissionDeps] = useState<TargetDependencies | null>(null);
+  const [loadingDeps, setLoadingDeps] = useState(false);
   
   // Form for creating paired targets (source + DR)
   const [formData, setFormData] = useState({
@@ -168,9 +185,44 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Delete this replication target?')) return;
-    await deleteTarget(id);
+  // Open decommission dialog with dependency check
+  const handleOpenDecommission = async (target: ReplicationTarget) => {
+    setTargetToDecommission(target);
+    setDecommissionDeps(null);
+    setShowDecommissionDialog(true);
+    setLoadingDeps(true);
+    
+    try {
+      const deps = await checkTargetDependencies(target.id);
+      setDecommissionDeps(deps);
+    } catch (err) {
+      console.error('Failed to check dependencies:', err);
+      setDecommissionDeps({ dependentGroups: [], partnerTarget: null, hasDeployedVm: false });
+    } finally {
+      setLoadingDeps(false);
+    }
+  };
+
+  // Handle decommission confirmation
+  const handleDecommissionConfirm = async (option: DecommissionOption) => {
+    if (!targetToDecommission) return;
+
+    try {
+      if (option === 'archive') {
+        await archiveTarget(targetToDecommission.id);
+      } else if (option === 'database') {
+        await deleteTarget(targetToDecommission.id);
+      } else if (option === 'full') {
+        await runDecommission(targetToDecommission.id);
+      }
+    } catch (err: any) {
+      toast({
+        title: 'Error',
+        description: err.message,
+        variant: 'destructive',
+      });
+      throw err;
+    }
   };
 
   const handleHealthCheck = async (target: any) => {
@@ -707,11 +759,11 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                           )}
                           <DropdownMenuSeparator />
                           <DropdownMenuItem 
-                            onClick={() => handleDelete(target.id)}
+                            onClick={() => handleOpenDecommission(target)}
                             className="text-destructive"
                           >
                             <Trash2 className="h-4 w-4 mr-2" />
-                            Delete
+                            Delete / Decommission
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -815,6 +867,16 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
             description: "Source and DR ZFS targets are now ready for replication",
           });
         }}
+      />
+
+      {/* Decommission Target Dialog */}
+      <DecommissionTargetDialog
+        open={showDecommissionDialog}
+        onOpenChange={setShowDecommissionDialog}
+        target={targetToDecommission}
+        dependencies={decommissionDeps}
+        loading={loadingDeps}
+        onConfirm={handleDecommissionConfirm}
       />
     </Card>
   );
