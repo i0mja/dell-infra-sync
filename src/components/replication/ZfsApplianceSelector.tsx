@@ -89,7 +89,7 @@ export const ZfsApplianceSelector = ({
         </div>
       )}
       
-      <ScrollArea className="h-[300px]">
+      <ScrollArea className="max-h-[300px]">
         <div className="space-y-2 pr-4">
           {filteredTemplates.map((template) => {
             const extTemplate = template as ZfsTargetTemplate & { 
