@@ -1438,10 +1438,22 @@ PACKAGES={packages_str}
         
         vc_conn = None
         reboot_initiated = False
-        shutdown_confirmed = False
-        shutdown_start = time.time()
+        reboot_confirmed = False
         
-        # Use VMware API for reliable reboot (preferred)
+        # STEP 1: Capture pre-reboot uptime for verification
+        pre_reboot_uptime = None
+        try:
+            pre_ssh = self._connect_ssh_password(vm_ip, 'root', root_password)
+            if pre_ssh:
+                uptime_result = self._exec_ssh(pre_ssh, 'cat /proc/uptime | cut -d" " -f1')
+                if uptime_result['exit_code'] == 0:
+                    pre_reboot_uptime = float(uptime_result['stdout'].strip())
+                    self._log_console(job_id, 'INFO', f'Pre-reboot uptime: {pre_reboot_uptime:.0f}s', job_details)
+                pre_ssh.close()
+        except Exception as e:
+            self._log_console(job_id, 'WARN', f'Could not capture pre-reboot uptime: {e}', job_details)
+        
+        # STEP 2: Use VMware API for reliable reboot (preferred)
         if vcenter_id and vm_moref:
             try:
                 vc_settings = self._get_vcenter_settings(vcenter_id)
@@ -1464,14 +1476,16 @@ PACKAGES={packages_str}
                             # Graceful reboot via VMware Tools
                             self._log_console(job_id, 'INFO', 'Sending reboot via VMware Tools (RebootGuest)...', job_details)
                             vm_obj.RebootGuest()
-                            reboot_initiated = True  # Reboot initiated, but NOT confirmed yet
+                            reboot_initiated = True
+                            self._log_console(job_id, 'INFO', 'Reboot command sent, waiting for system to restart...', job_details)
                         except Exception as e:
                             # Fall back to hard reset if graceful fails
                             self._log_console(job_id, 'WARN', f'Graceful reboot failed ({e}), using hard reset (ResetVM)...', job_details)
                             try:
                                 task = vm_obj.ResetVM_Task()
                                 self._wait_for_task(task, timeout=60)
-                                reboot_initiated = True  # Reboot initiated, but NOT confirmed yet
+                                reboot_initiated = True
+                                self._log_console(job_id, 'INFO', 'Hard reset issued, waiting for system to restart...', job_details)
                             except Exception as reset_err:
                                 self._log_console(job_id, 'ERROR', f'Hard reset also failed: {reset_err}', job_details)
                         
@@ -1503,59 +1517,15 @@ PACKAGES={packages_str}
                 self._log_console(job_id, 'WARN', f'SSH reboot command error (expected): {e}', job_details)
                 reboot_initiated = True  # Command may have worked even if error
         
-        # ALWAYS wait for SSH to fail after initiating reboot (confirms VM is actually rebooting)
-        if reboot_initiated:
-            time.sleep(3)  # Give reboot command time to start
-            self._log_console(job_id, 'INFO', 'Waiting for VM to shut down...', job_details)
-            consecutive_failures = 0
-            graceful_wait_seconds = 15  # Wait this long before escalating to hard reset
-            
-            # Phase 1: Wait for graceful reboot to take effect
-            for i in range(graceful_wait_seconds):
-                test_client = self._connect_ssh_password(vm_ip, 'root', root_password)
-                if test_client:
-                    test_client.close()
-                    consecutive_failures = 0
-                else:
-                    consecutive_failures += 1
-                    if consecutive_failures >= 3:
-                        shutdown_confirmed = True
-                        break
-                time.sleep(1)
-            
-            # Phase 2: If graceful didn't work, escalate to hard reset
-            if not shutdown_confirmed and vcenter_id and vm_moref:
-                self._log_console(job_id, 'WARN', 'Graceful reboot not effective after 15s, escalating to hard reset...', job_details)
-                try:
-                    vc_settings = self._get_vcenter_settings(vcenter_id)
-                    if vc_settings:
-                        vc_conn = self._connect_vcenter(
-                            vc_settings['host'],
-                            vc_settings['username'],
-                            vc_settings['password'],
-                            vc_settings.get('port', 443),
-                            vc_settings.get('verify_ssl', False)
-                        )
-                        if vc_conn:
-                            vm_obj = self._find_vm_by_moref(vc_conn, vm_moref)
-                            if vm_obj:
-                                task = vm_obj.ResetVM_Task()
-                                self._wait_for_task(task, timeout=60)
-                                self._log_console(job_id, 'INFO', 'Hard reset issued via ResetVM_Task', job_details)
-                                # Trust VMware API - VM was definitely reset, no need to detect SSH failure
-                                shutdown_confirmed = True
-                            Disconnect(vc_conn)
-                except Exception as e:
-                    self._log_console(job_id, 'ERROR', f'Hard reset escalation failed: {e}', job_details)
-        
-        if not shutdown_confirmed:
-            self._log_console(job_id, 'ERROR', 'VM did not shut down after reboot attempts - check VMware Tools', job_details)
+        if not reboot_initiated:
+            self._log_console(job_id, 'ERROR', 'Failed to initiate reboot via any method', job_details)
             return None
         
-        shutdown_time = int(time.time() - shutdown_start)
-        self._log_console(job_id, 'INFO', f'VM shutdown confirmed after {shutdown_time}s, waiting for boot...', job_details)
+        # STEP 3: Wait for reboot and verify using uptime comparison
+        # Wait a few seconds for reboot to start
+        time.sleep(5)
         
-        # Wait for VM to come back up
+        # Try to reconnect and verify uptime decreased (proving reboot occurred)
         self._log_console(job_id, 'INFO', f'Waiting up to {max_wait}s for VM to boot...', job_details)
         start_time = time.time()
         ssh_client = None
@@ -1563,21 +1533,51 @@ PACKAGES={packages_str}
         while time.time() - start_time < max_wait:
             elapsed = int(time.time() - start_time)
             try:
-                ssh_client = self._connect_ssh_password(vm_ip, 'root', root_password)
-                if ssh_client:
-                    self._log_console(job_id, 'INFO', f'SSH reconnected after {elapsed}s', job_details)
-                    break
+                test_client = self._connect_ssh_password(vm_ip, 'root', root_password)
+                if test_client:
+                    # Check current uptime
+                    uptime_result = self._exec_ssh(test_client, 'cat /proc/uptime | cut -d" " -f1')
+                    if uptime_result['exit_code'] == 0:
+                        try:
+                            current_uptime = float(uptime_result['stdout'].strip())
+                            
+                            # If we have pre-reboot uptime, verify reboot occurred
+                            if pre_reboot_uptime is not None:
+                                if current_uptime < pre_reboot_uptime:
+                                    self._log_console(job_id, 'INFO', 
+                                        f'Reboot confirmed: uptime {pre_reboot_uptime:.0f}s -> {current_uptime:.0f}s', job_details)
+                                    reboot_confirmed = True
+                                    ssh_client = test_client
+                                    break
+                                else:
+                                    # VM hasn't rebooted yet, uptime still increasing
+                                    test_client.close()
+                            else:
+                                # No pre-reboot uptime, just accept if uptime is low (< 120s means recently booted)
+                                if current_uptime < 120:
+                                    self._log_console(job_id, 'INFO', 
+                                        f'VM appears freshly booted (uptime: {current_uptime:.0f}s)', job_details)
+                                    reboot_confirmed = True
+                                    ssh_client = test_client
+                                    break
+                                else:
+                                    # Wait for reboot to happen
+                                    test_client.close()
+                        except (ValueError, TypeError):
+                            test_client.close()
+                    else:
+                        test_client.close()
             except Exception:
-                pass
+                pass  # SSH failure during reboot is expected
             
             # Log progress every 30 seconds
             if elapsed % 30 == 0 and elapsed > 0:
-                self._log_console(job_id, 'INFO', f'Still waiting for VM to boot... ({elapsed}s)', job_details)
+                self._log_console(job_id, 'INFO', f'Still waiting for VM to reboot... ({elapsed}s)', job_details)
             
-            time.sleep(5)
+            time.sleep(3)
         
-        if not ssh_client:
-            self._log_console(job_id, 'ERROR', f'VM did not come back up within {max_wait}s', job_details)
+        if not reboot_confirmed or not ssh_client:
+            self._log_console(job_id, 'ERROR', f'VM reboot not confirmed within {max_wait}s', job_details)
             return None
         
         # Give the system a moment to fully initialize services
