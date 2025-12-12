@@ -4483,11 +4483,10 @@ class ZfsTargetHandler(BaseHandler):
             
             vcenter = data[0]
             
-            # Decrypt password
+            # Decrypt password using executor's decrypt method
             if vcenter.get('password_encrypted'):
-                enc_key = self._get_encryption_key()
-                if enc_key:
-                    password = self._decrypt_password(vcenter['password_encrypted'], enc_key)
+                password = self.executor.decrypt_password(vcenter['password_encrypted'])
+                if password:
                     vcenter['password'] = password
             
             return vcenter
