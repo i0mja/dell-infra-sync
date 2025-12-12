@@ -49,7 +49,20 @@ import {
   XCircle,
   RefreshCw,
   Copy,
+  Clock,
+  SkipForward,
+  AlertTriangle,
+  Terminal,
+  ChevronDown,
+  Power,
+  PowerOff,
 } from "lucide-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { VMCombobox } from "./VMCombobox";
 import { ZfsApplianceSelector } from "./ZfsApplianceSelector";
 import { ZfsTargetTemplate, useZfsTemplates } from "@/hooks/useZfsTemplates";
@@ -89,12 +102,73 @@ interface SiteConfig {
   selectedTemplate: ZfsTargetTemplate | null;
 }
 
+type StepStatus = 'pending' | 'running' | 'success' | 'failed' | 'warning' | 'skipped' | 'fixing' | 'fixed';
+
+interface StepResult {
+  step: string;
+  status: StepStatus;
+  message?: string;
+  error?: string;
+}
+
 interface JobProgress {
   jobId: string | null;
   status: string;
   progress: number;
   currentStep: string;
   error?: string;
+  stepResults: StepResult[];
+  consoleLog: string[];
+  vmState?: string;
+  vmIp?: string;
+  targetName?: string;
+  clonedVmName?: string;
+}
+
+const STEP_LABELS: Record<string, string> = {
+  vcenter: 'vCenter Connection',
+  vm_state: 'VM State Detection',
+  convert_to_vm: 'Convert to VM',
+  clone_template: 'Clone Template',
+  power_on: 'Power On',
+  vmware_tools: 'VMware Tools',
+  ip_address: 'IP Address',
+  ssh_port: 'SSH Port',
+  ssh_auth: 'SSH Authentication',
+  ssh_key_deploy: 'Deploy SSH Key',
+  apt_sources: 'APT Sources',
+  zfs_packages: 'ZFS Packages',
+  nfs_packages: 'NFS Packages',
+  zfs_module: 'ZFS Module',
+  user_account: 'User Account',
+  disk_detection: 'Disk Detection',
+  zfs_pool: 'ZFS Pool',
+  nfs_export: 'NFS Export',
+  cleanup_config: 'Cleanup Config',
+  register_target: 'Register Target',
+  register_datastore: 'Add Datastore',
+  finalize: 'Finalize',
+};
+
+function getStatusIcon(status: StepStatus) {
+  switch (status) {
+    case 'pending':
+      return <Clock className="h-4 w-4 text-muted-foreground" />;
+    case 'running':
+    case 'fixing':
+      return <Loader2 className="h-4 w-4 text-primary animate-spin" />;
+    case 'success':
+    case 'fixed':
+      return <CheckCircle2 className="h-4 w-4 text-green-500" />;
+    case 'failed':
+      return <XCircle className="h-4 w-4 text-destructive" />;
+    case 'warning':
+      return <AlertTriangle className="h-4 w-4 text-yellow-500" />;
+    case 'skipped':
+      return <SkipForward className="h-4 w-4 text-muted-foreground" />;
+    default:
+      return <Clock className="h-4 w-4 text-muted-foreground" />;
+  }
 }
 
 const WIZARD_PAGES = [
@@ -151,12 +225,14 @@ export function PairedZfsDeployWizard({
   const [drConfig, setDrConfig] = useState<SiteConfig>(defaultSiteConfig());
   
   // Deployment state
-  const [sourceProgress, setSourceProgress] = useState<JobProgress>({
-    jobId: null, status: '', progress: 0, currentStep: ''
+  const defaultJobProgress = (): JobProgress => ({
+    jobId: null, status: '', progress: 0, currentStep: '',
+    stepResults: [], consoleLog: [], vmState: undefined, vmIp: undefined,
+    targetName: undefined, clonedVmName: undefined,
   });
-  const [drProgress, setDrProgress] = useState<JobProgress>({
-    jobId: null, status: '', progress: 0, currentStep: ''
-  });
+  const [sourceProgress, setSourceProgress] = useState<JobProgress>(defaultJobProgress());
+  const [drProgress, setDrProgress] = useState<JobProgress>(defaultJobProgress());
+  const [consoleOpen, setConsoleOpen] = useState<{ source: boolean; dr: boolean }>({ source: false, dr: false });
   const [deploying, setDeploying] = useState(false);
   const [deployComplete, setDeployComplete] = useState(false);
   
@@ -183,10 +259,11 @@ export function PairedZfsDeployWizard({
       setCurrentPage(1);
       setSourceConfig(defaultSiteConfig());
       setDrConfig(defaultSiteConfig());
-      setSourceProgress({ jobId: null, status: '', progress: 0, currentStep: '' });
-      setDrProgress({ jobId: null, status: '', progress: 0, currentStep: '' });
+      setSourceProgress(defaultJobProgress());
+      setDrProgress(defaultJobProgress());
       setDeploying(false);
       setDeployComplete(false);
+      setConsoleOpen({ source: false, dr: false });
     }
   }, [open]);
   
@@ -364,7 +441,8 @@ export function PairedZfsDeployWizard({
     if (!job) return null;
     
     const details = job.details as Record<string, unknown> | null;
-    const stepResults = (details?.step_results || []) as Array<{ step: string; status: string }>;
+    const stepResults = (details?.step_results || []) as StepResult[];
+    const consoleLog = (details?.console_log || []) as string[];
     const currentStep = stepResults.find(r => r.status === 'running')?.step || 
                        stepResults[stepResults.length - 1]?.step || '';
     
@@ -374,6 +452,12 @@ export function PairedZfsDeployWizard({
       progress: (details?.progress_percent as number) || 0,
       currentStep,
       error: job.status === 'failed' ? (details?.error as string) : undefined,
+      stepResults,
+      consoleLog,
+      vmState: (details?.vm_state as string) || undefined,
+      vmIp: (details?.vm_ip as string) || undefined,
+      targetName: (details?.target_name as string) || undefined,
+      clonedVmName: (details?.clone_template as Record<string, unknown>)?.clone_name as string || undefined,
     }));
     
     return job.status;
@@ -957,32 +1041,136 @@ export function PairedZfsDeployWizard({
   const renderProgressCard = (
     label: string,
     progress: JobProgress,
-    isPrimary: boolean
-  ) => (
-    <div className={`p-4 rounded-lg border ${isPrimary ? 'bg-primary/5' : 'bg-secondary/30'}`}>
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <Badge variant={isPrimary ? 'default' : 'secondary'}>{label}</Badge>
-          {progress.status === 'completed' && <CheckCircle2 className="h-4 w-4 text-green-500" />}
-          {progress.status === 'failed' && <XCircle className="h-4 w-4 text-destructive" />}
-          {progress.status === 'running' && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
-          {progress.status === 'pending' && <RefreshCw className="h-4 w-4 text-muted-foreground" />}
+    isPrimary: boolean,
+    config: SiteConfig,
+    selectedVm: any,
+    consoleOpenKey: 'source' | 'dr'
+  ) => {
+    const vcenter = vcenters.find(v => v.id === config.vcenterId);
+    const displayTargetName = progress.targetName || config.targetName;
+    const displayVmName = progress.clonedVmName || selectedVm?.name || 'Unknown';
+    
+    return (
+      <div className={`rounded-lg border overflow-hidden ${isPrimary ? 'bg-primary/5 border-primary/20' : 'bg-secondary/30'}`}>
+        {/* Header with config summary */}
+        <div className="p-3 border-b bg-card/50">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <Badge variant={isPrimary ? 'default' : 'secondary'}>{label}</Badge>
+              {progress.status === 'completed' && <CheckCircle2 className="h-4 w-4 text-green-500" />}
+              {progress.status === 'failed' && <XCircle className="h-4 w-4 text-destructive" />}
+              {progress.status === 'running' && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+              {progress.status === 'pending' && <RefreshCw className="h-4 w-4 text-muted-foreground" />}
+            </div>
+            <span className="text-sm font-semibold">{Math.round(progress.progress)}%</span>
+          </div>
+          <div className="text-xs text-muted-foreground space-y-0.5">
+            <div className="flex justify-between">
+              <span>Target:</span>
+              <span className="font-medium text-foreground">{displayTargetName}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>{config.isTemplate ? 'Cloning:' : 'VM:'}</span>
+              <span className="font-mono">{displayVmName}</span>
+            </div>
+            {vcenter && (
+              <div className="flex justify-between">
+                <span>vCenter:</span>
+                <span>{vcenter.name}</span>
+              </div>
+            )}
+          </div>
         </div>
-        <span className="text-sm font-medium">{Math.round(progress.progress)}%</span>
+        
+        {/* Progress bar */}
+        <div className="px-3 pt-3">
+          <Progress value={progress.progress} className="h-2" />
+        </div>
+        
+        {/* Step list */}
+        {progress.stepResults.length > 0 && (
+          <div className="p-3 space-y-1">
+            <ScrollArea className="max-h-[180px]">
+              <div className="space-y-1">
+                {progress.stepResults.map((step, idx) => (
+                  <div 
+                    key={`${step.step}-${idx}`}
+                    className={`flex items-center gap-2 p-1.5 rounded text-xs ${
+                      step.status === 'running' ? 'bg-primary/10' : ''
+                    }`}
+                  >
+                    {getStatusIcon(step.status)}
+                    <span className={step.status === 'running' ? 'font-medium' : ''}>
+                      {STEP_LABELS[step.step] || step.step}
+                    </span>
+                    {step.message && (
+                      <span className="text-muted-foreground ml-auto truncate max-w-[150px]">
+                        {step.message}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+          </div>
+        )}
+        
+        {/* VM State badges */}
+        {(progress.vmState || progress.vmIp) && (
+          <div className="px-3 pb-2 flex gap-2 flex-wrap">
+            {progress.vmState && (
+              <Badge variant="outline" className="text-xs gap-1">
+                {progress.vmState === 'poweredOn' ? (
+                  <Power className="h-3 w-3 text-green-500" />
+                ) : (
+                  <PowerOff className="h-3 w-3 text-muted-foreground" />
+                )}
+                {progress.vmState}
+              </Badge>
+            )}
+            {progress.vmIp && (
+              <Badge variant="outline" className="text-xs font-mono">
+                IP: {progress.vmIp}
+              </Badge>
+            )}
+          </div>
+        )}
+        
+        {/* Error display */}
+        {progress.error && (
+          <div className="mx-3 mb-3 p-2 rounded bg-destructive/10 border border-destructive/20">
+            <p className="text-xs text-destructive flex items-start gap-1.5">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              <span>{progress.error}</span>
+            </p>
+          </div>
+        )}
+        
+        {/* Console log collapsible */}
+        {progress.consoleLog.length > 0 && (
+          <Collapsible
+            open={consoleOpen[consoleOpenKey]}
+            onOpenChange={(open) => setConsoleOpen(prev => ({ ...prev, [consoleOpenKey]: open }))}
+          >
+            <CollapsibleTrigger asChild>
+              <button className="w-full flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:bg-muted/50 border-t">
+                <Terminal className="h-3.5 w-3.5" />
+                <span>Console Log ({progress.consoleLog.length} lines)</span>
+                <ChevronDown className={`h-3.5 w-3.5 ml-auto transition-transform ${consoleOpen[consoleOpenKey] ? 'rotate-180' : ''}`} />
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <ScrollArea className="h-[120px] bg-muted/30 border-t">
+                <pre className="p-2 text-[10px] font-mono text-muted-foreground whitespace-pre-wrap">
+                  {progress.consoleLog.join('\n')}
+                </pre>
+              </ScrollArea>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
       </div>
-      <Progress value={progress.progress} className="h-2" />
-      {progress.currentStep && (
-        <p className="text-xs text-muted-foreground mt-2">
-          {progress.currentStep}
-        </p>
-      )}
-      {progress.error && (
-        <p className="text-xs text-destructive mt-2">
-          Error: {progress.error}
-        </p>
-      )}
-    </div>
-  );
+    );
+  };
   
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1134,9 +1322,9 @@ export function PairedZfsDeployWizard({
               
               {hasStartedDeploy && (
                 <div className="space-y-4">
-                  <div className="grid md:grid-cols-2 gap-4">
-                    {renderProgressCard('Source Site', sourceProgress, true)}
-                    {renderProgressCard('DR Site', drProgress, false)}
+                <div className="grid md:grid-cols-2 gap-4">
+                    {renderProgressCard('Source Site', sourceProgress, true, sourceConfig, sourceVm, 'source')}
+                    {renderProgressCard('DR Site', drProgress, false, drConfig, drVm, 'dr')}
                   </div>
                   
                   {deployComplete && (
