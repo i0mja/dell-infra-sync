@@ -4620,6 +4620,7 @@ export type Database = {
         | "decommission_zfs_target"
         | "manage_datastore"
         | "scan_datastore_status"
+        | "exchange_ssh_keys"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -4833,6 +4834,7 @@ export const Constants = {
         "decommission_zfs_target",
         "manage_datastore",
         "scan_datastore_status",
+        "exchange_ssh_keys",
       ],
       operation_type: [
         "idrac_api",
