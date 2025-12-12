@@ -157,6 +157,13 @@ export interface VCenterVM {
 // Hooks using Supabase directly
 // ==========================================
 
+// Types for decommission flow
+export interface TargetDependencies {
+  dependentGroups: Array<{ id: string; name: string; vm_count?: number }>;
+  partnerTarget: { id: string; name: string } | null;
+  hasDeployedVm: boolean;
+}
+
 export function useReplicationTargets() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -167,6 +174,7 @@ export function useReplicationTargets() {
       const { data, error } = await supabase
         .from('replication_targets')
         .select('*')
+        .is('archived_at', null) // Only show non-archived targets
         .order('name');
       if (error) throw error;
 
@@ -240,6 +248,159 @@ export function useReplicationTargets() {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
   });
+
+  // Archive target (soft delete)
+  const archiveTargetMutation = useMutation({
+    mutationFn: async (id: string) => {
+      // Clear partner relationship first
+      const { data: target } = await supabase
+        .from('replication_targets')
+        .select('partner_target_id')
+        .eq('id', id)
+        .single();
+      
+      if (target?.partner_target_id) {
+        await supabase
+          .from('replication_targets')
+          .update({ partner_target_id: null, site_role: null })
+          .eq('id', target.partner_target_id);
+      }
+
+      const { error } = await supabase
+        .from('replication_targets')
+        .update({ 
+          archived_at: new Date().toISOString(),
+          partner_target_id: null,
+          site_role: null,
+          is_active: false
+        })
+        .eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast({ title: 'Target archived' });
+      queryClient.invalidateQueries({ queryKey: ['replication-targets'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  });
+
+  // Decommission target (creates job for full cleanup)
+  const decommissionTargetMutation = useMutation({
+    mutationFn: async (id: string) => {
+      // Get target details for the job
+      const { data: target, error: fetchErr } = await supabase
+        .from('replication_targets')
+        .select('*')
+        .eq('id', id)
+        .single();
+      if (fetchErr) throw fetchErr;
+
+      // Clear partner relationship
+      if (target?.partner_target_id) {
+        await supabase
+          .from('replication_targets')
+          .update({ partner_target_id: null, site_role: null })
+          .eq('id', target.partner_target_id);
+      }
+
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+
+      // Create decommission job
+      const { data: job, error: jobErr } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'decommission_zfs_target' as any,
+          status: 'pending',
+          created_by: user?.id,
+          target_scope: { replication_target_id: id },
+          details: {
+            target_id: id,
+            target_name: target.name,
+            hostname: target.hostname,
+            zfs_pool: target.zfs_pool,
+            dr_vcenter_id: target.dr_vcenter_id,
+            deployed_vm_moref: target.deployed_vm_moref,
+            actions: ['destroy_zfs_pool', 'remove_nfs_datastore', 'power_off_vm', 'delete_vm']
+          }
+        })
+        .select()
+        .single();
+      if (jobErr) throw jobErr;
+
+      // Mark target as being decommissioned
+      await supabase
+        .from('replication_targets')
+        .update({ 
+          is_active: false,
+          health_status: 'decommissioning',
+          partner_target_id: null,
+          site_role: null
+        })
+        .eq('id', id);
+
+      return job;
+    },
+    onSuccess: () => {
+      toast({ 
+        title: 'Decommission job created',
+        description: 'Check Jobs page for progress'
+      });
+      queryClient.invalidateQueries({ queryKey: ['replication-targets'] });
+      queryClient.invalidateQueries({ queryKey: ['jobs'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  });
+
+  // Check target dependencies before deletion
+  const checkTargetDependencies = async (targetId: string): Promise<TargetDependencies> => {
+    // Get protection groups using this target
+    const { data: groups } = await supabase
+      .from('protection_groups')
+      .select('id, name')
+      .eq('target_id', targetId);
+
+    // Get VM counts for each group
+    const groupsWithCounts: TargetDependencies['dependentGroups'] = [];
+    if (groups && groups.length > 0) {
+      for (const g of groups) {
+        const { count } = await supabase
+          .from('protected_vms')
+          .select('*', { count: 'exact', head: true })
+          .eq('protection_group_id', g.id);
+        groupsWithCounts.push({ ...g, vm_count: count || 0 });
+      }
+    }
+
+    // Get partner target info
+    const { data: target } = await supabase
+      .from('replication_targets')
+      .select('partner_target_id, deployed_vm_moref')
+      .eq('id', targetId)
+      .single();
+
+    let partnerTarget: TargetDependencies['partnerTarget'] = null;
+    if (target?.partner_target_id) {
+      const { data: partner } = await supabase
+        .from('replication_targets')
+        .select('id, name')
+        .eq('id', target.partner_target_id)
+        .single();
+      if (partner) {
+        partnerTarget = partner;
+      }
+    }
+
+    return {
+      dependentGroups: groupsWithCounts,
+      partnerTarget,
+      hasDeployedVm: !!target?.deployed_vm_moref
+    };
+  };
 
   const updateTargetMutation = useMutation({
     mutationFn: async ({ id, updates }: { id: string; updates: Partial<ReplicationTarget> }) => {
@@ -326,6 +487,9 @@ export function useReplicationTargets() {
     refetch, 
     createTarget: createTargetMutation.mutateAsync, 
     deleteTarget: deleteTargetMutation.mutateAsync,
+    archiveTarget: archiveTargetMutation.mutateAsync,
+    decommissionTarget: decommissionTargetMutation.mutateAsync,
+    checkTargetDependencies,
     updateTarget: updateTargetMutation.mutateAsync,
     setPartner: setPartnerMutation.mutateAsync
   };
