@@ -443,6 +443,85 @@ class ReplicationHandler(BaseHandler):
         except Exception as e:
             return {'success': False, 'error': str(e)}
     
+    def _get_target_ssh_creds(self, target: Dict) -> Optional[Dict]:
+        """
+        Get SSH credentials for connecting to a replication target.
+        Returns dict with hostname, port, username, and key_path/key_data/password.
+        """
+        try:
+            hostname = target.get('hostname')
+            port = target.get('port', 22)
+            username = target.get('ssh_username', 'root')
+            
+            if not hostname:
+                self.executor.log("Target has no hostname", "ERROR")
+                return None
+            
+            creds = {
+                'hostname': hostname,
+                'port': port,
+                'username': username,
+                'key_path': None,
+                'key_data': None,
+                'password': None
+            }
+            
+            # Try to get SSH key from target's encrypted key first
+            if target.get('ssh_key_encrypted'):
+                key_data = self.executor.decrypt_password(target['ssh_key_encrypted'])
+                if key_data:
+                    creds['key_data'] = key_data
+                    self.executor.log(f"Using target-specific SSH key for {hostname}")
+                    return creds
+            
+            # Fallback to activity_settings SSH configuration
+            try:
+                response = requests.get(
+                    f"{DSM_URL}/rest/v1/activity_settings",
+                    params={'select': '*', 'limit': '1'},
+                    headers={
+                        'apikey': SERVICE_ROLE_KEY,
+                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                    },
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+                if response.ok:
+                    settings_list = response.json()
+                    if settings_list:
+                        settings = settings_list[0]
+                        
+                        # Check for encrypted SSH key in settings
+                        if settings.get('ssh_private_key_encrypted'):
+                            key_data = self.executor.decrypt_password(settings['ssh_private_key_encrypted'])
+                            if key_data:
+                                creds['key_data'] = key_data
+                                self.executor.log(f"Using global SSH key for {hostname}")
+                                return creds
+                        
+                        # Check for SSH key path
+                        if settings.get('ssh_private_key_path'):
+                            creds['key_path'] = settings['ssh_private_key_path']
+                            self.executor.log(f"Using SSH key path for {hostname}")
+                            return creds
+                        
+                        # Check for encrypted password
+                        if settings.get('ssh_password_encrypted'):
+                            password = self.executor.decrypt_password(settings['ssh_password_encrypted'])
+                            if password:
+                                creds['password'] = password
+                                self.executor.log(f"Using SSH password for {hostname}")
+                                return creds
+            except Exception as e:
+                self.executor.log(f"Error fetching activity_settings: {e}", "WARNING")
+            
+            self.executor.log(f"No SSH credentials available for target {hostname}", "ERROR")
+            return None
+            
+        except Exception as e:
+            self.executor.log(f"Error getting target SSH credentials: {e}", "ERROR")
+            return None
+    
     # =========================================================================
     # Job Handler Methods
     # =========================================================================
