@@ -12,6 +12,7 @@ Uses paramiko for SSH to execute:
 Uses pyVmomi for DR shell VM creation.
 """
 
+import io
 import ssl
 import time
 import logging
@@ -66,7 +67,7 @@ class ZFSReplicationReal:
     
     def _get_ssh_client(self, hostname: str, port: int = 22, 
                         username: str = None, key_path: str = None,
-                        password: str = None) -> Optional[object]:
+                        key_data: str = None, password: str = None) -> Optional[object]:
         """
         Create SSH client connection.
         
@@ -74,7 +75,8 @@ class ZFSReplicationReal:
             hostname: Target hostname
             port: SSH port (default 22)
             username: SSH username
-            key_path: Path to SSH private key
+            key_path: Path to SSH private key file
+            key_data: Raw SSH private key content (preferred over key_path)
             password: SSH password (fallback if no key)
             
         Returns:
@@ -88,7 +90,32 @@ class ZFSReplicationReal:
             ssh = paramiko.SSHClient()
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             
-            if key_path:
+            if key_data:
+                # Load key from raw data using StringIO
+                key_file = io.StringIO(key_data)
+                pkey = None
+                
+                # Try different key types
+                for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                    try:
+                        key_file.seek(0)
+                        pkey = key_class.from_private_key(key_file)
+                        break
+                    except Exception:
+                        continue
+                
+                if pkey is None:
+                    logger.error(f"Failed to parse SSH key data for {hostname}")
+                    return None
+                
+                ssh.connect(
+                    hostname, 
+                    port=port, 
+                    username=username, 
+                    pkey=pkey,
+                    timeout=30
+                )
+            elif key_path:
                 ssh.connect(
                     hostname, 
                     port=port, 
@@ -171,7 +198,8 @@ class ZFSReplicationReal:
     
     def check_target_health(self, target_hostname: str, zfs_pool: str,
                             ssh_username: str = None, ssh_port: int = 22,
-                            ssh_key_path: str = None) -> Dict:
+                            ssh_key_path: str = None, ssh_key_data: str = None,
+                            ssh_password: str = None) -> Dict:
         """
         Check health of replication target.
         
@@ -182,7 +210,9 @@ class ZFSReplicationReal:
             zfs_pool: ZFS pool name
             ssh_username: SSH username
             ssh_port: SSH port
-            ssh_key_path: Path to SSH key
+            ssh_key_path: Path to SSH key file
+            ssh_key_data: Raw SSH private key content
+            ssh_password: SSH password (fallback)
             
         Returns:
             Dict with health check results
@@ -198,7 +228,9 @@ class ZFSReplicationReal:
                 'message': 'SSH library not available'
             }
         
-        ssh = self._get_ssh_client(target_hostname, ssh_port, ssh_username, ssh_key_path)
+        ssh = self._get_ssh_client(target_hostname, ssh_port, ssh_username, 
+                                   key_path=ssh_key_path, key_data=ssh_key_data,
+                                   password=ssh_password)
         if not ssh:
             return {
                 'success': False,
