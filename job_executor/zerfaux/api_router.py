@@ -1045,8 +1045,19 @@ class ZerfauxAPIRouter:
         # Create a storage_vmotion job for each VM
         jobs_created = []
         errors = []
+        skipped = []
         
         for vm in vms:
+            # Validate VM has MoRef (vm_vcenter_id) required for vMotion
+            if not vm.get('vm_vcenter_id'):
+                logger.warning(f"Skipping VM {vm['vm_name']} - missing vm_vcenter_id (MoRef)")
+                skipped.append({
+                    'vm_id': vm['id'],
+                    'vm_name': vm['vm_name'],
+                    'reason': 'Missing vm_vcenter_id - VM needs to be re-added from vCenter inventory'
+                })
+                continue
+            
             try:
                 job = self._db_insert('jobs', {
                     'job_type': 'storage_vmotion',
@@ -1057,6 +1068,7 @@ class ZerfauxAPIRouter:
                     'details': {
                         'protected_vm_id': vm['id'],
                         'vm_name': vm['vm_name'],
+                        'vm_vcenter_id': vm.get('vm_vcenter_id'),
                         'source_datastore': vm.get('current_datastore'),
                         'target_datastore': vm.get('target_datastore'),
                         'protection_group_id': vm.get('protection_group_id')
@@ -1077,6 +1089,7 @@ class ZerfauxAPIRouter:
             'success': len(jobs_created) > 0,
             'jobs_created': len(jobs_created),
             'job_ids': [j['id'] for j in jobs_created],
+            'skipped': skipped if skipped else None,
             'errors': errors if errors else None
         })
         return True
