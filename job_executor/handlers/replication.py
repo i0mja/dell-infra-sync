@@ -1735,7 +1735,9 @@ class ReplicationHandler(BaseHandler):
                                         )
                                     else:
                                         send_success = False
-                                        add_console_log(f"WARN: ZFS send failed: {send_result.get('error')}", "WARN")
+                                        send_error = send_result.get('error', 'ZFS send failed')
+                                        add_console_log(f"ERROR: ZFS send failed: {send_error}", "ERROR")
+                                        results['errors'].append({'vm': vm_name, 'error': f"ZFS send failed: {send_error}"})
                                         # Continue - snapshot was created, just send failed
                             else:
                                 # Same target or no DR target - get snapshot-specific size only
