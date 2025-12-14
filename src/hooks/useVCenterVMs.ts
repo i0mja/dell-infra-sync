@@ -21,6 +21,7 @@ export interface VCenterVM {
   cluster_name?: string;
   is_template?: boolean;
   vcenter_id?: string; // VMware moref (e.g., vm-123)
+  primary_datastore?: string; // Primary datastore name
 }
 
 const BATCH_SIZE = 1000;
@@ -77,6 +78,29 @@ export function useVCenterVMs(vcenterId?: string) {
 
       console.log(`[useVCenterVMs] Loaded ${allVMs.length} VMs for vCenter ${vcenterId}`);
       
+      // Fetch primary datastore info for all VMs
+      const vmIds = allVMs.map(vm => vm.id);
+      const datastoreMap = new Map<string, string>();
+      
+      // Batch fetch datastores (paginate if needed)
+      for (let i = 0; i < vmIds.length; i += BATCH_SIZE) {
+        const batchIds = vmIds.slice(i, i + BATCH_SIZE);
+        const { data: datastoreData } = await supabase
+          .from('vcenter_datastore_vms')
+          .select(`
+            vm_id,
+            vcenter_datastores!inner(name)
+          `)
+          .in('vm_id', batchIds)
+          .eq('is_primary_datastore', true);
+        
+        datastoreData?.forEach((row: any) => {
+          datastoreMap.set(row.vm_id, row.vcenter_datastores?.name);
+        });
+      }
+      
+      console.log(`[useVCenterVMs] Loaded datastore info for ${datastoreMap.size} VMs`);
+      
       return allVMs.map(vm => ({
         id: vm.id,
         name: vm.name,
@@ -89,6 +113,7 @@ export function useVCenterVMs(vcenterId?: string) {
         cluster_name: vm.cluster_name,
         is_template: vm.is_template,
         vcenter_id: vm.vcenter_id,
+        primary_datastore: datastoreMap.get(vm.id),
       })) as VCenterVM[];
     },
     enabled: !!vcenterId,

@@ -185,7 +185,7 @@ export function AddVMsDialog({
         vm_id: vm.id,
         vm_name: vm.name,
         vm_vcenter_id: vm.vcenter_id || undefined,
-        current_datastore: undefined,
+        current_datastore: vm.primary_datastore || undefined,
         needs_storage_vmotion: true,
       }));
 
