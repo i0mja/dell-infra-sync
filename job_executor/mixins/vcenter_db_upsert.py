@@ -416,7 +416,7 @@ class VCenterDbUpsertMixin:
         source_vcenter_id: str,
         job_id: str = None
     ) -> Dict[str, int]:
-        """Batch upsert datastores."""
+        """Batch upsert datastores with moRef change detection."""
         if not datastores:
             return {"synced": 0, "total": 0}
         
@@ -427,42 +427,117 @@ class VCenterDbUpsertMixin:
             'Prefer': 'resolution=merge-duplicates,return=minimal'
         }
         
+        # Pre-fetch existing datastores for this vCenter to detect moRef changes
+        existing_datastores = {}
+        moref_updated = 0
+        try:
+            existing_response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_datastores",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                params={
+                    'source_vcenter_id': f'eq.{source_vcenter_id}',
+                    'select': 'id,name,vcenter_id'
+                },
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+            if existing_response.status_code == 200:
+                from job_executor.utils import _safe_json_parse
+                existing_list = _safe_json_parse(existing_response) or []
+                # Map by name for moRef change detection
+                for ds in existing_list:
+                    name = ds.get('name', '')
+                    if name:
+                        if name not in existing_datastores:
+                            existing_datastores[name] = []
+                        existing_datastores[name].append(ds)
+        except Exception as e:
+            self.log(f"  Warning: Could not pre-fetch existing datastores: {e}", "WARN")
+        
         batch = []
         for d in datastores:
+            ds_name = d.get('name', '')
+            ds_moref = d.get('id', '')
+            
+            # Check if this datastore name exists with a different moRef
+            if ds_name in existing_datastores:
+                existing_entries = existing_datastores[ds_name]
+                for existing in existing_entries:
+                    if existing['vcenter_id'] != ds_moref:
+                        # moRef changed - update existing record instead of creating duplicate
+                        try:
+                            update_resp = requests.patch(
+                                f"{DSM_URL}/rest/v1/vcenter_datastores?id=eq.{existing['id']}",
+                                headers={
+                                    'apikey': SERVICE_ROLE_KEY,
+                                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                    'Content-Type': 'application/json',
+                                    'Prefer': 'return=minimal'
+                                },
+                                json={
+                                    'vcenter_id': ds_moref,
+                                    'type': d.get('type', ''),
+                                    'capacity_bytes': d.get('capacity_bytes', 0),
+                                    'free_bytes': d.get('free_bytes', 0),
+                                    'accessible': d.get('accessible', True),
+                                    'host_count': d.get('host_count', 0),
+                                    'vm_count': d.get('vm_count', 0),
+                                    'last_sync': utc_now_iso()
+                                },
+                                verify=VERIFY_SSL,
+                                timeout=15
+                            )
+                            if update_resp.status_code in [200, 204]:
+                                moref_updated += 1
+                                self.log(f"    Updated moRef for {ds_name}: {existing['vcenter_id']} -> {ds_moref}")
+                        except Exception as upd_err:
+                            self.log(f"    moRef update error for {ds_name}: {upd_err}", "WARN")
+                        # Skip adding to batch - we updated instead
+                        continue
+            
             batch.append({
-                'name': d.get('name', ''),
-                'vcenter_id': d.get('id', ''),
+                'name': ds_name,
+                'vcenter_id': ds_moref,
                 'source_vcenter_id': source_vcenter_id,
                 'type': d.get('type', ''),
                 'capacity_bytes': d.get('capacity_bytes', 0),
                 'free_bytes': d.get('free_bytes', 0),
                 'accessible': d.get('accessible', True),
-                # Phase 7: Host and VM counts
                 'host_count': d.get('host_count', 0),
                 'vm_count': d.get('vm_count', 0),
                 'last_sync': utc_now_iso()
             })
         
-        try:
-            response = requests.post(
-                f"{DSM_URL}/rest/v1/vcenter_datastores?on_conflict=vcenter_id,source_vcenter_id",
-                headers=headers,
-                json=batch,
-                verify=VERIFY_SSL,
-                timeout=30
-            )
-            
-            if response.status_code in [200, 201, 204]:
-                self.log(f"  ✓ Batch upserted {len(batch)} datastores")
-                return {"synced": len(batch), "total": len(datastores)}
-            else:
-                error_msg = f"HTTP {response.status_code}: {response.text[:300]}"
-                self.log(f"  Datastore batch upsert failed: {error_msg}", "WARN")
-                return {"synced": 0, "total": len(datastores), "error": error_msg}
+        synced = moref_updated
+        
+        if batch:
+            try:
+                response = requests.post(
+                    f"{DSM_URL}/rest/v1/vcenter_datastores?on_conflict=vcenter_id,source_vcenter_id",
+                    headers=headers,
+                    json=batch,
+                    verify=VERIFY_SSL,
+                    timeout=30
+                )
                 
-        except Exception as e:
-            self.log(f"  Datastore upsert error: {e}", "ERROR")
-            return {"synced": 0, "total": len(datastores), "error": str(e)}
+                if response.status_code in [200, 201, 204]:
+                    synced += len(batch)
+                    self.log(f"  ✓ Batch upserted {len(batch)} datastores" + (f", updated {moref_updated} moRefs" if moref_updated else ""))
+                else:
+                    error_msg = f"HTTP {response.status_code}: {response.text[:300]}"
+                    self.log(f"  Datastore batch upsert failed: {error_msg}", "WARN")
+                    return {"synced": moref_updated, "total": len(datastores), "error": error_msg, "moref_updated": moref_updated}
+                    
+            except Exception as e:
+                self.log(f"  Datastore upsert error: {e}", "ERROR")
+                return {"synced": moref_updated, "total": len(datastores), "error": str(e), "moref_updated": moref_updated}
+        else:
+            self.log(f"  ✓ Updated {moref_updated} datastore moRefs (no new datastores)")
+        
+        return {"synced": synced, "total": len(datastores), "moref_updated": moref_updated}
     
     def _upsert_datastore_hosts_batch(
         self,
