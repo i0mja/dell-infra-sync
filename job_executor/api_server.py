@@ -93,7 +93,7 @@ class APIHandler(BaseHTTPRequestHandler):
         """Handle POST requests"""
         try:
             # Check Zerfaux router first
-            if self.path.startswith('/api/replication'):
+            if self.path.startswith('/api/replication') or self.path.startswith('/api/zerfaux'):
                 router = get_zerfaux_router(self.executor)
                 if router.route_post(self.path, self):
                     return
@@ -137,7 +137,7 @@ class APIHandler(BaseHTTPRequestHandler):
         """Handle GET requests"""
         try:
             # Check Zerfaux router first
-            if self.path.startswith('/api/replication'):
+            if self.path.startswith('/api/replication') or self.path.startswith('/api/zerfaux'):
                 router = get_zerfaux_router(self.executor)
                 if router.route_get(self.path, self):
                     return
@@ -211,7 +211,7 @@ class APIHandler(BaseHTTPRequestHandler):
     def do_PUT(self):
         """Handle PUT requests"""
         try:
-            if self.path.startswith('/api/replication'):
+            if self.path.startswith('/api/replication') or self.path.startswith('/api/zerfaux'):
                 router = get_zerfaux_router(self.executor)
                 if router.route_put(self.path, self):
                     return
@@ -223,7 +223,7 @@ class APIHandler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         """Handle DELETE requests"""
         try:
-            if self.path.startswith('/api/replication'):
+            if self.path.startswith('/api/replication') or self.path.startswith('/api/zerfaux'):
                 router = get_zerfaux_router(self.executor)
                 if router.route_delete(self.path, self):
                     return
