@@ -708,6 +708,23 @@ class ReplicationHandler(BaseHandler):
                 return None
             
             # Try to find a matching template
+            import re
+            
+            # Helper to extract site prefix (e.g., "S06" from "S06-VREP-02")
+            def extract_site_prefix(name: str) -> Optional[str]:
+                match = re.match(r'^(S\d{2})-', name, re.IGNORECASE)
+                return match.group(1).upper() if match else None
+            
+            # Helper to check if name contains replication patterns
+            def is_replication_appliance(name: str) -> bool:
+                # Match variations: VRP, VREP, REPL, REP (but not just "REP" alone to avoid false positives)
+                patterns = ['VRP', 'VREP', 'REPL', '-REP-', '-REP']
+                name_upper = name.upper()
+                return any(p in name_upper for p in patterns)
+            
+            vm_site = extract_site_prefix(vm_name)
+            vm_is_repl = is_replication_appliance(vm_name)
+            
             for template in templates:
                 if not template.get('ssh_key_id'):
                     continue
@@ -726,6 +743,16 @@ class ReplicationHandler(BaseHandler):
                 if template_name_base and vm_name.startswith(template_name_base):
                     self.executor.log(f"Found matching template '{template_name}' via template_name field")
                     return self._fetch_ssh_key_by_id(template['ssh_key_id'], hostname)
+                
+                # Site-based fuzzy matching for replication appliances
+                # Matches VRP/VREP/REPL variations within the same site
+                template_site = extract_site_prefix(template_name)
+                template_is_repl = is_replication_appliance(template_name)
+                
+                if vm_site and template_site and vm_site == template_site:
+                    if vm_is_repl and template_is_repl:
+                        self.executor.log(f"Matched template '{template_name}' to VM '{vm_name}' by site prefix + replication pattern")
+                        return self._fetch_ssh_key_by_id(template['ssh_key_id'], hostname)
             
             # If no name match, check ssh_key_deployments for this hosting VM
             response = requests.get(
