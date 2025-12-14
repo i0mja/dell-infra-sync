@@ -14,6 +14,7 @@ Uses pyVmomi for DR shell VM creation.
 
 import io
 import ssl
+import subprocess
 import time
 import logging
 from datetime import datetime
@@ -516,7 +517,6 @@ class ZFSReplicationReal:
                     ssh.close()
             else:
                 # Local execution (when Job Executor runs directly on ZFS server)
-                import subprocess
                 proc = subprocess.run(
                     command,
                     shell=True,
