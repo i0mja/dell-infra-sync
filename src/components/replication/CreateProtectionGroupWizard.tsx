@@ -156,6 +156,23 @@ export function CreateProtectionGroupWizard({ open, onOpenChange }: CreateProtec
     }
   }, [open, sourceVCenterId]);
   
+  // Auto-select datastore when target is selected (for existing appliance mode)
+  useEffect(() => {
+    if (selectedTargetId && !selectedDatastore) {
+      // First, check if target has a datastore_name set directly
+      const target = targets.find(t => t.id === selectedTargetId);
+      if (target?.datastore_name) {
+        setSelectedDatastore(target.datastore_name);
+        return;
+      }
+      // Otherwise, find the linked datastore from vcenter_datastores
+      const linkedDs = datastores.find(ds => ds.replication_target?.id === selectedTargetId);
+      if (linkedDs) {
+        setSelectedDatastore(linkedDs.name);
+      }
+    }
+  }, [selectedTargetId, targets, datastores, selectedDatastore]);
+  
   // Validate current step
   const isStepValid = (step: number): boolean => {
     switch (step) {
