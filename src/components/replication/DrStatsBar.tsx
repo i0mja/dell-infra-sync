@@ -1,12 +1,13 @@
-import { useEffect } from "react";
-import { Shield, Target, Clock, Activity, HardDrive, CheckCircle2, AlertTriangle, Loader2, Zap } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Shield, Target, Clock, Activity, HardDrive, CheckCircle2, AlertTriangle, Loader2, Zap, RefreshCw } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { useProtectionGroups, useReplicationTargets, useReplicationJobs } from "@/hooks/useReplication";
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
-
+import { toast } from "sonner";
 interface StatItemProps {
   icon: React.ElementType;
   label: string;
@@ -60,8 +61,20 @@ export function DrStatsBar() {
   const { groups, loading: groupsLoading } = useProtectionGroups();
   const { targets, loading: targetsLoading } = useReplicationTargets();
   const { jobs, loading: jobsLoading } = useReplicationJobs();
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const loading = groupsLoading || targetsLoading || jobsLoading;
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['protection-groups'] }),
+      queryClient.invalidateQueries({ queryKey: ['replication-targets'] }),
+      queryClient.invalidateQueries({ queryKey: ['replication-jobs'] }),
+    ]);
+    toast.success("Stats refreshed");
+    setTimeout(() => setIsRefreshing(false), 500);
+  };
 
   // Real-time subscription for jobs table to update stats
   useEffect(() => {
@@ -257,6 +270,23 @@ export function DrStatsBar() {
           </div>
         </>
       )}
+
+      {/* Live Indicator + Refresh */}
+      <div className="ml-auto flex items-center gap-2 px-4 border-l">
+        <div className="flex items-center gap-1.5">
+          <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+          <span className="text-xs text-muted-foreground">Live</span>
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+        </Button>
+      </div>
     </div>
   );
 }
