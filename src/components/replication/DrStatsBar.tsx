@@ -63,21 +63,36 @@ export function DrStatsBar() {
   const healthyTargets = targets.filter(t => t.health_status === 'healthy').length;
   const degradedTargets = targets.filter(t => t.health_status === 'degraded' || t.health_status === 'offline').length;
 
-  // Calculate RPO compliance (simplified: VMs replicated within their RPO window)
+  // Calculate RPO compliance using recent replication jobs per group
   const rpoCompliant = groups.filter(g => {
-    if (!g.last_replication_at || !g.rpo_minutes) return false;
-    const lastRep = new Date(g.last_replication_at);
+    if (!g.rpo_minutes || !g.is_enabled) return false;
+    // Find the most recent completed replication job for this group
+    const groupJobs = jobs.filter(j => 
+      j.protection_group_id === g.id && 
+      j.status === 'completed' &&
+      j.job_type === 'run_replication_sync'
+    );
+    if (groupJobs.length === 0) return false;
+    const lastJob = groupJobs[0]; // Already sorted by created_at desc
+    if (!lastJob.completed_at) return false;
+    const lastRep = new Date(lastJob.completed_at);
     const now = new Date();
     const minutesSince = (now.getTime() - lastRep.getTime()) / (1000 * 60);
     return minutesSince <= g.rpo_minutes;
   }).length;
-  const rpoCompliance = groups.length > 0 ? Math.round((rpoCompliant / groups.length) * 100) : 0;
+  const enabledGroups = groups.filter(g => g.is_enabled);
+  const rpoCompliance = enabledGroups.length > 0 ? Math.round((rpoCompliant / enabledGroups.length) * 100) : 0;
 
-  // Last replication
-  const recentJobs = jobs.filter(j => j.status === 'completed');
-  const lastReplication = recentJobs.length > 0 && recentJobs[0].completed_at
-    ? formatDistanceToNow(new Date(recentJobs[0].completed_at), { addSuffix: true })
+  // Last replication - find most recent completed sync job
+  const recentSyncJobs = jobs.filter(j => j.status === 'completed' && j.job_type === 'run_replication_sync');
+  const lastReplication = recentSyncJobs.length > 0 && recentSyncJobs[0].completed_at
+    ? formatDistanceToNow(new Date(recentSyncJobs[0].completed_at), { addSuffix: true })
     : 'Never';
+  
+  // Calculate total bytes transferred from completed jobs
+  const totalBytesTransferred = jobs
+    .filter(j => j.status === 'completed')
+    .reduce((sum, j) => sum + (j.bytes_transferred || 0), 0);
 
   // Get target health status
   const getTargetStatus = (): 'success' | 'warning' | 'error' | 'neutral' => {
@@ -143,7 +158,7 @@ export function DrStatsBar() {
       <StatItem
         icon={HardDrive}
         label="Data Transferred"
-        value={formatBytes(jobs.reduce((sum, j) => sum + (j.bytes_transferred || 0), 0))}
+        value={formatBytes(totalBytesTransferred)}
         subValue="total"
         status="neutral"
         loading={loading}
