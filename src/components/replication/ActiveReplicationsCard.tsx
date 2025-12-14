@@ -2,14 +2,17 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Loader2, Server, Clock, HardDrive, Play, Zap, ArrowRight } from "lucide-react";
+import { Loader2, Server, Clock, HardDrive, Play, Zap, ArrowRight, CheckCircle2, AlertTriangle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { formatDistanceToNow } from "date-fns";
 
 interface VmSyncDetail {
   vm_name: string;
   bytes_transferred: number;
+  expected_bytes?: number;
   transfer_rate_mbps: number;
+  incremental_from?: string;
+  site_b_verified?: boolean;
   success: boolean;
 }
 
@@ -20,10 +23,12 @@ interface JobDetails {
   current_step?: string;
   progress_percent?: number;
   bytes_transferred?: number;
+  expected_bytes?: number;
   current_vm?: string;
   vms_completed?: number;
   total_vms?: number;
   transfer_rate_mbps?: number;
+  site_b_verified?: boolean;
   vm_sync_details?: VmSyncDetail[];
 }
 
@@ -161,10 +166,12 @@ export function ActiveReplicationsCard() {
           const vmName = details.vm_name || details.current_vm;
           const groupName = details.protection_group_name;
           const bytesTransferred = details.bytes_transferred || 0;
+          const expectedBytes = details.expected_bytes || 0;
           const transferRate = details.transfer_rate_mbps || 0;
           const vmsCompleted = details.vms_completed || 0;
           const totalVms = details.total_vms || 0;
           const vmSyncDetails = details.vm_sync_details || [];
+          const siteB_verified = details.site_b_verified;
 
           return (
             <div key={job.id} className="space-y-2 p-3 rounded-lg bg-muted/50">
@@ -216,16 +223,25 @@ export function ActiveReplicationsCard() {
                   )}
                 </div>
                 <div className="flex items-center gap-3">
-                  {bytesTransferred > 0 && (
+                  {(bytesTransferred > 0 || expectedBytes > 0) && (
                     <span className="flex items-center gap-1 text-blue-600">
                       <HardDrive className="h-3 w-3" />
                       {formatBytes(bytesTransferred)}
+                      {expectedBytes > 0 && expectedBytes !== bytesTransferred && (
+                        <span className="text-muted-foreground">/ {formatBytes(expectedBytes)}</span>
+                      )}
                     </span>
                   )}
                   {transferRate > 0 && (
                     <span className="flex items-center gap-1 text-green-600">
                       <Zap className="h-3 w-3" />
                       {transferRate.toFixed(1)} MB/s
+                    </span>
+                  )}
+                  {siteB_verified && (
+                    <span className="flex items-center gap-1 text-emerald-600">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Verified
                     </span>
                   )}
                 </div>
@@ -248,8 +264,17 @@ export function ActiveReplicationsCard() {
                   {vmSyncDetails.slice(-3).map((vm, idx) => (
                     <div key={idx} className="flex items-center justify-between text-xs pl-2">
                       <span className="flex items-center gap-1">
-                        <ArrowRight className="h-3 w-3 text-green-500" />
+                        {vm.site_b_verified ? (
+                          <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                        ) : vm.success ? (
+                          <ArrowRight className="h-3 w-3 text-green-500" />
+                        ) : (
+                          <AlertTriangle className="h-3 w-3 text-yellow-500" />
+                        )}
                         {vm.vm_name}
+                        {vm.incremental_from && (
+                          <span className="text-muted-foreground/60">(incr)</span>
+                        )}
                       </span>
                       <span className="text-muted-foreground">
                         {formatBytes(vm.bytes_transferred)}

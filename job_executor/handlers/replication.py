@@ -123,6 +123,36 @@ class ReplicationHandler(BaseHandler):
             self.executor.log(f"Error fetching protected VMs: {e}", "ERROR")
         return []
     
+    def _get_previous_snapshot(self, protected_vm_id: str) -> Optional[str]:
+        """Get the most recent successful snapshot name for incremental send"""
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/replication_jobs",
+                params={
+                    'protected_vm_id': f'eq.{protected_vm_id}',
+                    'status': 'eq.completed',
+                    'select': 'source_snapshot',
+                    'order': 'completed_at.desc',
+                    'limit': 1
+                },
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.ok:
+                jobs = response.json()
+                if jobs and jobs[0].get('source_snapshot'):
+                    return jobs[0]['source_snapshot']
+        except Exception as e:
+            self.executor.log(f"Failed to get previous snapshot: {e}")
+        
+        return None
+
+    
     def _get_replication_target(self, target_id: str) -> Optional[Dict]:
         """Fetch replication target by ID"""
         try:
@@ -1587,7 +1617,13 @@ class ReplicationHandler(BaseHandler):
                             
                             vm_bytes_transferred = 0
                             vm_transfer_rate = 0
+                            expected_bytes = 0
                             send_success = True
+                            site_b_verified = False
+                            previous_snapshot = None
+                            
+                            # Get previous snapshot for incremental send
+                            previous_snapshot = self._get_previous_snapshot(vm['id'])
                             
                             if dr_target and dr_target.get('id') != target.get('id'):
                                 # We have a separate DR target - do ZFS send/receive
@@ -1595,12 +1631,33 @@ class ReplicationHandler(BaseHandler):
                                 dr_hostname = dr_ssh_creds.get('hostname')
                                 dr_username = dr_ssh_creds.get('username', 'root')
                                 dr_port = dr_ssh_creds.get('port', 22)
+                                dr_key_data = dr_ssh_creds.get('ssh_key_data')
                                 
                                 if dr_hostname and self.zfs_replication:
                                     dr_dataset_prefix = dr_target.get('zfs_dataset_prefix') or dr_target.get('zfs_pool')
                                     target_dataset = f"{dr_dataset_prefix}/{vm_name}"
                                     
-                                    results['current_step'] = f'ZFS send → {dr_hostname} for {vm_name}'
+                                    # Get expected send size BEFORE transfer using zfs send -nP
+                                    size_result = self.zfs_replication.get_snapshot_send_size(
+                                        source_dataset,
+                                        snapshot_name,
+                                        incremental_from=previous_snapshot,
+                                        ssh_hostname=ssh_hostname,
+                                        ssh_username=ssh_username,
+                                        ssh_port=ssh_port,
+                                        ssh_key_data=ssh_key_data
+                                    )
+                                    
+                                    if size_result.get('success'):
+                                        expected_bytes = size_result.get('bytes', 0)
+                                        is_incremental = size_result.get('incremental', False)
+                                        add_console_log(
+                                            f"Transfer size estimate: {self._format_bytes(expected_bytes)}"
+                                            f"{' (incremental)' if is_incremental else ' (full)'}"
+                                        )
+                                    
+                                    results['current_step'] = f'Transferring {vm_name} ({self._format_bytes(expected_bytes)})'
+                                    results['expected_bytes'] = expected_bytes
                                     self.update_job_status(job_id, 'running', details=results)
                                     add_console_log(f"Starting ZFS send to {dr_hostname}:{target_dataset}")
                                     
@@ -1612,6 +1669,7 @@ class ReplicationHandler(BaseHandler):
                                         source_snapshot=snapshot_name,
                                         target_host=dr_hostname,
                                         target_dataset=target_dataset,
+                                        incremental_from=previous_snapshot,
                                         ssh_username=dr_username,
                                         ssh_port=dr_port
                                     )
@@ -1622,17 +1680,41 @@ class ReplicationHandler(BaseHandler):
                                         vm_bytes_transferred = send_result.get('bytes_transferred', 0)
                                         vm_transfer_rate = send_result.get('transfer_rate_mbps', 0)
                                         
+                                        # If bytes_transferred is 0, use expected_bytes as actual
+                                        if vm_bytes_transferred == 0 and expected_bytes > 0:
+                                            vm_bytes_transferred = expected_bytes
+                                            elapsed = max((time.time() - send_start), 1)
+                                            vm_transfer_rate = round(vm_bytes_transferred / 1_000_000 / elapsed, 2)
+                                        
                                         add_console_log(
                                             f"ZFS send complete: {self._format_bytes(vm_bytes_transferred)} "
                                             f"@ {vm_transfer_rate} MB/s ({send_duration}ms)"
                                         )
+                                        
+                                        # Verify snapshot arrived on Site B
+                                        verify_result = self.zfs_replication.verify_snapshot_on_target(
+                                            target_host=dr_hostname,
+                                            target_dataset=target_dataset,
+                                            snapshot_name=snapshot_name,
+                                            expected_bytes=vm_bytes_transferred,
+                                            ssh_username=dr_username,
+                                            ssh_port=dr_port,
+                                            ssh_key_data=dr_key_data
+                                        )
+                                        
+                                        if verify_result.get('verified'):
+                                            site_b_verified = True
+                                            target_bytes = verify_result.get('target_bytes', 0)
+                                            add_console_log(f"✓ Verified snapshot on Site B ({self._format_bytes(target_bytes)})")
+                                        else:
+                                            add_console_log(f"⚠ Site B verification failed: {verify_result.get('error')}", "WARN")
                                         
                                         # Log SSH command for activity tracking
                                         self._log_ssh_command(
                                             job_id,
                                             command=f"zfs send {source_dataset}@{snapshot_name} | zfs receive {target_dataset}",
                                             hostname=dr_hostname,
-                                            output=f"Transferred {vm_bytes_transferred} bytes",
+                                            output=f"Transferred {vm_bytes_transferred} bytes, Site B verified: {site_b_verified}",
                                             success=True,
                                             duration_ms=send_duration
                                         )
@@ -1641,29 +1723,37 @@ class ReplicationHandler(BaseHandler):
                                         add_console_log(f"WARN: ZFS send failed: {send_result.get('error')}", "WARN")
                                         # Continue - snapshot was created, just send failed
                             else:
-                                # Same target or no DR target - estimate bytes from dataset size
-                                size_result = self._get_dataset_size(
+                                # Same target or no DR target - get snapshot-specific size only
+                                # (no actual transfer happened, so bytes_transferred stays 0)
+                                size_result = self.zfs_replication.get_snapshot_send_size(
                                     source_dataset,
+                                    snapshot_name,
+                                    incremental_from=previous_snapshot,
                                     ssh_hostname=ssh_hostname,
                                     ssh_username=ssh_username,
                                     ssh_port=ssh_port,
                                     ssh_key_data=ssh_key_data
                                 )
                                 if size_result.get('success'):
-                                    vm_bytes_transferred = size_result.get('used_bytes', 0)
-                                    add_console_log(f"Dataset size: {self._format_bytes(vm_bytes_transferred)}")
+                                    expected_bytes = size_result.get('bytes', 0)
+                                    add_console_log(f"Snapshot size: {self._format_bytes(expected_bytes)} (no DR transfer)")
+                                # bytes_transferred stays 0 - no actual transfer happened
                             
                             # Update running totals
                             results['bytes_transferred'] += vm_bytes_transferred
                             if vm_transfer_rate > 0:
                                 results['transfer_rate_mbps'] = vm_transfer_rate
+                            results['site_b_verified'] = site_b_verified
                             
                             # Track per-VM details
                             results['vm_sync_details'].append({
                                 'vm_name': vm_name,
                                 'bytes_transferred': vm_bytes_transferred,
+                                'expected_bytes': expected_bytes,
                                 'transfer_rate_mbps': vm_transfer_rate,
                                 'snapshot_name': snapshot_name,
+                                'incremental_from': previous_snapshot,
+                                'site_b_verified': site_b_verified,
                                 'success': send_success
                             })
                             

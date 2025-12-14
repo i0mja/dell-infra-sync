@@ -1859,11 +1859,13 @@ export type Database = {
           id: string
           last_replication_at: string | null
           last_snapshot_at: string | null
+          last_snapshot_name: string | null
           last_sync_bytes: number | null
           needs_storage_vmotion: boolean | null
           priority: number | null
           protection_group_id: string
           replication_status: string | null
+          site_b_verified: boolean | null
           status_message: string | null
           target_datastore: string | null
           total_bytes_synced: number | null
@@ -1882,11 +1884,13 @@ export type Database = {
           id?: string
           last_replication_at?: string | null
           last_snapshot_at?: string | null
+          last_snapshot_name?: string | null
           last_sync_bytes?: number | null
           needs_storage_vmotion?: boolean | null
           priority?: number | null
           protection_group_id: string
           replication_status?: string | null
+          site_b_verified?: boolean | null
           status_message?: string | null
           target_datastore?: string | null
           total_bytes_synced?: number | null
@@ -1905,11 +1909,13 @@ export type Database = {
           id?: string
           last_replication_at?: string | null
           last_snapshot_at?: string | null
+          last_snapshot_name?: string | null
           last_sync_bytes?: number | null
           needs_storage_vmotion?: boolean | null
           priority?: number | null
           protection_group_id?: string
           replication_status?: string | null
+          site_b_verified?: boolean | null
           status_message?: string | null
           target_datastore?: string | null
           total_bytes_synced?: number | null
@@ -2061,12 +2067,15 @@ export type Database = {
           created_by: string | null
           details: Json | null
           error_message: string | null
+          expected_bytes: number | null
           id: string
           incremental: boolean | null
+          incremental_from: string | null
           job_type: string
           log: string | null
           protected_vm_id: string | null
           protection_group_id: string | null
+          site_b_verified: boolean | null
           snapshot_name: string | null
           source_snapshot: string | null
           started_at: string | null
@@ -2083,12 +2092,15 @@ export type Database = {
           created_by?: string | null
           details?: Json | null
           error_message?: string | null
+          expected_bytes?: number | null
           id?: string
           incremental?: boolean | null
+          incremental_from?: string | null
           job_type: string
           log?: string | null
           protected_vm_id?: string | null
           protection_group_id?: string | null
+          site_b_verified?: boolean | null
           snapshot_name?: string | null
           source_snapshot?: string | null
           started_at?: string | null
@@ -2105,12 +2117,15 @@ export type Database = {
           created_by?: string | null
           details?: Json | null
           error_message?: string | null
+          expected_bytes?: number | null
           id?: string
           incremental?: boolean | null
+          incremental_from?: string | null
           job_type?: string
           log?: string | null
           protected_vm_id?: string | null
           protection_group_id?: string | null
+          site_b_verified?: boolean | null
           snapshot_name?: string | null
           source_snapshot?: string | null
           started_at?: string | null

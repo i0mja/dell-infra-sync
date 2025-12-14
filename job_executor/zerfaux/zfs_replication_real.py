@@ -508,7 +508,6 @@ class ZFSReplicationReal:
     
     def _parse_transfer_size(self, output: str) -> int:
         """Parse bytes transferred from zfs send output"""
-        # Try to extract size from output like "total estimated size is 1.5G"
         import re
         
         patterns = [
@@ -526,8 +525,174 @@ class ZFSReplicationReal:
                 unit = match.group(2).upper() if len(match.groups()) > 1 else ''
                 return int(size * multipliers.get(unit, 1))
         
-        # Default estimate if we can't parse
         return 0
+    
+    def get_snapshot_send_size(self, dataset: str, snapshot: str,
+                               incremental_from: str = None,
+                               ssh_hostname: str = None, ssh_username: str = None,
+                               ssh_port: int = 22, ssh_key_data: str = None) -> Dict:
+        """
+        Get exact size that zfs send will transfer using -nP flags.
+        Uses: zfs send -nP [-i @base] dataset@snapshot
+        Outputs parseable size without actually sending.
+        
+        Args:
+            dataset: ZFS dataset path
+            snapshot: Snapshot name
+            incremental_from: Previous snapshot for incremental send
+            ssh_hostname: Remote host (None for local)
+            ssh_username: SSH username
+            ssh_port: SSH port
+            ssh_key_data: SSH private key content
+            
+        Returns:
+            Dict with bytes, success, and incremental flag
+        """
+        if incremental_from:
+            cmd = f"zfs send -nP -i @{incremental_from} {dataset}@{snapshot}"
+        else:
+            cmd = f"zfs send -nP {dataset}@{snapshot}"
+        
+        logger.info(f"Getting send size: {cmd}")
+        
+        result = self._exec_command(cmd, ssh_hostname, ssh_username, ssh_port, ssh_key_data)
+        
+        if result.get('success'):
+            # Parse output: "size\t11273642128"
+            for line in result.get('stdout', '').splitlines():
+                if line.startswith('size'):
+                    try:
+                        size_bytes = int(line.split('\t')[1])
+                        return {
+                            'success': True,
+                            'bytes': size_bytes,
+                            'incremental': incremental_from is not None,
+                            'incremental_from': incremental_from
+                        }
+                    except (IndexError, ValueError) as e:
+                        logger.warning(f"Failed to parse size from: {line}")
+        
+        return {
+            'success': False,
+            'bytes': 0,
+            'error': result.get('stderr', 'Unknown error')
+        }
+    
+    def _exec_command(self, command: str, ssh_hostname: str = None,
+                      ssh_username: str = None, ssh_port: int = 22,
+                      ssh_key_data: str = None) -> Dict:
+        """Execute command locally or via SSH"""
+        if ssh_hostname:
+            if not PARAMIKO_AVAILABLE:
+                return {'success': False, 'stderr': 'paramiko not available'}
+            
+            ssh = self._get_ssh_client(ssh_hostname, ssh_port, ssh_username,
+                                       key_data=ssh_key_data)
+            if not ssh:
+                return {'success': False, 'stderr': f'SSH connection failed to {ssh_hostname}'}
+            
+            try:
+                return self._exec_ssh_command(ssh, command)
+            finally:
+                ssh.close()
+        else:
+            import subprocess
+            try:
+                proc = subprocess.run(
+                    command, shell=True, capture_output=True, text=True, timeout=60
+                )
+                return {
+                    'success': proc.returncode == 0,
+                    'stdout': proc.stdout,
+                    'stderr': proc.stderr,
+                    'exit_code': proc.returncode
+                }
+            except Exception as e:
+                return {'success': False, 'stderr': str(e)}
+    
+    def verify_snapshot_on_target(self, target_host: str, target_dataset: str,
+                                   snapshot_name: str, expected_bytes: int = 0,
+                                   ssh_username: str = None, ssh_port: int = 22,
+                                   ssh_key_data: str = None) -> Dict:
+        """
+        Verify snapshot arrived on Site B by:
+        1. Checking snapshot exists
+        2. Comparing size (referenced bytes)
+        
+        Args:
+            target_host: Site B hostname
+            target_dataset: Target dataset path
+            snapshot_name: Snapshot to verify
+            expected_bytes: Expected size in bytes
+            ssh_username: SSH username
+            ssh_port: SSH port
+            ssh_key_data: SSH key content
+            
+        Returns:
+            Dict with verification result
+        """
+        logger.info(f"Verifying snapshot on Site B: {target_dataset}@{snapshot_name}")
+        
+        if not PARAMIKO_AVAILABLE:
+            return {'success': False, 'verified': False, 'error': 'paramiko not available'}
+        
+        ssh = self._get_ssh_client(target_host, ssh_port, ssh_username, key_data=ssh_key_data)
+        if not ssh:
+            return {'success': False, 'verified': False, 'error': 'Cannot connect to Site B'}
+        
+        try:
+            # 1. Check snapshot exists
+            exists_cmd = f"zfs list -t snapshot {target_dataset}@{snapshot_name}"
+            exists_result = self._exec_ssh_command(ssh, exists_cmd)
+            
+            if not exists_result['success']:
+                return {
+                    'success': False,
+                    'verified': False,
+                    'snapshot_exists': False,
+                    'error': f'Snapshot not found on Site B: {target_dataset}@{snapshot_name}'
+                }
+            
+            # 2. Get snapshot size on target
+            size_cmd = f"zfs list -Hp -o referenced {target_dataset}@{snapshot_name}"
+            size_result = self._exec_ssh_command(ssh, size_cmd)
+            
+            target_bytes = 0
+            if size_result['success']:
+                try:
+                    target_bytes = int(size_result['stdout'].strip())
+                except ValueError:
+                    pass
+            
+            # 3. Compare sizes (allow 5% tolerance for metadata)
+            size_match = True
+            if expected_bytes > 0:
+                size_match = abs(target_bytes - expected_bytes) < (expected_bytes * 0.05)
+            
+            return {
+                'success': True,
+                'verified': True,
+                'snapshot_exists': True,
+                'target_bytes': target_bytes,
+                'expected_bytes': expected_bytes,
+                'size_match': size_match,
+                'target_dataset': target_dataset,
+                'snapshot_name': snapshot_name,
+                'message': f'Verified {target_dataset}@{snapshot_name} on Site B ({target_bytes} bytes)'
+            }
+            
+        except Exception as e:
+            logger.error(f"Site B verification error: {e}")
+            return {
+                'success': False,
+                'verified': False,
+                'error': str(e)
+            }
+        finally:
+            try:
+                ssh.close()
+            except:
+                pass
     
     def list_snapshots(self, dataset: str, target_host: str = None,
                        ssh_username: str = None, ssh_port: int = 22) -> List[Dict]:
