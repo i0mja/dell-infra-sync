@@ -446,6 +446,7 @@ class ZFSReplicationReal:
                           target_host: str, target_dataset: str,
                           incremental_from: str = None,
                           ssh_username: str = None, ssh_port: int = 22,
+                          target_ssh_key_data: str = None,
                           use_syncoid: bool = False,
                           source_host: str = None, source_ssh_username: str = None,
                           source_ssh_port: int = 22, source_ssh_key_data: str = None) -> Dict:
@@ -482,7 +483,7 @@ class ZFSReplicationReal:
                 ssh_hostname=target_host,
                 ssh_username=ssh_username or 'root',
                 ssh_port=ssh_port,
-                ssh_key_data=source_ssh_key_data
+                ssh_key_data=target_ssh_key_data  # Use Site B's key
             )
             if not dest_exists:
                 logger.warning(f"Destination {target_dataset} doesn't exist on {target_host}, switching to full send")
