@@ -17,3 +17,4 @@ export { VCenterSyncProgress } from './VCenterSyncProgress';
 export { ZfsDeploymentResults } from './ZfsDeploymentResults';
 export { ValidationPreflightResults } from './ValidationPreflightResults';
 export { ZfsHealthCheckResults } from './ZfsHealthCheckResults';
+export { ReplicationSyncResults } from './ReplicationSyncResults';

@@ -321,7 +321,8 @@ class ZFSReplicationReal:
     
     def create_snapshot(self, dataset: str, snapshot_name: str = None,
                         ssh_hostname: str = None, ssh_username: str = None,
-                        ssh_port: int = 22, ssh_key_path: str = None) -> Dict:
+                        ssh_port: int = 22, ssh_key_path: str = None,
+                        ssh_key_data: str = None) -> Dict:
         """
         Create a ZFS snapshot.
         
@@ -331,7 +332,8 @@ class ZFSReplicationReal:
             ssh_hostname: Remote host (None for local)
             ssh_username: SSH username for remote
             ssh_port: SSH port
-            ssh_key_path: Path to SSH key
+            ssh_key_path: Path to SSH key file
+            ssh_key_data: Raw SSH private key content (preferred)
             
         Returns:
             Dict with snapshot result
@@ -352,13 +354,14 @@ class ZFSReplicationReal:
                     'error': 'paramiko not installed'
                 }
             
-            ssh = self._get_ssh_client(ssh_hostname, ssh_port, ssh_username, ssh_key_path)
+            ssh = self._get_ssh_client(ssh_hostname, ssh_port, ssh_username, 
+                                       key_path=ssh_key_path, key_data=ssh_key_data)
             if not ssh:
                 return {
                     'success': False,
                     'dataset': dataset,
                     'snapshot_name': snapshot_name,
-                    'error': 'SSH connection failed'
+                    'error': f'SSH connection failed to {ssh_hostname}'
                 }
             
             try:
