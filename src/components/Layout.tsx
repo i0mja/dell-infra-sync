@@ -20,6 +20,7 @@ import { useSearchParams } from "react-router-dom";
 import { NotificationCenter } from "@/components/notifications/NotificationCenter";
 import { getSettingsNavigation } from "@/config/settings-tabs";
 import { useJobExecutorInit } from "@/hooks/useJobExecutorInit";
+import { GlobalSyncIndicator } from "@/components/GlobalSyncIndicator";
 const Layout = () => {
   const { user, signOut, loading } = useAuth();
   const navigate = useNavigate();
@@ -247,6 +248,9 @@ const Layout = () => {
           </div>
         </main>
       </div>
+      
+      {/* Global sync indicator - visible on all pages except dashboard */}
+      <GlobalSyncIndicator />
     </div>
   );
 };

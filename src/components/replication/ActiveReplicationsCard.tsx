@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Loader2, Server, Clock, HardDrive, Play, Zap, ArrowRight, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Loader2, Server, Clock, HardDrive, Play, Zap, ArrowRight, CheckCircle2, AlertTriangle, Pause, RefreshCw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { formatDistanceToNow } from "date-fns";
-
 interface VmSyncDetail {
   vm_name: string;
   bytes_transferred: number;
@@ -43,6 +43,9 @@ interface ActiveJob {
 export function ActiveReplicationsCard() {
   const [activeJobs, setActiveJobs] = useState<ActiveJob[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isLive, setIsLive] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Fetch active replication jobs
   const fetchActiveJobs = async () => {
@@ -60,6 +63,16 @@ export function ActiveReplicationsCard() {
     setLoading(false);
   };
 
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await fetchActiveJobs();
+    setTimeout(() => setIsRefreshing(false), 500);
+  };
+
+  const toggleLive = () => {
+    setIsLive(prev => !prev);
+  };
+
   useEffect(() => {
     fetchActiveJobs();
 
@@ -75,19 +88,21 @@ export function ActiveReplicationsCard() {
           filter: 'status=in.(pending,running)'
         },
         () => {
-          fetchActiveJobs();
+          if (isLive) fetchActiveJobs();
         }
       )
       .subscribe();
 
-    // Also poll every 2 seconds for progress updates
-    const interval = setInterval(fetchActiveJobs, 2000);
+    // Also poll every 2 seconds for progress updates when live
+    if (isLive) {
+      intervalRef.current = setInterval(fetchActiveJobs, 2000);
+    }
 
     return () => {
       supabase.removeChannel(channel);
-      clearInterval(interval);
+      if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, []);
+  }, [isLive]);
 
   const formatBytes = (bytes: number): string => {
     if (!bytes || bytes === 0) return "0 B";
@@ -155,7 +170,40 @@ export function ActiveReplicationsCard() {
         <CardTitle className="text-sm font-medium flex items-center gap-2">
           <Play className="h-4 w-4" />
           Active Replications
-          <Badge variant="secondary" className="ml-auto">{activeJobs.length}</Badge>
+          <Badge variant="secondary" className="ml-2">{activeJobs.length}</Badge>
+          
+          <div className="ml-auto flex items-center gap-1">
+            {/* Live indicator */}
+            {isLive && (
+              <div className="flex items-center gap-1 mr-1">
+                <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
+                <span className="text-[10px] text-muted-foreground">Live</span>
+              </div>
+            )}
+            
+            {/* Live/Pause toggle */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={toggleLive}
+              title={isLive ? "Pause updates" : "Resume updates"}
+            >
+              {isLive ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+            </Button>
+            
+            {/* Manual refresh */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              title="Refresh now"
+            >
+              <RefreshCw className={`h-3 w-3 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
