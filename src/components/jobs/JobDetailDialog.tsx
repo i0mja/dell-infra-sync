@@ -10,7 +10,7 @@ import { CheckCircle, XCircle, PlayCircle, Clock, AlertCircle, ListChecks, Link2
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
 import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
-import { DiscoveryScanResults, VCenterSyncResults, CredentialTestResults, ScpResults, MultiServerResults, GenericResults, JobTimingCard, EsxiUpgradeResults, EsxiPreflightResults, JobProgressHeader, JobTasksTimeline, JobConsoleLog, StorageVMotionResults, ZfsDeploymentResults, ValidationPreflightResults } from "./results";
+import { DiscoveryScanResults, VCenterSyncResults, CredentialTestResults, ScpResults, MultiServerResults, GenericResults, JobTimingCard, EsxiUpgradeResults, EsxiPreflightResults, JobProgressHeader, JobTasksTimeline, JobConsoleLog, StorageVMotionResults, ZfsDeploymentResults, ValidationPreflightResults, ZfsHealthCheckResults } from "./results";
 interface Job {
   id: string;
   job_type: string;
@@ -203,6 +203,8 @@ export const JobDetailDialog = ({
       case 'validate_zfs_template':
       case 'prepare_zfs_template':
         return <ValidationPreflightResults details={job.details} status={job.status} />;
+      case 'check_zfs_target_health':
+        return <ZfsHealthCheckResults details={job.details} />;
       default:
         return <GenericResults details={job.details} />;
     }

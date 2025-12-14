@@ -16,3 +16,4 @@ export { StorageVMotionResults } from './StorageVMotionResults';
 export { VCenterSyncProgress } from './VCenterSyncProgress';
 export { ZfsDeploymentResults } from './ZfsDeploymentResults';
 export { ValidationPreflightResults } from './ValidationPreflightResults';
+export { ZfsHealthCheckResults } from './ZfsHealthCheckResults';
