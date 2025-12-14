@@ -473,6 +473,7 @@ export function ProtectionGroupsPanel() {
               onBatchMigrate={batchMigrate}
               protectionDatastore={selectedGroup.protection_datastore}
               sourceVCenterId={selectedGroup.source_vcenter_id || undefined}
+              protectionGroupId={selectedGroup.id}
               onRefresh={refetchVMs}
             />
           )}

@@ -1051,6 +1051,9 @@ class ZerfauxAPIRouter:
                 job = self._db_insert('jobs', {
                     'job_type': 'storage_vmotion',
                     'status': 'pending',
+                    'target_scope': {
+                        'protected_vm_id': vm['id']
+                    },
                     'details': {
                         'protected_vm_id': vm['id'],
                         'vm_name': vm['vm_name'],

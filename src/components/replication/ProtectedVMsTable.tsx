@@ -22,13 +22,13 @@ import {
   MoveRight,
   MoreVertical,
   Wand2,
-  Loader2,
 } from "lucide-react";
 import { ProtectedVM } from "@/hooks/useReplication";
 import { formatDistanceToNow } from "date-fns";
 import { ProtectionDatastoreWizard } from "./ProtectionDatastoreWizard";
 import { DrShellVmWizard } from "./DrShellVmWizard";
 import { AddVMsDialog } from "./AddVMsDialog";
+import { BatchMigrationWizard } from "./BatchMigrationWizard";
 
 interface ProtectedVMsTableProps {
   vms: ProtectedVM[];
@@ -38,6 +38,7 @@ interface ProtectedVMsTableProps {
   onBatchMigrate?: (vmIds: string[]) => Promise<unknown>;
   protectionDatastore?: string;
   sourceVCenterId?: string;
+  protectionGroupId?: string;
   onRefresh?: () => void;
 }
 
@@ -49,14 +50,15 @@ export function ProtectedVMsTable({
   onBatchMigrate,
   protectionDatastore,
   sourceVCenterId,
+  protectionGroupId,
   onRefresh,
 }: ProtectedVMsTableProps) {
   const [showAddDialog, setShowAddDialog] = useState(false);
-  const [migratingAll, setMigratingAll] = useState(false);
   
   // Wizard state
   const [datastoreWizardOpen, setDatastoreWizardOpen] = useState(false);
   const [drShellWizardOpen, setDrShellWizardOpen] = useState(false);
+  const [batchMigrationWizardOpen, setBatchMigrationWizardOpen] = useState(false);
   const [selectedVM, setSelectedVM] = useState<ProtectedVM | null>(null);
   
   // Get existing VM IDs to exclude from selector
@@ -80,16 +82,9 @@ export function ProtectedVMsTable({
     onRefresh?.();
   };
 
-  const handleBatchMigrate = async () => {
+  const handleOpenBatchWizard = () => {
     if (!onBatchMigrate || pendingMigrationCount === 0) return;
-    
-    setMigratingAll(true);
-    try {
-      const vmIds = pendingMigrationVMs.map(vm => vm.id);
-      await onBatchMigrate(vmIds);
-    } finally {
-      setMigratingAll(false);
-    }
+    setBatchMigrationWizardOpen(true);
   };
 
   const getStatusBadge = (status: string) => {
@@ -144,21 +139,11 @@ export function ProtectedVMsTable({
             <Button 
               size="sm" 
               variant="outline"
-              onClick={handleBatchMigrate}
-              disabled={migratingAll}
+              onClick={handleOpenBatchWizard}
               className="border-amber-500/30 text-amber-600 hover:bg-amber-500/10"
             >
-              {migratingAll ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                  Migrating...
-                </>
-              ) : (
-                <>
-                  <MoveRight className="h-4 w-4 mr-1" />
-                  Migrate All
-                </>
-              )}
+              <MoveRight className="h-4 w-4 mr-1" />
+              Migrate VMs...
             </Button>
           </AlertDescription>
         </Alert>
@@ -292,6 +277,18 @@ export function ProtectedVMsTable({
         vm={selectedVM}
         onComplete={handleWizardComplete}
       />
+      
+      {onBatchMigrate && protectionGroupId && (
+        <BatchMigrationWizard
+          open={batchMigrationWizardOpen}
+          onOpenChange={setBatchMigrationWizardOpen}
+          vms={vms}
+          protectionGroupId={protectionGroupId}
+          protectionDatastore={protectionDatastore}
+          onBatchMigrate={onBatchMigrate}
+          onComplete={handleWizardComplete}
+        />
+      )}
     </div>
   );
 }
