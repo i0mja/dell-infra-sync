@@ -390,6 +390,108 @@ class ReplicationHandler(BaseHandler):
             self.executor.log(f"Failed to log SSH command: {e}", "WARN")
             return False
     
+    def _add_console_log(self, job_id: str, message: str, level: str = 'INFO') -> None:
+        """Add log entry to job's console_log array in details"""
+        timestamp = datetime.now(timezone.utc).strftime('%H:%M:%S')
+        log_entry = f"[{timestamp}] {level}: {message}"
+        
+        try:
+            # Fetch current job details
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/jobs",
+                params={'id': f'eq.{job_id}', 'select': 'details'},
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=5
+            )
+            if response.ok:
+                jobs = response.json()
+                if jobs:
+                    details = jobs[0].get('details', {}) or {}
+                    console_log = details.get('console_log', [])
+                    console_log.append(log_entry)
+                    details['console_log'] = console_log
+                    
+                    # Update job with new console log
+                    requests.patch(
+                        f"{DSM_URL}/rest/v1/jobs",
+                        params={'id': f'eq.{job_id}'},
+                        json={'details': details},
+                        headers={
+                            'apikey': SERVICE_ROLE_KEY,
+                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=minimal'
+                        },
+                        verify=VERIFY_SSL,
+                        timeout=5
+                    )
+        except Exception:
+            pass  # Don't fail job for logging issues
+        
+        # Also log to executor output
+        self.executor.log(message, level)
+    
+    def _create_job_task(self, job_id: str, log_message: str, status: str = 'running') -> Optional[str]:
+        """Create a job task for progress tracking"""
+        try:
+            response = requests.post(
+                f"{DSM_URL}/rest/v1/job_tasks",
+                json={
+                    'job_id': job_id,
+                    'status': status,
+                    'log': log_message,
+                    'started_at': utc_now_iso()
+                },
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=representation'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            if response.ok:
+                result = response.json()
+                if result and len(result) > 0:
+                    return result[0].get('id')
+        except Exception as e:
+            self.executor.log(f"Failed to create job task: {e}", "WARN")
+        return None
+    
+    def _update_job_task(self, task_id: str, status: str, log_message: str = None) -> bool:
+        """Update a job task status"""
+        if not task_id:
+            return False
+        try:
+            data = {'status': status}
+            if log_message:
+                data['log'] = log_message
+            if status in ('completed', 'failed'):
+                data['completed_at'] = utc_now_iso()
+            
+            response = requests.patch(
+                f"{DSM_URL}/rest/v1/job_tasks",
+                params={'id': f'eq.{task_id}'},
+                json=data,
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            return response.ok
+        except Exception as e:
+            self.executor.log(f"Failed to update job task: {e}", "WARN")
+            return False
+    
     def _calculate_current_rpo(self, last_replication_at: str) -> int:
         """Calculate current RPO in seconds from last replication time"""
         if not last_replication_at:
@@ -1078,13 +1180,37 @@ class ReplicationHandler(BaseHandler):
             # Update job with initial progress info
             self.update_job_status(job_id, 'running', details=results)
             
+            # Add console log helper for this job
+            def add_console_log(message: str, level: str = 'INFO'):
+                self._add_console_log(job_id, message, level)
+            
+            add_console_log(f"Starting replication sync for group: {group.get('name')}")
+            add_console_log(f"Target: {target.get('hostname')} / Pool: {target.get('zfs_pool')}")
+            
+            # Get SSH credentials for target
+            ssh_creds = self._get_ssh_credentials(target)
+            ssh_hostname = ssh_creds.get('hostname')
+            ssh_username = ssh_creds.get('username', 'root')
+            ssh_port = ssh_creds.get('port', 22)
+            ssh_key_data = ssh_creds.get('private_key')
+            
+            if not ssh_hostname:
+                raise ValueError(f"No SSH hostname configured for target {target.get('name')}")
+            
+            add_console_log(f"SSH credentials: {ssh_username}@{ssh_hostname}:{ssh_port}")
+            
             snapshot_name = f"zerfaux-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
+            add_console_log(f"Using snapshot name: {snapshot_name}")
+            
+            # Create job task for the sync operation
+            sync_task_id = self._create_job_task(job_id, f"Sync {len(protected_vms)} VMs")
             
             # Sync each VM
             total_vms = len(protected_vms)
             for idx, vm in enumerate(protected_vms):
                 vm_name = vm.get('vm_name')
                 self.executor.log(f"[{job_id}] Syncing VM: {vm_name}")
+                add_console_log(f"Processing VM {idx + 1}/{total_vms}: {vm_name}")
                 
                 # Update progress
                 progress = int(((idx) / max(total_vms, 1)) * 100)
@@ -1094,6 +1220,9 @@ class ReplicationHandler(BaseHandler):
                 results['progress_percent'] = progress
                 results['vms_completed'] = idx
                 self.update_job_status(job_id, 'running', details=results)
+                
+                # Create VM-specific task
+                vm_task_id = self._create_job_task(job_id, f"Sync VM: {vm_name}")
                 
                 try:
                     # Update VM status
@@ -1111,20 +1240,40 @@ class ReplicationHandler(BaseHandler):
                         # Update step
                         results['current_step'] = f'Creating snapshot for {vm_name}'
                         self.update_job_status(job_id, 'running', details=results)
+                        add_console_log(f"Creating ZFS snapshot for {vm_name}")
                         
-                        # Create snapshot
+                        # Create snapshot - pass SSH credentials for remote execution
                         source_dataset = f"{target.get('zfs_pool')}/{vm_name}"
+                        step_start = time.time()
                         snapshot_result = self.zfs_replication.create_snapshot(
                             source_dataset,
-                            snapshot_name
+                            snapshot_name,
+                            ssh_hostname=ssh_hostname,
+                            ssh_username=ssh_username,
+                            ssh_port=ssh_port,
+                            ssh_key_data=ssh_key_data
                         )
                         
                         if snapshot_result.get('success'):
-                            self.executor.log(f"[{job_id}] Created snapshot: {snapshot_result.get('full_snapshot')}")
+                            snapshot_duration = int((time.time() - step_start) * 1000)
+                            full_snapshot = snapshot_result.get('full_snapshot')
+                            self.executor.log(f"[{job_id}] Created snapshot: {full_snapshot}")
+                            add_console_log(f"Snapshot created: {full_snapshot} ({snapshot_duration}ms)")
+                            
+                            # Log SSH command to activity table
+                            self._log_ssh_command(
+                                job_id,
+                                command=f"zfs snapshot {source_dataset}@{snapshot_name}",
+                                hostname=ssh_hostname,
+                                output=snapshot_result.get('message', 'Snapshot created'),
+                                success=True,
+                                duration_ms=snapshot_duration
+                            )
                             
                             # Update step for ZFS send
                             results['current_step'] = f'ZFS send in progress for {vm_name}'
                             self.update_job_status(job_id, 'running', details=results)
+                            add_console_log(f"Snapshot complete for {vm_name}")
                             
                             # Mark as successful (full replication would involve zfs send/receive)
                             self._update_protected_vm(
@@ -1144,14 +1293,23 @@ class ReplicationHandler(BaseHandler):
                             
                             results['vms_synced'] += 1
                             results['vms_completed'] = idx + 1
+                            
+                            # Update VM task as completed
+                            self._update_job_task(vm_task_id, 'completed', f"Synced {vm_name}")
                         else:
-                            raise Exception(snapshot_result.get('error', 'Snapshot failed'))
+                            error_msg = snapshot_result.get('error', 'Snapshot failed')
+                            add_console_log(f"ERROR: Snapshot failed for {vm_name}: {error_msg}", "ERROR")
+                            self._update_job_task(vm_task_id, 'failed', f"Failed: {error_msg}")
+                            raise Exception(error_msg)
                     else:
                         # ZFS not available - mark as error
+                        add_console_log("ERROR: ZFS replication module not available", "ERROR")
+                        self._update_job_task(vm_task_id, 'failed', "ZFS module not available")
                         raise Exception("ZFS replication module not available")
                     
                 except Exception as e:
                     self.executor.log(f"[{job_id}] Error syncing {vm_name}: {e}", "ERROR")
+                    add_console_log(f"ERROR syncing {vm_name}: {e}", "ERROR")
                     self._update_protected_vm(vm['id'], replication_status='error', status_message=str(e))
                     results['errors'].append({'vm': vm_name, 'error': str(e)})
             
@@ -1159,6 +1317,13 @@ class ReplicationHandler(BaseHandler):
             results['progress_percent'] = 100
             results['current_step'] = 'Complete'
             results['vms_completed'] = total_vms
+            
+            # Update sync task
+            if sync_task_id:
+                task_status = 'completed' if len(results['errors']) == 0 else 'failed'
+                self._update_job_task(sync_task_id, task_status, f"Synced {results['vms_synced']}/{total_vms} VMs")
+            
+            add_console_log(f"Sync complete: {results['vms_synced']}/{total_vms} VMs synced")
             
             # Update group
             self._update_protection_group(
