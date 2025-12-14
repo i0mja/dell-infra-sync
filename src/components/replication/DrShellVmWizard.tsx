@@ -156,12 +156,14 @@ export function DrShellVmWizard({
     setSelectedDatastoreId(null);
   }, [selectedDrVcenterId]);
 
-  // Update config from plan when loaded (plan is now raw protected_vms row)
+  // Update config from plan when loaded - use vcenter_vm data for accurate CPU/memory
   useEffect(() => {
     if (plan && vm) {
-      // Use VM name for suggested shell name
       setShellVmName(`${vm.vm_name}-DR`);
-      // Keep default CPU/memory since the raw table doesn't have these enriched fields
+      // Use actual VM specs from vcenter_vms join
+      const vcenterVm = (plan as { vcenter_vm?: { cpu_count?: number; memory_mb?: number } }).vcenter_vm;
+      if (vcenterVm?.cpu_count) setCpuCount(vcenterVm.cpu_count);
+      if (vcenterVm?.memory_mb) setMemoryMb(vcenterVm.memory_mb);
     }
   }, [plan, vm]);
 
