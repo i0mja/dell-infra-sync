@@ -1612,8 +1612,15 @@ class ReplicationHandler(BaseHandler):
                             
                             # ===== ACTUAL ZFS SEND/RECEIVE =====
                             # Get DR target info for send/receive
-                            dr_target_id = group.get('target_id')
+                            # The DR target is the partner_target_id of the source target (Site B)
+                            dr_target_id = target.get('partner_target_id')  # Use partner, not group.target_id
                             dr_target = self._get_replication_target(dr_target_id) if dr_target_id else None
+                            
+                            # Debug logging for DR target resolution
+                            if dr_target:
+                                add_console_log(f"DR target resolved: {dr_target.get('name')} ({dr_target.get('hostname')})")
+                            else:
+                                add_console_log(f"No DR target configured (partner_target_id not set on source target)")
                             
                             vm_bytes_transferred = 0
                             vm_transfer_rate = 0
@@ -1627,6 +1634,7 @@ class ReplicationHandler(BaseHandler):
                             
                             if dr_target and dr_target.get('id') != target.get('id'):
                                 # We have a separate DR target - do ZFS send/receive
+                                add_console_log(f"🔄 DR replication: {target.get('name')} → {dr_target.get('name')}")
                                 dr_ssh_creds = self._get_target_ssh_creds(dr_target)
                                 dr_hostname = dr_ssh_creds.get('hostname')
                                 dr_username = dr_ssh_creds.get('username', 'root')
