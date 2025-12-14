@@ -2,9 +2,11 @@
  * DR Shell VM Wizard
  * 
  * Multi-step wizard to create a DR shell VM at the DR site with replicated disks.
+ * Uses job queue pattern for HTTPS compatibility (no mixed-content blocking).
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { supabase } from "@/integrations/supabase/client";
 import {
   Dialog,
   DialogContent,
@@ -116,6 +118,8 @@ export function DrShellVmWizard({
   const [selectedDrVcenterId, setSelectedDrVcenterId] = useState<string | null>(null);
   const [selectedDatastoreId, setSelectedDatastoreId] = useState<string | null>(null);
   const [networkName, setNetworkName] = useState("");
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [jobProgress, setJobProgress] = useState<string>('Queuing job...');
   
   const { plan, loading: planLoading, fetchPlan, createDRShell, vcenters, drDatastores, datastoresLoading, drNetworks, networksLoading } = useDRShellPlan(vm?.id, selectedDrVcenterId);
   
@@ -147,6 +151,8 @@ export function DrShellVmWizard({
       setSelectedDrVcenterId(null);
       setSelectedDatastoreId(null);
       setNetworkName("");
+      setJobId(null);
+      setJobProgress('Queuing job...');
       fetchPlan();
     }
   }, [open, vm, fetchPlan]);
@@ -167,10 +173,64 @@ export function DrShellVmWizard({
     }
   }, [plan, vm]);
 
+  // Poll job status for completion
+  const pollJobStatus = useCallback(async (id: string) => {
+    const poll = async () => {
+      const { data: job, error } = await supabase
+        .from('jobs')
+        .select('status, details')
+        .eq('id', id)
+        .single();
+      
+      if (error) {
+        setResult({ success: false, message: error.message });
+        setStep('complete');
+        setExecuting(false);
+        return;
+      }
+      
+      const details = job.details as { 
+        current_step?: string; 
+        progress_percent?: number;
+        message?: string;
+        error?: string;
+        shell_vm_name?: string;
+        success?: boolean;
+      } | null;
+      
+      if (details?.current_step) {
+        setJobProgress(details.current_step);
+      }
+      
+      if (job.status === 'completed') {
+        setResult({ 
+          success: details?.success ?? true, 
+          message: details?.message || 'DR Shell VM created successfully',
+          shell_vm_name: details?.shell_vm_name || shellVmName
+        });
+        setStep('complete');
+        setExecuting(false);
+      } else if (job.status === 'failed') {
+        setResult({ 
+          success: false, 
+          message: details?.error || details?.message || 'Job failed' 
+        });
+        setStep('complete');
+        setExecuting(false);
+      } else {
+        // Still running, poll again
+        setTimeout(poll, 2000);
+      }
+    };
+    poll();
+  }, [shellVmName]);
+
   const handleExecute = async () => {
     if (!vm) return;
     
     setExecuting(true);
+    setJobProgress('Queuing job...');
+    
     try {
       const response = await createDRShell({
         shell_vm_name: shellVmName,
@@ -180,19 +240,18 @@ export function DrShellVmWizard({
         datastore_name: selectedDatastore?.name,
         network_name: selectedNetwork?.name || undefined,
       });
-      setResult({ 
-        success: true, 
-        message: response?.message || 'DR Shell VM created successfully',
-        shell_vm_name: response?.shell_vm_name,
-      });
-      setStep('complete');
+      
+      // Job created, start polling
+      setJobId(response.job_id);
+      setJobProgress('Job queued, waiting for executor...');
+      pollJobStatus(response.job_id);
+      
     } catch (error) {
       setResult({ 
         success: false, 
-        message: error instanceof Error ? error.message : 'Failed to create DR Shell VM' 
+        message: error instanceof Error ? error.message : 'Failed to create job' 
       });
       setStep('complete');
-    } finally {
       setExecuting(false);
     }
   };
@@ -519,11 +578,14 @@ export function DrShellVmWizard({
           {shellVmName}
         </p>
         <Progress value={66} className="w-48 mx-auto" />
-        <div className="text-xs text-muted-foreground mt-3 space-y-0.5">
-          <p>• Creating VM shell</p>
-          <p>• Attaching disks</p>
-          <p>• Configuring network</p>
-        </div>
+        <p className="text-xs text-muted-foreground mt-3">
+          {jobProgress}
+        </p>
+        {jobId && (
+          <p className="text-xs text-muted-foreground/60 mt-1">
+            Job: {jobId.slice(0, 8)}...
+          </p>
+        )}
       </div>
     </div>
   );

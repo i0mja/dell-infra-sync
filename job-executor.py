@@ -948,6 +948,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
             'exchange_ssh_keys': self.replication_handler.execute_exchange_ssh_keys,
             'sync_protection_config': self.replication_handler.execute_sync_protection_config,
             'check_zfs_target_health': self.replication_handler.execute_check_zfs_target_health,
+            'create_dr_shell': self.replication_handler.execute_create_dr_shell,
             # Template handlers
             'prepare_zfs_template': self.template_handler.execute_prepare_zfs_template,
             'clone_zfs_template': self.template_handler.execute_clone_zfs_template,

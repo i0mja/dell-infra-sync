@@ -1335,7 +1335,7 @@ export function useDRShellPlan(protectedVmId?: string, selectedDrVcenterId?: str
     enabled: !!selectedDrVcenterId,
   });
 
-  // This operation requires Job Executor
+  // Create DR Shell via job queue (avoids mixed-content blocking)
   const createDRShell = async (config: { 
     shell_vm_name?: string; 
     cpu_count?: number; 
@@ -1343,26 +1343,41 @@ export function useDRShellPlan(protectedVmId?: string, selectedDrVcenterId?: str
     dr_vcenter_id?: string;
     datastore_name?: string;
     network_name?: string;
-  }) => {
-    if (!protectedVmId) return;
+  }): Promise<{ job_id: string }> => {
+    if (!protectedVmId) throw new Error('No protected VM ID');
     
-    try {
-      const data = await fetchJobExecutor<{ success: boolean; shell_vm_name: string; message: string }>(
-        `/api/replication/protected-vms/${protectedVmId}/create-dr-shell`,
-        {
-          method: 'POST',
-          body: JSON.stringify(config),
+    // Get current user
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    // Create job in queue instead of direct API call
+    const { data: job, error } = await supabase
+      .from('jobs')
+      .insert({
+        job_type: 'create_dr_shell' as any,
+        status: 'pending',
+        created_by: user?.id,
+        details: {
+          protected_vm_id: protectedVmId,
+          shell_vm_name: config.shell_vm_name,
+          cpu_count: config.cpu_count || 2,
+          memory_mb: config.memory_mb || 4096,
+          dr_vcenter_id: config.dr_vcenter_id,
+          datastore_name: config.datastore_name,
+          network_name: config.network_name,
         }
-      );
-      toast({ title: 'DR Shell created', description: data.message });
-      queryClient.invalidateQueries({ queryKey: ['dr-shell-plan', protectedVmId] });
-      queryClient.invalidateQueries({ queryKey: ['protected-vms'] });
-      return data;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to create DR shell';
-      toast({ title: 'Error', description: message, variant: 'destructive' });
-      throw err;
+      })
+      .select()
+      .single();
+    
+    if (error) {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+      throw error;
     }
+    
+    toast({ title: 'DR Shell job created', description: 'Job queued for execution' });
+    queryClient.invalidateQueries({ queryKey: ['jobs'] });
+    
+    return { job_id: job.id };
   };
 
   return { plan, loading, fetchPlan, createDRShell, vcenters, drDatastores, datastoresLoading, drNetworks, networksLoading };
