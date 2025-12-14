@@ -503,12 +503,10 @@ class ZFSReplicationReal:
             else:
                 # Add -v for verbose output with byte counts
                 send_cmd = f"zfs send -v {source_dataset}@{source_snapshot}"
-                # Full send - unmount first, then receive, then mount
-                # CRITICAL: Do NOT mask zfs receive exit code with || true
-                # Structure: (unmount || true) && zfs receive && (mount || true)
-                # This way zfs receive failure is properly detected
-                logger.info(f"Full send - using unmount/receive -F/mount approach (dest_exists={dest_exists})")
-                recv_cmd = f"(zfs unmount {target_dataset} </dev/null 2>/dev/null || true) && zfs receive -F {target_dataset} && (zfs mount {target_dataset} </dev/null 2>/dev/null || true)"
+                # Full send - use -Fu to receive without mounting first (avoids "dataset is busy" from NFS)
+                # Then explicitly mount afterward
+                logger.info(f"Full send - using 'zfs receive -Fu' approach to bypass busy dataset (dest_exists={dest_exists})")
+                recv_cmd = f"zfs receive -Fu {target_dataset} && (zfs mount {target_dataset} 2>/dev/null || true)"
             
             # Build the SSH command for target with StrictHostKeyChecking disabled
             ssh_opts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes"
