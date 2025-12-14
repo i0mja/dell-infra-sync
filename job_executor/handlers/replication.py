@@ -3662,3 +3662,326 @@ chmod 600 ~/.ssh/authorized_keys
                 completed_at=utc_now_iso(),
                 details={**details, 'error': str(e)}
             )
+
+    # =========================================================================
+    # Create DR Shell VM (Job Queue Handler)
+    # =========================================================================
+    
+    def execute_create_dr_shell(self, job: Dict) -> bool:
+        """
+        Create a DR shell VM at the DR site using replicated disks.
+        
+        Job details expected:
+        - protected_vm_id: UUID of the protected VM
+        - shell_vm_name: Name for the new DR shell VM
+        - cpu_count: Number of vCPUs
+        - memory_mb: Memory in MB
+        - dr_vcenter_id: Target DR vCenter ID
+        - datastore_name: Target datastore name
+        - network_name: Target network name (optional)
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        
+        protected_vm_id = details.get('protected_vm_id')
+        shell_vm_name = details.get('shell_vm_name')
+        cpu_count = details.get('cpu_count', 2)
+        memory_mb = details.get('memory_mb', 4096)
+        dr_vcenter_id = details.get('dr_vcenter_id')
+        datastore_name = details.get('datastore_name')
+        network_name = details.get('network_name')
+        
+        self.executor.log(f"[{job_id}] Creating DR shell VM: {shell_vm_name}", "INFO")
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso(), details={
+            **details,
+            'current_step': 'Initializing DR shell creation',
+            'progress_percent': 0
+        })
+        
+        try:
+            # Validate required parameters
+            if not protected_vm_id:
+                raise ValueError("protected_vm_id is required")
+            if not shell_vm_name:
+                raise ValueError("shell_vm_name is required")
+            if not dr_vcenter_id:
+                raise ValueError("dr_vcenter_id is required")
+            if not datastore_name:
+                raise ValueError("datastore_name is required")
+            
+            # Step 1: Fetch protected VM details
+            self._add_console_log(job_id, f"Fetching protected VM: {protected_vm_id}")
+            protected_vm = self._get_protected_vm(protected_vm_id)
+            if not protected_vm:
+                raise ValueError(f"Protected VM not found: {protected_vm_id}")
+            
+            self.update_job_status(job_id, 'running', details={
+                **details,
+                'current_step': 'Fetching protection group',
+                'progress_percent': 10
+            })
+            
+            # Step 2: Fetch protection group
+            group_id = protected_vm.get('protection_group_id')
+            if not group_id:
+                raise ValueError("Protected VM has no protection group")
+            
+            group = self._get_protection_group(group_id)
+            if not group:
+                raise ValueError(f"Protection group not found: {group_id}")
+            
+            # Step 3: Get replication target for disk info
+            self._add_console_log(job_id, "Looking up replication target")
+            target_id = group.get('target_id')
+            target = self._get_replication_target(target_id) if target_id else None
+            
+            self.update_job_status(job_id, 'running', details={
+                **details,
+                'current_step': 'Connecting to DR vCenter',
+                'progress_percent': 20
+            })
+            
+            # Step 4: Get DR vCenter credentials
+            vcenter_data = self._get_vcenter(dr_vcenter_id)
+            if not vcenter_data:
+                raise ValueError(f"DR vCenter not found: {dr_vcenter_id}")
+            
+            vcenter_host = vcenter_data.get('host')
+            vcenter_user = vcenter_data.get('username')
+            vcenter_password_enc = vcenter_data.get('password_encrypted')
+            
+            # Decrypt password
+            vcenter_password = self.executor.decrypt_password(vcenter_password_enc) if vcenter_password_enc else None
+            if not vcenter_password:
+                raise ValueError("Unable to decrypt vCenter password")
+            
+            self._add_console_log(job_id, f"Connecting to DR vCenter: {vcenter_host}")
+            
+            # Step 5: Connect to vCenter
+            import ssl
+            from pyVim.connect import SmartConnect, Disconnect
+            from pyVmomi import vim
+            
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            
+            si = SmartConnect(
+                host=vcenter_host,
+                user=vcenter_user,
+                pwd=vcenter_password,
+                sslContext=context
+            )
+            
+            try:
+                content = si.RetrieveContent()
+                
+                self.update_job_status(job_id, 'running', details={
+                    **details,
+                    'current_step': 'Finding target datastore and cluster',
+                    'progress_percent': 30
+                })
+                
+                # Step 6: Find target datastore
+                self._add_console_log(job_id, f"Looking for datastore: {datastore_name}")
+                datastore = None
+                for dc in content.rootFolder.childEntity:
+                    if hasattr(dc, 'datastoreFolder'):
+                        for ds in dc.datastoreFolder.childEntity:
+                            if hasattr(ds, 'name') and ds.name == datastore_name:
+                                datastore = ds
+                                break
+                    if datastore:
+                        break
+                
+                if not datastore:
+                    raise ValueError(f"Datastore not found: {datastore_name}")
+                
+                # Step 7: Find a cluster/host to create VM on
+                cluster = None
+                host = None
+                for dc in content.rootFolder.childEntity:
+                    if hasattr(dc, 'hostFolder'):
+                        for child in dc.hostFolder.childEntity:
+                            if isinstance(child, vim.ClusterComputeResource):
+                                cluster = child
+                                if cluster.host:
+                                    host = cluster.host[0]
+                                break
+                            elif isinstance(child, vim.ComputeResource):
+                                if child.host:
+                                    host = child.host[0]
+                                    break
+                    if host:
+                        break
+                
+                if not host:
+                    raise ValueError("No available host found in DR vCenter")
+                
+                self.update_job_status(job_id, 'running', details={
+                    **details,
+                    'current_step': 'Creating DR shell VM',
+                    'progress_percent': 50
+                })
+                
+                # Step 8: Find network if specified
+                network = None
+                if network_name:
+                    self._add_console_log(job_id, f"Looking for network: {network_name}")
+                    for dc in content.rootFolder.childEntity:
+                        if hasattr(dc, 'networkFolder'):
+                            for net in dc.networkFolder.childEntity:
+                                if hasattr(net, 'name') and net.name == network_name:
+                                    network = net
+                                    break
+                        if network:
+                            break
+                
+                # Step 9: Create VM configuration
+                self._add_console_log(job_id, f"Creating VM: {shell_vm_name}")
+                
+                # VM folder - use datacenter's vmFolder
+                vm_folder = None
+                for dc in content.rootFolder.childEntity:
+                    if hasattr(dc, 'vmFolder'):
+                        vm_folder = dc.vmFolder
+                        break
+                
+                if not vm_folder:
+                    raise ValueError("No VM folder found")
+                
+                # Resource pool
+                resource_pool = cluster.resourcePool if cluster else host.parent.resourcePool
+                
+                # Create VM spec
+                vmx_file = vim.vm.FileInfo(vmPathName=f"[{datastore_name}]")
+                
+                config_spec = vim.vm.ConfigSpec()
+                config_spec.name = shell_vm_name
+                config_spec.memoryMB = memory_mb
+                config_spec.numCPUs = cpu_count
+                config_spec.guestId = 'otherGuest64'
+                config_spec.files = vmx_file
+                
+                # Add network adapter if network specified
+                if network:
+                    nic_spec = vim.vm.device.VirtualDeviceSpec()
+                    nic_spec.operation = vim.vm.device.VirtualDeviceSpec.Operation.add
+                    nic = vim.vm.device.VirtualVmxnet3()
+                    nic.backing = vim.vm.device.VirtualEthernetCard.NetworkBackingInfo()
+                    nic.backing.deviceName = network_name
+                    nic.backing.network = network
+                    nic.connectable = vim.vm.device.VirtualDevice.ConnectInfo()
+                    nic.connectable.startConnected = True
+                    nic.connectable.connected = True
+                    nic.connectable.allowGuestControl = True
+                    nic_spec.device = nic
+                    config_spec.deviceChange = [nic_spec]
+                
+                # Create the VM
+                self._add_console_log(job_id, "Creating VM task...")
+                task = vm_folder.CreateVM_Task(config=config_spec, pool=resource_pool, host=host)
+                
+                # Wait for task completion
+                self.update_job_status(job_id, 'running', details={
+                    **details,
+                    'current_step': 'Waiting for VM creation',
+                    'progress_percent': 70
+                })
+                
+                # Poll task
+                while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+                    time.sleep(2)
+                
+                if task.info.state == vim.TaskInfo.State.error:
+                    raise Exception(f"VM creation failed: {task.info.error.msg}")
+                
+                created_vm = task.info.result
+                vm_moref = created_vm._moId
+                
+                self._add_console_log(job_id, f"VM created successfully: {vm_moref}")
+                
+                self.update_job_status(job_id, 'running', details={
+                    **details,
+                    'current_step': 'Updating database',
+                    'progress_percent': 90
+                })
+                
+                # Step 10: Update protected_vms record
+                self._update_protected_vm(protected_vm_id,
+                    dr_shell_vm_created=True,
+                    dr_shell_vm_name=shell_vm_name,
+                    dr_shell_vm_id=vm_moref
+                )
+                
+                self.executor.log(f"[{job_id}] DR shell VM created: {shell_vm_name} ({vm_moref})", "INFO")
+                
+                self.update_job_status(job_id, 'completed',
+                    completed_at=utc_now_iso(),
+                    details={
+                        **details,
+                        'current_step': 'Complete',
+                        'progress_percent': 100,
+                        'success': True,
+                        'shell_vm_name': shell_vm_name,
+                        'shell_vm_moref': vm_moref,
+                        'message': f'DR Shell VM "{shell_vm_name}" created successfully'
+                    }
+                )
+                return True
+                
+            finally:
+                Disconnect(si)
+                
+        except Exception as e:
+            self.executor.log(f"[{job_id}] DR shell creation failed: {e}", "ERROR")
+            self.update_job_status(job_id, 'failed',
+                completed_at=utc_now_iso(),
+                details={
+                    **details,
+                    'success': False,
+                    'error': str(e),
+                    'message': f'Failed to create DR shell VM: {e}'
+                }
+            )
+            return False
+    
+    def _get_protected_vm(self, vm_id: str) -> Optional[Dict]:
+        """Fetch protected VM by ID"""
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/protected_vms",
+                params={'id': f'eq.{vm_id}'},
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            if response.ok:
+                vms = response.json()
+                return vms[0] if vms else None
+        except Exception as e:
+            self.executor.log(f"Error fetching protected VM: {e}", "ERROR")
+        return None
+    
+    def _get_vcenter(self, vcenter_id: str) -> Optional[Dict]:
+        """Fetch vCenter by ID"""
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenters",
+                params={'id': f'eq.{vcenter_id}'},
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            if response.ok:
+                vcenters = response.json()
+                return vcenters[0] if vcenters else None
+        except Exception as e:
+            self.executor.log(f"Error fetching vCenter: {e}", "ERROR")
+        return None
