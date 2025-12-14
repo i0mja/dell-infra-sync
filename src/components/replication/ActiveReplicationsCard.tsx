@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Loader2, Server, Clock, HardDrive, Play, Zap, ArrowRight, CheckCircle2, AlertTriangle, Pause, RefreshCw } from "lucide-react";
+import { Loader2, Server, Clock, HardDrive, Play, Zap, ArrowRight, CheckCircle2, AlertTriangle, Pause, RefreshCw, Database, GitBranch, Copy } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { formatDistanceToNow } from "date-fns";
 interface VmSyncDetail {
@@ -14,6 +14,10 @@ interface VmSyncDetail {
   incremental_from?: string;
   site_b_verified?: boolean;
   success: boolean;
+  // Enhanced snapshot stats
+  snapshot_size?: number; // referenced bytes (total size)
+  changes_since_last?: number; // used bytes (delta)
+  is_incremental?: boolean;
 }
 
 interface JobDetails {
@@ -30,6 +34,10 @@ interface JobDetails {
   transfer_rate_mbps?: number;
   site_b_verified?: boolean;
   vm_sync_details?: VmSyncDetail[];
+  // Enhanced snapshot stats
+  snapshot_size?: number;
+  changes_since_last?: number;
+  is_incremental?: boolean;
 }
 
 interface ActiveJob {
@@ -220,6 +228,9 @@ export function ActiveReplicationsCard() {
           const totalVms = details.total_vms || 0;
           const vmSyncDetails = details.vm_sync_details || [];
           const siteB_verified = details.site_b_verified;
+          const snapshotSize = details.snapshot_size || 0;
+          const changesSinceLast = details.changes_since_last || 0;
+          const isIncremental = details.is_incremental ?? !!vmSyncDetails.some(v => v.is_incremental || v.incremental_from);
 
           return (
             <div key={job.id} className="space-y-2 p-3 rounded-lg bg-muted/50">
@@ -258,6 +269,40 @@ export function ActiveReplicationsCard() {
                   <span className="font-medium">{progress}%</span>
                 </div>
                 <Progress value={progress} className="h-2" />
+              </div>
+
+              {/* Enhanced Snapshot Stats Row */}
+              <div className="flex items-center gap-4 text-xs">
+                {/* Full vs Incremental Badge */}
+                <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded ${isIncremental ? 'bg-amber-500/10 text-amber-600' : 'bg-purple-500/10 text-purple-600'}`}>
+                  {isIncremental ? (
+                    <>
+                      <GitBranch className="h-3 w-3" />
+                      Incremental
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-3 w-3" />
+                      Full Sync
+                    </>
+                  )}
+                </span>
+
+                {/* Snapshot Size (referenced) */}
+                {snapshotSize > 0 && (
+                  <span className="flex items-center gap-1 text-muted-foreground" title="Total snapshot size (referenced bytes)">
+                    <Database className="h-3 w-3" />
+                    Size: {formatBytes(snapshotSize)}
+                  </span>
+                )}
+
+                {/* Changes Since Last (used) */}
+                {changesSinceLast >= 0 && isIncremental && (
+                  <span className="flex items-center gap-1 text-cyan-600" title="Changes since last snapshot (used bytes)">
+                    <ArrowRight className="h-3 w-3" />
+                    Delta: {formatBytes(changesSinceLast)}
+                  </span>
+                )}
               </div>
 
               {/* Transfer Stats */}
@@ -320,13 +365,24 @@ export function ActiveReplicationsCard() {
                           <AlertTriangle className="h-3 w-3 text-yellow-500" />
                         )}
                         {vm.vm_name}
-                        {vm.incremental_from && (
-                          <span className="text-muted-foreground/60">(incr)</span>
+                        {(vm.is_incremental || vm.incremental_from) && (
+                          <span className="text-amber-500/80 text-[10px]">(incr)</span>
                         )}
                       </span>
-                      <span className="text-muted-foreground">
-                        {formatBytes(vm.bytes_transferred)}
-                        {vm.transfer_rate_mbps > 0 && ` @ ${vm.transfer_rate_mbps.toFixed(1)} MB/s`}
+                      <span className="text-muted-foreground flex items-center gap-2">
+                        {/* Show snapshot size if available */}
+                        {vm.snapshot_size && vm.snapshot_size > 0 && (
+                          <span className="text-muted-foreground/60" title="Snapshot size">
+                            {formatBytes(vm.snapshot_size)}
+                          </span>
+                        )}
+                        {/* Show delta/transferred */}
+                        <span className="text-blue-600">
+                          {formatBytes(vm.bytes_transferred)}
+                        </span>
+                        {vm.transfer_rate_mbps > 0 && (
+                          <span className="text-green-600">@ {vm.transfer_rate_mbps.toFixed(1)} MB/s</span>
+                        )}
                       </span>
                     </div>
                   ))}
