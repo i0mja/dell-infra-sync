@@ -355,6 +355,41 @@ class ReplicationHandler(BaseHandler):
             self.executor.log(f"Error updating replication job: {e}", "ERROR")
             return False
     
+    def _log_ssh_command(self, job_id: str, command: str, hostname: str,
+                         output: str, success: bool, duration_ms: int,
+                         operation_type: str = 'ssh_command') -> bool:
+        """
+        Log SSH command to idrac_commands table for activity tracking.
+        Uses the ssh_command operation_type for all SSH operations.
+        """
+        try:
+            response = requests.post(
+                f"{DSM_URL}/rest/v1/idrac_commands",
+                json={
+                    'job_id': job_id,
+                    'command_type': command[:100] if command else 'SSH_COMMAND',  # Use command as type for clarity
+                    'endpoint': command,
+                    'full_url': f"ssh://{hostname}",
+                    'response_body': {'output': output[:1000] if output else ''},  # Truncate for storage
+                    'success': success,
+                    'response_time_ms': duration_ms,
+                    'operation_type': 'ssh_command',  # Always use ssh_command from the enum
+                    'source': 'job_executor'
+                },
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            return response.ok
+        except Exception as e:
+            self.executor.log(f"Failed to log SSH command: {e}", "WARN")
+            return False
+    
     def _calculate_current_rpo(self, last_replication_at: str) -> int:
         """Calculate current RPO in seconds from last replication time"""
         if not last_replication_at:
@@ -2115,8 +2150,37 @@ chmod 600 ~/.ssh/authorized_keys
         job_id = job['id']
         details = job.get('details', {}) or {}
         
-        self.executor.log(f"[{job_id}] Starting ZFS target health check")
+        # Console log and step results for verbose output
+        console_log = []
+        step_results = []
+        
+        def log_and_store(msg: str, level: str = "INFO"):
+            """Log message and store in console_log array"""
+            self.executor.log(f"[{job_id}] {msg}", level)
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            console_log.append(f"[{timestamp}] {level}: {msg}")
+        
+        def add_step_result(step: str, status: str, message: str, duration_ms: int = None):
+            """Add a step result with timing info"""
+            step_results.append({
+                'step': step,
+                'status': status,
+                'message': message,
+                'duration_ms': duration_ms,
+                'timestamp': datetime.now().isoformat()
+            })
+        
+        log_and_store("Starting ZFS target health check")
         self.update_job_status(job_id, 'running', started_at=utc_now_iso())
+        
+        # Create tasks for each test upfront
+        test_tasks = {}
+        test_names = ['ssh_connectivity', 'zfs_pool_health', 'cross_site_ssh', 'data_transfer_test', 'snapshot_sync_status']
+        for test_name in test_names:
+            task_id = self.create_task(job_id)
+            if task_id:
+                self.update_task_status(task_id, 'pending', log=f"Pending: {test_name.replace('_', ' ').title()}")
+                test_tasks[test_name] = task_id
         
         try:
             target_id = details.get('target_id')
@@ -2127,6 +2191,8 @@ chmod 600 ~/.ssh/authorized_keys
             if not target_id:
                 raise ValueError("No target_id provided in job details")
             
+            log_and_store(f"Target: {target_name} ({target_id})")
+            
             # Fetch the target from DB
             target = self._get_replication_target(target_id)
             if not target:
@@ -2134,6 +2200,8 @@ chmod 600 ~/.ssh/authorized_keys
             
             hostname = target.get('hostname') or target_hostname
             pool = target.get('zfs_pool') or zfs_pool
+            
+            log_and_store(f"Hostname: {hostname}, Pool: {pool}")
             
             results = {
                 'target_id': target_id,
@@ -2149,23 +2217,63 @@ chmod 600 ~/.ssh/authorized_keys
             if not creds:
                 raise ValueError(f"No SSH credentials available for target {hostname}")
             
-            # Test 1: SSH connectivity
-            self.executor.log(f"[{job_id}] Testing SSH connectivity to {hostname}")
+            # =========================================================================
+            # Test 1: SSH Connectivity
+            # =========================================================================
+            task_id = test_tasks.get('ssh_connectivity')
+            if task_id:
+                self.update_task_status(task_id, 'running', log="Testing SSH connectivity...", progress=10)
+            
+            log_and_store(f"Testing SSH connectivity to {hostname}:{creds['port']}")
+            start_time = time.time()
+            
             ssh_result = self._test_ssh_connection(
                 creds['hostname'],
                 creds['port'],
                 creds['username'],
                 creds.get('key_data')
             )
+            
+            duration_ms = int((time.time() - start_time) * 1000)
+            
+            # Log SSH command
+            self._log_ssh_command(
+                job_id=job_id,
+                command='hostname',
+                hostname=hostname,
+                output=ssh_result.get('hostname', '') if ssh_result['success'] else ssh_result.get('error', ''),
+                success=ssh_result['success'],
+                duration_ms=duration_ms,
+                operation_type='ssh_connectivity'
+            )
+            
+            ssh_message = 'SSH connection successful' if ssh_result['success'] else ssh_result.get('error')
             results['tests'].append({
                 'name': 'ssh_connectivity',
                 'success': ssh_result['success'],
-                'message': 'SSH connection successful' if ssh_result['success'] else ssh_result.get('error')
+                'message': ssh_message
             })
+            
+            add_step_result('ssh_connectivity', 'success' if ssh_result['success'] else 'failed', ssh_message, duration_ms)
+            
+            if task_id:
+                status = 'completed' if ssh_result['success'] else 'failed'
+                self.update_task_status(task_id, status, log=ssh_message, progress=100)
+            
+            if ssh_result['success']:
+                log_and_store(f"SSH connection successful in {duration_ms}ms")
+            else:
+                log_and_store(f"SSH connection failed: {ssh_result.get('error')}", "ERROR")
             
             if not ssh_result['success']:
                 overall_status = 'offline'
                 results['overall_status'] = overall_status
+                
+                # Mark remaining tasks as skipped
+                for name in ['zfs_pool_health', 'cross_site_ssh', 'data_transfer_test', 'snapshot_sync_status']:
+                    tid = test_tasks.get(name)
+                    if tid:
+                        self.update_task_status(tid, 'cancelled', log="Skipped: SSH connectivity failed")
                 
                 # Update target health status
                 self._update_replication_target(target_id, 
@@ -2176,13 +2284,20 @@ chmod 600 ~/.ssh/authorized_keys
                 
                 self.update_job_status(job_id, 'completed', 
                     completed_at=utc_now_iso(),
-                    details={**details, 'results': results}
+                    details={**details, 'results': results, 'console_log': console_log, 'step_results': step_results}
                 )
                 return
             
-            # Test 2: ZFS pool health (if pool is configured)
+            # =========================================================================
+            # Test 2: ZFS Pool Health
+            # =========================================================================
             if pool:
-                self.executor.log(f"[{job_id}] Checking ZFS pool {pool} health")
+                task_id = test_tasks.get('zfs_pool_health')
+                if task_id:
+                    self.update_task_status(task_id, 'running', log=f"Checking ZFS pool {pool}...", progress=10)
+                
+                log_and_store(f"Checking ZFS pool {pool} health")
+                start_time = time.time()
                 
                 if ZFS_AVAILABLE and self.zfs_replication:
                     health_result = self.zfs_replication.check_target_health(
@@ -2194,11 +2309,32 @@ chmod 600 ~/.ssh/authorized_keys
                         ssh_password=creds.get('password')
                     )
                     
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    
                     # Map field names from ZFSReplicationReal response
                     pool_status = health_result.get('pool_health', 'UNKNOWN')
                     free_gb = health_result.get('free_space_gb', 0)
                     total_gb = health_result.get('total_space_gb', 0)
                     used_percent = round((1 - (free_gb / total_gb)) * 100) if total_gb > 0 else 0
+                    last_scrub = health_result.get('last_scrub')
+                    
+                    log_and_store(f"Pool status: {pool_status}")
+                    log_and_store(f"Capacity: {used_percent}% used ({free_gb:.1f} GB free of {total_gb:.1f} GB)")
+                    if last_scrub:
+                        log_and_store(f"Last scrub: {last_scrub}")
+                    
+                    pool_message = health_result.get('error') if not health_result.get('success') else f"Pool {pool} is {pool_status}"
+                    
+                    # Log SSH command
+                    self._log_ssh_command(
+                        job_id=job_id,
+                        command=f'zpool status {pool}',
+                        hostname=hostname,
+                        output=f"Status: {pool_status}, Used: {used_percent}%",
+                        success=health_result.get('success', False),
+                        duration_ms=duration_ms,
+                        operation_type='zfs_pool_health'
+                    )
                     
                     results['tests'].append({
                         'name': 'zfs_pool_health',
@@ -2207,10 +2343,16 @@ chmod 600 ~/.ssh/authorized_keys
                         'free_gb': free_gb,
                         'total_gb': total_gb,
                         'used_percent': used_percent,
-                        'last_scrub': health_result.get('last_scrub'),
-                        'message': health_result.get('error') if not health_result.get('success') else f"Pool {pool} is {pool_status}",
+                        'last_scrub': last_scrub,
+                        'message': pool_message,
                         'repairable': pool_status in ('DEGRADED', 'FAULTED')
                     })
+                    
+                    add_step_result('zfs_pool_health', 'success' if health_result.get('success') else 'failed', pool_message, duration_ms)
+                    
+                    if task_id:
+                        status = 'completed' if health_result.get('success') else 'failed'
+                        self.update_task_status(task_id, status, log=pool_message, progress=100)
                     
                     if not health_result.get('success'):
                         overall_status = 'degraded'
@@ -2222,7 +2364,6 @@ chmod 600 ~/.ssh/authorized_keys
                 else:
                     # Basic SSH-based check
                     try:
-                        import paramiko
                         ssh = paramiko.SSHClient()
                         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                         
@@ -2240,25 +2381,51 @@ chmod 600 ~/.ssh/authorized_keys
                         )
                         
                         # Check pool health
+                        log_and_store(f"Running: zpool status {pool} -x")
                         stdin, stdout, stderr = ssh.exec_command(f'zpool status {pool} -x')
                         pool_output = stdout.read().decode().strip()
                         
+                        for line in pool_output.split('\n')[:10]:
+                            log_and_store(f"  {line}")
+                        
                         # Check pool capacity
+                        log_and_store(f"Running: zpool list -Ho capacity {pool}")
                         stdin, stdout, stderr = ssh.exec_command(f'zpool list -Ho capacity {pool}')
                         capacity_output = stdout.read().decode().strip().replace('%', '')
                         
                         ssh.close()
                         
+                        duration_ms = int((time.time() - start_time) * 1000)
+                        
                         is_healthy = 'is healthy' in pool_output.lower() or 'all pools are healthy' in pool_output.lower()
                         used_percent = int(capacity_output) if capacity_output.isdigit() else 0
+                        
+                        pool_message = pool_output if not is_healthy else f"Pool {pool} healthy, {used_percent}% used"
+                        
+                        # Log SSH command
+                        self._log_ssh_command(
+                            job_id=job_id,
+                            command=f'zpool status {pool} -x',
+                            hostname=hostname,
+                            output=pool_output,
+                            success=is_healthy,
+                            duration_ms=duration_ms,
+                            operation_type='zfs_pool_health'
+                        )
                         
                         results['tests'].append({
                             'name': 'zfs_pool_health',
                             'success': is_healthy,
                             'pool_status': 'ONLINE' if is_healthy else 'DEGRADED',
                             'used_percent': used_percent,
-                            'message': pool_output if not is_healthy else f"Pool {pool} healthy, {used_percent}% used"
+                            'message': pool_message
                         })
+                        
+                        add_step_result('zfs_pool_health', 'success' if is_healthy else 'failed', pool_message, duration_ms)
+                        
+                        if task_id:
+                            status = 'completed' if is_healthy else 'failed'
+                            self.update_task_status(task_id, status, log=pool_message, progress=100)
                         
                         if not is_healthy:
                             overall_status = 'degraded'
@@ -2266,17 +2433,39 @@ chmod 600 ~/.ssh/authorized_keys
                             overall_status = 'degraded'
                             
                     except Exception as e:
+                        duration_ms = int((time.time() - start_time) * 1000)
+                        error_msg = str(e)
+                        log_and_store(f"Pool health check failed: {error_msg}", "ERROR")
+                        
                         results['tests'].append({
                             'name': 'zfs_pool_health',
                             'success': False,
-                            'message': str(e)
+                            'message': error_msg
                         })
+                        add_step_result('zfs_pool_health', 'failed', error_msg, duration_ms)
+                        
+                        if task_id:
+                            self.update_task_status(task_id, 'failed', log=error_msg, progress=100)
                         overall_status = 'degraded'
+            else:
+                # No pool configured, skip pool check
+                task_id = test_tasks.get('zfs_pool_health')
+                if task_id:
+                    self.update_task_status(task_id, 'cancelled', log="Skipped: No ZFS pool configured")
+                log_and_store("Skipping ZFS pool check: No pool configured")
             
-            # Test 3: Cross-site SSH connectivity (if has partner target)
+            # =========================================================================
+            # Test 3: Cross-Site SSH Connectivity
+            # =========================================================================
             partner_target_id = target.get('partner_target_id')
             if partner_target_id:
-                self.executor.log(f"[{job_id}] Testing cross-site SSH to partner target")
+                task_id = test_tasks.get('cross_site_ssh')
+                if task_id:
+                    self.update_task_status(task_id, 'running', log="Testing cross-site SSH...", progress=10)
+                
+                log_and_store(f"Testing cross-site SSH to partner target {partner_target_id}")
+                start_time = time.time()
+                
                 partner = self._get_replication_target(partner_target_id)
                 if partner:
                     partner_creds = self._get_target_ssh_creds(partner)
@@ -2286,6 +2475,8 @@ chmod 600 ~/.ssh/authorized_keys
                         'partner_hostname': partner.get('hostname'),
                         'message': 'No credentials for partner'
                     }
+                    
+                    log_and_store(f"Partner: {partner.get('name')} ({partner.get('hostname')})")
                     
                     if partner_creds:
                         # Test SSH from this target to partner
@@ -2297,6 +2488,19 @@ chmod 600 ~/.ssh/authorized_keys
                             'message': cross_site_test.get('message', cross_site_test.get('error', 'Unknown'))
                         }
                     
+                    duration_ms = int((time.time() - start_time) * 1000)
+                    
+                    # Log SSH command
+                    self._log_ssh_command(
+                        job_id=job_id,
+                        command=f"ssh {partner.get('hostname')} hostname",
+                        hostname=hostname,
+                        output=cross_site_result['message'],
+                        success=cross_site_result['success'],
+                        duration_ms=duration_ms,
+                        operation_type='cross_site_ssh'
+                    )
+                    
                     results['tests'].append({
                         'name': 'cross_site_ssh',
                         'success': cross_site_result['success'],
@@ -2306,13 +2510,46 @@ chmod 600 ~/.ssh/authorized_keys
                         'repairable': not cross_site_result['success']
                     })
                     
+                    add_step_result('cross_site_ssh', 'success' if cross_site_result['success'] else 'failed', cross_site_result['message'], duration_ms)
+                    
+                    if task_id:
+                        status = 'completed' if cross_site_result['success'] else 'failed'
+                        self.update_task_status(task_id, status, log=cross_site_result['message'], progress=100)
+                    
+                    if cross_site_result['success']:
+                        log_and_store(f"Cross-site SSH successful in {duration_ms}ms")
+                    else:
+                        log_and_store(f"Cross-site SSH failed: {cross_site_result['message']}", "WARN")
+                    
                     if not cross_site_result['success'] and overall_status == 'healthy':
                         overall_status = 'degraded'
                     
-                    # Test 4: Data transfer test (only if partner exists and cross-site SSH works)
+                    # =========================================================================
+                    # Test 4: Data Transfer Test
+                    # =========================================================================
                     if cross_site_result['success'] and partner_creds and pool:
-                        self.executor.log(f"[{job_id}] Testing actual data transfer to partner")
+                        task_id = test_tasks.get('data_transfer_test')
+                        if task_id:
+                            self.update_task_status(task_id, 'running', log="Testing ZFS data transfer...", progress=10)
+                        
+                        log_and_store(f"Testing actual ZFS data transfer to partner")
+                        start_time = time.time()
+                        
                         transfer_result = self._test_data_transfer(creds, partner_creds, pool, job_id)
+                        
+                        duration_ms = int((time.time() - start_time) * 1000)
+                        
+                        # Log SSH command
+                        self._log_ssh_command(
+                            job_id=job_id,
+                            command=f"zfs send/receive test to {partner.get('hostname')}",
+                            hostname=hostname,
+                            output=transfer_result.get('message', ''),
+                            success=transfer_result.get('success', False),
+                            duration_ms=duration_ms,
+                            operation_type='data_transfer_test'
+                        )
+                        
                         results['tests'].append({
                             'name': 'data_transfer_test',
                             'success': transfer_result.get('success', False),
@@ -2322,13 +2559,53 @@ chmod 600 ~/.ssh/authorized_keys
                             'repairable': False  # Cannot auto-repair - requires investigation
                         })
                         
+                        add_step_result('data_transfer_test', 'success' if transfer_result.get('success') else 'failed', transfer_result.get('message', 'Unknown'), duration_ms)
+                        
+                        if task_id:
+                            status = 'completed' if transfer_result.get('success') else 'failed'
+                            self.update_task_status(task_id, status, log=transfer_result.get('message'), progress=100)
+                        
+                        if transfer_result.get('success'):
+                            log_and_store(f"Data transfer successful: {transfer_result.get('message')}")
+                        else:
+                            log_and_store(f"Data transfer failed: {transfer_result.get('message')}", "ERROR")
+                        
                         if not transfer_result.get('success') and overall_status == 'healthy':
                             overall_status = 'degraded'
+                    else:
+                        # Skip data transfer test
+                        task_id = test_tasks.get('data_transfer_test')
+                        if task_id:
+                            skip_reason = "Skipped: Cross-site SSH not available" if not cross_site_result['success'] else "Skipped: No pool or credentials"
+                            self.update_task_status(task_id, 'cancelled', log=skip_reason)
+                            log_and_store(skip_reason)
                     
-                    # Test 5: Snapshot sync status
+                    # =========================================================================
+                    # Test 5: Snapshot Sync Status
+                    # =========================================================================
                     if partner_creds and pool:
-                        self.executor.log(f"[{job_id}] Checking snapshot sync status")
+                        task_id = test_tasks.get('snapshot_sync_status')
+                        if task_id:
+                            self.update_task_status(task_id, 'running', log="Checking snapshot sync status...", progress=10)
+                        
+                        log_and_store(f"Checking snapshot sync status with partner")
+                        start_time = time.time()
+                        
                         sync_result = self._check_snapshot_sync(creds, partner_creds, pool, job_id)
+                        
+                        duration_ms = int((time.time() - start_time) * 1000)
+                        
+                        # Log SSH command
+                        self._log_ssh_command(
+                            job_id=job_id,
+                            command=f"zfs list -t snapshot comparison",
+                            hostname=hostname,
+                            output=f"Source: {sync_result.get('source_snapshot')}, Dest: {sync_result.get('dest_snapshot')}, Lag: {sync_result.get('sync_lag_hours')}h",
+                            success=sync_result.get('success', False),
+                            duration_ms=duration_ms,
+                            operation_type='snapshot_sync_status'
+                        )
+                        
                         results['tests'].append({
                             'name': 'snapshot_sync_status',
                             'success': sync_result.get('success', False),
@@ -2339,9 +2616,45 @@ chmod 600 ~/.ssh/authorized_keys
                             'repairable': not sync_result.get('success', False)  # Can trigger manual sync
                         })
                         
+                        add_step_result('snapshot_sync_status', 'success' if sync_result.get('success') else 'failed', sync_result.get('message', 'Unknown'), duration_ms)
+                        
+                        if task_id:
+                            status = 'completed' if sync_result.get('success') else 'failed'
+                            self.update_task_status(task_id, status, log=sync_result.get('message'), progress=100)
+                        
+                        if sync_result.get('success'):
+                            log_and_store(f"Snapshot sync: {sync_result.get('message')}")
+                        else:
+                            log_and_store(f"Snapshot sync issue: {sync_result.get('message')}", "WARN")
+                        
                         if not sync_result.get('success') and sync_result.get('sync_lag_hours', 0) > 24:
                             if overall_status == 'healthy':
                                 overall_status = 'degraded'
+                    else:
+                        # Skip snapshot sync check
+                        task_id = test_tasks.get('snapshot_sync_status')
+                        if task_id:
+                            skip_reason = "Skipped: No partner credentials or pool"
+                            self.update_task_status(task_id, 'cancelled', log=skip_reason)
+                            log_and_store(skip_reason)
+                else:
+                    # Partner not found
+                    task_id = test_tasks.get('cross_site_ssh')
+                    if task_id:
+                        self.update_task_status(task_id, 'failed', log=f"Partner target not found: {partner_target_id}")
+                    log_and_store(f"Partner target not found: {partner_target_id}", "ERROR")
+                    
+                    for name in ['data_transfer_test', 'snapshot_sync_status']:
+                        tid = test_tasks.get(name)
+                        if tid:
+                            self.update_task_status(tid, 'cancelled', log="Skipped: Partner not found")
+            else:
+                # No partner configured
+                log_and_store("No partner target configured - skipping cross-site tests")
+                for name in ['cross_site_ssh', 'data_transfer_test', 'snapshot_sync_status']:
+                    tid = test_tasks.get(name)
+                    if tid:
+                        self.update_task_status(tid, 'cancelled', log="Skipped: No partner configured")
             
             results['overall_status'] = overall_status
             
@@ -2352,17 +2665,17 @@ chmod 600 ~/.ssh/authorized_keys
                 health_check_error=None if overall_status == 'healthy' else results.get('tests', [{}])[-1].get('message')
             )
             
-            self.executor.log(f"[{job_id}] Health check complete: {overall_status}")
+            log_and_store(f"Health check complete: {overall_status}")
             self.update_job_status(job_id, 'completed',
                 completed_at=utc_now_iso(),
-                details={**details, 'results': results}
+                details={**details, 'results': results, 'console_log': console_log, 'step_results': step_results}
             )
             
         except Exception as e:
-            self.executor.log(f"[{job_id}] Health check failed: {e}", "ERROR")
+            log_and_store(f"Health check failed: {e}", "ERROR")
             self.update_job_status(job_id, 'failed',
                 completed_at=utc_now_iso(),
-                details={**details, 'error': str(e)}
+                details={**details, 'error': str(e), 'console_log': console_log, 'step_results': step_results}
             )
     
     def _update_replication_target(self, target_id: str, **kwargs) -> bool:
