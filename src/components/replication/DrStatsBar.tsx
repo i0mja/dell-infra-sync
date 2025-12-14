@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Shield, Target, Clock, Activity, HardDrive, CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
+import { Shield, Target, Clock, Activity, HardDrive, CheckCircle2, AlertTriangle, Loader2, Zap } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { useProtectionGroups, useReplicationTargets, useReplicationJobs } from "@/hooks/useReplication";
@@ -14,9 +14,10 @@ interface StatItemProps {
   subValue?: string;
   status?: 'success' | 'warning' | 'error' | 'neutral';
   loading?: boolean;
+  animated?: boolean;
 }
 
-function StatItem({ icon: Icon, label, value, subValue, status = 'neutral', loading }: StatItemProps) {
+function StatItem({ icon: Icon, label, value, subValue, status = 'neutral', loading, animated }: StatItemProps) {
   const statusColors = {
     success: 'text-green-500',
     warning: 'text-amber-500',
@@ -39,7 +40,7 @@ function StatItem({ icon: Icon, label, value, subValue, status = 'neutral', load
   return (
     <div className="flex items-center gap-3 px-4 py-2">
       <div className={`p-2 rounded-md bg-muted/50 ${statusColors[status]}`}>
-        <Icon className="h-4 w-4" />
+        <Icon className={`h-4 w-4 ${animated ? 'animate-spin' : ''}`} />
       </div>
       <div>
         <p className="text-xs text-muted-foreground">{label}</p>
@@ -80,6 +81,13 @@ export function DrStatsBar() {
           queryClient.invalidateQueries({ queryKey: ['replication-targets'] });
         }
       )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'replication_jobs' },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['replication-jobs'] });
+        }
+      )
       .subscribe();
 
     return () => {
@@ -88,7 +96,18 @@ export function DrStatsBar() {
   }, [queryClient]);
 
   // Count active/running jobs for indicator
-  const runningJobs = jobs.filter(j => j.status === 'running' || j.status === 'pending').length;
+  const runningJobs = jobs.filter(j => 
+    (j.status === 'running' || j.status === 'pending') && 
+    j.job_type === 'run_replication_sync'
+  ).length;
+
+  // Calculate bytes being transferred in running jobs
+  const activeTransferBytes = jobs
+    .filter(j => j.status === 'running' && j.job_type === 'run_replication_sync')
+    .reduce((sum, j) => {
+      const jobDetails = j as any;
+      return sum + (jobDetails.details?.bytes_transferred || 0);
+    }, 0);
 
   // Calculate stats
   const totalVMs = groups.reduce((sum, g) => sum + (g.vm_count || 0), 0);
@@ -180,6 +199,28 @@ export function DrStatsBar() {
         loading={loading}
       />
       <div className="h-8 w-px bg-border" />
+      
+      {/* Active Sync Indicator - show when jobs are running */}
+      {runningJobs > 0 ? (
+        <>
+          <div className="flex items-center gap-3 px-4 py-2 bg-blue-500/10 border-l border-r border-blue-500/20">
+            <div className="p-2 rounded-md bg-blue-500/20">
+              <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />
+            </div>
+            <div>
+              <p className="text-xs text-blue-500 font-medium">Syncing Now</p>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-lg font-semibold text-blue-600">{runningJobs}</span>
+                <span className="text-xs text-blue-500">
+                  {activeTransferBytes > 0 ? `(${formatBytes(activeTransferBytes)})` : 'active'}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="h-8 w-px bg-border" />
+        </>
+      ) : null}
+      
       <StatItem
         icon={Clock}
         label="Last Replication"
@@ -193,9 +234,29 @@ export function DrStatsBar() {
         label="Data Transferred"
         value={formatBytes(totalBytesTransferred)}
         subValue="total"
-        status="neutral"
+        status={totalBytesTransferred > 0 ? 'success' : 'neutral'}
         loading={loading}
       />
+      
+      {/* Show current transfer rate if syncing */}
+      {runningJobs > 0 && (
+        <>
+          <div className="h-8 w-px bg-border" />
+          <div className="flex items-center gap-3 px-4 py-2">
+            <div className="p-2 rounded-md bg-muted/50 text-blue-500">
+              <Zap className="h-4 w-4" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Transfer Rate</p>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-lg font-semibold">
+                  {getActiveTransferRate(jobs)} MB/s
+                </span>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -205,4 +266,16 @@ function formatBytes(bytes: number): string {
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+}
+
+function getActiveTransferRate(jobs: any[]): string {
+  const runningJobs = jobs.filter(j => j.status === 'running' && j.job_type === 'run_replication_sync');
+  if (runningJobs.length === 0) return '0';
+  
+  const totalRate = runningJobs.reduce((sum, j) => {
+    const rate = (j.details as any)?.transfer_rate_mbps || 0;
+    return sum + rate;
+  }, 0);
+  
+  return totalRate.toFixed(1);
 }

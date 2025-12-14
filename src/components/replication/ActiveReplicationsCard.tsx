@@ -2,26 +2,37 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Loader2, Server, Clock, HardDrive, Play } from "lucide-react";
+import { Loader2, Server, Clock, HardDrive, Play, Zap, ArrowRight } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { formatDistanceToNow } from "date-fns";
+
+interface VmSyncDetail {
+  vm_name: string;
+  bytes_transferred: number;
+  transfer_rate_mbps: number;
+  success: boolean;
+}
+
+interface JobDetails {
+  protection_group_id?: string;
+  protection_group_name?: string;
+  vm_name?: string;
+  current_step?: string;
+  progress_percent?: number;
+  bytes_transferred?: number;
+  current_vm?: string;
+  vms_completed?: number;
+  total_vms?: number;
+  transfer_rate_mbps?: number;
+  vm_sync_details?: VmSyncDetail[];
+}
 
 interface ActiveJob {
   id: string;
   job_type: string;
   status: string;
   started_at: string | null;
-  details: {
-    protection_group_id?: string;
-    protection_group_name?: string;
-    vm_name?: string;
-    current_step?: string;
-    progress_percent?: number;
-    bytes_transferred?: number;
-    current_vm?: string;
-    vms_completed?: number;
-    total_vms?: number;
-  } | null;
+  details: JobDetails | null;
 }
 
 export function ActiveReplicationsCard() {
@@ -33,7 +44,7 @@ export function ActiveReplicationsCard() {
     const { data, error } = await supabase
       .from('jobs')
       .select('id, job_type, status, started_at, details')
-      .in('job_type', ['run_replication_sync', 'storage_vmotion'])
+      .in('job_type', ['run_replication_sync', 'storage_vmotion', 'create_dr_shell'])
       .in('status', ['pending', 'running'])
       .order('created_at', { ascending: false })
       .limit(10);
@@ -64,8 +75,8 @@ export function ActiveReplicationsCard() {
       )
       .subscribe();
 
-    // Also poll every 3 seconds for progress updates
-    const interval = setInterval(fetchActiveJobs, 3000);
+    // Also poll every 2 seconds for progress updates
+    const interval = setInterval(fetchActiveJobs, 2000);
 
     return () => {
       supabase.removeChannel(channel);
@@ -90,6 +101,8 @@ export function ActiveReplicationsCard() {
         return <Badge variant="outline" className="text-green-600 border-green-500/30">Snapshot</Badge>;
       case 'zfs_send':
         return <Badge variant="outline" className="text-amber-600 border-amber-500/30">ZFS Send</Badge>;
+      case 'create_dr_shell':
+        return <Badge variant="outline" className="text-teal-600 border-teal-500/30">DR Shell</Badge>;
       default:
         return <Badge variant="secondary">{type}</Badge>;
     }
@@ -147,6 +160,11 @@ export function ActiveReplicationsCard() {
           const currentStep = details.current_step || (job.status === 'pending' ? 'Waiting...' : 'Processing...');
           const vmName = details.vm_name || details.current_vm;
           const groupName = details.protection_group_name;
+          const bytesTransferred = details.bytes_transferred || 0;
+          const transferRate = details.transfer_rate_mbps || 0;
+          const vmsCompleted = details.vms_completed || 0;
+          const totalVms = details.total_vms || 0;
+          const vmSyncDetails = details.vm_sync_details || [];
 
           return (
             <div key={job.id} className="space-y-2 p-3 rounded-lg bg-muted/50">
@@ -181,31 +199,70 @@ export function ActiveReplicationsCard() {
 
               <div className="space-y-1">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground">{currentStep}</span>
+                  <span className="text-muted-foreground truncate max-w-[200px]">{currentStep}</span>
                   <span className="font-medium">{progress}%</span>
                 </div>
                 <Progress value={progress} className="h-2" />
               </div>
 
+              {/* Transfer Stats */}
               <div className="flex items-center justify-between text-xs text-muted-foreground">
-                {job.started_at && (
-                  <span className="flex items-center gap-1">
-                    <Clock className="h-3 w-3" />
-                    Started {formatDistanceToNow(new Date(job.started_at), { addSuffix: true })}
-                  </span>
-                )}
-                {details.bytes_transferred ? (
-                  <span className="flex items-center gap-1">
-                    <HardDrive className="h-3 w-3" />
-                    {formatBytes(details.bytes_transferred)}
-                  </span>
-                ) : null}
+                <div className="flex items-center gap-3">
+                  {job.started_at && (
+                    <span className="flex items-center gap-1">
+                      <Clock className="h-3 w-3" />
+                      Started {formatDistanceToNow(new Date(job.started_at), { addSuffix: true })}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  {bytesTransferred > 0 && (
+                    <span className="flex items-center gap-1 text-blue-600">
+                      <HardDrive className="h-3 w-3" />
+                      {formatBytes(bytesTransferred)}
+                    </span>
+                  )}
+                  {transferRate > 0 && (
+                    <span className="flex items-center gap-1 text-green-600">
+                      <Zap className="h-3 w-3" />
+                      {transferRate.toFixed(1)} MB/s
+                    </span>
+                  )}
+                </div>
               </div>
 
-              {details.vms_completed !== undefined && details.total_vms !== undefined && (
-                <p className="text-xs text-muted-foreground">
-                  VMs: {details.vms_completed} / {details.total_vms}
-                </p>
+              {/* VMs Progress */}
+              {totalVms > 0 && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">VMs Progress</span>
+                  <span className="font-medium">
+                    {vmsCompleted} / {totalVms}
+                  </span>
+                </div>
+              )}
+
+              {/* Per-VM Sync Details */}
+              {vmSyncDetails.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-border/50 space-y-1">
+                  <p className="text-xs text-muted-foreground font-medium">Completed VMs:</p>
+                  {vmSyncDetails.slice(-3).map((vm, idx) => (
+                    <div key={idx} className="flex items-center justify-between text-xs pl-2">
+                      <span className="flex items-center gap-1">
+                        <ArrowRight className="h-3 w-3 text-green-500" />
+                        {vm.vm_name}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {formatBytes(vm.bytes_transferred)}
+                        {vm.transfer_rate_mbps > 0 && ` @ ${vm.transfer_rate_mbps.toFixed(1)} MB/s`}
+                      </span>
+                    </div>
+                  ))}
+                  {vmSyncDetails.length > 3 && (
+                    <p className="text-xs text-muted-foreground pl-2">
+                      +{vmSyncDetails.length - 3} more...
+                    </p>
+                  )}
+                </div>
               )}
             </div>
           );

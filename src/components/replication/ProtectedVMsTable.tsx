@@ -125,6 +125,13 @@ export function ProtectedVMsTable({
     }
   };
 
+  const formatBytes = (bytes: number): string => {
+    if (!bytes || bytes === 0) return "0 B";
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+  };
+
   // Get RPO status for a VM
   const getRpoStatus = (vm: ProtectedVM): 'compliant' | 'warning' | 'critical' | 'never' => {
     if (!vm.last_replication_at) return 'never';
@@ -257,7 +264,8 @@ export function ProtectedVMsTable({
                 <TableHead>Status</TableHead>
                 <TableHead>Datastore</TableHead>
                 <TableHead>DR Shell</TableHead>
-                <TableHead>Last Replication</TableHead>
+                <TableHead>Last Sync</TableHead>
+                <TableHead>Sync Size</TableHead>
                 <TableHead className="w-12"></TableHead>
               </TableRow>
             </TableHeader>
@@ -297,6 +305,14 @@ export function ProtectedVMsTable({
                   </TableCell>
                   <TableCell>
                     {getRpoIndicator(vm)}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1 text-sm">
+                      <HardDrive className="h-3 w-3 text-muted-foreground" />
+                      <span className={(vm as any).last_sync_bytes > 0 ? 'text-foreground' : 'text-muted-foreground'}>
+                        {formatBytes((vm as any).last_sync_bytes || 0)}
+                      </span>
+                    </div>
                   </TableCell>
                   <TableCell>
                     <DropdownMenu>
