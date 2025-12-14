@@ -13,7 +13,8 @@ import {
   Wifi,
   Clock,
   Copy,
-  Check
+  Check,
+  Timer
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { useState } from "react";
@@ -41,6 +42,14 @@ interface HealthTest {
   sync_lag_hours?: number;
 }
 
+interface StepResult {
+  step: string;
+  status: string;
+  message: string;
+  duration_ms?: number;
+  timestamp?: string;
+}
+
 interface ZfsHealthCheckResultsProps {
   details: {
     results?: {
@@ -51,6 +60,7 @@ interface ZfsHealthCheckResultsProps {
       target_name?: string;
       overall_status?: string;
     };
+    step_results?: StepResult[];
     zfs_pool?: string;
     target_id?: string;
     target_name?: string;
@@ -81,7 +91,11 @@ export function ZfsHealthCheckResults({ details }: ZfsHealthCheckResultsProps) {
   
   const results = details?.results;
   const tests = results?.tests || [];
+  const stepResults = details?.step_results || [];
   const overallStatus = results?.overall_status || "unknown";
+  
+  // Calculate total duration from step results
+  const totalDuration = stepResults.reduce((acc, step) => acc + (step.duration_ms || 0), 0);
   
   // Extract specific tests for detailed display
   const poolTest = tests.find(t => t.name === "zfs_pool_health");
@@ -199,6 +213,9 @@ export function ZfsHealthCheckResults({ details }: ZfsHealthCheckResultsProps) {
                 </p>
                 <p className="text-sm text-muted-foreground">
                   {tests.filter(t => t.success).length} of {tests.length} checks passed
+                  {totalDuration > 0 && (
+                    <span className="ml-2">• {(totalDuration / 1000).toFixed(1)}s total</span>
+                  )}
                 </p>
               </div>
             </div>
@@ -295,6 +312,64 @@ export function ZfsHealthCheckResults({ details }: ZfsHealthCheckResultsProps) {
                 </Badge>
               </div>
             )}
+          </CardContent>
+        </Card>
+      )}
+      
+      {/* Test Execution Timeline */}
+      {stepResults.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Clock className="h-4 w-4" />
+              Test Execution Timeline
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {stepResults.map((step, idx) => {
+                const config = TEST_LABELS[step.step] || { label: step.step.replace(/_/g, " "), icon: CheckCircle2 };
+                const Icon = config.icon;
+                const isSuccess = step.status === 'success';
+                const isFailed = step.status === 'failed';
+                
+                return (
+                  <div 
+                    key={idx}
+                    className={`flex items-center justify-between py-2 px-3 rounded-lg border ${
+                      isSuccess ? "bg-muted/20" : isFailed ? "bg-destructive/5 border-destructive/20" : "bg-muted/10"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      {isSuccess ? (
+                        <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+                      ) : isFailed ? (
+                        <XCircle className="h-4 w-4 text-destructive shrink-0" />
+                      ) : (
+                        <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0" />
+                      )}
+                      <Icon className="h-4 w-4 text-muted-foreground" />
+                      <span className="font-medium text-sm">{config.label}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {step.duration_ms !== undefined && step.duration_ms > 0 && (
+                        <Badge variant="outline" className="text-xs font-mono">
+                          {step.duration_ms > 1000 
+                            ? `${(step.duration_ms / 1000).toFixed(1)}s` 
+                            : `${step.duration_ms}ms`}
+                        </Badge>
+                      )}
+                      <Badge 
+                        variant={isSuccess ? "secondary" : isFailed ? "destructive" : "outline"}
+                        className={isSuccess ? "bg-green-500/20 text-green-400 text-xs" : "text-xs"}
+                      >
+                        {isSuccess ? "Passed" : isFailed ? "Failed" : step.status}
+                      </Badge>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </CardContent>
         </Card>
       )}
