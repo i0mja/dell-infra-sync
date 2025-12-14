@@ -4632,6 +4632,9 @@ export type Database = {
         | "scan_datastore_status"
         | "exchange_ssh_keys"
         | "check_zfs_target_health"
+        | "repair_zfs_pool"
+        | "repair_cross_site_ssh"
+        | "repair_syncoid_cron"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -4847,6 +4850,9 @@ export const Constants = {
         "scan_datastore_status",
         "exchange_ssh_keys",
         "check_zfs_target_health",
+        "repair_zfs_pool",
+        "repair_cross_site_ssh",
+        "repair_syncoid_cron",
       ],
       operation_type: [
         "idrac_api",

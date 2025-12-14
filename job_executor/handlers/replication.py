@@ -2192,22 +2192,31 @@ chmod 600 ~/.ssh/authorized_keys
                         ssh_password=creds.get('password')
                     )
                     
+                    # Map field names from ZFSReplicationReal response
+                    pool_status = health_result.get('pool_health', 'UNKNOWN')
+                    free_gb = health_result.get('free_space_gb', 0)
+                    total_gb = health_result.get('total_space_gb', 0)
+                    used_percent = round((1 - (free_gb / total_gb)) * 100) if total_gb > 0 else 0
+                    
                     results['tests'].append({
                         'name': 'zfs_pool_health',
                         'success': health_result.get('success', False),
-                        'pool_status': health_result.get('pool_status'),
-                        'free_gb': health_result.get('free_gb'),
-                        'used_percent': health_result.get('used_percent'),
-                        'message': health_result.get('error') if not health_result.get('success') else f"Pool {pool} is {health_result.get('pool_status', 'unknown')}"
+                        'pool_status': pool_status,
+                        'free_gb': free_gb,
+                        'total_gb': total_gb,
+                        'used_percent': used_percent,
+                        'last_scrub': health_result.get('last_scrub'),
+                        'message': health_result.get('error') if not health_result.get('success') else f"Pool {pool} is {pool_status}",
+                        'repairable': pool_status in ('DEGRADED', 'FAULTED')
                     })
                     
                     if not health_result.get('success'):
                         overall_status = 'degraded'
-                    elif health_result.get('pool_status') != 'ONLINE':
+                    elif pool_status != 'ONLINE':
                         overall_status = 'degraded'
-                    elif health_result.get('used_percent', 0) > 90:
+                    elif used_percent > 90:
                         overall_status = 'degraded'
-                        results['tests'][-1]['message'] = f"Pool {pool} is {health_result.get('used_percent')}% full"
+                        results['tests'][-1]['message'] = f"Pool {pool} is {used_percent}% full"
                 else:
                     # Basic SSH-based check
                     try:
@@ -2262,6 +2271,42 @@ chmod 600 ~/.ssh/authorized_keys
                         })
                         overall_status = 'degraded'
             
+            # Test 3: Cross-site SSH connectivity (if has partner target)
+            partner_target_id = target.get('partner_target_id')
+            if partner_target_id:
+                self.executor.log(f"[{job_id}] Testing cross-site SSH to partner target")
+                partner = self._get_replication_target(partner_target_id)
+                if partner:
+                    partner_creds = self._get_target_ssh_creds(partner)
+                    cross_site_result = {
+                        'success': False,
+                        'partner_name': partner.get('name'),
+                        'partner_hostname': partner.get('hostname'),
+                        'message': 'No credentials for partner'
+                    }
+                    
+                    if partner_creds:
+                        # Test SSH from this target to partner
+                        cross_site_test = self._test_cross_site_ssh(creds, partner_creds)
+                        cross_site_result = {
+                            'success': cross_site_test.get('success', False),
+                            'partner_name': partner.get('name'),
+                            'partner_hostname': partner.get('hostname'),
+                            'message': cross_site_test.get('message', cross_site_test.get('error', 'Unknown'))
+                        }
+                    
+                    results['tests'].append({
+                        'name': 'cross_site_ssh',
+                        'success': cross_site_result['success'],
+                        'partner_name': cross_site_result['partner_name'],
+                        'partner_hostname': cross_site_result['partner_hostname'],
+                        'message': cross_site_result['message'],
+                        'repairable': not cross_site_result['success']
+                    })
+                    
+                    if not cross_site_result['success'] and overall_status == 'healthy':
+                        overall_status = 'degraded'
+            
             results['overall_status'] = overall_status
             
             # Update target health status in database
@@ -2304,3 +2349,338 @@ chmod 600 ~/.ssh/authorized_keys
         except Exception as e:
             self.executor.log(f"Error updating replication target: {e}", "ERROR")
             return False
+    
+    def _test_cross_site_ssh(self, source_creds: Dict, partner_creds: Dict) -> Dict:
+        """
+        Test if source target can SSH to partner target.
+        This verifies the cross-site replication link is functional.
+        """
+        if not PARAMIKO_AVAILABLE:
+            return {'success': False, 'error': 'paramiko not installed'}
+        
+        try:
+            # Connect to source
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            pkey = None
+            if source_creds.get('key_data'):
+                key_file = io.StringIO(source_creds['key_data'])
+                for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                    try:
+                        key_file.seek(0)
+                        pkey = key_class.from_private_key(key_file)
+                        break
+                    except:
+                        continue
+            
+            ssh.connect(
+                hostname=source_creds['hostname'],
+                port=source_creds['port'],
+                username=source_creds['username'],
+                pkey=pkey,
+                password=source_creds.get('password'),
+                timeout=30,
+                allow_agent=False,
+                look_for_keys=False
+            )
+            
+            # From source, try to SSH to partner
+            partner_host = partner_creds['hostname']
+            partner_port = partner_creds['port']
+            partner_user = partner_creds['username']
+            
+            # Test with ssh command from source to partner
+            cmd = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p {partner_port} {partner_user}@{partner_host} 'hostname' 2>&1 || echo 'SSH_FAILED'"
+            stdin, stdout, stderr = ssh.exec_command(cmd, timeout=30)
+            output = stdout.read().decode().strip()
+            
+            ssh.close()
+            
+            if 'SSH_FAILED' in output or 'Permission denied' in output or 'Connection refused' in output:
+                return {
+                    'success': False,
+                    'error': f'Cannot reach partner: {output}',
+                    'message': f'SSH from source to partner failed'
+                }
+            
+            return {
+                'success': True,
+                'message': f'Cross-site SSH working (partner hostname: {output})'
+            }
+            
+        except Exception as e:
+            return {'success': False, 'error': str(e), 'message': f'Cross-site test failed: {e}'}
+    
+    # =========================================================================
+    # Repair Handlers
+    # =========================================================================
+    
+    def execute_repair_zfs_pool(self, job: Dict):
+        """
+        Attempt to repair a degraded ZFS pool.
+        Actions: scrub the pool, clear errors, report status.
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        
+        self.executor.log(f"[{job_id}] Starting ZFS pool repair")
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso())
+        
+        try:
+            target_id = details.get('target_id')
+            hostname = details.get('hostname')
+            zfs_pool = details.get('zfs_pool')
+            
+            if not target_id:
+                raise ValueError("No target_id provided")
+            
+            target = self._get_replication_target(target_id)
+            if not target:
+                raise ValueError(f"Target not found: {target_id}")
+            
+            creds = self._get_target_ssh_creds(target)
+            if not creds:
+                raise ValueError("No SSH credentials available")
+            
+            # Connect via SSH
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            pkey = None
+            if creds.get('key_data'):
+                key_file = io.StringIO(creds['key_data'])
+                for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                    try:
+                        key_file.seek(0)
+                        pkey = key_class.from_private_key(key_file)
+                        break
+                    except:
+                        continue
+            
+            ssh.connect(
+                hostname=creds['hostname'],
+                port=creds['port'],
+                username=creds['username'],
+                pkey=pkey,
+                password=creds.get('password'),
+                timeout=30
+            )
+            
+            repair_log = []
+            
+            # Clear pool errors
+            self.executor.log(f"[{job_id}] Clearing pool errors")
+            stdin, stdout, stderr = ssh.exec_command(f'zpool clear {zfs_pool} 2>&1')
+            clear_output = stdout.read().decode().strip()
+            repair_log.append(f"zpool clear: {clear_output or 'OK'}")
+            
+            # Start a scrub
+            self.executor.log(f"[{job_id}] Starting pool scrub")
+            stdin, stdout, stderr = ssh.exec_command(f'zpool scrub {zfs_pool} 2>&1')
+            scrub_output = stdout.read().decode().strip()
+            repair_log.append(f"zpool scrub: {scrub_output or 'Started'}")
+            
+            # Check current status
+            stdin, stdout, stderr = ssh.exec_command(f'zpool status -x {zfs_pool}')
+            status_output = stdout.read().decode().strip()
+            repair_log.append(f"Status: {status_output}")
+            
+            ssh.close()
+            
+            is_healthy = 'is healthy' in status_output.lower() or 'all pools are healthy' in status_output.lower()
+            
+            self.executor.log(f"[{job_id}] Repair complete, pool healthy: {is_healthy}")
+            self.update_job_status(job_id, 'completed',
+                completed_at=utc_now_iso(),
+                details={
+                    **details,
+                    'repair_log': repair_log,
+                    'is_healthy': is_healthy,
+                    'message': 'Pool repair attempted. Scrub started.' if not is_healthy else 'Pool is now healthy'
+                }
+            )
+            
+        except Exception as e:
+            self.executor.log(f"[{job_id}] Repair failed: {e}", "ERROR")
+            self.update_job_status(job_id, 'failed',
+                completed_at=utc_now_iso(),
+                details={**details, 'error': str(e)}
+            )
+    
+    def execute_repair_cross_site_ssh(self, job: Dict):
+        """
+        Attempt to repair cross-site SSH by re-exchanging keys.
+        This creates an exchange_ssh_keys job for the pair.
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        
+        self.executor.log(f"[{job_id}] Starting cross-site SSH repair")
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso())
+        
+        try:
+            target_id = details.get('target_id')
+            
+            if not target_id:
+                raise ValueError("No target_id provided")
+            
+            target = self._get_replication_target(target_id)
+            if not target:
+                raise ValueError(f"Target not found: {target_id}")
+            
+            partner_id = target.get('partner_target_id')
+            if not partner_id:
+                raise ValueError("No partner target configured - cannot repair cross-site SSH")
+            
+            # Create an SSH key exchange job between the pair
+            self.executor.log(f"[{job_id}] Creating SSH key exchange job for pair")
+            
+            response = requests.post(
+                f"{DSM_URL}/rest/v1/jobs",
+                json={
+                    'job_type': 'exchange_ssh_keys',
+                    'status': 'pending',
+                    'created_by': job.get('created_by'),
+                    'details': {
+                        'source_target_id': target_id,
+                        'destination_target_id': partner_id,
+                        'reason': 'Cross-site SSH repair',
+                        'parent_repair_job_id': job_id
+                    }
+                },
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=representation'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if not response.ok:
+                raise ValueError(f"Failed to create exchange job: {response.text}")
+            
+            exchange_job = response.json()
+            exchange_job_id = exchange_job[0]['id'] if exchange_job else None
+            
+            self.executor.log(f"[{job_id}] Created exchange_ssh_keys job: {exchange_job_id}")
+            self.update_job_status(job_id, 'completed',
+                completed_at=utc_now_iso(),
+                details={
+                    **details,
+                    'exchange_job_id': exchange_job_id,
+                    'message': 'SSH key exchange job created. Check its status for results.'
+                }
+            )
+            
+        except Exception as e:
+            self.executor.log(f"[{job_id}] Repair failed: {e}", "ERROR")
+            self.update_job_status(job_id, 'failed',
+                completed_at=utc_now_iso(),
+                details={**details, 'error': str(e)}
+            )
+    
+    def execute_repair_syncoid_cron(self, job: Dict):
+        """
+        Repair syncoid cron schedule by reinstalling it.
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        
+        self.executor.log(f"[{job_id}] Starting syncoid cron repair")
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso())
+        
+        try:
+            target_id = details.get('target_id')
+            
+            if not target_id:
+                raise ValueError("No target_id provided")
+            
+            target = self._get_replication_target(target_id)
+            if not target:
+                raise ValueError(f"Target not found: {target_id}")
+            
+            creds = self._get_target_ssh_creds(target)
+            if not creds:
+                raise ValueError("No SSH credentials available")
+            
+            partner_id = target.get('partner_target_id')
+            partner = self._get_replication_target(partner_id) if partner_id else None
+            
+            # Connect via SSH
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            pkey = None
+            if creds.get('key_data'):
+                key_file = io.StringIO(creds['key_data'])
+                for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                    try:
+                        key_file.seek(0)
+                        pkey = key_class.from_private_key(key_file)
+                        break
+                    except:
+                        continue
+            
+            ssh.connect(
+                hostname=creds['hostname'],
+                port=creds['port'],
+                username=creds['username'],
+                pkey=pkey,
+                password=creds.get('password'),
+                timeout=30
+            )
+            
+            repair_log = []
+            
+            # Check if syncoid is installed
+            stdin, stdout, stderr = ssh.exec_command('which syncoid 2>/dev/null || echo "NOT_FOUND"')
+            syncoid_path = stdout.read().decode().strip()
+            
+            if syncoid_path == 'NOT_FOUND':
+                repair_log.append("syncoid not installed on this system")
+                self.executor.log(f"[{job_id}] syncoid not installed")
+            else:
+                repair_log.append(f"syncoid found at: {syncoid_path}")
+                
+                # Check existing crontab
+                stdin, stdout, stderr = ssh.exec_command('crontab -l 2>/dev/null || echo "NO_CRONTAB"')
+                crontab = stdout.read().decode().strip()
+                
+                if 'syncoid' in crontab:
+                    repair_log.append("syncoid cron entry already exists")
+                else:
+                    repair_log.append("No syncoid cron entry found")
+                    
+                    # If we have a partner, suggest/create the cron entry
+                    if partner:
+                        partner_host = partner.get('hostname')
+                        partner_user = partner.get('ssh_username', 'root')
+                        pool = target.get('zfs_pool', 'tank')
+                        
+                        cron_entry = f"0 */4 * * * {syncoid_path} --no-privilege-elevation {pool} {partner_user}@{partner_host}:{pool} >> /var/log/syncoid.log 2>&1"
+                        repair_log.append(f"Suggested cron entry: {cron_entry}")
+                        repair_log.append("Note: Manual review recommended before enabling automated replication")
+                    else:
+                        repair_log.append("No partner target configured - cannot set up replication cron")
+            
+            ssh.close()
+            
+            self.executor.log(f"[{job_id}] Cron repair check complete")
+            self.update_job_status(job_id, 'completed',
+                completed_at=utc_now_iso(),
+                details={
+                    **details,
+                    'repair_log': repair_log,
+                    'message': 'Syncoid cron check complete. Review repair log for details.'
+                }
+            )
+            
+        except Exception as e:
+            self.executor.log(f"[{job_id}] Repair failed: {e}", "ERROR")
+            self.update_job_status(job_id, 'failed',
+                completed_at=utc_now_iso(),
+                details={**details, 'error': str(e)}
+            )
