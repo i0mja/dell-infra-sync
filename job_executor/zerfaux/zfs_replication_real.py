@@ -548,29 +548,87 @@ class ZFSReplicationReal:
         Returns:
             Dict with bytes, success, and incremental flag
         """
+        import re
+        
         if incremental_from:
             cmd = f"zfs send -nP -i @{incremental_from} {dataset}@{snapshot}"
         else:
             cmd = f"zfs send -nP {dataset}@{snapshot}"
         
-        logger.info(f"Getting send size: {cmd}")
+        logger.info(f"[get_snapshot_send_size] Getting size for {dataset}@{snapshot}")
+        logger.info(f"[get_snapshot_send_size] Incremental from: {incremental_from}")
+        logger.info(f"[get_snapshot_send_size] Running command: {cmd}")
         
         result = self._exec_command(cmd, ssh_hostname, ssh_username, ssh_port, ssh_key_data)
         
+        logger.info(f"[get_snapshot_send_size] Command success: {result.get('success')}")
+        logger.info(f"[get_snapshot_send_size] Stdout (first 500 chars): {result.get('stdout', '')[:500]}")
+        logger.info(f"[get_snapshot_send_size] Stderr (first 500 chars): {result.get('stderr', '')[:500]}")
+        
         if result.get('success'):
-            # Parse output: "size\t11273642128"
-            for line in result.get('stdout', '').splitlines():
-                if line.startswith('size'):
-                    try:
-                        size_bytes = int(line.split('\t')[1])
-                        return {
-                            'success': True,
-                            'bytes': size_bytes,
-                            'incremental': incremental_from is not None,
-                            'incremental_from': incremental_from
-                        }
-                    except (IndexError, ValueError) as e:
-                        logger.warning(f"Failed to parse size from: {line}")
+            stdout = result.get('stdout', '')
+            
+            # Try multiple parsing formats for different ZFS versions
+            for line in stdout.splitlines():
+                stripped = line.strip()
+                
+                # Format 1: OpenZFS 2.x tab-separated: "size\t11273642128"
+                if stripped.startswith('size'):
+                    parts = stripped.split()
+                    if len(parts) >= 2:
+                        try:
+                            size_bytes = int(parts[-1])
+                            logger.info(f"[get_snapshot_send_size] Parsed size (format 1 - tab): {size_bytes}")
+                            return {
+                                'success': True,
+                                'bytes': size_bytes,
+                                'incremental': incremental_from is not None,
+                                'incremental_from': incremental_from
+                            }
+                        except ValueError:
+                            logger.warning(f"[get_snapshot_send_size] Failed to parse as int: {parts[-1]}")
+                
+                # Format 2: "full\tdataset@snap\t123456789" - take last number
+                if stripped.startswith('full') or stripped.startswith('incremental'):
+                    parts = stripped.split()
+                    if len(parts) >= 3:
+                        try:
+                            size_bytes = int(parts[-1])
+                            logger.info(f"[get_snapshot_send_size] Parsed size (format 2 - full/incr): {size_bytes}")
+                            return {
+                                'success': True,
+                                'bytes': size_bytes,
+                                'incremental': incremental_from is not None,
+                                'incremental_from': incremental_from
+                            }
+                        except ValueError:
+                            pass
+            
+            # Format 3: Older ZFS: "estimated size is 123456789"
+            match = re.search(r'estimated size[^0-9]*(\d+)', stdout, re.IGNORECASE)
+            if match:
+                size_bytes = int(match.group(1))
+                logger.info(f"[get_snapshot_send_size] Parsed size (format 3 - estimated): {size_bytes}")
+                return {
+                    'success': True,
+                    'bytes': size_bytes,
+                    'incremental': incremental_from is not None,
+                    'incremental_from': incremental_from
+                }
+            
+            # Format 4: Just look for any large number in output (fallback)
+            numbers = re.findall(r'\b(\d{6,})\b', stdout)
+            if numbers:
+                size_bytes = max(int(n) for n in numbers)
+                logger.info(f"[get_snapshot_send_size] Parsed size (format 4 - fallback number): {size_bytes}")
+                return {
+                    'success': True,
+                    'bytes': size_bytes,
+                    'incremental': incremental_from is not None,
+                    'incremental_from': incremental_from
+                }
+            
+            logger.warning(f"[get_snapshot_send_size] Could not parse size from output")
         
         return {
             'success': False,

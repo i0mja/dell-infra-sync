@@ -155,9 +155,15 @@ export function DrStatsBar() {
     : 'Never';
   
   // Calculate total bytes transferred from completed jobs
-  const totalBytesTransferred = jobs
-    .filter(j => j.status === 'completed')
-    .reduce((sum, j) => sum + (j.bytes_transferred || 0), 0);
+  // Only count jobs after tracking was fixed (Dec 14, 2025)
+  const trackingFixDate = new Date('2025-12-14T19:00:00Z');
+  const recentJobs = jobs.filter(j => 
+    j.status === 'completed' && 
+    j.job_type === 'run_replication_sync' &&
+    new Date(j.created_at) >= trackingFixDate
+  );
+  const totalBytesTransferred = recentJobs.reduce((sum, j) => sum + (j.bytes_transferred || 0), 0);
+  const hasVerifiedTracking = recentJobs.length > 0;
 
   // Get target health status
   const getTargetStatus = (): 'success' | 'warning' | 'error' | 'neutral' => {
@@ -245,8 +251,8 @@ export function DrStatsBar() {
       <StatItem
         icon={HardDrive}
         label="Data Transferred"
-        value={formatBytes(totalBytesTransferred)}
-        subValue="total"
+        value={totalBytesTransferred > 0 ? formatBytes(totalBytesTransferred) : "—"}
+        subValue={hasVerifiedTracking ? "verified" : "tracking enabled"}
         status={totalBytesTransferred > 0 ? 'success' : 'neutral'}
         loading={loading}
       />
