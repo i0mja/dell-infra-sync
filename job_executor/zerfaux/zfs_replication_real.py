@@ -501,14 +501,10 @@ class ZFSReplicationReal:
                 recv_cmd = f"zfs receive -Fu {target_dataset}"
             else:
                 send_cmd = f"zfs send {source_dataset}@{source_snapshot}"
-                if dest_exists:
-                    # Full send to existing dataset (likely busy/NFS-mounted)
-                    # Unmount first, receive with force, then remount
-                    logger.info(f"Full send to existing dataset - using unmount/mount approach")
-                    recv_cmd = f"zfs unmount {target_dataset} </dev/null 2>/dev/null || true; zfs receive -F {target_dataset}; zfs mount {target_dataset} </dev/null 2>/dev/null || true"
-                else:
-                    # Full send to new dataset
-                    recv_cmd = f"zfs receive -u {target_dataset}"
+                # Full send - always use unmount/receive -F/mount approach
+                # This handles both new datasets (unmount fails silently) and existing busy datasets
+                logger.info(f"Full send - using unmount/receive -F/mount approach (dest_exists={dest_exists})")
+                recv_cmd = f"zfs unmount {target_dataset} </dev/null 2>/dev/null || true; zfs receive -F {target_dataset}; zfs mount {target_dataset} </dev/null 2>/dev/null || true"
             
             # Build the SSH command for target with StrictHostKeyChecking disabled
             ssh_opts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes"
