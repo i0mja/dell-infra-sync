@@ -1739,7 +1739,6 @@ class ReplicationHandler(BaseHandler):
             elapsed_seconds = 1
             if sync_start:
                 try:
-                    from datetime import datetime
                     start_dt = datetime.fromisoformat(sync_start.replace('Z', '+00:00'))
                     elapsed_seconds = max(1, (datetime.now(timezone.utc) - start_dt).total_seconds())
                 except:
