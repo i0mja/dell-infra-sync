@@ -1672,6 +1672,8 @@ class ReplicationHandler(BaseHandler):
                                     send_start = time.time()
                                     
                                     # Perform actual ZFS send/receive
+                                    # Execute ZFS send on the SOURCE server (Site A) via SSH
+                                    # This allows the Job Executor to run on Windows/non-ZFS systems
                                     send_result = self.zfs_replication.replicate_dataset(
                                         source_dataset=source_dataset,
                                         source_snapshot=snapshot_name,
@@ -1679,7 +1681,12 @@ class ReplicationHandler(BaseHandler):
                                         target_dataset=target_dataset,
                                         incremental_from=previous_snapshot,
                                         ssh_username=dr_username,
-                                        ssh_port=dr_port
+                                        ssh_port=dr_port,
+                                        # Source SSH credentials - execute ZFS send on Site A
+                                        source_host=ssh_hostname,
+                                        source_ssh_username=ssh_username,
+                                        source_ssh_port=ssh_port,
+                                        source_ssh_key_data=ssh_key_data
                                     )
                                     
                                     send_duration = int((time.time() - send_start) * 1000)

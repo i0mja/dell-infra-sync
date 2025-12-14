@@ -409,11 +409,14 @@ class ZFSReplicationReal:
                           target_host: str, target_dataset: str,
                           incremental_from: str = None,
                           ssh_username: str = None, ssh_port: int = 22,
-                          use_syncoid: bool = False) -> Dict:
+                          use_syncoid: bool = False,
+                          source_host: str = None, source_ssh_username: str = None,
+                          source_ssh_port: int = 22, source_ssh_key_data: str = None) -> Dict:
         """
         Replicate a ZFS dataset to a remote target.
         
         Uses either native ZFS send/receive or syncoid.
+        Can execute locally or remotely via SSH (for Windows Job Executors).
         
         Args:
             source_dataset: Source ZFS dataset
@@ -421,9 +424,13 @@ class ZFSReplicationReal:
             target_host: Target hostname
             target_dataset: Target ZFS dataset
             incremental_from: Previous snapshot for incremental send
-            ssh_username: SSH username
-            ssh_port: SSH port
+            ssh_username: SSH username for target
+            ssh_port: SSH port for target
             use_syncoid: Whether to use syncoid instead of native ZFS
+            source_host: Source ZFS server to execute command on (via SSH)
+            source_ssh_username: SSH username for source server
+            source_ssh_port: SSH port for source server
+            source_ssh_key_data: SSH private key for source server
             
         Returns:
             Dict with replication result
@@ -443,54 +450,113 @@ class ZFSReplicationReal:
             
             recv_cmd = f"zfs receive -F {target_dataset}"
             
+            # Build the SSH command for target with StrictHostKeyChecking disabled
+            ssh_opts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes"
             if ssh_username:
-                command = f"{send_cmd} | ssh -p {ssh_port} {ssh_username}@{target_host} {recv_cmd}"
+                command = f"{send_cmd} | ssh {ssh_opts} -p {ssh_port} {ssh_username}@{target_host} {recv_cmd}"
             else:
-                command = f"{send_cmd} | ssh -p {ssh_port} {target_host} {recv_cmd}"
+                command = f"{send_cmd} | ssh {ssh_opts} -p {ssh_port} {target_host} {recv_cmd}"
         
-        # Execute replication command
-        import subprocess
         try:
-            proc = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=3600  # 1 hour timeout for large transfers
-            )
-            
-            elapsed = time.time() - start_time
-            
-            if proc.returncode == 0:
-                # Parse bytes transferred from output if available
-                bytes_transferred = self._parse_transfer_size(proc.stdout + proc.stderr)
+            if source_host:
+                # Execute ZFS send on the SOURCE server via SSH (for Windows Job Executors)
+                logger.info(f"Executing ZFS send remotely on {source_host}")
+                ssh = self._get_ssh_client(
+                    source_host, 
+                    source_ssh_port, 
+                    source_ssh_username,
+                    key_data=source_ssh_key_data
+                )
                 
-                return {
-                    'success': True,
-                    'source_dataset': source_dataset,
-                    'source_snapshot': source_snapshot,
-                    'target_host': target_host,
-                    'target_dataset': target_dataset,
-                    'incremental': incremental_from is not None,
-                    'incremental_from': incremental_from,
-                    'bytes_transferred': bytes_transferred,
-                    'transfer_rate_mbps': round(bytes_transferred / 1_000_000 / max(elapsed, 1), 2),
-                    'started_at': datetime.fromtimestamp(start_time).isoformat(),
-                    'completed_at': datetime.utcnow().isoformat(),
-                    'elapsed_seconds': round(elapsed, 2),
-                    'message': f'Replicated {bytes_transferred / 1_000_000:.2f} MB in {elapsed:.2f}s'
-                }
+                if not ssh:
+                    return {
+                        'success': False,
+                        'source_dataset': source_dataset,
+                        'error': f'Failed to connect to source host {source_host}',
+                        'message': f'Cannot SSH to source ZFS server {source_host}'
+                    }
+                
+                try:
+                    result = self._exec_ssh_command(ssh, command, timeout=3600)
+                    elapsed = time.time() - start_time
+                    
+                    if result.get('success'):
+                        bytes_transferred = self._parse_transfer_size(
+                            result.get('stdout', '') + result.get('stderr', '')
+                        )
+                        
+                        return {
+                            'success': True,
+                            'source_dataset': source_dataset,
+                            'source_snapshot': source_snapshot,
+                            'target_host': target_host,
+                            'target_dataset': target_dataset,
+                            'incremental': incremental_from is not None,
+                            'incremental_from': incremental_from,
+                            'bytes_transferred': bytes_transferred,
+                            'transfer_rate_mbps': round(bytes_transferred / 1_000_000 / max(elapsed, 1), 2),
+                            'started_at': datetime.fromtimestamp(start_time).isoformat(),
+                            'completed_at': datetime.utcnow().isoformat(),
+                            'elapsed_seconds': round(elapsed, 2),
+                            'executed_on': source_host,
+                            'message': f'Replicated {bytes_transferred / 1_000_000:.2f} MB in {elapsed:.2f}s'
+                        }
+                    else:
+                        return {
+                            'success': False,
+                            'source_dataset': source_dataset,
+                            'source_snapshot': source_snapshot,
+                            'target_host': target_host,
+                            'target_dataset': target_dataset,
+                            'error': result.get('stderr', 'Unknown error'),
+                            'executed_on': source_host,
+                            'message': f'Replication failed: {result.get("stderr")}'
+                        }
+                finally:
+                    ssh.close()
             else:
-                return {
-                    'success': False,
-                    'source_dataset': source_dataset,
-                    'source_snapshot': source_snapshot,
-                    'target_host': target_host,
-                    'target_dataset': target_dataset,
-                    'error': proc.stderr,
-                    'message': f'Replication failed: {proc.stderr}'
-                }
+                # Local execution (when Job Executor runs directly on ZFS server)
+                import subprocess
+                proc = subprocess.run(
+                    command,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=3600  # 1 hour timeout for large transfers
+                )
                 
+                elapsed = time.time() - start_time
+                
+                if proc.returncode == 0:
+                    bytes_transferred = self._parse_transfer_size(proc.stdout + proc.stderr)
+                    
+                    return {
+                        'success': True,
+                        'source_dataset': source_dataset,
+                        'source_snapshot': source_snapshot,
+                        'target_host': target_host,
+                        'target_dataset': target_dataset,
+                        'incremental': incremental_from is not None,
+                        'incremental_from': incremental_from,
+                        'bytes_transferred': bytes_transferred,
+                        'transfer_rate_mbps': round(bytes_transferred / 1_000_000 / max(elapsed, 1), 2),
+                        'started_at': datetime.fromtimestamp(start_time).isoformat(),
+                        'completed_at': datetime.utcnow().isoformat(),
+                        'elapsed_seconds': round(elapsed, 2),
+                        'executed_on': 'local',
+                        'message': f'Replicated {bytes_transferred / 1_000_000:.2f} MB in {elapsed:.2f}s'
+                    }
+                else:
+                    return {
+                        'success': False,
+                        'source_dataset': source_dataset,
+                        'source_snapshot': source_snapshot,
+                        'target_host': target_host,
+                        'target_dataset': target_dataset,
+                        'error': proc.stderr,
+                        'message': f'Replication failed: {proc.stderr}'
+                    }
+                    
         except subprocess.TimeoutExpired:
             return {
                 'success': False,
