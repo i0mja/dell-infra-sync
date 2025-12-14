@@ -1084,7 +1084,12 @@ export function useProtectionPlan(protectedVmId?: string) {
       if (!protectedVmId) return null;
       const { data, error } = await supabase
         .from('protected_vms')
-        .select('*')
+        .select(`
+          *,
+          vcenter_vm:vcenter_vms!protected_vms_vm_id_fkey(
+            id, name, cpu_count, memory_mb, guest_os, power_state
+          )
+        `)
         .eq('id', protectedVmId)
         .single();
       if (error) throw error;
@@ -1218,6 +1223,9 @@ export function useDRShellPlan(protectedVmId?: string, selectedDrVcenterId?: str
           *,
           protection_group:protection_groups(
             id, name, source_vcenter_id, target_id, protection_datastore
+          ),
+          vcenter_vm:vcenter_vms!protected_vms_vm_id_fkey(
+            id, name, cpu_count, memory_mb, guest_os, power_state
           )
         `)
         .eq('id', protectedVmId)

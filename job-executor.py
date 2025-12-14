@@ -1224,6 +1224,40 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
                 
                 update_task('update_db', 'completed', 'Database updated')
                 
+                # Also update vcenter_vms directly so wizards see fresh data immediately
+                if vm.get('vm_id'):
+                    try:
+                        requests.patch(
+                            f"{DSM_URL}/rest/v1/vcenter_vms",
+                            headers={**headers, 'Content-Type': 'application/json'},
+                            params={'id': f"eq.{vm['vm_id']}"},
+                            json={'updated_at': utc_now_iso()},
+                            verify=VERIFY_SSL,
+                            timeout=10
+                        )
+                        self.log(f"Updated vcenter_vms timestamp for vm_id={vm['vm_id']}")
+                    except Exception as vm_update_err:
+                        self.log(f"Failed to update vcenter_vms: {vm_update_err}", "WARN")
+                
+                # Queue a vCenter sync to refresh VM-datastore relationships
+                if group.get('source_vcenter_id'):
+                    try:
+                        requests.post(
+                            f"{DSM_URL}/rest/v1/jobs",
+                            headers={**headers, 'Content-Type': 'application/json', 'Prefer': 'return=representation'},
+                            json={
+                                'job_type': 'vcenter_sync',
+                                'status': 'pending',
+                                'target_scope': {'vcenter_id': group.get('source_vcenter_id')},
+                                'details': {'reason': f'Post-vMotion refresh for {vm_name}', 'sync_vms': True, 'sync_datastores': True}
+                            },
+                            verify=VERIFY_SSL,
+                            timeout=10
+                        )
+                        self.log(f"Queued vCenter sync job after vMotion for vcenter_id={group.get('source_vcenter_id')}")
+                    except Exception as sync_err:
+                        self.log(f"Failed to queue post-vMotion sync: {sync_err}", "WARN")
+                
                 self.log(f"VM {vm_name} successfully relocated to {final_target} in {duration_seconds}s")
                 job_details['current_step'] = 'Complete'
                 job_details['progress_percent'] = 100
