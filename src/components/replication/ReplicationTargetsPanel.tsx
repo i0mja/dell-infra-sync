@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -52,6 +52,7 @@ import {
   Database,
   RefreshCw,
   MonitorCheck,
+  Eye,
 } from "lucide-react";
 import { useReplicationTargets, ReplicationTarget, TargetDependencies } from "@/hooks/useReplication";
 import { useSshKeys, SshKey } from "@/hooks/useSshKeys";
@@ -63,6 +64,7 @@ import { PrepareTemplateWizard } from "./PrepareTemplateWizard";
 import { PairedZfsDeployWizard } from "./PairedZfsDeployWizard";
 import { DecommissionTargetDialog, DecommissionOption } from "./DecommissionTargetDialog";
 import { DatastoreManagementDialog } from "./DatastoreManagementDialog";
+import { ZfsTargetHealthDialog } from "./ZfsTargetHealthDialog";
 
 interface ReplicationTargetsPanelProps {
   onAddTarget?: () => void;
@@ -113,6 +115,11 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
   }>({ open: false, target: null });
   const [sshPassword, setSshPassword] = useState('');
   const [submittingSshExchange, setSubmittingSshExchange] = useState(false);
+  
+  // Health dialog state
+  const [showHealthDialog, setShowHealthDialog] = useState(false);
+  const [healthResults, setHealthResults] = useState<any>(null);
+  const [healthTarget, setHealthTarget] = useState<ReplicationTarget | null>(null);
   
   // Form for creating paired targets (source + DR)
   const [formData, setFormData] = useState({
@@ -249,7 +256,7 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
     }
   };
 
-  const handleHealthCheck = async (target: any) => {
+  const handleHealthCheck = async (target: any, showResultsAfter: boolean = false) => {
     setHealthCheckingId(target.id);
     try {
       // Get current user
@@ -259,7 +266,7 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
       const sshHost = target.hosting_vm?.ip_address || target.hostname;
       
       // Create a check_zfs_target_health job that the Job Executor will process
-      const { error } = await supabase
+      const { data: jobData, error } = await supabase
         .from('jobs')
         .insert({
           job_type: 'check_zfs_target_health' as any,
@@ -272,7 +279,9 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
             target_name: target.name,
             hosting_vm_name: target.hosting_vm?.name || null
           }
-        });
+        })
+        .select()
+        .single();
       
       if (error) throw error;
       
@@ -280,6 +289,12 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
         title: "Health check job created",
         description: `Checking ${target.name} via ${sshHost}... See Jobs page for results`
       });
+      
+      // If requested, poll for results and show dialog
+      if (showResultsAfter && jobData) {
+        setHealthTarget(target);
+        pollForHealthResults(jobData.id, target);
+      }
       
     } catch (err: any) {
       toast({
@@ -289,6 +304,69 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
       });
     } finally {
       setHealthCheckingId(null);
+    }
+  };
+
+  const pollForHealthResults = async (jobId: string, target: ReplicationTarget) => {
+    // Poll for job completion (max 60 seconds)
+    const maxAttempts = 30;
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      const { data: job } = await supabase
+        .from('jobs')
+        .select('status, details')
+        .eq('id', jobId)
+        .single();
+      
+      const details = job?.details as Record<string, any> | null;
+      
+      if (job?.status === 'completed' && details?.results) {
+        setHealthResults(details.results);
+        setShowHealthDialog(true);
+        return;
+      }
+      
+      if (job?.status === 'failed') {
+        toast({
+          title: "Health check failed",
+          description: details?.error || "Unknown error",
+          variant: "destructive"
+        });
+        return;
+      }
+    }
+    
+    toast({
+      title: "Health check timeout",
+      description: "Check the Jobs page for results",
+    });
+  };
+
+  const handleViewHealthResults = async (target: ReplicationTarget) => {
+    // Find the most recent completed health check job for this target
+    const { data: jobs } = await supabase
+      .from('jobs')
+      .select('id, status, details, completed_at')
+      .eq('job_type', 'check_zfs_target_health' as any)
+      .eq('status', 'completed')
+      .order('completed_at', { ascending: false })
+      .limit(20);
+    
+    // Find one that matches this target
+    const targetJob = jobs?.find(j => {
+      const details = j.details as Record<string, any> | null;
+      return details?.target_id === target.id;
+    });
+    
+    const targetDetails = targetJob?.details as Record<string, any> | null;
+    if (targetDetails?.results) {
+      setHealthTarget(target);
+      setHealthResults(targetDetails.results);
+      setShowHealthDialog(true);
+    } else {
+      // No results, run a new check
+      handleHealthCheck(target, true);
     }
   };
 
@@ -1081,9 +1159,13 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleViewHealthResults(target)}>
+                            <Eye className="h-4 w-4 mr-2" />
+                            View Health
+                          </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => handleHealthCheck(target)}>
                             <HeartPulse className="h-4 w-4 mr-2" />
-                            Health Check
+                            Run Health Check
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => handleEdit(target)}>
                             <Pencil className="h-4 w-4 mr-2" />
@@ -1338,6 +1420,16 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Health Results Dialog */}
+      <ZfsTargetHealthDialog
+        open={showHealthDialog}
+        onOpenChange={setShowHealthDialog}
+        healthResults={healthResults}
+        partnerName={healthTarget?.partner_target?.name}
+        onRefresh={() => healthTarget && handleHealthCheck(healthTarget, true)}
+        refreshing={healthCheckingId === healthTarget?.id}
+      />
     </Card>
   );
 }
