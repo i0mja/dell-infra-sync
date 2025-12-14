@@ -184,7 +184,7 @@ export function AddVMsDialog({
       const vmsToAdd: Partial<ProtectedVM>[] = selectedVMs.map(vm => ({
         vm_id: vm.id,
         vm_name: vm.name,
-        vm_vcenter_id: undefined,
+        vm_vcenter_id: vm.vcenter_id || undefined,
         current_datastore: undefined,
         needs_storage_vmotion: true,
       }));

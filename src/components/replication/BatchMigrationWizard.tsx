@@ -79,17 +79,21 @@ export function BatchMigrationWizard({
 
   // Get only VMs that need migration
   const pendingVMs = vms.filter(vm => vm.needs_storage_vmotion);
+  
+  // VMs missing MoRef (vm_vcenter_id) cannot be migrated
+  const vmsWithMoRef = pendingVMs.filter(vm => vm.vm_vcenter_id);
+  const vmsMissingMoRef = pendingVMs.filter(vm => !vm.vm_vcenter_id);
 
-  // Reset state when dialog opens
+  // Reset state when dialog opens - only pre-select VMs with MoRef
   useEffect(() => {
     if (open) {
       setStep('select');
-      setSelectedVMs(new Set(pendingVMs.map(vm => vm.id)));
+      setSelectedVMs(new Set(vmsWithMoRef.map(vm => vm.id)));
       setStrategy('parallel');
       setJobIds([]);
       setError(null);
     }
-  }, [open, pendingVMs.length]);
+  }, [open, vmsWithMoRef.length]);
 
   // Poll job statuses during execution
   const { data: jobStatuses } = useQuery({
@@ -137,12 +141,12 @@ export function BatchMigrationWizard({
   }, []);
 
   const handleSelectAll = useCallback(() => {
-    if (selectedVMs.size === pendingVMs.length) {
+    if (selectedVMs.size === vmsWithMoRef.length) {
       setSelectedVMs(new Set());
     } else {
-      setSelectedVMs(new Set(pendingVMs.map(vm => vm.id)));
+      setSelectedVMs(new Set(vmsWithMoRef.map(vm => vm.id)));
     }
-  }, [pendingVMs, selectedVMs.size]);
+  }, [vmsWithMoRef, selectedVMs.size]);
 
   const handleExecute = async () => {
     setExecuting(true);
@@ -234,21 +238,37 @@ export function BatchMigrationWizard({
       <div className="flex items-center justify-between">
         <h4 className="font-medium">Select VMs to Migrate</h4>
         <Button variant="ghost" size="sm" onClick={handleSelectAll}>
-          {selectedVMs.size === pendingVMs.length ? 'Deselect All' : 'Select All'}
+          {selectedVMs.size === vmsWithMoRef.length ? 'Deselect All' : 'Select All'}
         </Button>
       </div>
 
-      {pendingVMs.length === 0 ? (
+      {/* Warning for VMs missing MoRef */}
+      {vmsMissingMoRef.length > 0 && (
+        <Alert variant="destructive" className="bg-amber-500/10 border-amber-500/30">
+          <AlertTriangle className="h-4 w-4 text-amber-500" />
+          <AlertDescription className="text-amber-600">
+            <strong>{vmsMissingMoRef.length} VM(s)</strong> cannot be migrated - missing vCenter reference. 
+            Re-add these VMs from the vCenter inventory:{' '}
+            <span className="font-mono text-xs">
+              {vmsMissingMoRef.map(vm => vm.vm_name).join(', ')}
+            </span>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {vmsWithMoRef.length === 0 ? (
         <Alert>
           <Info className="h-4 w-4" />
           <AlertDescription>
-            No VMs require migration. All VMs are already on the protection datastore.
+            {pendingVMs.length === 0 
+              ? 'No VMs require migration. All VMs are already on the protection datastore.'
+              : 'No VMs can be migrated. All pending VMs are missing their vCenter reference.'}
           </AlertDescription>
         </Alert>
       ) : (
-        <ScrollArea className="h-[280px] border rounded-lg">
+        <ScrollArea className="h-[250px] border rounded-lg">
           <div className="p-2 space-y-1">
-            {pendingVMs.map((vm) => (
+            {vmsWithMoRef.map((vm) => (
               <div
                 key={vm.id}
                 className={`flex items-center gap-3 p-3 rounded-md cursor-pointer transition-colors
@@ -280,7 +300,7 @@ export function BatchMigrationWizard({
       )}
 
       <div className="flex items-center justify-between text-sm text-muted-foreground border-t pt-3">
-        <span>{selectedVMs.size} of {pendingVMs.length} VMs selected</span>
+        <span>{selectedVMs.size} of {vmsWithMoRef.length} VMs selected</span>
         <span>~{getSelectedVMsSize()} GB total</span>
       </div>
     </div>
