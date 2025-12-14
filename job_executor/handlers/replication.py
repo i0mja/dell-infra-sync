@@ -1710,23 +1710,28 @@ class ReplicationHandler(BaseHandler):
                                         vm_bytes_transferred = send_result.get('bytes_transferred', 0)
                                         vm_transfer_rate = send_result.get('transfer_rate_mbps', 0)
                                         
-                                        # If bytes_transferred is 0, use expected_bytes as actual
+                                        # DO NOT assume expected_bytes were transferred if bytes_transferred is 0
+                                        # This was causing false success reporting - if we can't parse actual bytes,
+                                        # log a warning but don't fabricate transfer stats
                                         if vm_bytes_transferred == 0 and expected_bytes > 0:
-                                            vm_bytes_transferred = expected_bytes
-                                            elapsed = max((time.time() - send_start), 1)
-                                            vm_transfer_rate = round(vm_bytes_transferred / 1_000_000 / elapsed, 2)
+                                            add_console_log(
+                                                f"⚠ Could not parse bytes transferred from zfs send output. "
+                                                f"Expected ~{self._format_bytes(expected_bytes)} - will verify on Site B",
+                                                "WARN"
+                                            )
                                         
                                         add_console_log(
                                             f"ZFS send complete: {self._format_bytes(vm_bytes_transferred)} "
                                             f"@ {vm_transfer_rate} MB/s ({send_duration}ms)"
                                         )
                                         
-                                        # Verify snapshot arrived on Site B
+                                        # CRITICAL: Verify snapshot arrived on Site B
+                                        # This is the source of truth - not the send command exit code
                                         verify_result = self.zfs_replication.verify_snapshot_on_target(
                                             target_host=dr_hostname,
                                             target_dataset=target_dataset,
                                             snapshot_name=snapshot_name,
-                                            expected_bytes=vm_bytes_transferred,
+                                            expected_bytes=expected_bytes if vm_bytes_transferred == 0 else vm_bytes_transferred,
                                             ssh_username=dr_username,
                                             ssh_port=dr_port,
                                             ssh_key_data=dr_key_data
@@ -1736,8 +1741,24 @@ class ReplicationHandler(BaseHandler):
                                             site_b_verified = True
                                             target_bytes = verify_result.get('target_bytes', 0)
                                             add_console_log(f"✓ Verified snapshot on Site B ({self._format_bytes(target_bytes)})")
+                                            
+                                            # If we couldn't parse bytes from send, use verified target bytes
+                                            if vm_bytes_transferred == 0 and target_bytes > 0:
+                                                vm_bytes_transferred = target_bytes
+                                                elapsed = max((time.time() - send_start), 1)
+                                                vm_transfer_rate = round(vm_bytes_transferred / 1_000_000 / elapsed, 2)
+                                                add_console_log(f"Using verified target size: {self._format_bytes(target_bytes)}")
                                         else:
-                                            add_console_log(f"⚠ Site B verification failed: {verify_result.get('error')}", "WARN")
+                                            # CRITICAL: Site B verification failed - this is a REAL failure
+                                            site_b_verified = False
+                                            send_success = False  # Mark as failed!
+                                            error_msg = verify_result.get('error', 'Unknown verification error')
+                                            add_console_log(f"ERROR: Site B verification FAILED: {error_msg}", "ERROR")
+                                            add_console_log("Data may not have arrived at Site B despite send command succeeding", "ERROR")
+                                            results['errors'].append({
+                                                'vm': vm_name, 
+                                                'error': f"Site B verification failed: {error_msg}"
+                                            })
                                         
                                         # Log SSH command for activity tracking
                                         self._log_ssh_command(

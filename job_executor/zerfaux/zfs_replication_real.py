@@ -496,15 +496,19 @@ class ZFSReplicationReal:
         else:
             # Use native ZFS send/receive
             if incremental_from:
-                send_cmd = f"zfs send -i @{incremental_from} {source_dataset}@{source_snapshot}"
+                # Add -v for verbose output with byte counts
+                send_cmd = f"zfs send -v -i @{incremental_from} {source_dataset}@{source_snapshot}"
                 # Incremental: use -Fu (force rollback, no mount)
                 recv_cmd = f"zfs receive -Fu {target_dataset}"
             else:
-                send_cmd = f"zfs send {source_dataset}@{source_snapshot}"
-                # Full send - always use unmount/receive -F/mount approach
-                # This handles both new datasets (unmount fails silently) and existing busy datasets
+                # Add -v for verbose output with byte counts
+                send_cmd = f"zfs send -v {source_dataset}@{source_snapshot}"
+                # Full send - unmount first, then receive, then mount
+                # CRITICAL: Do NOT mask zfs receive exit code with || true
+                # Structure: (unmount || true) && zfs receive && (mount || true)
+                # This way zfs receive failure is properly detected
                 logger.info(f"Full send - using unmount/receive -F/mount approach (dest_exists={dest_exists})")
-                recv_cmd = f"zfs unmount {target_dataset} </dev/null 2>/dev/null || true; zfs receive -F {target_dataset}; zfs mount {target_dataset} </dev/null 2>/dev/null || true"
+                recv_cmd = f"(zfs unmount {target_dataset} </dev/null 2>/dev/null || true) && zfs receive -F {target_dataset} && (zfs mount {target_dataset} </dev/null 2>/dev/null || true)"
             
             # Build the SSH command for target with StrictHostKeyChecking disabled
             ssh_opts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes"
@@ -628,24 +632,58 @@ class ZFSReplicationReal:
             }
     
     def _parse_transfer_size(self, output: str) -> int:
-        """Parse bytes transferred from zfs send output"""
+        """
+        Parse bytes transferred from zfs send -v output.
+        
+        zfs send -v outputs lines like:
+        - "full send of pool/dataset@snap estimated size is 26.7G"
+        - "incremental send of pool/dataset@snap estimated size is 1.2M"
+        - "total estimated size is 26.7G"
+        - At the end: "26.7G  pool/dataset@snap"
+        
+        Also handles raw byte counts and other formats.
+        """
         import re
         
+        if not output:
+            return 0
+        
+        multipliers = {'T': 1024**4, 'G': 1024**3, 'M': 1024**2, 'K': 1024, 'B': 1, '': 1}
+        
+        # Patterns ordered by specificity
         patterns = [
-            r'(\d+\.?\d*)\s*([TGMK]?)B?\s*bytes?',
-            r'size\s+is\s+(\d+\.?\d*)\s*([TGMK])',
-            r'sent\s+(\d+\.?\d*)\s*([TGMK])'
+            # zfs send -v output: "estimated size is 26.7G"
+            r'estimated size is\s+(\d+\.?\d*)\s*([TGMKB])',
+            # zfs send -v output: "total estimated size is 26.7G"
+            r'total estimated size is\s+(\d+\.?\d*)\s*([TGMKB])',
+            # zfs send -v final line: "26.7G  pool/dataset@snap"
+            r'^(\d+\.?\d*)\s*([TGMKB])\s+\S+@\S+',
+            # Generic: "sent 26.7G" or "26.7G bytes"
+            r'sent\s+(\d+\.?\d*)\s*([TGMKB])',
+            r'(\d+\.?\d*)\s*([TGMKB])B?\s*bytes?',
+            # Raw byte count (no unit)
+            r'size\s+is\s+(\d+)\s*$',
         ]
         
-        multipliers = {'T': 1024**4, 'G': 1024**3, 'M': 1024**2, 'K': 1024, '': 1}
-        
         for pattern in patterns:
-            match = re.search(pattern, output, re.IGNORECASE)
+            match = re.search(pattern, output, re.IGNORECASE | re.MULTILINE)
             if match:
                 size = float(match.group(1))
-                unit = match.group(2).upper() if len(match.groups()) > 1 else ''
-                return int(size * multipliers.get(unit, 1))
+                unit = match.group(2).upper() if len(match.groups()) > 1 and match.group(2) else ''
+                bytes_val = int(size * multipliers.get(unit, 1))
+                if bytes_val > 0:
+                    logger.debug(f"Parsed transfer size: {bytes_val} bytes (pattern: {pattern})")
+                    return bytes_val
         
+        # Try to find any large number that might be bytes
+        numbers = re.findall(r'\b(\d{6,})\b', output)
+        if numbers:
+            # Return the largest number (likely total bytes)
+            largest = max(int(n) for n in numbers)
+            logger.debug(f"Parsed transfer size from raw number: {largest} bytes")
+            return largest
+        
+        logger.warning(f"Could not parse transfer size from output: {output[:200]}...")
         return 0
     
     def get_snapshot_send_size(self, dataset: str, snapshot: str,
