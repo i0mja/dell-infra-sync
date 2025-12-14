@@ -3497,7 +3497,7 @@ chmod 600 ~/.ssh/authorized_keys
             partner_port = partner_creds.get('port', 22)
             
             start_time = time.time()
-            send_cmd = f"zfs send {test_snapshot} 2>/dev/null | ssh -o StrictHostKeyChecking=no -p {partner_port} {partner_user}@{partner_host} 'zfs receive -F {test_dataset}' 2>&1"
+            send_cmd = f"zfs send {test_snapshot} 2>/dev/null | ssh -o StrictHostKeyChecking=no -p {partner_port} {partner_user}@{partner_host} 'zfs receive -Fu {test_dataset}' 2>&1"
             stdin, stdout, stderr = ssh.exec_command(send_cmd, timeout=120)
             send_output = stdout.read().decode().strip()
             send_error = stderr.read().decode().strip()

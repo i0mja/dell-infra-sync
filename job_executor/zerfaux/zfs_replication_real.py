@@ -499,7 +499,8 @@ class ZFSReplicationReal:
             else:
                 send_cmd = f"zfs send {source_dataset}@{source_snapshot}"
             
-            recv_cmd = f"zfs receive -F {target_dataset}"
+            # Use -Fu: -F forces rollback, -u prevents mounting (allows receiving to busy/NFS-mounted datasets)
+            recv_cmd = f"zfs receive -Fu {target_dataset}"
             
             # Build the SSH command for target with StrictHostKeyChecking disabled
             ssh_opts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes"
