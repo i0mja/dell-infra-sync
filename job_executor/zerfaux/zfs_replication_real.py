@@ -198,6 +198,41 @@ class ZFSReplicationReal:
         
         return None
     
+    def check_dataset_exists(self, dataset: str, ssh_hostname: str = None, 
+                             ssh_username: str = 'root', ssh_port: int = 22,
+                             ssh_key_data: str = None) -> bool:
+        """
+        Check if a ZFS dataset exists on a target host.
+        
+        Args:
+            dataset: ZFS dataset path (e.g., 'tank/nfs/vm-name')
+            ssh_hostname: Remote host (None for local)
+            ssh_username: SSH username
+            ssh_port: SSH port
+            ssh_key_data: SSH private key data
+            
+        Returns:
+            True if dataset exists, False otherwise
+        """
+        command = f"zfs list -H -o name {dataset}"
+        
+        if ssh_hostname:
+            ssh = self._get_ssh_client(ssh_hostname, ssh_port, ssh_username, key_data=ssh_key_data)
+            if not ssh:
+                return False
+            try:
+                result = self._exec_ssh_command(ssh, command, timeout=30)
+                return result.get('success', False) and result.get('exit_code', 1) == 0
+            finally:
+                ssh.close()
+        else:
+            import subprocess
+            try:
+                proc = subprocess.run(command.split(), capture_output=True, timeout=30)
+                return proc.returncode == 0
+            except:
+                return False
+    
     def check_target_health(self, target_hostname: str, zfs_pool: str,
                             ssh_username: str = None, ssh_port: int = 22,
                             ssh_key_path: str = None, ssh_key_data: str = None,
@@ -439,6 +474,19 @@ class ZFSReplicationReal:
         """
         logger.info(f"Replicating {source_dataset}@{source_snapshot} to {target_host}:{target_dataset}")
         start_time = time.time()
+        
+        # Check if destination dataset exists - if not, force full send
+        if incremental_from:
+            dest_exists = self.check_dataset_exists(
+                target_dataset, 
+                ssh_hostname=target_host,
+                ssh_username=ssh_username or 'root',
+                ssh_port=ssh_port,
+                ssh_key_data=source_ssh_key_data
+            )
+            if not dest_exists:
+                logger.warning(f"Destination {target_dataset} doesn't exist on {target_host}, switching to full send")
+                incremental_from = None  # Force full send
         
         if use_syncoid:
             # Use syncoid for replication
