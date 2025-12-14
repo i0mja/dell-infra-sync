@@ -583,15 +583,17 @@ export function useProtectionGroups() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('protection_groups')
-        .select('*')
+        .select('*, protected_vms(count)')
         .order('name');
       if (error) throw error;
-      // Map database fields to interface, handling JSON retention_policy
+      // Map database fields to interface, handling JSON retention_policy and VM count
       return (data || []).map(row => ({
         ...row,
+        vm_count: (row.protected_vms as { count: number }[])?.[0]?.count || 0,
         retention_policy: (row.retention_policy as { daily: number; weekly: number; monthly: number }) || { daily: 7, weekly: 4, monthly: 12 }
       })) as ProtectionGroup[];
-    }
+    },
+    refetchInterval: 15000 // Auto-refresh every 15 seconds
   });
 
   const createGroupMutation = useMutation({
@@ -997,14 +999,36 @@ export function useReplicationJobs() {
   const { data: jobs = [], isLoading: loading, error, refetch } = useQuery({
     queryKey: ['replication-jobs'],
     queryFn: async () => {
+      // Query the jobs table for replication-related job types
       const { data, error } = await supabase
-        .from('replication_jobs')
+        .from('jobs')
         .select('*')
+        .in('job_type', ['run_replication_sync', 'storage_vmotion'])
         .order('created_at', { ascending: false })
         .limit(100);
       if (error) throw error;
-      return data as ReplicationJob[];
-    }
+      // Map jobs table to ReplicationJob interface
+      return (data || []).map(job => {
+        const targetScope = job.target_scope as Record<string, unknown> | null;
+        const details = job.details as Record<string, unknown> | null;
+        return {
+          id: job.id,
+          protection_group_id: (targetScope?.protection_group_id || details?.protection_group_id) as string | undefined,
+          protected_vm_id: details?.protected_vm_id as string | undefined,
+          job_type: job.job_type,
+          status: job.status,
+          started_at: job.started_at,
+          completed_at: job.completed_at,
+          bytes_transferred: (details?.bytes_transferred as number) || 0,
+          error_message: details?.error as string | undefined,
+          source_snapshot: details?.source_snapshot as string | undefined,
+          target_snapshot: details?.target_snapshot as string | undefined,
+          incremental: details?.incremental as boolean | undefined,
+          created_at: job.created_at,
+        };
+      }) as ReplicationJob[];
+    },
+    refetchInterval: 10000 // Auto-refresh every 10 seconds
   });
 
   return { jobs, loading, error: error?.message || null, refetch };
