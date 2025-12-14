@@ -476,18 +476,19 @@ class ZFSReplicationReal:
         logger.info(f"Replicating {source_dataset}@{source_snapshot} to {target_host}:{target_dataset}")
         start_time = time.time()
         
-        # Check if destination dataset exists - if not, force full send
-        if incremental_from:
-            dest_exists = self.check_dataset_exists(
-                target_dataset, 
-                ssh_hostname=target_host,
-                ssh_username=ssh_username or 'root',
-                ssh_port=ssh_port,
-                ssh_key_data=target_ssh_key_data  # Use Site B's key
-            )
-            if not dest_exists:
-                logger.warning(f"Destination {target_dataset} doesn't exist on {target_host}, switching to full send")
-                incremental_from = None  # Force full send
+        # Check if destination dataset exists
+        dest_exists = self.check_dataset_exists(
+            target_dataset, 
+            ssh_hostname=target_host,
+            ssh_username=ssh_username or 'root',
+            ssh_port=ssh_port,
+            ssh_key_data=target_ssh_key_data  # Use Site B's key
+        )
+        
+        # If incremental but destination doesn't exist, force full send
+        if incremental_from and not dest_exists:
+            logger.warning(f"Destination {target_dataset} doesn't exist on {target_host}, switching to full send")
+            incremental_from = None  # Force full send
         
         if use_syncoid:
             # Use syncoid for replication
@@ -496,18 +497,25 @@ class ZFSReplicationReal:
             # Use native ZFS send/receive
             if incremental_from:
                 send_cmd = f"zfs send -i @{incremental_from} {source_dataset}@{source_snapshot}"
+                # Incremental: use -Fu (force rollback, no mount)
+                recv_cmd = f"zfs receive -Fu {target_dataset}"
             else:
                 send_cmd = f"zfs send {source_dataset}@{source_snapshot}"
-            
-            # Use -Fu: -F forces rollback, -u prevents mounting (allows receiving to busy/NFS-mounted datasets)
-            recv_cmd = f"zfs receive -Fu {target_dataset}"
+                if dest_exists:
+                    # Full send to existing dataset (likely busy/NFS-mounted)
+                    # Unmount first, receive with force, then remount
+                    logger.info(f"Full send to existing dataset - using unmount/mount approach")
+                    recv_cmd = f"zfs unmount {target_dataset} 2>/dev/null || true; zfs receive -F {target_dataset}; zfs mount {target_dataset} 2>/dev/null || true"
+                else:
+                    # Full send to new dataset
+                    recv_cmd = f"zfs receive -u {target_dataset}"
             
             # Build the SSH command for target with StrictHostKeyChecking disabled
             ssh_opts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes"
             if ssh_username:
-                command = f"{send_cmd} | ssh {ssh_opts} -p {ssh_port} {ssh_username}@{target_host} {recv_cmd}"
+                command = f"{send_cmd} | ssh {ssh_opts} -p {ssh_port} {ssh_username}@{target_host} '{recv_cmd}'"
             else:
-                command = f"{send_cmd} | ssh {ssh_opts} -p {ssh_port} {target_host} {recv_cmd}"
+                command = f"{send_cmd} | ssh {ssh_opts} -p {ssh_port} {target_host} '{recv_cmd}'"
         
         try:
             if source_host:
