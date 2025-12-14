@@ -32,6 +32,13 @@ interface HealthTest {
   last_scrub?: string;
   partner_name?: string;
   partner_hostname?: string;
+  // Data transfer test fields
+  transfer_time_ms?: number;
+  bytes_transferred?: number;
+  // Snapshot sync fields
+  source_snapshot?: string;
+  dest_snapshot?: string;
+  sync_lag_hours?: number;
 }
 
 interface ZfsHealthCheckResultsProps {
@@ -57,12 +64,15 @@ const TEST_LABELS: Record<string, { label: string; icon: React.ElementType }> = 
   zfs_pool_health: { label: "ZFS Pool Health", icon: HardDrive },
   cross_site_ssh: { label: "Cross-Site Replication Link", icon: Link2 },
   syncoid_cron: { label: "Syncoid Schedule", icon: Clock },
+  data_transfer_test: { label: "Data Transfer Test", icon: HardDrive },
+  snapshot_sync_status: { label: "Snapshot Sync Status", icon: Clock },
 };
 
 const REPAIR_JOB_TYPES: Record<string, string> = {
   zfs_pool_health: "repair_zfs_pool",
   cross_site_ssh: "repair_cross_site_ssh",
   syncoid_cron: "repair_syncoid_cron",
+  snapshot_sync_status: "run_replication_sync",
 };
 
 export function ZfsHealthCheckResults({ details }: ZfsHealthCheckResultsProps) {
@@ -73,9 +83,11 @@ export function ZfsHealthCheckResults({ details }: ZfsHealthCheckResultsProps) {
   const tests = results?.tests || [];
   const overallStatus = results?.overall_status || "unknown";
   
-  // Extract pool test for capacity info
+  // Extract specific tests for detailed display
   const poolTest = tests.find(t => t.name === "zfs_pool_health");
   const crossSiteTest = tests.find(t => t.name === "cross_site_ssh");
+  const dataTransferTest = tests.find(t => t.name === "data_transfer_test");
+  const syncStatusTest = tests.find(t => t.name === "snapshot_sync_status");
   
   // Parse last scrub info
   const parseScrubInfo = (scrubStr?: string) => {
@@ -321,6 +333,31 @@ export function ZfsHealthCheckResults({ details }: ZfsHealthCheckResultsProps) {
                         <p className="text-sm text-muted-foreground mt-0.5">
                           {test.message}
                         </p>
+                      )}
+                      {/* Extra info for data transfer test */}
+                      {test.name === "data_transfer_test" && test.transfer_time_ms && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Transfer time: {test.transfer_time_ms}ms
+                        </p>
+                      )}
+                      {/* Extra info for sync status */}
+                      {test.name === "snapshot_sync_status" && test.sync_lag_hours !== undefined && test.sync_lag_hours !== null && (
+                        <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
+                          {test.source_snapshot && (
+                            <p>Source: <span className="font-mono">{test.source_snapshot}</span></p>
+                          )}
+                          {test.dest_snapshot && (
+                            <p>Destination: <span className="font-mono">{test.dest_snapshot}</span></p>
+                          )}
+                          {test.sync_lag_hours > 0 && (
+                            <Badge 
+                              variant={test.sync_lag_hours > 24 ? "destructive" : test.sync_lag_hours > 4 ? "secondary" : "outline"}
+                              className="text-xs mt-1"
+                            >
+                              {test.sync_lag_hours}h behind
+                            </Badge>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>

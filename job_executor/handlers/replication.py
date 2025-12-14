@@ -2109,6 +2109,8 @@ chmod 600 ~/.ssh/authorized_keys
         2. ZFS pool health status
         3. Pool capacity and free space
         4. Recent scrub status
+        5. Data transfer test (end-to-end ZFS send/receive verification)
+        6. Snapshot sync status (checks if replication is current)
         """
         job_id = job['id']
         details = job.get('details', {}) or {}
@@ -2306,6 +2308,40 @@ chmod 600 ~/.ssh/authorized_keys
                     
                     if not cross_site_result['success'] and overall_status == 'healthy':
                         overall_status = 'degraded'
+                    
+                    # Test 4: Data transfer test (only if partner exists and cross-site SSH works)
+                    if cross_site_result['success'] and partner_creds and pool:
+                        self.executor.log(f"[{job_id}] Testing actual data transfer to partner")
+                        transfer_result = self._test_data_transfer(creds, partner_creds, pool, job_id)
+                        results['tests'].append({
+                            'name': 'data_transfer_test',
+                            'success': transfer_result.get('success', False),
+                            'message': transfer_result.get('message', 'Unknown'),
+                            'transfer_time_ms': transfer_result.get('transfer_time_ms'),
+                            'bytes_transferred': transfer_result.get('bytes_transferred'),
+                            'repairable': False  # Cannot auto-repair - requires investigation
+                        })
+                        
+                        if not transfer_result.get('success') and overall_status == 'healthy':
+                            overall_status = 'degraded'
+                    
+                    # Test 5: Snapshot sync status
+                    if partner_creds and pool:
+                        self.executor.log(f"[{job_id}] Checking snapshot sync status")
+                        sync_result = self._check_snapshot_sync(creds, partner_creds, pool, job_id)
+                        results['tests'].append({
+                            'name': 'snapshot_sync_status',
+                            'success': sync_result.get('success', False),
+                            'message': sync_result.get('message', 'Unknown'),
+                            'source_snapshot': sync_result.get('source_snapshot'),
+                            'dest_snapshot': sync_result.get('dest_snapshot'),
+                            'sync_lag_hours': sync_result.get('sync_lag_hours'),
+                            'repairable': not sync_result.get('success', False)  # Can trigger manual sync
+                        })
+                        
+                        if not sync_result.get('success') and sync_result.get('sync_lag_hours', 0) > 24:
+                            if overall_status == 'healthy':
+                                overall_status = 'degraded'
             
             results['overall_status'] = overall_status
             
@@ -2349,6 +2385,240 @@ chmod 600 ~/.ssh/authorized_keys
         except Exception as e:
             self.executor.log(f"Error updating replication target: {e}", "ERROR")
             return False
+    
+    def _test_data_transfer(self, source_creds: Dict, partner_creds: Dict, pool: str, job_id: str = None) -> Dict:
+        """
+        Test actual ZFS data transfer between source and partner.
+        Creates a small test dataset, sends it via zfs send/receive, verifies it arrived.
+        """
+        if not PARAMIKO_AVAILABLE:
+            return {'success': False, 'message': 'paramiko not installed'}
+        
+        test_dataset = f"{pool}/dsm_health_test"
+        test_snapshot = f"{test_dataset}@healthcheck"
+        timestamp = int(time.time())
+        test_content = f"dsm-healthcheck-{timestamp}"
+        
+        try:
+            # Connect to source
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            pkey = None
+            if source_creds.get('key_data'):
+                key_file = io.StringIO(source_creds['key_data'])
+                for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                    try:
+                        key_file.seek(0)
+                        pkey = key_class.from_private_key(key_file)
+                        break
+                    except:
+                        continue
+            
+            ssh.connect(
+                hostname=source_creds['hostname'],
+                port=source_creds['port'],
+                username=source_creds['username'],
+                pkey=pkey,
+                password=source_creds.get('password'),
+                timeout=30,
+                allow_agent=False,
+                look_for_keys=False
+            )
+            
+            if job_id:
+                self.executor.log(f"[{job_id}] Creating test dataset {test_dataset}")
+            
+            # Create test dataset (ignore errors if exists)
+            ssh.exec_command(f"zfs create {test_dataset} 2>/dev/null || true")
+            time.sleep(0.5)
+            
+            # Create test file
+            ssh.exec_command(f"echo '{test_content}' > /{test_dataset}/verify.txt")
+            time.sleep(0.5)
+            
+            # Create snapshot
+            ssh.exec_command(f"zfs destroy {test_snapshot} 2>/dev/null || true")
+            stdin, stdout, stderr = ssh.exec_command(f"zfs snapshot {test_snapshot}")
+            stdout.read()  # Wait for completion
+            
+            if job_id:
+                self.executor.log(f"[{job_id}] Sending test snapshot to partner")
+            
+            # Send to partner and time it
+            partner_host = partner_creds['hostname']
+            partner_user = partner_creds['username']
+            partner_port = partner_creds.get('port', 22)
+            
+            start_time = time.time()
+            send_cmd = f"zfs send {test_snapshot} 2>/dev/null | ssh -o StrictHostKeyChecking=no -p {partner_port} {partner_user}@{partner_host} 'zfs receive -F {test_dataset}' 2>&1"
+            stdin, stdout, stderr = ssh.exec_command(send_cmd, timeout=120)
+            send_output = stdout.read().decode().strip()
+            send_error = stderr.read().decode().strip()
+            transfer_time = (time.time() - start_time) * 1000  # ms
+            
+            if job_id:
+                self.executor.log(f"[{job_id}] Verifying data on partner")
+            
+            # Verify on destination
+            verify_cmd = f"ssh -o StrictHostKeyChecking=no -p {partner_port} {partner_user}@{partner_host} 'cat /{test_dataset}/verify.txt' 2>&1"
+            stdin, stdout, stderr = ssh.exec_command(verify_cmd, timeout=30)
+            verify_output = stdout.read().decode().strip()
+            
+            if job_id:
+                self.executor.log(f"[{job_id}] Cleaning up test dataset")
+            
+            # Cleanup both sides
+            ssh.exec_command(f"zfs destroy -r {test_dataset} 2>/dev/null || true")
+            ssh.exec_command(f"ssh -o StrictHostKeyChecking=no -p {partner_port} {partner_user}@{partner_host} 'zfs destroy -r {test_dataset}' 2>/dev/null || true")
+            
+            ssh.close()
+            
+            # Verify content matches
+            if test_content in verify_output:
+                return {
+                    'success': True,
+                    'message': f'Data replicated to partner in {transfer_time:.0f}ms',
+                    'transfer_time_ms': round(transfer_time),
+                    'bytes_transferred': len(test_content)
+                }
+            else:
+                return {
+                    'success': False,
+                    'message': f'Content mismatch on destination',
+                    'transfer_time_ms': round(transfer_time),
+                    'error': verify_output or send_output or send_error
+                }
+                
+        except Exception as e:
+            return {'success': False, 'message': f'Data transfer test failed: {e}'}
+    
+    def _check_snapshot_sync(self, source_creds: Dict, partner_creds: Dict, pool: str, job_id: str = None) -> Dict:
+        """
+        Check if snapshots are in sync between source and destination.
+        Compares the latest snapshot on source vs destination for replicated datasets.
+        """
+        if not PARAMIKO_AVAILABLE:
+            return {'success': False, 'message': 'paramiko not installed'}
+        
+        try:
+            # Connect to source
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            pkey = None
+            if source_creds.get('key_data'):
+                key_file = io.StringIO(source_creds['key_data'])
+                for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                    try:
+                        key_file.seek(0)
+                        pkey = key_class.from_private_key(key_file)
+                        break
+                    except:
+                        continue
+            
+            ssh.connect(
+                hostname=source_creds['hostname'],
+                port=source_creds['port'],
+                username=source_creds['username'],
+                pkey=pkey,
+                password=source_creds.get('password'),
+                timeout=30,
+                allow_agent=False,
+                look_for_keys=False
+            )
+            
+            # Get latest snapshot on source (exclude health test dataset)
+            stdin, stdout, stderr = ssh.exec_command(
+                f"zfs list -t snapshot -o name,creation -Hp -r {pool} 2>/dev/null | grep -v dsm_health_test | tail -1"
+            )
+            source_output = stdout.read().decode().strip()
+            
+            partner_host = partner_creds['hostname']
+            partner_user = partner_creds['username']
+            partner_port = partner_creds.get('port', 22)
+            
+            # Get latest snapshot on destination
+            stdin, stdout, stderr = ssh.exec_command(
+                f"ssh -o StrictHostKeyChecking=no -p {partner_port} {partner_user}@{partner_host} "
+                f"'zfs list -t snapshot -o name,creation -Hp -r {pool} 2>/dev/null | grep -v dsm_health_test | tail -1'"
+            )
+            dest_output = stdout.read().decode().strip()
+            
+            ssh.close()
+            
+            # Parse results
+            source_parts = source_output.split('\t') if source_output else []
+            dest_parts = dest_output.split('\t') if dest_output else []
+            
+            source_snapshot = source_parts[0] if len(source_parts) >= 1 else None
+            source_time = int(source_parts[1]) if len(source_parts) >= 2 else None
+            dest_snapshot = dest_parts[0] if len(dest_parts) >= 1 else None
+            dest_time = int(dest_parts[1]) if len(dest_parts) >= 2 else None
+            
+            if not source_snapshot:
+                return {
+                    'success': True,
+                    'message': 'No snapshots found on source (nothing to sync)',
+                    'source_snapshot': None,
+                    'dest_snapshot': dest_snapshot,
+                    'sync_lag_hours': 0
+                }
+            
+            if not dest_snapshot:
+                return {
+                    'success': False,
+                    'message': 'No snapshots on destination - replication may not be set up',
+                    'source_snapshot': source_snapshot,
+                    'dest_snapshot': None,
+                    'sync_lag_hours': None
+                }
+            
+            # Calculate lag
+            if source_time and dest_time:
+                lag_seconds = source_time - dest_time
+                lag_hours = round(lag_seconds / 3600, 1)
+                
+                if lag_hours <= 0.5:
+                    return {
+                        'success': True,
+                        'message': 'Snapshots are in sync',
+                        'source_snapshot': source_snapshot.split('@')[-1] if '@' in source_snapshot else source_snapshot,
+                        'dest_snapshot': dest_snapshot.split('@')[-1] if '@' in dest_snapshot else dest_snapshot,
+                        'sync_lag_hours': 0
+                    }
+                else:
+                    return {
+                        'success': lag_hours < 24,  # Warning if more than 24h behind
+                        'message': f'Destination is {lag_hours}h behind source',
+                        'source_snapshot': source_snapshot.split('@')[-1] if '@' in source_snapshot else source_snapshot,
+                        'dest_snapshot': dest_snapshot.split('@')[-1] if '@' in dest_snapshot else dest_snapshot,
+                        'sync_lag_hours': lag_hours
+                    }
+            
+            # Fallback: compare snapshot names
+            source_snap_name = source_snapshot.split('@')[-1] if '@' in source_snapshot else source_snapshot
+            dest_snap_name = dest_snapshot.split('@')[-1] if '@' in dest_snapshot else dest_snapshot
+            
+            if source_snap_name == dest_snap_name:
+                return {
+                    'success': True,
+                    'message': 'Latest snapshots match',
+                    'source_snapshot': source_snap_name,
+                    'dest_snapshot': dest_snap_name,
+                    'sync_lag_hours': 0
+                }
+            else:
+                return {
+                    'success': False,
+                    'message': 'Snapshot mismatch between source and destination',
+                    'source_snapshot': source_snap_name,
+                    'dest_snapshot': dest_snap_name,
+                    'sync_lag_hours': None
+                }
+                
+        except Exception as e:
+            return {'success': False, 'message': f'Sync check failed: {e}'}
     
     def _test_cross_site_ssh(self, source_creds: Dict, partner_creds: Dict) -> Dict:
         """
