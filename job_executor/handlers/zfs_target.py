@@ -1647,7 +1647,7 @@ class ZfsTargetHandler(BaseHandler):
             'port': 22,
             'target_type': 'zfs',
             'zfs_pool': pool_name,
-            'zfs_dataset_prefix': 'nfs',
+            'zfs_dataset_prefix': f'{pool_name}/nfs',
             'ssh_username': ssh_username,
             'ssh_key_id': ssh_key_id,
             'dr_vcenter_id': vcenter_id,
