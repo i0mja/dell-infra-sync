@@ -1682,6 +1682,7 @@ class ReplicationHandler(BaseHandler):
                                         incremental_from=previous_snapshot,
                                         ssh_username=dr_username,
                                         ssh_port=dr_port,
+                                        target_ssh_key_data=dr_key_data,  # Site B's SSH key
                                         # Source SSH credentials - execute ZFS send on Site A
                                         source_host=ssh_hostname,
                                         source_ssh_username=ssh_username,
