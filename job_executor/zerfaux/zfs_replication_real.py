@@ -505,7 +505,7 @@ class ZFSReplicationReal:
                     # Full send to existing dataset (likely busy/NFS-mounted)
                     # Unmount first, receive with force, then remount
                     logger.info(f"Full send to existing dataset - using unmount/mount approach")
-                    recv_cmd = f"zfs unmount {target_dataset} 2>/dev/null || true; zfs receive -F {target_dataset}; zfs mount {target_dataset} 2>/dev/null || true"
+                    recv_cmd = f"zfs unmount {target_dataset} </dev/null 2>/dev/null || true; zfs receive -F {target_dataset}; zfs mount {target_dataset} </dev/null 2>/dev/null || true"
                 else:
                     # Full send to new dataset
                     recv_cmd = f"zfs receive -u {target_dataset}"
