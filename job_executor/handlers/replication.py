@@ -448,6 +448,15 @@ class ReplicationHandler(BaseHandler):
         Get SSH credentials for connecting to a replication target.
         Returns dict with hostname, port, username, and key_path/key_data/password.
         
+        Lookup order:
+        1. Direct ssh_key_encrypted on target
+        2. ssh_key_id reference on target → ssh_keys table
+        3. hosting_vm_id → vcenter_vms → zfs_target_templates → ssh_key_id
+        4. source_template_id → zfs_target_templates → ssh_key_id
+        5. ssh_key_deployments table
+        6. Global activity_settings SSH config
+        7. Provided password fallback
+        
         Args:
             target: The replication target dict
             password: Optional password to use for authentication (e.g., from job details)
@@ -480,34 +489,24 @@ class ReplicationHandler(BaseHandler):
             
             # Check if target has an ssh_key_id reference to ssh_keys table
             if target.get('ssh_key_id'):
-                try:
-                    response = requests.get(
-                        f"{DSM_URL}/rest/v1/ssh_keys",
-                        params={
-                            'id': f"eq.{target['ssh_key_id']}",
-                            'select': 'private_key_encrypted,status'
-                        },
-                        headers={
-                            'apikey': SERVICE_ROLE_KEY,
-                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
-                        },
-                        verify=VERIFY_SSL,
-                        timeout=10
-                    )
-                    if response.ok:
-                        keys = response.json()
-                        if keys and keys[0].get('private_key_encrypted'):
-                            # Only use active keys
-                            if keys[0].get('status') in ('active', 'pending'):
-                                key_data = self.executor.decrypt_password(keys[0]['private_key_encrypted'])
-                                if key_data:
-                                    creds['key_data'] = key_data
-                                    self.executor.log(f"Using SSH key from ssh_keys table for {hostname}")
-                                    return creds
-                            else:
-                                self.executor.log(f"SSH key {target['ssh_key_id']} is not active", "WARNING")
-                except Exception as e:
-                    self.executor.log(f"Error fetching SSH key from ssh_keys table: {e}", "WARNING")
+                key_data = self._fetch_ssh_key_by_id(target['ssh_key_id'], hostname)
+                if key_data:
+                    creds['key_data'] = key_data
+                    return creds
+            
+            # Check via hosting_vm_id → vcenter_vms → zfs_target_templates chain
+            if target.get('hosting_vm_id'):
+                key_data = self._fetch_ssh_key_via_hosting_vm(target['hosting_vm_id'], hostname)
+                if key_data:
+                    creds['key_data'] = key_data
+                    return creds
+            
+            # Check via source_template_id → zfs_target_templates chain
+            if target.get('source_template_id'):
+                key_data = self._fetch_ssh_key_via_template(target['source_template_id'], hostname)
+                if key_data:
+                    creds['key_data'] = key_data
+                    return creds
             
             # Check ssh_key_deployments table for keys deployed to this target
             if target.get('id'):
@@ -613,6 +612,180 @@ class ReplicationHandler(BaseHandler):
         except Exception as e:
             self.executor.log(f"Error getting target SSH credentials: {e}", "ERROR")
             return None
+    
+    def _fetch_ssh_key_by_id(self, ssh_key_id: str, hostname: str) -> Optional[str]:
+        """
+        Fetch SSH private key by ID from ssh_keys table.
+        Returns decrypted private key data if found and active.
+        """
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/ssh_keys",
+                params={
+                    'id': f"eq.{ssh_key_id}",
+                    'select': 'id,name,private_key_encrypted,status'
+                },
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            if response.ok:
+                keys = response.json()
+                if keys and keys[0].get('private_key_encrypted'):
+                    key = keys[0]
+                    # Only use active or pending keys
+                    if key.get('status') in ('active', 'pending'):
+                        key_data = self.executor.decrypt_password(key['private_key_encrypted'])
+                        if key_data:
+                            self.executor.log(f"Using SSH key '{key.get('name', ssh_key_id)}' for {hostname}")
+                            return key_data
+                    else:
+                        self.executor.log(f"SSH key {ssh_key_id} is not active (status: {key.get('status')})", "WARNING")
+        except Exception as e:
+            self.executor.log(f"Error fetching SSH key {ssh_key_id}: {e}", "WARNING")
+        return None
+    
+    def _fetch_ssh_key_via_hosting_vm(self, hosting_vm_id: str, hostname: str) -> Optional[str]:
+        """
+        Fetch SSH key by following: hosting_vm_id → vcenter_vms → zfs_target_templates → ssh_key_id
+        
+        This supports the pattern where:
+        - A replication target (NFS share IP) is hosted by a VM (hosting_vm_id)
+        - That VM was deployed from a zfs_target_template
+        - The template has an ssh_key_id for SSH access
+        """
+        try:
+            # First, get the hosting VM from vcenter_vms
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_vms",
+                params={
+                    'id': f"eq.{hosting_vm_id}",
+                    'select': 'id,name,vcenter_id'
+                },
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            if not response.ok:
+                return None
+                
+            vms = response.json()
+            if not vms:
+                self.executor.log(f"Hosting VM {hosting_vm_id} not found in vcenter_vms", "WARNING")
+                return None
+            
+            vm = vms[0]
+            vm_name = vm.get('name', '')
+            self.executor.log(f"Looking up SSH key via hosting VM: {vm_name}")
+            
+            # Find a zfs_target_template that matches this VM
+            # Check by name pattern (e.g., VM "S16-VREP-02" might come from template "S16-VREP-TMP")
+            # Or look for templates where this VM could be a deployment
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/zfs_target_templates",
+                params={
+                    'is_active': 'eq.true',
+                    'select': 'id,name,ssh_key_id,template_name'
+                },
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            if not response.ok:
+                return None
+            
+            templates = response.json()
+            if not templates:
+                return None
+            
+            # Try to find a matching template
+            for template in templates:
+                if not template.get('ssh_key_id'):
+                    continue
+                    
+                template_name = template.get('name', '')
+                template_vm_name = template.get('template_name', '')
+                
+                # Match if VM name starts with template name prefix (removing -TMP/-TEMPLATE suffixes)
+                name_base = template_name.replace('-TMP', '').replace('-TEMPLATE', '').replace('_TMP', '').replace('_TEMPLATE', '')
+                if name_base and vm_name.startswith(name_base):
+                    self.executor.log(f"Found matching template '{template_name}' for VM '{vm_name}'")
+                    return self._fetch_ssh_key_by_id(template['ssh_key_id'], hostname)
+                
+                # Also check template_name field (the VMware template VM name)
+                template_name_base = template_vm_name.replace('-TMP', '').replace('-TEMPLATE', '').replace('_TMP', '').replace('_TEMPLATE', '') if template_vm_name else ''
+                if template_name_base and vm_name.startswith(template_name_base):
+                    self.executor.log(f"Found matching template '{template_name}' via template_name field")
+                    return self._fetch_ssh_key_by_id(template['ssh_key_id'], hostname)
+            
+            # If no name match, check ssh_key_deployments for this hosting VM
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/ssh_key_deployments",
+                params={
+                    'hosting_vm_id': f"eq.{hosting_vm_id}",
+                    'status': 'eq.deployed',
+                    'select': 'ssh_key_id'
+                },
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            if response.ok:
+                deployments = response.json()
+                if deployments:
+                    self.executor.log(f"Found SSH key deployment for hosting VM {vm_name}")
+                    return self._fetch_ssh_key_by_id(deployments[0]['ssh_key_id'], hostname)
+                    
+        except Exception as e:
+            self.executor.log(f"Error fetching SSH key via hosting VM: {e}", "WARNING")
+        return None
+    
+    def _fetch_ssh_key_via_template(self, template_id: str, hostname: str) -> Optional[str]:
+        """
+        Fetch SSH key by following: source_template_id → zfs_target_templates → ssh_key_id
+        """
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/zfs_target_templates",
+                params={
+                    'id': f"eq.{template_id}",
+                    'select': 'id,name,ssh_key_id'
+                },
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            if not response.ok:
+                return None
+                
+            templates = response.json()
+            if not templates:
+                self.executor.log(f"Template {template_id} not found in zfs_target_templates", "WARNING")
+                return None
+            
+            template = templates[0]
+            if template.get('ssh_key_id'):
+                self.executor.log(f"Found SSH key via source template '{template.get('name', template_id)}'")
+                return self._fetch_ssh_key_by_id(template['ssh_key_id'], hostname)
+                
+        except Exception as e:
+            self.executor.log(f"Error fetching SSH key via template: {e}", "WARNING")
+        return None
     
     # =========================================================================
     # Job Handler Methods
