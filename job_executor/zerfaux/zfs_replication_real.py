@@ -140,19 +140,20 @@ class ZFSReplicationReal:
             logger.error(f"SSH connection failed to {hostname}: {e}")
             return None
     
-    def _exec_ssh_command(self, ssh, command: str) -> Dict:
+    def _exec_ssh_command(self, ssh, command: str, timeout: int = 300) -> Dict:
         """
         Execute SSH command and return result.
         
         Args:
             ssh: paramiko.SSHClient
             command: Command to execute
+            timeout: Command timeout in seconds (default 300)
             
         Returns:
             Dict with stdout, stderr, exit_code
         """
         try:
-            stdin, stdout, stderr = ssh.exec_command(command, timeout=300)
+            stdin, stdout, stderr = ssh.exec_command(command, timeout=timeout)
             exit_code = stdout.channel.recv_exit_status()
             
             return {
