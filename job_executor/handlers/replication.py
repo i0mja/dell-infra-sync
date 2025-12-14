@@ -1645,6 +1645,20 @@ class ReplicationHandler(BaseHandler):
                                     dr_dataset_prefix = dr_target.get('zfs_dataset_prefix') or dr_target.get('zfs_pool')
                                     target_dataset = f"{dr_dataset_prefix}/{vm_name}"
                                     
+                                    # Check if destination dataset exists BEFORE calculating size
+                                    # This ensures we get the right size estimate (incremental vs full)
+                                    if previous_snapshot:
+                                        dest_exists = self.zfs_replication.check_dataset_exists(
+                                            target_dataset,
+                                            ssh_hostname=dr_hostname,
+                                            ssh_username=dr_username,
+                                            ssh_port=dr_port,
+                                            ssh_key_data=dr_key_data
+                                        )
+                                        if not dest_exists:
+                                            add_console_log(f"⚠️ Destination {target_dataset} doesn't exist on Site B, will do full send")
+                                            previous_snapshot = None  # Force full send
+                                    
                                     # Get expected send size BEFORE transfer using zfs send -nP
                                     size_result = self.zfs_replication.get_snapshot_send_size(
                                         source_dataset,
