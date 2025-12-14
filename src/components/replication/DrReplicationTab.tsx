@@ -8,6 +8,7 @@ import { DrStatsBar } from "./DrStatsBar";
 import { DrQuickActions } from "./DrQuickActions";
 import { DrOnboarding } from "./DrOnboarding";
 import { OnboardZfsTargetWizard } from "./OnboardZfsTargetWizard";
+import { ActiveReplicationsCard } from "./ActiveReplicationsCard";
 import { useProtectionGroups } from "@/hooks/useReplication";
 
 export function DrReplicationTab() {
@@ -35,6 +36,11 @@ export function DrReplicationTab() {
       <DrStatsBar />
       <DrQuickActions onOpenOnboardWizard={() => setShowOnboardWizard(true)} />
       <div className="flex-1 overflow-auto p-6">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 mb-4">
+          <div className="lg:col-span-1">
+            <ActiveReplicationsCard />
+          </div>
+        </div>
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList>
             <TabsTrigger value="groups">Protection Groups</TabsTrigger>

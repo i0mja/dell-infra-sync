@@ -1,7 +1,11 @@
-import { Shield, Target, Clock, Activity, HardDrive, CheckCircle2, AlertTriangle } from "lucide-react";
+import { useEffect } from "react";
+import { Shield, Target, Clock, Activity, HardDrive, CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import { useProtectionGroups, useReplicationTargets, useReplicationJobs } from "@/hooks/useReplication";
 import { formatDistanceToNow } from "date-fns";
+import { supabase } from "@/integrations/supabase/client";
+import { useQueryClient } from "@tanstack/react-query";
 
 interface StatItemProps {
   icon: React.ElementType;
@@ -51,11 +55,40 @@ function StatItem({ icon: Icon, label, value, subValue, status = 'neutral', load
 }
 
 export function DrStatsBar() {
+  const queryClient = useQueryClient();
   const { groups, loading: groupsLoading } = useProtectionGroups();
   const { targets, loading: targetsLoading } = useReplicationTargets();
   const { jobs, loading: jobsLoading } = useReplicationJobs();
 
   const loading = groupsLoading || targetsLoading || jobsLoading;
+
+  // Real-time subscription for jobs table to update stats
+  useEffect(() => {
+    const channel = supabase
+      .channel('dr-stats-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'jobs' },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['replication-jobs'] });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'replication_targets' },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['replication-targets'] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [queryClient]);
+
+  // Count active/running jobs for indicator
+  const runningJobs = jobs.filter(j => j.status === 'running' || j.status === 'pending').length;
 
   // Calculate stats
   const totalVMs = groups.reduce((sum, g) => sum + (g.vm_count || 0), 0);

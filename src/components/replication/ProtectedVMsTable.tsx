@@ -11,6 +11,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { 
   Plus, 
   Trash2, 
@@ -22,9 +28,11 @@ import {
   MoveRight,
   MoreVertical,
   Wand2,
+  AlertCircle,
+  XCircle,
 } from "lucide-react";
 import { ProtectedVM } from "@/hooks/useReplication";
-import { formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow, differenceInMinutes } from "date-fns";
 import { ProtectionDatastoreWizard } from "./ProtectionDatastoreWizard";
 import { DrShellVmWizard } from "./DrShellVmWizard";
 import { AddVMsDialog } from "./AddVMsDialog";
@@ -39,6 +47,7 @@ interface ProtectedVMsTableProps {
   protectionDatastore?: string;
   sourceVCenterId?: string;
   protectionGroupId?: string;
+  rpoMinutes?: number;
   onRefresh?: () => void;
 }
 
@@ -51,6 +60,7 @@ export function ProtectedVMsTable({
   protectionDatastore,
   sourceVCenterId,
   protectionGroupId,
+  rpoMinutes,
   onRefresh,
 }: ProtectedVMsTableProps) {
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -113,6 +123,68 @@ export function ProtectedVMsTable({
       default:
         return <Badge variant="secondary">{status}</Badge>;
     }
+  };
+
+  // Get RPO status for a VM
+  const getRpoStatus = (vm: ProtectedVM): 'compliant' | 'warning' | 'critical' | 'never' => {
+    if (!vm.last_replication_at) return 'never';
+    if (!rpoMinutes) return 'compliant';
+    
+    const lastRep = new Date(vm.last_replication_at);
+    const minutesSince = differenceInMinutes(new Date(), lastRep);
+    
+    if (minutesSince <= rpoMinutes) return 'compliant';
+    if (minutesSince <= rpoMinutes * 1.5) return 'warning';
+    return 'critical';
+  };
+
+  const getRpoIndicator = (vm: ProtectedVM) => {
+    const status = getRpoStatus(vm);
+    const lastRep = vm.last_replication_at 
+      ? formatDistanceToNow(new Date(vm.last_replication_at), { addSuffix: true })
+      : 'Never';
+    
+    const minutesSince = vm.last_replication_at 
+      ? differenceInMinutes(new Date(), new Date(vm.last_replication_at))
+      : null;
+    
+    const tooltipContent = rpoMinutes 
+      ? `RPO Target: ${rpoMinutes}m | Last sync: ${lastRep}${minutesSince !== null ? ` (${minutesSince}m ago)` : ''}`
+      : `Last sync: ${lastRep}`;
+
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="flex items-center gap-2 text-sm">
+              {status === 'compliant' && (
+                <CheckCircle2 className="h-4 w-4 text-green-500" />
+              )}
+              {status === 'warning' && (
+                <AlertCircle className="h-4 w-4 text-amber-500" />
+              )}
+              {status === 'critical' && (
+                <XCircle className="h-4 w-4 text-destructive" />
+              )}
+              {status === 'never' && (
+                <Clock className="h-4 w-4 text-muted-foreground" />
+              )}
+              <span className={
+                status === 'compliant' ? 'text-green-600' :
+                status === 'warning' ? 'text-amber-600' :
+                status === 'critical' ? 'text-destructive' :
+                'text-muted-foreground'
+              }>
+                {lastRep}
+              </span>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{tooltipContent}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
   };
 
   if (loading) {
@@ -223,10 +295,8 @@ export function ProtectedVMsTable({
                       <span className="text-muted-foreground text-sm">Not created</span>
                     )}
                   </TableCell>
-                  <TableCell className="text-muted-foreground text-sm">
-                    {vm.last_replication_at 
-                      ? formatDistanceToNow(new Date(vm.last_replication_at), { addSuffix: true })
-                      : 'Never'}
+                  <TableCell>
+                    {getRpoIndicator(vm)}
                   </TableCell>
                   <TableCell>
                     <DropdownMenu>
