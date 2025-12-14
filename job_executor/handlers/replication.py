@@ -1826,7 +1826,7 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
             
             # Step 3: Test SSH connection from source to destination
             self.executor.log(f"[{job_id}] Testing SSH connection from source to destination")
-            test_result = self._test_ssh_connection(source_target, dest_target, password=admin_password)
+            test_result = self._test_replication_ssh_connection(source_target, dest_target, password=admin_password)
             if not test_result.get('success'):
                 raise Exception(f"SSH connection test failed: {test_result.get('error')}")
             results['steps'].append('connection_tested')
@@ -2048,8 +2048,8 @@ chmod 600 ~/.ssh/authorized_keys
         except Exception as e:
             return {'success': False, 'error': str(e)}
     
-    def _test_ssh_connection(self, source_target: Dict, dest_target: Dict, password: str = None) -> Dict:
-        """Test SSH connection from source to destination"""
+    def _test_replication_ssh_connection(self, source_target: Dict, dest_target: Dict, password: str = None) -> Dict:
+        """Test SSH connection from source to destination for replication pair"""
         if not PARAMIKO_AVAILABLE:
             return {'success': False, 'error': 'Paramiko not available'}
         
