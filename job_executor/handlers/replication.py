@@ -580,6 +580,172 @@ class ReplicationHandler(BaseHandler):
         except Exception as e:
             return {'success': False, 'error': str(e)}
     
+    def _ensure_vm_dataset(
+        self,
+        vm_name: str,
+        source_dataset: str,
+        ssh_hostname: str,
+        ssh_username: str = 'root',
+        ssh_port: int = 22,
+        ssh_key_data: str = None,
+        add_console_log=None
+    ) -> Dict:
+        """
+        Ensure a ZFS dataset exists for the VM. Auto-creates if missing.
+        
+        Returns:
+            {
+                'ready': bool,      # True if dataset is ready for snapshots
+                'exists': bool,     # True if dataset already existed
+                'created': bool,    # True if we created the dataset
+                'needs_migration': bool,  # True if directory exists but not as dataset
+                'dataset': str,     # The full dataset path
+                'error': str        # Error message if not ready
+            }
+        """
+        if add_console_log is None:
+            add_console_log = lambda msg, level='INFO': self.executor.log(msg, level)
+        
+        result = {
+            'ready': False,
+            'exists': False,
+            'created': False,
+            'needs_migration': False,
+            'dataset': source_dataset,
+            'error': None
+        }
+        
+        if not PARAMIKO_AVAILABLE:
+            result['error'] = 'paramiko not available for SSH'
+            return result
+        
+        try:
+            # Connect via SSH
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            if not ssh_key_data:
+                result['error'] = 'No SSH key provided'
+                return result
+            
+            # Parse SSH key
+            key_file = io.StringIO(ssh_key_data)
+            pkey = None
+            for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                try:
+                    key_file.seek(0)
+                    pkey = key_class.from_private_key(key_file)
+                    break
+                except:
+                    continue
+            
+            if not pkey:
+                result['error'] = 'Unable to parse SSH key'
+                return result
+            
+            ssh.connect(
+                hostname=ssh_hostname,
+                port=ssh_port,
+                username=ssh_username,
+                pkey=pkey,
+                timeout=30,
+                allow_agent=False,
+                look_for_keys=False
+            )
+            
+            # Step 1: Check if dataset exists
+            check_cmd = f"zfs list -H -o name {source_dataset} 2>/dev/null"
+            stdin, stdout, stderr = ssh.exec_command(check_cmd)
+            exit_code = stdout.channel.recv_exit_status()
+            
+            if exit_code == 0:
+                # Dataset already exists
+                add_console_log(f"ZFS dataset exists: {source_dataset}")
+                result['ready'] = True
+                result['exists'] = True
+                ssh.close()
+                return result
+            
+            # Dataset doesn't exist - check if parent exists
+            parent_dataset = '/'.join(source_dataset.split('/')[:-1])
+            check_parent_cmd = f"zfs list -H -o name {parent_dataset} 2>/dev/null"
+            stdin, stdout, stderr = ssh.exec_command(check_parent_cmd)
+            parent_exit_code = stdout.channel.recv_exit_status()
+            
+            if parent_exit_code != 0:
+                result['error'] = f"Parent dataset '{parent_dataset}' does not exist"
+                ssh.close()
+                return result
+            
+            # Step 2: Check if directory exists (would need migration)
+            mount_cmd = f"zfs get -H -o value mountpoint {parent_dataset}"
+            stdin, stdout, stderr = ssh.exec_command(mount_cmd)
+            parent_mount = stdout.read().decode().strip()
+            
+            vm_dir_path = f"{parent_mount}/{vm_name}"
+            dir_check_cmd = f"test -d '{vm_dir_path}' && echo 'EXISTS' || echo 'MISSING'"
+            stdin, stdout, stderr = ssh.exec_command(dir_check_cmd)
+            dir_status = stdout.read().decode().strip()
+            
+            if dir_status == 'EXISTS':
+                # Directory exists but is not a dataset - needs migration
+                # Check if it has any content
+                content_check_cmd = f"ls -A '{vm_dir_path}' 2>/dev/null | head -1"
+                stdin, stdout, stderr = ssh.exec_command(content_check_cmd)
+                has_content = stdout.read().decode().strip()
+                
+                if has_content:
+                    # Directory has content - needs manual migration
+                    add_console_log(f"WARNING: Directory {vm_dir_path} exists with data but is not a ZFS dataset", "WARNING")
+                    add_console_log(f"Manual migration required: mv, zfs create, cp -a", "WARNING")
+                    result['needs_migration'] = True
+                    result['error'] = f"Directory exists with data at {vm_dir_path}. Manual migration to ZFS dataset required."
+                    ssh.close()
+                    return result
+                else:
+                    # Empty directory - we can remove it and create dataset
+                    add_console_log(f"Removing empty directory to create dataset: {vm_dir_path}")
+                    rmdir_cmd = f"rmdir '{vm_dir_path}'"
+                    stdin, stdout, stderr = ssh.exec_command(rmdir_cmd)
+                    rmdir_exit = stdout.channel.recv_exit_status()
+                    
+                    if rmdir_exit != 0:
+                        rmdir_err = stderr.read().decode().strip()
+                        result['error'] = f"Failed to remove empty directory: {rmdir_err}"
+                        ssh.close()
+                        return result
+            
+            # Step 3: Create the dataset
+            add_console_log(f"Creating ZFS dataset: {source_dataset}")
+            create_cmd = f"zfs create {source_dataset}"
+            stdin, stdout, stderr = ssh.exec_command(create_cmd)
+            create_exit = stdout.channel.recv_exit_status()
+            create_err = stderr.read().decode().strip()
+            
+            if create_exit != 0:
+                result['error'] = f"Failed to create dataset: {create_err}"
+                ssh.close()
+                return result
+            
+            # Verify dataset was created
+            stdin, stdout, stderr = ssh.exec_command(f"zfs list -H -o name {source_dataset}")
+            verify_exit = stdout.channel.recv_exit_status()
+            
+            if verify_exit == 0:
+                add_console_log(f"Successfully created ZFS dataset: {source_dataset}")
+                result['ready'] = True
+                result['created'] = True
+            else:
+                result['error'] = 'Dataset creation completed but verification failed'
+            
+            ssh.close()
+            return result
+            
+        except Exception as e:
+            result['error'] = f"SSH error: {str(e)}"
+            self.executor.log(f"Error in _ensure_vm_dataset: {e}", "ERROR")
+            return result
+    
     def _get_target_ssh_creds(self, target: Dict, password: str = None) -> Optional[Dict]:
         """
         Get SSH credentials for connecting to a replication target.
@@ -1238,12 +1404,41 @@ class ReplicationHandler(BaseHandler):
                     
                     if self.zfs_replication:
                         # Update step
+                        results['current_step'] = f'Validating dataset for {vm_name}'
+                        self.update_job_status(job_id, 'running', details=results)
+                        
+                        # Build correct dataset path using zfs_dataset_prefix
+                        dataset_prefix = target.get('zfs_dataset_prefix') or target.get('zfs_pool')
+                        source_dataset = f"{dataset_prefix}/{vm_name}"
+                        add_console_log(f"Target dataset: {source_dataset}")
+                        
+                        # Ensure VM dataset exists (auto-create if needed)
+                        dataset_result = self._ensure_vm_dataset(
+                            vm_name=vm_name,
+                            source_dataset=source_dataset,
+                            ssh_hostname=ssh_hostname,
+                            ssh_username=ssh_username,
+                            ssh_port=ssh_port,
+                            ssh_key_data=ssh_key_data,
+                            add_console_log=add_console_log
+                        )
+                        
+                        if not dataset_result.get('ready'):
+                            error_msg = dataset_result.get('error', 'Dataset not ready')
+                            add_console_log(f"ERROR: Dataset not ready for {vm_name}: {error_msg}", "ERROR")
+                            self._update_job_task(vm_task_id, 'failed', f"Dataset error: {error_msg}")
+                            self._update_protected_vm(vm['id'], replication_status='error', status_message=error_msg)
+                            results['errors'].append({'vm': vm_name, 'error': error_msg})
+                            continue
+                        
+                        if dataset_result.get('created'):
+                            add_console_log(f"Created new ZFS dataset: {source_dataset}")
+                        
+                        # Now create snapshot
                         results['current_step'] = f'Creating snapshot for {vm_name}'
                         self.update_job_status(job_id, 'running', details=results)
                         add_console_log(f"Creating ZFS snapshot for {vm_name}")
                         
-                        # Create snapshot - pass SSH credentials for remote execution
-                        source_dataset = f"{target.get('zfs_pool')}/{vm_name}"
                         step_start = time.time()
                         snapshot_result = self.zfs_replication.create_snapshot(
                             source_dataset,
