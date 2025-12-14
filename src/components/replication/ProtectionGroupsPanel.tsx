@@ -474,6 +474,7 @@ export function ProtectionGroupsPanel() {
               protectionDatastore={selectedGroup.protection_datastore}
               sourceVCenterId={selectedGroup.source_vcenter_id || undefined}
               protectionGroupId={selectedGroup.id}
+              rpoMinutes={selectedGroup.rpo_minutes}
               onRefresh={refetchVMs}
             />
           )}

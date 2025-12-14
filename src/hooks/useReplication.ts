@@ -6,6 +6,7 @@
  */
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 
@@ -595,6 +596,32 @@ export function useProtectionGroups() {
     },
     refetchInterval: 15000 // Auto-refresh every 15 seconds
   });
+
+  // Real-time subscription for protection groups and protected VMs changes
+  useEffect(() => {
+    const channel = supabase
+      .channel('protection-groups-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'protection_groups' },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['protection-groups'] });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'protected_vms' },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['protection-groups'] });
+          queryClient.invalidateQueries({ queryKey: ['protected-vms'] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [queryClient]);
 
   const createGroupMutation = useMutation({
     mutationFn: async (group: Partial<ProtectionGroup>) => {
