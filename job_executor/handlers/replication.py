@@ -1187,12 +1187,12 @@ class ReplicationHandler(BaseHandler):
             add_console_log(f"Starting replication sync for group: {group.get('name')}")
             add_console_log(f"Target: {target.get('hostname')} / Pool: {target.get('zfs_pool')}")
             
-            # Get SSH credentials for target
-            ssh_creds = self._get_ssh_credentials(target)
+            # Get SSH credentials for target using comprehensive lookup
+            ssh_creds = self._get_target_ssh_creds(target)
             ssh_hostname = ssh_creds.get('hostname')
             ssh_username = ssh_creds.get('username', 'root')
             ssh_port = ssh_creds.get('port', 22)
-            ssh_key_data = ssh_creds.get('private_key')
+            ssh_key_data = ssh_creds.get('key_data') or ssh_creds.get('private_key')
             
             if not ssh_hostname:
                 raise ValueError(f"No SSH hostname configured for target {target.get('name')}")
