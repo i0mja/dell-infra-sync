@@ -1851,6 +1851,7 @@ export type Database = {
       protected_vms: {
         Row: {
           created_at: string | null
+          current_dataset_size: number | null
           current_datastore: string | null
           dr_shell_vm_created: boolean | null
           dr_shell_vm_id: string | null
@@ -1858,12 +1859,14 @@ export type Database = {
           id: string
           last_replication_at: string | null
           last_snapshot_at: string | null
+          last_sync_bytes: number | null
           needs_storage_vmotion: boolean | null
           priority: number | null
           protection_group_id: string
           replication_status: string | null
           status_message: string | null
           target_datastore: string | null
+          total_bytes_synced: number | null
           updated_at: string | null
           vm_id: string | null
           vm_name: string
@@ -1871,6 +1874,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string | null
+          current_dataset_size?: number | null
           current_datastore?: string | null
           dr_shell_vm_created?: boolean | null
           dr_shell_vm_id?: string | null
@@ -1878,12 +1882,14 @@ export type Database = {
           id?: string
           last_replication_at?: string | null
           last_snapshot_at?: string | null
+          last_sync_bytes?: number | null
           needs_storage_vmotion?: boolean | null
           priority?: number | null
           protection_group_id: string
           replication_status?: string | null
           status_message?: string | null
           target_datastore?: string | null
+          total_bytes_synced?: number | null
           updated_at?: string | null
           vm_id?: string | null
           vm_name: string
@@ -1891,6 +1897,7 @@ export type Database = {
         }
         Update: {
           created_at?: string | null
+          current_dataset_size?: number | null
           current_datastore?: string | null
           dr_shell_vm_created?: boolean | null
           dr_shell_vm_id?: string | null
@@ -1898,12 +1905,14 @@ export type Database = {
           id?: string
           last_replication_at?: string | null
           last_snapshot_at?: string | null
+          last_sync_bytes?: number | null
           needs_storage_vmotion?: boolean | null
           priority?: number | null
           protection_group_id?: string
           replication_status?: string | null
           status_message?: string | null
           target_datastore?: string | null
+          total_bytes_synced?: number | null
           updated_at?: string | null
           vm_id?: string | null
           vm_name?: string
@@ -2063,7 +2072,9 @@ export type Database = {
           started_at: string | null
           status: string
           target_snapshot: string | null
+          transfer_rate_mbps: number | null
           updated_at: string | null
+          vm_sync_details: Json | null
         }
         Insert: {
           bytes_transferred?: number | null
@@ -2083,7 +2094,9 @@ export type Database = {
           started_at?: string | null
           status?: string
           target_snapshot?: string | null
+          transfer_rate_mbps?: number | null
           updated_at?: string | null
+          vm_sync_details?: Json | null
         }
         Update: {
           bytes_transferred?: number | null
@@ -2103,7 +2116,9 @@ export type Database = {
           started_at?: string | null
           status?: string
           target_snapshot?: string | null
+          transfer_rate_mbps?: number | null
           updated_at?: string | null
+          vm_sync_details?: Json | null
         }
         Relationships: [
           {

@@ -746,6 +746,113 @@ class ReplicationHandler(BaseHandler):
             self.executor.log(f"Error in _ensure_vm_dataset: {e}", "ERROR")
             return result
     
+    def _format_bytes(self, size_bytes: int) -> str:
+        """Format bytes to human readable string"""
+        if not size_bytes or size_bytes == 0:
+            return "0 B"
+        units = ['B', 'KB', 'MB', 'GB', 'TB']
+        i = 0
+        while size_bytes >= 1024 and i < len(units) - 1:
+            size_bytes /= 1024
+            i += 1
+        return f"{size_bytes:.1f} {units[i]}"
+    
+    def _get_dataset_size(
+        self,
+        dataset: str,
+        ssh_hostname: str,
+        ssh_username: str = 'root',
+        ssh_port: int = 22,
+        ssh_key_data: str = None
+    ) -> Dict:
+        """
+        Get the size of a ZFS dataset.
+        
+        Returns:
+            Dict with success, used_bytes, referenced_bytes
+        """
+        result = {
+            'success': False,
+            'used_bytes': 0,
+            'referenced_bytes': 0
+        }
+        
+        if not PARAMIKO_AVAILABLE:
+            return result
+        
+        try:
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            if ssh_key_data:
+                key_file = io.StringIO(ssh_key_data)
+                pkey = None
+                for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                    try:
+                        key_file.seek(0)
+                        pkey = key_class.from_private_key(key_file)
+                        break
+                    except:
+                        continue
+                
+                if pkey:
+                    ssh.connect(
+                        hostname=ssh_hostname,
+                        port=ssh_port,
+                        username=ssh_username,
+                        pkey=pkey,
+                        timeout=30,
+                        allow_agent=False,
+                        look_for_keys=False
+                    )
+            
+            if not ssh.get_transport():
+                return result
+            
+            # Get used and referenced size
+            cmd = f"zfs list -H -o used,refer {dataset}"
+            stdin, stdout, stderr = ssh.exec_command(cmd)
+            exit_code = stdout.channel.recv_exit_status()
+            output = stdout.read().decode().strip()
+            
+            ssh.close()
+            
+            if exit_code == 0 and output:
+                parts = output.split()
+                if len(parts) >= 2:
+                    result['used_bytes'] = self._parse_zfs_size_to_bytes(parts[0])
+                    result['referenced_bytes'] = self._parse_zfs_size_to_bytes(parts[1])
+                    result['success'] = True
+            
+            return result
+            
+        except Exception as e:
+            self.executor.log(f"Error getting dataset size: {e}", "WARN")
+            return result
+    
+    def _parse_zfs_size_to_bytes(self, size_str: str) -> int:
+        """Parse ZFS size string (e.g., '1.5T', '500G', '128M') to bytes"""
+        try:
+            size_str = size_str.strip().upper()
+            if not size_str or size_str == '0' or size_str == '-':
+                return 0
+            
+            multipliers = {
+                'T': 1024**4,
+                'G': 1024**3,
+                'M': 1024**2,
+                'K': 1024,
+                'B': 1
+            }
+            
+            for suffix, mult in multipliers.items():
+                if size_str.endswith(suffix):
+                    return int(float(size_str[:-1]) * mult)
+            
+            return int(float(size_str))
+        except:
+            return 0
+
     def _get_target_ssh_creds(self, target: Dict, password: str = None) -> Optional[Dict]:
         """
         Get SSH credentials for connecting to a replication target.
@@ -1340,7 +1447,10 @@ class ReplicationHandler(BaseHandler):
                 'current_vm': None,
                 'current_step': 'Initializing',
                 'progress_percent': 0,
-                'bytes_transferred': 0
+                'bytes_transferred': 0,
+                'transfer_rate_mbps': 0,
+                'vm_sync_details': [],
+                'sync_start_time': utc_now_iso()
             }
             
             # Update job with initial progress info
@@ -1470,12 +1580,101 @@ class ReplicationHandler(BaseHandler):
                             self.update_job_status(job_id, 'running', details=results)
                             add_console_log(f"Snapshot complete for {vm_name}")
                             
-                            # Mark as successful (full replication would involve zfs send/receive)
+                            # ===== ACTUAL ZFS SEND/RECEIVE =====
+                            # Get DR target info for send/receive
+                            dr_target_id = group.get('target_id')
+                            dr_target = self._get_replication_target(dr_target_id) if dr_target_id else None
+                            
+                            vm_bytes_transferred = 0
+                            vm_transfer_rate = 0
+                            send_success = True
+                            
+                            if dr_target and dr_target.get('id') != target.get('id'):
+                                # We have a separate DR target - do ZFS send/receive
+                                dr_ssh_creds = self._get_target_ssh_creds(dr_target)
+                                dr_hostname = dr_ssh_creds.get('hostname')
+                                dr_username = dr_ssh_creds.get('username', 'root')
+                                dr_port = dr_ssh_creds.get('port', 22)
+                                
+                                if dr_hostname and self.zfs_replication:
+                                    dr_dataset_prefix = dr_target.get('zfs_dataset_prefix') or dr_target.get('zfs_pool')
+                                    target_dataset = f"{dr_dataset_prefix}/{vm_name}"
+                                    
+                                    results['current_step'] = f'ZFS send → {dr_hostname} for {vm_name}'
+                                    self.update_job_status(job_id, 'running', details=results)
+                                    add_console_log(f"Starting ZFS send to {dr_hostname}:{target_dataset}")
+                                    
+                                    send_start = time.time()
+                                    
+                                    # Perform actual ZFS send/receive
+                                    send_result = self.zfs_replication.replicate_dataset(
+                                        source_dataset=source_dataset,
+                                        source_snapshot=snapshot_name,
+                                        target_host=dr_hostname,
+                                        target_dataset=target_dataset,
+                                        ssh_username=dr_username,
+                                        ssh_port=dr_port
+                                    )
+                                    
+                                    send_duration = int((time.time() - send_start) * 1000)
+                                    
+                                    if send_result.get('success'):
+                                        vm_bytes_transferred = send_result.get('bytes_transferred', 0)
+                                        vm_transfer_rate = send_result.get('transfer_rate_mbps', 0)
+                                        
+                                        add_console_log(
+                                            f"ZFS send complete: {self._format_bytes(vm_bytes_transferred)} "
+                                            f"@ {vm_transfer_rate} MB/s ({send_duration}ms)"
+                                        )
+                                        
+                                        # Log SSH command for activity tracking
+                                        self._log_ssh_command(
+                                            job_id,
+                                            command=f"zfs send {source_dataset}@{snapshot_name} | zfs receive {target_dataset}",
+                                            hostname=dr_hostname,
+                                            output=f"Transferred {vm_bytes_transferred} bytes",
+                                            success=True,
+                                            duration_ms=send_duration
+                                        )
+                                    else:
+                                        send_success = False
+                                        add_console_log(f"WARN: ZFS send failed: {send_result.get('error')}", "WARN")
+                                        # Continue - snapshot was created, just send failed
+                            else:
+                                # Same target or no DR target - estimate bytes from dataset size
+                                size_result = self._get_dataset_size(
+                                    source_dataset,
+                                    ssh_hostname=ssh_hostname,
+                                    ssh_username=ssh_username,
+                                    ssh_port=ssh_port,
+                                    ssh_key_data=ssh_key_data
+                                )
+                                if size_result.get('success'):
+                                    vm_bytes_transferred = size_result.get('used_bytes', 0)
+                                    add_console_log(f"Dataset size: {self._format_bytes(vm_bytes_transferred)}")
+                            
+                            # Update running totals
+                            results['bytes_transferred'] += vm_bytes_transferred
+                            if vm_transfer_rate > 0:
+                                results['transfer_rate_mbps'] = vm_transfer_rate
+                            
+                            # Track per-VM details
+                            results['vm_sync_details'].append({
+                                'vm_name': vm_name,
+                                'bytes_transferred': vm_bytes_transferred,
+                                'transfer_rate_mbps': vm_transfer_rate,
+                                'snapshot_name': snapshot_name,
+                                'success': send_success
+                            })
+                            
+                            # Update protected VM with byte tracking
                             self._update_protected_vm(
                                 vm['id'],
                                 replication_status='synced',
                                 last_snapshot_at=utc_now_iso(),
-                                last_replication_at=utc_now_iso()
+                                last_replication_at=utc_now_iso(),
+                                last_sync_bytes=vm_bytes_transferred,
+                                total_bytes_synced=(vm.get('total_bytes_synced') or 0) + vm_bytes_transferred
                             )
                             
                             if rep_job_id:
@@ -1483,14 +1682,20 @@ class ReplicationHandler(BaseHandler):
                                     rep_job_id,
                                     status='completed',
                                     completed_at=utc_now_iso(),
-                                    source_snapshot=snapshot_name
+                                    source_snapshot=snapshot_name,
+                                    bytes_transferred=vm_bytes_transferred,
+                                    transfer_rate_mbps=vm_transfer_rate
                                 )
                             
                             results['vms_synced'] += 1
                             results['vms_completed'] = idx + 1
                             
+                            # Update progress with bytes info
+                            results['current_step'] = f'Completed {vm_name} ({self._format_bytes(vm_bytes_transferred)})'
+                            self.update_job_status(job_id, 'running', details=results)
+                            
                             # Update VM task as completed
-                            self._update_job_task(vm_task_id, 'completed', f"Synced {vm_name}")
+                            self._update_job_task(vm_task_id, 'completed', f"Synced {vm_name} ({self._format_bytes(vm_bytes_transferred)})")
                         else:
                             error_msg = snapshot_result.get('error', 'Snapshot failed')
                             add_console_log(f"ERROR: Snapshot failed for {vm_name}: {error_msg}", "ERROR")
@@ -1529,11 +1734,23 @@ class ReplicationHandler(BaseHandler):
                 sync_in_progress=False
             )
             
-            # Insert metrics
+            # Calculate throughput from sync
+            sync_start = results.get('sync_start_time')
+            elapsed_seconds = 1
+            if sync_start:
+                try:
+                    from datetime import datetime
+                    start_dt = datetime.fromisoformat(sync_start.replace('Z', '+00:00'))
+                    elapsed_seconds = max(1, (datetime.now(timezone.utc) - start_dt).total_seconds())
+                except:
+                    pass
+            avg_throughput = (results.get('bytes_transferred', 0) / 1_000_000) / elapsed_seconds
+            
+            # Insert metrics with actual throughput
             self._insert_replication_metrics(group_id, {
                 'current_rpo_seconds': 0,
                 'pending_bytes': 0,
-                'throughput_mbps': 0
+                'throughput_mbps': round(avg_throughput, 2)
             })
             
             success = len(results['errors']) == 0
