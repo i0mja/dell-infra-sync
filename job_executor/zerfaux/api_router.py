@@ -760,11 +760,12 @@ class ZerfauxAPIRouter:
             handler._send_error('No target datastore specified', 400)
             return True
         
-        # Use stub to relocate
+        # Use stub/real implementation to relocate
         result = self.vcenter_inventory.relocate_vm(
             vcenter_id=group.get('source_vcenter_id', ''),
             vm_moref=vm.get('vm_vcenter_id', ''),
-            target_datastore=target_datastore
+            target_datastore=target_datastore,
+            progress_callback=None  # No job context in direct API call
         )
         
         if result['success']:

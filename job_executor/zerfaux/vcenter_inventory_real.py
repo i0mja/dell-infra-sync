@@ -15,7 +15,7 @@ import ssl
 import time
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Callable
 
 try:
     from pyVim.connect import SmartConnect, Disconnect
@@ -427,16 +427,19 @@ class VCenterInventoryReal:
                 pass
     
     def relocate_vm(self, vcenter_id: str, vm_moref: str, 
-                    target_datastore: str) -> Dict:
+                    target_datastore: str,
+                    progress_callback: Callable[[int, str], None] = None) -> Dict:
         """
         Relocate (Storage vMotion) a VM to a different datastore.
         
-        Uses pyVmomi RelocateVM_Task to perform the migration.
+        Uses pyVmomi RelocateVM_Task to perform the migration with progress tracking.
         
         Args:
             vcenter_id: UUID of vCenter connection
             vm_moref: VMware MoRef ID of the VM
             target_datastore: Name of target datastore
+            progress_callback: Optional callback function(progress_percent, message)
+                              Called periodically with progress updates
             
         Returns:
             Dict with relocation result
@@ -536,12 +539,37 @@ class VCenterInventoryReal:
             logger.info(f"Starting Storage vMotion for {target_vm.name} to {target_datastore}")
             task = target_vm.RelocateVM_Task(spec=relocate_spec)
             
-            # Wait for task completion
-            WaitForTask(task)
+            # Poll for task completion with progress tracking
+            last_progress = -1
+            poll_interval = 5  # seconds
+            
+            while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+                current_progress = task.info.progress or 0
+                
+                # Only report when progress changes
+                if current_progress != last_progress:
+                    last_progress = current_progress
+                    progress_msg = f"Storage vMotion: {current_progress}% complete"
+                    logger.info(progress_msg)
+                    
+                    # Call progress callback if provided
+                    if progress_callback:
+                        try:
+                            progress_callback(current_progress, progress_msg)
+                        except Exception as cb_err:
+                            logger.warning(f"Progress callback error: {cb_err}")
+                
+                time.sleep(poll_interval)
             
             elapsed = time.time() - start_time
             
             if task.info.state == vim.TaskInfo.State.success:
+                # Final progress update
+                if progress_callback:
+                    try:
+                        progress_callback(100, "Storage vMotion completed")
+                    except:
+                        pass
                 logger.info(f"VM {target_vm.name} relocated successfully in {elapsed:.2f}s")
                 return {
                     'success': True,

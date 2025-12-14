@@ -1172,12 +1172,24 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
             job_details = self._add_console_log(job_id, 'INFO', f'Starting vMotion: {source_datastore} -> {final_target}', job_details)
             self.update_job_status(job_id, 'running', details=job_details)
             
-            # Use VCenterInventory to perform the relocation
+            # Progress callback to update job during vMotion
+            def vmotion_progress_callback(progress_percent: int, message: str):
+                """Called by relocate_vm with progress updates from vCenter."""
+                nonlocal job_details
+                # Map vMotion progress (0-100) to job progress (50-80)
+                mapped_progress = 50 + int(progress_percent * 0.3)
+                job_details['progress_percent'] = mapped_progress
+                job_details['current_step'] = message
+                job_details = self._add_console_log(job_id, 'INFO', message, job_details)
+                self.update_job_status(job_id, 'running', details=job_details)
+            
+            # Use VCenterInventory to perform the relocation with progress tracking
             vcenter_inventory = VCenterInventory(self)
             result = vcenter_inventory.relocate_vm(
                 vcenter_id=group.get('source_vcenter_id', ''),
                 vm_moref=vm.get('vm_vcenter_id', ''),
-                target_datastore=final_target
+                target_datastore=final_target,
+                progress_callback=vmotion_progress_callback
             )
             
             duration_seconds = int(time.time() - start_time)
