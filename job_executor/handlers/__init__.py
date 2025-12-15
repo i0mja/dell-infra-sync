@@ -15,6 +15,7 @@ from .vcenter_handlers import VCenterHandlers
 from .network import NetworkHandler
 from .zfs_target import ZfsTargetHandler
 from .replication import ReplicationHandler
+from .sla_monitoring import SLAMonitoringHandler
 
 __all__ = [
     'IDMHandler',
@@ -31,5 +32,6 @@ __all__ = [
     'VCenterHandlers',
     'NetworkHandler',
     'ZfsTargetHandler',
-    'ReplicationHandler'
+    'ReplicationHandler',
+    'SLAMonitoringHandler'
 ]

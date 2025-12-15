@@ -146,11 +146,23 @@ export function ProtectionGroupsPanel() {
 
   const isSyncing = activeSyncJobs.length > 0;
 
-  // Check if test is overdue
+  // Check if test is overdue (also returns true if never tested and reminder is set)
   const isTestOverdue = (group: ProtectionGroup): boolean => {
-    if (!group.test_reminder_days || !group.last_test_at) return false;
+    if (!group.test_reminder_days) return false;
+    
+    // If never tested, check against group creation date
+    if (!group.last_test_at) {
+      const daysSinceCreation = differenceInDays(new Date(), new Date(group.created_at));
+      return daysSinceCreation > group.test_reminder_days;
+    }
+    
     const daysSinceTest = differenceInDays(new Date(), new Date(group.last_test_at));
     return daysSinceTest > group.test_reminder_days;
+  };
+  
+  // Check if group has never been tested
+  const isNeverTested = (group: ProtectionGroup): boolean => {
+    return !group.last_test_at && !!group.test_reminder_days;
   };
 
   // Check if group has target configured

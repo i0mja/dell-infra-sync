@@ -3254,6 +3254,50 @@ export type Database = {
           },
         ]
       }
+      sla_violations: {
+        Row: {
+          created_at: string | null
+          details: Json | null
+          detected_at: string | null
+          id: string
+          notification_sent: boolean | null
+          protection_group_id: string | null
+          resolved_at: string | null
+          severity: string | null
+          violation_type: string
+        }
+        Insert: {
+          created_at?: string | null
+          details?: Json | null
+          detected_at?: string | null
+          id?: string
+          notification_sent?: boolean | null
+          protection_group_id?: string | null
+          resolved_at?: string | null
+          severity?: string | null
+          violation_type: string
+        }
+        Update: {
+          created_at?: string | null
+          details?: Json | null
+          detected_at?: string | null
+          id?: string
+          notification_sent?: boolean | null
+          protection_group_id?: string | null
+          resolved_at?: string | null
+          severity?: string | null
+          violation_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sla_violations_protection_group_id_fkey"
+            columns: ["protection_group_id"]
+            isOneToOne: false
+            referencedRelation: "protection_groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ssh_key_deployments: {
         Row: {
           created_at: string
@@ -4666,6 +4710,8 @@ export type Database = {
         | "repair_cross_site_ssh"
         | "repair_syncoid_cron"
         | "create_dr_shell"
+        | "scheduled_replication_check"
+        | "rpo_monitoring"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -4885,6 +4931,8 @@ export const Constants = {
         "repair_cross_site_ssh",
         "repair_syncoid_cron",
         "create_dr_shell",
+        "scheduled_replication_check",
+        "rpo_monitoring",
       ],
       operation_type: [
         "idrac_api",
