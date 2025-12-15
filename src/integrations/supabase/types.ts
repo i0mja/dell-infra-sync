@@ -643,6 +643,51 @@ export type Database = {
           },
         ]
       }
+      executor_heartbeats: {
+        Row: {
+          capabilities: Json | null
+          created_at: string | null
+          executor_id: string
+          hostname: string | null
+          id: string
+          ip_address: string | null
+          jobs_processed: number | null
+          last_error: string | null
+          last_seen_at: string | null
+          poll_count: number | null
+          startup_time: string | null
+          version: string | null
+        }
+        Insert: {
+          capabilities?: Json | null
+          created_at?: string | null
+          executor_id: string
+          hostname?: string | null
+          id?: string
+          ip_address?: string | null
+          jobs_processed?: number | null
+          last_error?: string | null
+          last_seen_at?: string | null
+          poll_count?: number | null
+          startup_time?: string | null
+          version?: string | null
+        }
+        Update: {
+          capabilities?: Json | null
+          created_at?: string | null
+          executor_id?: string
+          hostname?: string | null
+          id?: string
+          ip_address?: string | null
+          jobs_processed?: number | null
+          last_error?: string | null
+          last_seen_at?: string | null
+          poll_count?: number | null
+          startup_time?: string | null
+          version?: string | null
+        }
+        Relationships: []
+      }
       failover_events: {
         Row: {
           checkpoint_time: string | null

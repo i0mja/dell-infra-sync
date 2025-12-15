@@ -175,6 +175,11 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
         self.last_poll_error = None  # Last error in polling loop (if any)
         self.startup_time = datetime.now()  # When executor started
         
+        # Heartbeat tracking
+        self.executor_id = self._generate_executor_id()
+        self.last_heartbeat_time = 0  # Timestamp of last heartbeat
+        self.heartbeat_interval = 15  # Send heartbeat every 15 seconds
+        
         # Initialize job handlers
         self.idm_handler = IDMHandler(self)
         self.console_handler = ConsoleHandler(self)
@@ -196,6 +201,73 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
         self.template_handler = TemplateHandler(self)
         self.sla_monitoring_handler = SLAMonitoringHandler(self)
         self.failover_handler = FailoverHandler(self)
+    
+    def _generate_executor_id(self) -> str:
+        """Generate a unique executor ID based on hostname and startup time"""
+        import socket
+        hostname = socket.gethostname()
+        # Create a short hash for uniqueness
+        unique_part = hashlib.md5(f"{hostname}-{time.time()}".encode()).hexdigest()[:8]
+        return f"{hostname}-{unique_part}"
+    
+    def _get_hostname(self) -> str:
+        """Get the hostname of this machine"""
+        import socket
+        try:
+            return socket.gethostname()
+        except Exception:
+            return "unknown"
+    
+    def send_heartbeat(self):
+        """Send heartbeat to database so UI knows executor is alive"""
+        current_time = time.time()
+        
+        # Only send heartbeat if interval has passed
+        if current_time - self.last_heartbeat_time < self.heartbeat_interval:
+            return
+        
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json',
+                'Prefer': 'resolution=merge-duplicates'
+            }
+            
+            heartbeat_data = {
+                'executor_id': self.executor_id,
+                'hostname': self._get_hostname(),
+                'ip_address': self.get_local_ip(),
+                'version': '1.0.0',
+                'last_seen_at': utc_now_iso(),
+                'poll_count': self.poll_count,
+                'jobs_processed': self.jobs_processed,
+                'startup_time': self.startup_time.isoformat() + 'Z',
+                'last_error': self.last_poll_error,
+                'capabilities': [
+                    'firmware_update', 'ip_discovery', 'vcenter_sync', 
+                    'esxi_upgrade', 'failover_preflight_check', 'group_failover',
+                    'replication_sync', 'sla_check', 'cluster_safety_check'
+                ]
+            }
+            
+            response = requests.post(
+                f"{DSM_URL}/rest/v1/executor_heartbeats",
+                headers=headers,
+                json=heartbeat_data,
+                verify=VERIFY_SSL,
+                timeout=5
+            )
+            
+            if response.status_code in (200, 201):
+                self.last_heartbeat_time = current_time
+            else:
+                # Log but don't fail - heartbeat is non-critical
+                self.log(f"Heartbeat update returned {response.status_code}", "DEBUG")
+                
+        except Exception as e:
+            # Don't spam logs - heartbeat failures are non-critical
+            pass
 
     def _validate_service_role_key(self):
         """Ensure SERVICE_ROLE_KEY is present before making Supabase requests"""
@@ -1463,6 +1535,9 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
                     self.poll_count += 1
                     self.last_poll_time = datetime.now()
                     self.last_poll_error = None
+                    
+                    # Send heartbeat to database for UI status tracking
+                    self.send_heartbeat()
                     
                     # Process jobs from the queue (long-running operations only)
                     jobs = self.get_pending_jobs()
