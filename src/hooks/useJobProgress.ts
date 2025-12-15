@@ -13,8 +13,12 @@ export interface JobProgress {
   details?: Record<string, any>;
 }
 
-export function useJobProgress(jobId: string | null, enabled: boolean = true) {
+export function useJobProgress(jobId: string | null, enabled: boolean = true, jobStatus?: string) {
   const { session } = useAuth();
+  
+  // Reduce polling frequency for pending jobs - they only change when executor picks them up
+  const pollingInterval = jobStatus === 'pending' ? 10000 : 2000;
+  
   const query = useQuery({
     queryKey: ['job-progress', jobId],
     queryFn: async () => {
@@ -215,7 +219,7 @@ export function useJobProgress(jobId: string | null, enabled: boolean = true) {
       return progress;
     },
     enabled: enabled && !!jobId,
-    refetchInterval: 2000, // Refetch every 2 seconds for active jobs
+    refetchInterval: pollingInterval,
   });
   
   // Subscribe to real-time updates

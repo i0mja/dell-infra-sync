@@ -12,6 +12,7 @@ import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
 import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
 import { DiscoveryScanResults, VCenterSyncResults, CredentialTestResults, ScpResults, MultiServerResults, GenericResults, JobTimingCard, EsxiUpgradeResults, EsxiPreflightResults, JobProgressHeader, JobTasksTimeline, JobConsoleLog, StorageVMotionResults, ZfsDeploymentResults, ValidationPreflightResults, ZfsHealthCheckResults, ReplicationSyncResults, FailoverPreflightResults } from "./results";
 import { PendingJobWarning } from "@/components/activity/PendingJobWarning";
+import { toast } from "sonner";
 interface Job {
   id: string;
   job_type: string;
@@ -103,9 +104,8 @@ export const JobDetailDialog = ({
         error
       } = await supabase.from('maintenance_windows').select('id, title, status, maintenance_type, planned_start').overlaps('job_ids', [job.id]).limit(1).maybeSingle();
       if (error) {
-        // 406 errors can occur with array queries - handle gracefully
+        // 406 errors can occur with array queries - handle gracefully (silently)
         if (error.code === '406' || error.message?.includes('406')) {
-          console.warn('Array query not supported, skipping parent window lookup');
           setParentWindow(null);
           return;
         }
@@ -266,10 +266,34 @@ export const JobDetailDialog = ({
           </DialogHeader>
 
           <ParentWindowBanner />
-          
+
           {/* Show warning for pending jobs that require executor */}
           {job.status === 'pending' && (
-            <PendingJobWarning job={job} />
+            <PendingJobWarning 
+              job={job} 
+              onCancel={async () => {
+                try {
+                  const { error } = await supabase
+                    .from('jobs')
+                    .update({ 
+                      status: 'cancelled', 
+                      completed_at: new Date().toISOString(),
+                      details: {
+                        ...((job.details as object) || {}),
+                        cancellation_reason: 'Cancelled by user - job was stuck in pending state'
+                      }
+                    })
+                    .eq('id', job.id);
+                  
+                  if (error) throw error;
+                  toast.success('Job cancelled successfully');
+                  onOpenChange(false);
+                } catch (error) {
+                  console.error('Error cancelling job:', error);
+                  toast.error('Failed to cancel job');
+                }
+              }}
+            />
           )}
 
           <Tabs defaultValue="progress" className="w-full">

@@ -16,9 +16,9 @@ export function GlobalSyncIndicator() {
 
   useEffect(() => {
     const fetchRunningJobs = async () => {
-      const { data, error, count } = await supabase
+      const { error, count } = await supabase
         .from('jobs')
-        .select('id', { count: 'exact', head: true })
+        .select('id', { count: 'exact' })
         .in('job_type', ['run_replication_sync', 'storage_vmotion', 'create_dr_shell'])
         .in('status', ['pending', 'running']);
 
