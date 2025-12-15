@@ -203,12 +203,11 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
         self.failover_handler = FailoverHandler(self)
     
     def _generate_executor_id(self) -> str:
-        """Generate a unique executor ID based on hostname and startup time"""
+        """Generate a stable executor ID based on hostname for heartbeat upserts"""
         import socket
         hostname = socket.gethostname()
-        # Create a short hash for uniqueness
-        unique_part = hashlib.md5(f"{hostname}-{time.time()}".encode()).hexdigest()[:8]
-        return f"{hostname}-{unique_part}"
+        # Use stable ID so heartbeats update instead of insert new records
+        return f"executor-{hostname}"
     
     def _get_hostname(self) -> str:
         """Get the hostname of this machine"""

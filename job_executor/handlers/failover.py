@@ -758,9 +758,8 @@ class FailoverHandler:
             if not private_key_encrypted:
                 return {'success': False, 'error': 'SSH private key not available'}
 
-            # Decrypt the private key
-            from job_executor.crypto import decrypt_value
-            private_key = decrypt_value(private_key_encrypted)
+            # Decrypt the private key using executor's decrypt method
+            private_key = self.executor.decrypt_password(private_key_encrypted)
 
             if not private_key:
                 return {'success': False, 'error': 'Failed to decrypt SSH key'}
@@ -769,9 +768,21 @@ class FailoverHandler:
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-            # Load private key
+            # Load private key - try multiple key types (RSA, Ed25519, ECDSA)
             from io import StringIO
-            pkey = paramiko.RSAKey.from_private_key(StringIO(private_key))
+            key_file = StringIO(private_key)
+            pkey = None
+            
+            for key_class in [paramiko.RSAKey, paramiko.Ed25519Key, paramiko.ECDSAKey]:
+                try:
+                    key_file.seek(0)
+                    pkey = key_class.from_private_key(key_file)
+                    break
+                except paramiko.SSHException:
+                    continue
+            
+            if not pkey:
+                return {'success': False, 'error': 'Unsupported SSH key type or invalid key format'}
 
             # Attempt connection with timeout
             client.connect(
