@@ -140,6 +140,47 @@ class ZFSReplicationReal:
             logger.error(f"SSH connection failed to {hostname}: {e}")
             return None
     
+    def _get_ssh_client_with_retry(self, hostname: str, port: int = 22,
+                                    username: str = None, key_path: str = None,
+                                    key_data: str = None, password: str = None,
+                                    max_retries: int = 3, initial_delay: float = 5.0) -> Optional[object]:
+        """
+        SSH connection with retry logic for transient failures.
+        
+        Useful after reboots or network interruptions when SSH may not be
+        immediately available.
+        
+        Args:
+            hostname: Target hostname
+            port: SSH port
+            username: SSH username
+            key_path: Path to SSH private key file
+            key_data: Raw SSH private key content
+            password: SSH password (fallback)
+            max_retries: Maximum connection attempts (default 3)
+            initial_delay: Initial delay between retries in seconds (default 5)
+            
+        Returns:
+            paramiko.SSHClient or None
+        """
+        for attempt in range(max_retries):
+            ssh = self._get_ssh_client(
+                hostname, port, username,
+                key_path=key_path, key_data=key_data, password=password
+            )
+            if ssh:
+                if attempt > 0:
+                    logger.info(f"SSH connected to {hostname} on attempt {attempt + 1}")
+                return ssh
+            
+            if attempt < max_retries - 1:
+                delay = initial_delay * (2 ** attempt)  # Exponential backoff: 5s, 10s, 20s
+                logger.warning(f"SSH connection to {hostname} failed, retrying in {delay}s... (attempt {attempt + 1}/{max_retries})")
+                time.sleep(delay)
+        
+        logger.error(f"SSH connection to {hostname} failed after {max_retries} attempts")
+        return None
+    
     def _exec_ssh_command(self, ssh, command: str, timeout: int = 300) -> Dict:
         """
         Execute SSH command and return result.
@@ -851,9 +892,15 @@ class ZFSReplicationReal:
         if not PARAMIKO_AVAILABLE:
             return {'success': False, 'verified': False, 'error': 'paramiko not available'}
         
-        ssh = self._get_ssh_client(target_host, ssh_port, ssh_username, key_data=ssh_key_data)
+        # Use retry logic for verification - Site B may be slow to respond after reboot or heavy I/O
+        ssh = self._get_ssh_client_with_retry(
+            target_host, ssh_port, ssh_username,
+            key_data=ssh_key_data,
+            max_retries=3,
+            initial_delay=5.0
+        )
         if not ssh:
-            return {'success': False, 'verified': False, 'error': 'Cannot connect to Site B'}
+            return {'success': False, 'verified': False, 'error': 'Cannot connect to Site B after retries'}
         
         try:
             # 1. Check snapshot exists
