@@ -44,7 +44,7 @@ class FailoverHandler:
         job_id = job['id']
         
         if not protection_group_id:
-            self.executor.update_job_status(job_id, 'failed', {
+            self.executor.update_job_status(job_id, 'failed', details={
                 **details,
                 'error': 'No protection_group_id provided'
             })
@@ -78,7 +78,7 @@ class FailoverHandler:
             checks_completed += 1
             progress = int((checks_completed / total_checks) * 100)
             
-            self.executor.update_job_status(job_id, 'running', {
+            self.executor.update_job_status(job_id, 'running', details={
                 **details,
                 'current_step': f"Check {checks_completed}/{total_checks}: {check_name}",
                 'progress_percent': progress,
@@ -91,15 +91,16 @@ class FailoverHandler:
         log_and_track(f"Starting pre-flight checks for group {protection_group_id}")
         
         # Set initial running state with started_at
-        self.executor.update_job_status(job_id, 'running', {
+        self.executor.update_job_status(job_id, 'running', details={
             **details,
             'current_step': 'Initializing pre-flight checks...',
             'progress_percent': 0,
             'total_checks': total_checks,
             'checks_completed': 0,
             'console_log': console_log,
-            'step_results': []
-        }, started_at=self._utc_now_iso())
+            'step_results': [],
+            'started_at': self._utc_now_iso()
+        })
 
         try:
             # Fetch protection group with target info
@@ -283,7 +284,7 @@ class FailoverHandler:
             status_msg = f"Complete: ready={all_passed}, blockers={len(blockers)}, warnings={len(warnings)}"
             log_and_track(status_msg)
             
-            self.executor.update_job_status(job_id, 'completed', {
+            self.executor.update_job_status(job_id, 'completed', details={
                 **details,
                 'result': result,
                 'console_log': console_log,
@@ -295,7 +296,7 @@ class FailoverHandler:
 
         except Exception as e:
             log_and_track(f"Error: {e}", "ERROR")
-            self.executor.update_job_status(job_id, 'failed', {
+            self.executor.update_job_status(job_id, 'failed', details={
                 **details,
                 'error': str(e),
                 'console_log': console_log,
@@ -404,7 +405,7 @@ class FailoverHandler:
             }
 
             self.executor.log(f"[Group Failover] Complete: {recovered_count}/{len(vms)} VMs recovered")
-            self.executor.update_job_status(job['id'], 'completed', {
+            self.executor.update_job_status(job['id'], 'completed', details={
                 **details,
                 'result': result
             })
@@ -445,7 +446,7 @@ class FailoverHandler:
             self._update_group_failover_status(protection_group_id, 'committed', None)
 
             self.executor.log("[Commit Failover] Failover committed successfully")
-            self.executor.update_job_status(job['id'], 'completed', {
+            self.executor.update_job_status(job['id'], 'completed', details={
                 **details,
                 'committed': True,
                 'committed_at': datetime.utcnow().isoformat()
@@ -487,7 +488,7 @@ class FailoverHandler:
             self._update_group_failover_status(protection_group_id, 'normal', None)
 
             self.executor.log("[Rollback Failover] Rollback completed")
-            self.executor.update_job_status(job['id'], 'completed', {
+            self.executor.update_job_status(job['id'], 'completed', details={
                 **details,
                 'rolled_back': True,
                 'rolled_back_at': datetime.utcnow().isoformat()
@@ -1057,7 +1058,7 @@ class FailoverHandler:
 
     def _fail_job(self, job: Dict, error: str):
         """Helper to fail a job with error details."""
-        self.executor.update_job_status(job['id'], 'failed', {
+        self.executor.update_job_status(job['id'], 'failed', details={
             **job.get('details', {}),
             'error': error
         })
