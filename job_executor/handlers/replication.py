@@ -2654,47 +2654,76 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
                 raise ValueError(f"Destination target not found: {dest_target_id}")
             
             results = {
+                'source_target_id': source_target_id,
                 'source_target': source_target.get('name'),
+                'source_hostname': source_target.get('hostname'),
+                'destination_target_id': dest_target_id,
                 'destination_target': dest_target.get('name'),
-                'steps': []
+                'destination_hostname': dest_target.get('hostname'),
+                'steps': [],
+                'current_step': 'initializing'
             }
             
             # Step 1: Get/generate SSH key on source (use admin_password if provided)
+            results['current_step'] = 'source_key_generation'
             self.executor.log(f"[{job_id}] Getting SSH key from source: {source_target.get('hostname')}")
             source_pub_key = self._get_or_generate_ssh_key(source_target, password=admin_password)
             if not source_pub_key:
-                raise Exception("Failed to get/generate SSH key on source target")
+                results['failed_step'] = 'source_key_generation'
+                results['error'] = f"Failed to get/generate SSH key on source target ({source_target.get('hostname')})"
+                raise Exception(results['error'])
             results['steps'].append('source_key_obtained')
             
             # Step 2: Copy public key to destination (use admin_password for dest too)
+            results['current_step'] = 'copy_key_to_destination'
             self.executor.log(f"[{job_id}] Copying public key to destination: {dest_target.get('hostname')}")
             copy_result = self._copy_ssh_key_to_target(dest_target, source_pub_key, source_target.get('hostname', 'zerfaux'), password=admin_password)
             if not copy_result.get('success'):
-                raise Exception(f"Failed to copy key to destination: {copy_result.get('error')}")
+                results['failed_step'] = 'copy_key_to_destination'
+                results['error'] = f"Failed to copy key to destination ({dest_target.get('hostname')}): {copy_result.get('error')}"
+                raise Exception(results['error'])
             results['steps'].append('key_copied_to_destination')
             
             # Step 3: Test SSH connection from source to destination
+            results['current_step'] = 'test_ssh_connection'
             self.executor.log(f"[{job_id}] Testing SSH connection from source to destination")
             test_result = self._test_replication_ssh_connection(source_target, dest_target, password=admin_password)
             if not test_result.get('success'):
-                raise Exception(f"SSH connection test failed: {test_result.get('error')}")
+                results['failed_step'] = 'test_ssh_connection'
+                results['error'] = f"SSH connection test failed ({source_target.get('hostname')} → {dest_target.get('hostname')}): {test_result.get('error')}"
+                raise Exception(results['error'])
             results['steps'].append('connection_tested')
             
             # Step 4: Mark both targets as ssh_trust_established
+            results['current_step'] = 'establish_trust'
             self._update_replication_target(source_target_id, ssh_trust_established=True)
             self._update_replication_target(dest_target_id, ssh_trust_established=True)
             results['steps'].append('trust_established')
             
             # Step 5: Auto-link an active SSH key if available and targets don't have one
+            results['current_step'] = 'link_ssh_key'
             self._auto_link_ssh_key_to_targets(source_target_id, dest_target_id)
             results['steps'].append('ssh_key_linked')
             
+            results['current_step'] = 'completed'
             self.update_job_status(job_id, 'completed', completed_at=utc_now_iso(), details=results)
             self.executor.log(f"[{job_id}] SSH key exchange completed successfully")
             
         except Exception as e:
             self.executor.log(f"[{job_id}] Error in SSH key exchange: {e}", "ERROR")
-            self.update_job_status(job_id, 'failed', completed_at=utc_now_iso(), details={'error': str(e)})
+            # Preserve all context on failure - don't overwrite results
+            if 'results' not in dir() or not isinstance(results, dict):
+                results = {
+                    'source_target_id': details.get('source_target_id'),
+                    'destination_target_id': details.get('destination_target_id'),
+                    'steps': [],
+                    'failed_step': 'initialization'
+                }
+            if 'error' not in results:
+                results['error'] = str(e)
+            if 'failed_step' not in results:
+                results['failed_step'] = results.get('current_step', 'unknown')
+            self.update_job_status(job_id, 'failed', completed_at=utc_now_iso(), details=results)
     
     def _update_replication_target(self, target_id: str, **kwargs) -> bool:
         """Update replication target fields"""

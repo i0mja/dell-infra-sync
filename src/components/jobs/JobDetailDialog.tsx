@@ -10,7 +10,7 @@ import { CheckCircle, XCircle, PlayCircle, Clock, AlertCircle, ListChecks, Link2
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
 import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
-import { DiscoveryScanResults, VCenterSyncResults, CredentialTestResults, ScpResults, MultiServerResults, GenericResults, JobTimingCard, EsxiUpgradeResults, EsxiPreflightResults, JobProgressHeader, JobTasksTimeline, JobConsoleLog, StorageVMotionResults, ZfsDeploymentResults, ValidationPreflightResults, ZfsHealthCheckResults, ReplicationSyncResults, FailoverPreflightResults } from "./results";
+import { DiscoveryScanResults, VCenterSyncResults, CredentialTestResults, ScpResults, MultiServerResults, GenericResults, JobTimingCard, EsxiUpgradeResults, EsxiPreflightResults, JobProgressHeader, JobTasksTimeline, JobConsoleLog, StorageVMotionResults, ZfsDeploymentResults, ValidationPreflightResults, ZfsHealthCheckResults, ReplicationSyncResults, FailoverPreflightResults, SshKeyExchangeResults } from "./results";
 import { PendingJobWarning } from "@/components/activity/PendingJobWarning";
 import { toast } from "sonner";
 interface Job {
@@ -210,6 +210,8 @@ export const JobDetailDialog = ({
         return <ReplicationSyncResults details={job.details} status={job.status} />;
       case 'failover_preflight_check':
         return <FailoverPreflightResults details={job.details} />;
+      case 'exchange_ssh_keys':
+        return <SshKeyExchangeResults details={job.details} status={job.status} />;
       default:
         return <GenericResults details={job.details} />;
     }
