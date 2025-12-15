@@ -84,6 +84,12 @@ export interface ReplicationTarget {
     dr_vcenter_id?: string;
     ssh_trust_established?: boolean;
   } | null;
+  // Joined SSH key info
+  ssh_key?: {
+    id: string;
+    name: string;
+    status: string;
+  } | null;
 }
 
 export interface ProtectionGroup {
@@ -203,13 +209,14 @@ export function useReplicationTargets() {
       const targetIds = (data || []).map(t => t.id);
       const hostingVmIds = (data || []).filter(t => t.hosting_vm_id).map(t => t.hosting_vm_id);
       const partnerIds = (data || []).filter(t => t.partner_target_id).map(t => t.partner_target_id);
+      const sshKeyIds = (data || []).filter(t => t.ssh_key_id).map(t => t.ssh_key_id);
       
       // Collect deployed_vm_morefs for targets without hosting_vm_id (fallback lookup)
       const morefTargets = (data || []).filter(t => !t.hosting_vm_id && t.deployed_vm_moref);
       const morefs = morefTargets.map(t => t.deployed_vm_moref);
 
-      // Fetch hosting VMs, linked datastores, partner targets, and moref fallback VMs in parallel
-      const [hostingVmsResult, linkedDatastoresResult, partnersResult, morefVmsResult] = await Promise.all([
+      // Fetch hosting VMs, linked datastores, partner targets, SSH keys, and moref fallback VMs in parallel
+      const [hostingVmsResult, linkedDatastoresResult, partnersResult, sshKeysResult, morefVmsResult] = await Promise.all([
         hostingVmIds.length > 0 
           ? supabase.from('vcenter_vms').select('id, name, ip_address, power_state, vcenter_id').in('id', hostingVmIds)
           : { data: [] },
@@ -218,6 +225,10 @@ export function useReplicationTargets() {
           : { data: [] },
         partnerIds.length > 0
           ? supabase.from('replication_targets').select('id, name, hostname, zfs_pool, health_status, dr_vcenter_id, ssh_trust_established').in('id', partnerIds)
+          : { data: [] },
+        // Fetch SSH key names
+        sshKeyIds.length > 0
+          ? supabase.from('ssh_keys').select('id, name, status').in('id', sshKeyIds)
           : { data: [] },
         // Fallback: look up VMs by deployed_vm_moref (stored in vcenter_id column)
         morefs.length > 0
@@ -242,6 +253,10 @@ export function useReplicationTargets() {
 
       const partnerMap: Record<string, ReplicationTarget['partner_target']> = {};
       (partnersResult.data || []).forEach(p => { partnerMap[p.id] = p; });
+      
+      // Build SSH key name lookup
+      const sshKeyMap: Record<string, { id: string; name: string; status: string }> = {};
+      (sshKeysResult.data || []).forEach(k => { sshKeyMap[k.id] = k; });
 
       // Map targets with VM lookup fallback via moref
       const enrichedTargets = (data || []).map(t => {
@@ -268,7 +283,8 @@ export function useReplicationTargets() {
           ...t,
           hosting_vm,
           linked_datastore: datastoreMap[t.id] || null,
-          partner_target: t.partner_target_id ? partnerMap[t.partner_target_id] || null : null
+          partner_target: t.partner_target_id ? partnerMap[t.partner_target_id] || null : null,
+          ssh_key: t.ssh_key_id ? sshKeyMap[t.ssh_key_id] || null : null
         };
       }) as ReplicationTarget[];
       

@@ -373,7 +373,8 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
   const handleEdit = (target: any) => {
     setEditingTarget({
       ...target,
-      hosting_vm_id: target.hosting_vm_id || target.hosting_vm?.id || null
+      hosting_vm_id: target.hosting_vm_id || target.hosting_vm?.id || null,
+      ssh_key_id: target.ssh_key_id || null
     });
     setShowEditDialog(true);
   };
@@ -1052,9 +1053,19 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                             {target.hosting_vm.power_state === 'poweredOn' && (
                               <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" title="Powered On" />
                             )}
-                            {/* SSH warning - only show if SSH not established AND not healthy */}
-                            {!target.ssh_trust_established && target.health_status !== 'healthy' && (
-                              <Badge variant="outline" className="text-xs text-amber-600 border-amber-500/30" title="SSH not configured - health checks may fail">
+                            {/* SSH key badge - show name if assigned, warning if not */}
+                            {target.ssh_key_id ? (
+                              <Badge variant="outline" className="text-xs text-green-600 border-green-500/30" title={`SSH key: ${target.ssh_key?.name || 'assigned'}`}>
+                                <KeyRound className="h-3 w-3 mr-1" />
+                                {target.ssh_key?.name || 'SSH'}
+                              </Badge>
+                            ) : target.ssh_trust_established ? (
+                              <Badge variant="outline" className="text-xs text-amber-600 border-amber-500/30" title="Legacy SSH trust (no managed key)">
+                                <KeyRound className="h-3 w-3 mr-1" />
+                                Legacy SSH
+                              </Badge>
+                            ) : target.health_status !== 'healthy' && (
+                              <Badge variant="outline" className="text-xs text-red-600 border-red-500/30" title="No SSH configured - health checks may fail">
                                 <KeyRound className="h-3 w-3 mr-1" />
                                 No SSH
                               </Badge>
@@ -1072,8 +1083,18 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                           <div className="flex items-center gap-2">
                             <Target className="h-4 w-4 text-muted-foreground" />
                             <span className="italic text-muted-foreground">No VM linked</span>
-                            {!target.ssh_trust_established && target.health_status !== 'healthy' && (
-                              <Badge variant="outline" className="text-xs text-amber-600 border-amber-500/30" title="SSH not configured - health checks may fail">
+                            {target.ssh_key_id ? (
+                              <Badge variant="outline" className="text-xs text-green-600 border-green-500/30" title={`SSH key: ${target.ssh_key?.name || 'assigned'}`}>
+                                <KeyRound className="h-3 w-3 mr-1" />
+                                {target.ssh_key?.name || 'SSH'}
+                              </Badge>
+                            ) : target.ssh_trust_established ? (
+                              <Badge variant="outline" className="text-xs text-amber-600 border-amber-500/30" title="Legacy SSH trust">
+                                <KeyRound className="h-3 w-3 mr-1" />
+                                Legacy SSH
+                              </Badge>
+                            ) : target.health_status !== 'healthy' && (
+                              <Badge variant="outline" className="text-xs text-red-600 border-red-500/30" title="No SSH configured">
                                 <KeyRound className="h-3 w-3 mr-1" />
                                 No SSH
                               </Badge>
