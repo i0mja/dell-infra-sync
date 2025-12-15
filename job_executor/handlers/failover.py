@@ -17,6 +17,10 @@ class FailoverHandler:
     def __init__(self, executor):
         self.executor = executor
 
+    def _utc_now_iso(self) -> str:
+        """Get current UTC time as ISO string."""
+        return datetime.utcnow().isoformat() + 'Z'
+
     def execute_failover_preflight_check(self, job: Dict):
         """
         Run all 10 pre-flight checks for a protection group before failover.
@@ -36,19 +40,66 @@ class FailoverHandler:
         details = job.get('details', {})
         protection_group_id = details.get('protection_group_id')
         force_check = details.get('force', False)
+        job_id = job['id']
         
         if not protection_group_id:
-            self.executor.update_job_status(job['id'], 'failed', {
+            self.executor.update_job_status(job_id, 'failed', {
                 **details,
                 'error': 'No protection_group_id provided'
             })
             return
 
-        self.executor.log(f"[Failover Pre-Flight] Starting checks for group {protection_group_id}")
-        self.executor.update_job_status(job['id'], 'running')
+        # Initialize progress tracking
+        console_log = []
+        step_results = []
+        total_checks = 10
+        checks_completed = 0
+
+        def log_and_track(msg: str, level: str = "INFO"):
+            """Log message and add to console_log array."""
+            timestamp = datetime.utcnow().strftime("%H:%M:%S")
+            console_log.append(f"[{timestamp}] {level}: {msg}")
+            self.executor.log(f"[Failover Pre-Flight] {msg}", level)
+
+        def update_check_progress(check_name: str, passed: bool, message: str, is_warning: bool = False):
+            """Update step results and persist progress to DB."""
+            nonlocal checks_completed
+            step_results.append({
+                'step': check_name,
+                'status': 'success' if passed else ('warning' if is_warning else 'failed'),
+                'passed': passed,
+                'message': message,
+                'timestamp': datetime.utcnow().isoformat()
+            })
+            checks_completed += 1
+            progress = int((checks_completed / total_checks) * 100)
+            
+            self.executor.update_job_status(job_id, 'running', {
+                **details,
+                'current_step': f"Check {checks_completed}/{total_checks}: {check_name}",
+                'progress_percent': progress,
+                'checks_completed': checks_completed,
+                'total_checks': total_checks,
+                'console_log': console_log,
+                'step_results': step_results
+            })
+
+        log_and_track(f"Starting pre-flight checks for group {protection_group_id}")
+        
+        # Set initial running state with started_at
+        self.executor.update_job_status(job_id, 'running', {
+            **details,
+            'current_step': 'Initializing pre-flight checks...',
+            'progress_percent': 0,
+            'total_checks': total_checks,
+            'checks_completed': 0,
+            'console_log': console_log,
+            'step_results': []
+        }, started_at=self._utc_now_iso())
 
         try:
             # Fetch protection group with target info
+            log_and_track("Fetching protection group details...")
             group = self._fetch_protection_group(protection_group_id)
             if not group:
                 self._fail_job(job, "Protection group not found")
@@ -60,14 +111,25 @@ class FailoverHandler:
             warnings = []
 
             # 1. DR Shell VMs exist
-            self.executor.log("[Failover Pre-Flight] Check 1/10: DR Shell VMs...")
+            log_and_track("Check 1/10: Verifying DR Shell VMs exist...")
             checks['dr_shell_vms_exist'] = self._check_dr_shells_exist(protection_group_id)
+            update_check_progress(
+                'DR Shell VMs',
+                checks['dr_shell_vms_exist']['passed'],
+                checks['dr_shell_vms_exist']['message']
+            )
             if not checks['dr_shell_vms_exist']['passed']:
                 blockers.append(checks['dr_shell_vms_exist'])
 
             # 2. Replication currency
-            self.executor.log("[Failover Pre-Flight] Check 2/10: Replication currency...")
+            log_and_track("Check 2/10: Verifying replication currency...")
             checks['replication_current'] = self._check_replication_currency(group)
+            update_check_progress(
+                'Replication Current',
+                checks['replication_current']['passed'],
+                checks['replication_current']['message'],
+                checks['replication_current'].get('is_warning', False)
+            )
             if not checks['replication_current']['passed']:
                 if checks['replication_current'].get('is_warning'):
                     warnings.append(checks['replication_current'])
@@ -75,32 +137,58 @@ class FailoverHandler:
                     blockers.append(checks['replication_current'])
 
             # 3. Site B ZFS target health
-            self.executor.log("[Failover Pre-Flight] Check 3/10: Site B ZFS health...")
+            log_and_track("Check 3/10: Checking Site B ZFS health...")
             checks['site_b_zfs_healthy'] = self._check_site_b_zfs(group.get('target_id'))
+            update_check_progress(
+                'Site B ZFS Health',
+                checks['site_b_zfs_healthy']['passed'],
+                checks['site_b_zfs_healthy']['message']
+            )
             if not checks['site_b_zfs_healthy']['passed']:
                 blockers.append(checks['site_b_zfs_healthy'])
 
             # 4. Site B vCenter connection
-            self.executor.log("[Failover Pre-Flight] Check 4/10: Site B vCenter...")
+            log_and_track("Check 4/10: Checking Site B vCenter connection...")
             checks['site_b_vcenter_connected'] = self._check_site_b_vcenter(group)
+            update_check_progress(
+                'Site B vCenter',
+                checks['site_b_vcenter_connected']['passed'],
+                checks['site_b_vcenter_connected']['message']
+            )
             if not checks['site_b_vcenter_connected']['passed']:
                 blockers.append(checks['site_b_vcenter_connected'])
 
             # 5. NFS datastore mounted
-            self.executor.log("[Failover Pre-Flight] Check 5/10: NFS datastore...")
+            log_and_track("Check 5/10: Verifying NFS datastore is mounted...")
             checks['nfs_datastore_mounted'] = self._check_nfs_mounted(group)
+            update_check_progress(
+                'NFS Datastore',
+                checks['nfs_datastore_mounted']['passed'],
+                checks['nfs_datastore_mounted']['message']
+            )
             if not checks['nfs_datastore_mounted']['passed']:
                 blockers.append(checks['nfs_datastore_mounted'])
 
             # 6. No conflicting jobs
-            self.executor.log("[Failover Pre-Flight] Check 6/10: Conflicting jobs...")
-            checks['no_conflicting_jobs'] = self._check_no_conflicts(protection_group_id, job['id'])
+            log_and_track("Check 6/10: Checking for conflicting jobs...")
+            checks['no_conflicting_jobs'] = self._check_no_conflicts(protection_group_id, job_id)
+            update_check_progress(
+                'No Conflicts',
+                checks['no_conflicting_jobs']['passed'],
+                checks['no_conflicting_jobs']['message']
+            )
             if not checks['no_conflicting_jobs']['passed']:
                 blockers.append(checks['no_conflicting_jobs'])
 
             # 7. Snapshot consistency
-            self.executor.log("[Failover Pre-Flight] Check 7/10: Snapshot consistency...")
+            log_and_track("Check 7/10: Verifying snapshot consistency...")
             checks['snapshots_consistent'] = self._check_snapshot_consistency(protection_group_id)
+            update_check_progress(
+                'Snapshots',
+                checks['snapshots_consistent']['passed'],
+                checks['snapshots_consistent']['message'],
+                checks['snapshots_consistent'].get('is_warning', False)
+            )
             if not checks['snapshots_consistent']['passed']:
                 if checks['snapshots_consistent'].get('is_warning'):
                     warnings.append(checks['snapshots_consistent'])
@@ -108,20 +196,37 @@ class FailoverHandler:
                     blockers.append(checks['snapshots_consistent'])
 
             # 8. Network mapping
-            self.executor.log("[Failover Pre-Flight] Check 8/10: Network mappings...")
+            log_and_track("Check 8/10: Validating network mappings...")
             checks['network_mapping_valid'] = self._check_network_mapping(protection_group_id)
+            update_check_progress(
+                'Network Mapping',
+                checks['network_mapping_valid']['passed'],
+                checks['network_mapping_valid']['message'],
+                True  # Network mapping issues are warnings
+            )
             if not checks['network_mapping_valid']['passed']:
-                warnings.append(checks['network_mapping_valid'])  # Warning, not blocker
+                warnings.append(checks['network_mapping_valid'])
 
             # 9. Group not paused
-            self.executor.log("[Failover Pre-Flight] Check 9/10: Group status...")
+            log_and_track("Check 9/10: Checking group status...")
             checks['group_not_paused'] = self._check_group_status(group)
+            update_check_progress(
+                'Group Status',
+                checks['group_not_paused']['passed'],
+                checks['group_not_paused']['message']
+            )
             if not checks['group_not_paused']['passed']:
                 blockers.append(checks['group_not_paused'])
 
             # 10. DR resources available
-            self.executor.log("[Failover Pre-Flight] Check 10/10: DR resources...")
+            log_and_track("Check 10/10: Checking DR resource availability...")
             checks['resources_available'] = self._check_dr_resources(protection_group_id, group)
+            update_check_progress(
+                'DR Resources',
+                checks['resources_available']['passed'],
+                checks['resources_available']['message'],
+                checks['resources_available'].get('is_warning', False)
+            )
             if not checks['resources_available']['passed']:
                 if checks['resources_available'].get('is_warning'):
                     warnings.append(checks['resources_available'])
@@ -149,15 +254,27 @@ class FailoverHandler:
             # Update protected VMs with check results
             self._update_vm_failover_readiness(protection_group_id, checks)
 
-            self.executor.log(f"[Failover Pre-Flight] Complete: ready={all_passed}, blockers={len(blockers)}, warnings={len(warnings)}")
-            self.executor.update_job_status(job['id'], 'completed', {
+            status_msg = f"Complete: ready={all_passed}, blockers={len(blockers)}, warnings={len(warnings)}"
+            log_and_track(status_msg)
+            
+            self.executor.update_job_status(job_id, 'completed', {
                 **details,
-                'result': result
+                'result': result,
+                'console_log': console_log,
+                'step_results': step_results,
+                'progress_percent': 100,
+                'checks_completed': total_checks,
+                'total_checks': total_checks
             })
 
         except Exception as e:
-            self.executor.log(f"[Failover Pre-Flight] Error: {e}", "ERROR")
-            self._fail_job(job, str(e))
+            log_and_track(f"Error: {e}", "ERROR")
+            self.executor.update_job_status(job_id, 'failed', {
+                **details,
+                'error': str(e),
+                'console_log': console_log,
+                'step_results': step_results
+            })
 
     def execute_group_failover(self, job: Dict):
         """

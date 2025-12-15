@@ -18,3 +18,4 @@ export { ZfsDeploymentResults } from './ZfsDeploymentResults';
 export { ValidationPreflightResults } from './ValidationPreflightResults';
 export { ZfsHealthCheckResults } from './ZfsHealthCheckResults';
 export { ReplicationSyncResults } from './ReplicationSyncResults';
+export { FailoverPreflightResults } from './FailoverPreflightResults';

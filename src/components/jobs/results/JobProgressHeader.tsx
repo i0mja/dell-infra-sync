@@ -2,7 +2,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { useJobProgress, formatElapsed } from "@/hooks/useJobProgress";
-import { Clock, Server, Database, Globe, Layers, HardDrive, Network, Monitor, AlertTriangle } from "lucide-react";
+import { Clock, Server, Database, Globe, Layers, HardDrive, Network, Monitor, AlertTriangle, CheckCircle2, XCircle, Shield } from "lucide-react";
 import { useEffect, useState } from "react";
 import { VCenterSyncProgress } from "./VCenterSyncProgress";
 
@@ -115,6 +115,10 @@ export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
 
   // Check if this is a vCenter sync job that's running
   const isVCenterSyncRunning = job.job_type === 'vcenter_sync' && job.status === 'running';
+  
+  // Check if this is a failover preflight check job
+  const isFailoverPreflight = job.job_type === 'failover_preflight_check';
+  const stepResults = progress?.details?.step_results || job.details?.step_results;
 
   const getStatusColor = () => {
     switch (job.status) {
@@ -201,6 +205,34 @@ export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
             details={progress?.details || job.details} 
             currentStep={progress?.currentStep} 
           />
+        )}
+
+        {/* Failover Preflight Check Progress */}
+        {isFailoverPreflight && job.status === 'running' && stepResults && stepResults.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Shield className="h-4 w-4" />
+              <span>Pre-flight checks progress</span>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {stepResults.map((step: { step: string; status: string; passed: boolean }, idx: number) => (
+                <Badge 
+                  key={idx}
+                  variant={step.status === 'success' ? 'secondary' : step.status === 'warning' ? 'outline' : 'destructive'}
+                  className="text-xs flex items-center gap-1"
+                >
+                  {step.status === 'success' ? (
+                    <CheckCircle2 className="h-3 w-3" />
+                  ) : step.status === 'warning' ? (
+                    <AlertTriangle className="h-3 w-3" />
+                  ) : (
+                    <XCircle className="h-3 w-3" />
+                  )}
+                  {step.step}
+                </Badge>
+              ))}
+            </div>
+          </div>
         )}
       </CardContent>
     </Card>
