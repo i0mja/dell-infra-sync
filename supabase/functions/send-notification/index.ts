@@ -181,6 +181,104 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Handle SLA violation alerts
+    if (notification_type === 'sla_violation_alert') {
+      const { alert_type, violations = [], summary } = payload;
+      
+      const isRPOBreach = alert_type === 'rpo_breach';
+      const alertEmoji = isRPOBreach ? '⏱️' : '🧪';
+      const alertTitle = isRPOBreach ? 'RPO SLA Violation' : 'Test Reminder Alert';
+      const themeColor = isRPOBreach ? 'FF6B35' : 'FFA500';
+      
+      // Format violations list
+      const violationsList = violations.map((v: any) => {
+        if (isRPOBreach) {
+          return `• **${v.group_name}**: ${v.current_rpo_minutes}min (target: ${v.target_rpo_minutes}min) - ${v.severity}`;
+        } else {
+          return `• **${v.group_name}**: Never tested or test overdue (reminder: ${v.reminder_days} days)`;
+        }
+      }).join('\n');
+      
+      // Email notification
+      if (settings.smtp_host && settings.smtp_user && settings.smtp_from_email) {
+        const subject = `${alertEmoji} ${alertTitle} - ${violations.length} protection group(s)`;
+        const body = `
+          <h2>${alertEmoji} ${alertTitle}</h2>
+          <p>${summary}</p>
+          
+          <h3>Affected Protection Groups</h3>
+          <ul>
+            ${violations.map((v: any) => {
+              if (isRPOBreach) {
+                return `<li><strong>${v.group_name}</strong>: Current RPO ${v.current_rpo_minutes} minutes (Target: ${v.target_rpo_minutes} minutes) - <span style="color: ${v.severity === 'critical' ? 'red' : 'orange'}">${v.severity.toUpperCase()}</span></li>`;
+              } else {
+                return `<li><strong>${v.group_name}</strong>: Failover test ${v.last_test_at ? 'overdue' : 'never performed'}</li>`;
+              }
+            }).join('')}
+          </ul>
+          
+          <p><strong>Action Required:</strong> ${isRPOBreach 
+            ? 'Review protection group schedules and ensure replication is functioning correctly.'
+            : 'Schedule a failover test to verify DR readiness.'}</p>
+        `;
+        
+        try {
+          await sendEmailNotification(settings, 'sla-violation', alert_type, 'alert', { body, subject });
+          console.log('SLA violation email sent');
+        } catch (error) {
+          console.error('Failed to send SLA violation email:', error);
+        }
+      }
+      
+      // Teams notification
+      if (settings.teams_webhook_url) {
+        const card = {
+          "@type": "MessageCard",
+          "@context": "https://schema.org/extensions",
+          "themeColor": themeColor,
+          "summary": `${alertTitle}: ${violations.length} group(s)`,
+          "sections": [{
+            "activityTitle": `${alertEmoji} ${alertTitle}`,
+            "activitySubtitle": summary,
+            "facts": violations.slice(0, 10).map((v: any) => ({
+              "name": v.group_name,
+              "value": isRPOBreach 
+                ? `${v.current_rpo_minutes}min / ${v.target_rpo_minutes}min target (${v.severity})`
+                : v.last_test_at ? 'Test overdue' : 'Never tested'
+            })),
+            "text": isRPOBreach 
+              ? '⚠️ Review protection group schedules and replication status.'
+              : '🧪 Schedule failover tests to verify DR readiness.'
+          }]
+        };
+        
+        try {
+          const teamsResponse = await fetch(settings.teams_webhook_url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(card)
+          });
+          if (!teamsResponse.ok) throw new Error('Teams webhook failed');
+          console.log('SLA violation Teams notification sent');
+        } catch (error) {
+          console.error('Failed to send Teams notification:', error);
+        }
+      }
+      
+      // Log the alert
+      await supabaseClient.from('notification_logs').insert({
+        notification_type: 'sla_violation_alert',
+        status: 'success',
+        delivery_details: { alert_type, violations_count: violations.length },
+        severity: violations.some((v: any) => v.severity === 'critical') ? 'critical' : 'warning'
+      });
+      
+      return new Response(
+        JSON.stringify({ success: true, message: 'SLA violation alert sent' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     // Check if we should notify for this event (skip for test notifications)
     if (!isTestNotification) {
       const shouldNotify = 

@@ -110,7 +110,7 @@ from job_executor.handlers import (
     IDMHandler, ConsoleHandler, DatastoreHandler, MediaUploadHandler,
     VirtualMediaHandler, PowerHandler, BootHandler, DiscoveryHandler,
     FirmwareHandler, ClusterHandler, ESXiHandler, VCenterHandlers, NetworkHandler,
-    ZfsTargetHandler, ReplicationHandler
+    ZfsTargetHandler, ReplicationHandler, SLAMonitoringHandler
 )
 from job_executor.handlers.template_copy import TemplateCopyHandler
 from job_executor.handlers.ssh_key_handlers import SshKeyHandler
@@ -194,6 +194,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
         self.zfs_target_handler = ZfsTargetHandler(self)
         self.replication_handler = ReplicationHandler(self)
         self.template_handler = TemplateHandler(self)
+        self.sla_monitoring_handler = SLAMonitoringHandler(self)
 
     def _validate_service_role_key(self):
         """Ensure SERVICE_ROLE_KEY is present before making Supabase requests"""
@@ -957,6 +958,9 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
             # Datastore management
             'manage_datastore': self.zfs_target_handler.execute_manage_datastore,
             'scan_datastore_status': self.zfs_target_handler.execute_scan_datastore_status,
+            # SLA Monitoring handlers
+            'scheduled_replication_check': self.sla_monitoring_handler.execute_scheduled_replication_check,
+            'rpo_monitoring': self.sla_monitoring_handler.execute_rpo_monitoring,
         }
         
         handler = handler_map.get(job_type)
@@ -989,6 +993,74 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
         console_log.append(log_entry)
         current_details['console_log'] = console_log
         return current_details
+    
+    def _ensure_sla_monitoring_jobs(self):
+        """Create recurring SLA monitoring jobs if they don't exist"""
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            # Check for scheduled_replication_check job
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/jobs",
+                params={
+                    'job_type': 'eq.scheduled_replication_check',
+                    'status': 'in.(pending,running)',
+                    'select': 'id'
+                },
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.ok and not response.json():
+                # Create scheduled replication check job
+                requests.post(
+                    f"{DSM_URL}/rest/v1/jobs",
+                    json={
+                        'job_type': 'scheduled_replication_check',
+                        'status': 'pending',
+                        'details': {'is_internal': True, 'interval_seconds': 60}
+                    },
+                    headers=headers,
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+                self.log("[SLA] Created scheduled_replication_check job")
+            
+            # Check for rpo_monitoring job
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/jobs",
+                params={
+                    'job_type': 'eq.rpo_monitoring',
+                    'status': 'in.(pending,running)',
+                    'select': 'id'
+                },
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.ok and not response.json():
+                # Create RPO monitoring job
+                requests.post(
+                    f"{DSM_URL}/rest/v1/jobs",
+                    json={
+                        'job_type': 'rpo_monitoring',
+                        'status': 'pending',
+                        'details': {'is_internal': True, 'interval_seconds': 300}
+                    },
+                    headers=headers,
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+                self.log("[SLA] Created rpo_monitoring job")
+                
+        except Exception as e:
+            self.log(f"[SLA] Error ensuring monitoring jobs: {e}", "WARN")
 
     def execute_storage_vmotion(self, job: Dict):
         """
@@ -1376,6 +1448,9 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
                 self.log("="*70)
             except Exception as e:
                 self.log(f"Warning: Could not start media server: {e}", "WARN")
+        
+        # Ensure SLA monitoring jobs exist
+        self._ensure_sla_monitoring_jobs()
         
         try:
             while self.running:

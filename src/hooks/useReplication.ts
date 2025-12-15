@@ -782,7 +782,7 @@ export function useProtectionGroups() {
       if (error) throw error;
       
       // Check if config-affecting fields changed - queue sync job
-      const configFields = ['rpo_minutes', 'retention_policy', 'replication_schedule'];
+      const configFields = ['rpo_minutes', 'retention_policy', 'replication_schedule', 'journal_history_hours'];
       const hasConfigChanges = configFields.some(field => {
         const updateValue = updates[field as keyof typeof updates];
         const originalValue = originalGroup?.[field as keyof ProtectionGroup];
