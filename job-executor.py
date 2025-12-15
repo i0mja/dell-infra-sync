@@ -110,7 +110,7 @@ from job_executor.handlers import (
     IDMHandler, ConsoleHandler, DatastoreHandler, MediaUploadHandler,
     VirtualMediaHandler, PowerHandler, BootHandler, DiscoveryHandler,
     FirmwareHandler, ClusterHandler, ESXiHandler, VCenterHandlers, NetworkHandler,
-    ZfsTargetHandler, ReplicationHandler, SLAMonitoringHandler
+    ZfsTargetHandler, ReplicationHandler, SLAMonitoringHandler, FailoverHandler
 )
 from job_executor.handlers.template_copy import TemplateCopyHandler
 from job_executor.handlers.ssh_key_handlers import SshKeyHandler
@@ -195,6 +195,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
         self.replication_handler = ReplicationHandler(self)
         self.template_handler = TemplateHandler(self)
         self.sla_monitoring_handler = SLAMonitoringHandler(self)
+        self.failover_handler = FailoverHandler(self)
 
     def _validate_service_role_key(self):
         """Ensure SERVICE_ROLE_KEY is present before making Supabase requests"""

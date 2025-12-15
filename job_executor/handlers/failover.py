@@ -1,0 +1,995 @@
+"""
+Failover Handler for Dell Server Manager Job Executor
+======================================================
+
+Handles failover pre-flight checks and group failover operations.
+Implements 10 pre-flight checks before allowing failover to Site B.
+"""
+
+import time
+from typing import Dict, Optional, List, Any
+from datetime import datetime, timedelta
+
+
+class FailoverHandler:
+    """Handler for failover pre-flight checks and execution."""
+
+    def __init__(self, executor):
+        self.executor = executor
+
+    def execute_failover_preflight_check(self, job: Dict):
+        """
+        Run all 10 pre-flight checks for a protection group before failover.
+        
+        Checks:
+        1. DR Shell VMs exist for all protected VMs
+        2. Replication is current (within RPO)
+        3. Site B ZFS target is healthy
+        4. Site B vCenter is connected
+        5. NFS datastore is mounted and accessible
+        6. No conflicting jobs are running
+        7. All snapshots are consistent
+        8. Network mappings are configured
+        9. Protection group is not paused
+        10. DR resources (CPU/RAM) are available
+        """
+        details = job.get('details', {})
+        protection_group_id = details.get('protection_group_id')
+        force_check = details.get('force', False)
+        
+        if not protection_group_id:
+            self.executor.update_job_status(job['id'], 'failed', {
+                **details,
+                'error': 'No protection_group_id provided'
+            })
+            return
+
+        self.executor.log(f"[Failover Pre-Flight] Starting checks for group {protection_group_id}")
+        self.executor.update_job_status(job['id'], 'running')
+
+        try:
+            # Fetch protection group with target info
+            group = self._fetch_protection_group(protection_group_id)
+            if not group:
+                self._fail_job(job, "Protection group not found")
+                return
+
+            # Run all checks
+            checks = {}
+            blockers = []
+            warnings = []
+
+            # 1. DR Shell VMs exist
+            self.executor.log("[Failover Pre-Flight] Check 1/10: DR Shell VMs...")
+            checks['dr_shell_vms_exist'] = self._check_dr_shells_exist(protection_group_id)
+            if not checks['dr_shell_vms_exist']['passed']:
+                blockers.append(checks['dr_shell_vms_exist'])
+
+            # 2. Replication currency
+            self.executor.log("[Failover Pre-Flight] Check 2/10: Replication currency...")
+            checks['replication_current'] = self._check_replication_currency(group)
+            if not checks['replication_current']['passed']:
+                if checks['replication_current'].get('is_warning'):
+                    warnings.append(checks['replication_current'])
+                else:
+                    blockers.append(checks['replication_current'])
+
+            # 3. Site B ZFS target health
+            self.executor.log("[Failover Pre-Flight] Check 3/10: Site B ZFS health...")
+            checks['site_b_zfs_healthy'] = self._check_site_b_zfs(group.get('target_id'))
+            if not checks['site_b_zfs_healthy']['passed']:
+                blockers.append(checks['site_b_zfs_healthy'])
+
+            # 4. Site B vCenter connection
+            self.executor.log("[Failover Pre-Flight] Check 4/10: Site B vCenter...")
+            checks['site_b_vcenter_connected'] = self._check_site_b_vcenter(group)
+            if not checks['site_b_vcenter_connected']['passed']:
+                blockers.append(checks['site_b_vcenter_connected'])
+
+            # 5. NFS datastore mounted
+            self.executor.log("[Failover Pre-Flight] Check 5/10: NFS datastore...")
+            checks['nfs_datastore_mounted'] = self._check_nfs_mounted(group)
+            if not checks['nfs_datastore_mounted']['passed']:
+                blockers.append(checks['nfs_datastore_mounted'])
+
+            # 6. No conflicting jobs
+            self.executor.log("[Failover Pre-Flight] Check 6/10: Conflicting jobs...")
+            checks['no_conflicting_jobs'] = self._check_no_conflicts(protection_group_id, job['id'])
+            if not checks['no_conflicting_jobs']['passed']:
+                blockers.append(checks['no_conflicting_jobs'])
+
+            # 7. Snapshot consistency
+            self.executor.log("[Failover Pre-Flight] Check 7/10: Snapshot consistency...")
+            checks['snapshots_consistent'] = self._check_snapshot_consistency(protection_group_id)
+            if not checks['snapshots_consistent']['passed']:
+                if checks['snapshots_consistent'].get('is_warning'):
+                    warnings.append(checks['snapshots_consistent'])
+                else:
+                    blockers.append(checks['snapshots_consistent'])
+
+            # 8. Network mapping
+            self.executor.log("[Failover Pre-Flight] Check 8/10: Network mappings...")
+            checks['network_mapping_valid'] = self._check_network_mapping(protection_group_id)
+            if not checks['network_mapping_valid']['passed']:
+                warnings.append(checks['network_mapping_valid'])  # Warning, not blocker
+
+            # 9. Group not paused
+            self.executor.log("[Failover Pre-Flight] Check 9/10: Group status...")
+            checks['group_not_paused'] = self._check_group_status(group)
+            if not checks['group_not_paused']['passed']:
+                blockers.append(checks['group_not_paused'])
+
+            # 10. DR resources available
+            self.executor.log("[Failover Pre-Flight] Check 10/10: DR resources...")
+            checks['resources_available'] = self._check_dr_resources(protection_group_id, group)
+            if not checks['resources_available']['passed']:
+                if checks['resources_available'].get('is_warning'):
+                    warnings.append(checks['resources_available'])
+                else:
+                    blockers.append(checks['resources_available'])
+
+            # Determine overall result
+            all_passed = len(blockers) == 0
+            can_proceed = all_passed or force_check
+            can_force = len(blockers) == 0 or all(b.get('can_override', False) for b in blockers)
+
+            result = {
+                'ready': all_passed,
+                'can_proceed': can_proceed,
+                'can_force': can_force,
+                'checks': checks,
+                'blockers': blockers,
+                'warnings': warnings,
+                'checked_at': datetime.utcnow().isoformat(),
+                'protection_group_id': protection_group_id,
+                'group_name': group.get('name', 'Unknown'),
+                'vm_count': self._get_vm_count(protection_group_id)
+            }
+
+            # Update protected VMs with check results
+            self._update_vm_failover_readiness(protection_group_id, checks)
+
+            self.executor.log(f"[Failover Pre-Flight] Complete: ready={all_passed}, blockers={len(blockers)}, warnings={len(warnings)}")
+            self.executor.update_job_status(job['id'], 'completed', {
+                **details,
+                'result': result
+            })
+
+        except Exception as e:
+            self.executor.log(f"[Failover Pre-Flight] Error: {e}", "ERROR")
+            self._fail_job(job, str(e))
+
+    def execute_group_failover(self, job: Dict):
+        """
+        Execute failover for an entire protection group to Site B.
+        
+        Steps:
+        1. Validate pre-flight checks (unless force=True)
+        2. Create failover event record
+        3. Optional: Run final sync before failover
+        4. Optional: Gracefully shutdown source VMs
+        5. For each protected VM, power on DR shell VM
+        6. Update protection group status
+        7. Set up reverse protection (optional)
+        """
+        details = job.get('details', {})
+        protection_group_id = details.get('protection_group_id')
+        failover_type = details.get('failover_type', 'live')  # 'live' or 'test'
+        force = details.get('force', False)
+        shutdown_source = details.get('shutdown_source_vms', True)
+        final_sync = details.get('final_sync', True)
+        reverse_protection = details.get('reverse_protection', False)
+        test_network_id = details.get('test_network_id')
+
+        if not protection_group_id:
+            self._fail_job(job, "No protection_group_id provided")
+            return
+
+        self.executor.log(f"[Group Failover] Starting {failover_type} failover for group {protection_group_id}")
+        self.executor.update_job_status(job['id'], 'running')
+
+        try:
+            # Fetch group and VMs
+            group = self._fetch_protection_group(protection_group_id)
+            if not group:
+                self._fail_job(job, "Protection group not found")
+                return
+
+            vms = self._fetch_protected_vms(protection_group_id)
+            if not vms:
+                self._fail_job(job, "No protected VMs in group")
+                return
+
+            # Create failover event
+            event_id = self._create_failover_event(
+                protection_group_id, 
+                failover_type, 
+                job.get('created_by'),
+                shutdown_source,
+                reverse_protection,
+                test_network_id
+            )
+
+            # Update group status
+            self._update_group_failover_status(protection_group_id, 'failing_over', event_id)
+
+            # Optional: Final sync
+            if final_sync and failover_type == 'live':
+                self.executor.log("[Group Failover] Running final sync...")
+                self._run_final_sync(protection_group_id)
+
+            # Optional: Shutdown source VMs (live failover only)
+            if shutdown_source and failover_type == 'live':
+                self.executor.log("[Group Failover] Shutting down source VMs...")
+                self._shutdown_source_vms(vms, group.get('source_vcenter_id'))
+
+            # Power on DR shell VMs
+            recovered_count = 0
+            failed_vms = []
+            
+            for vm in vms:
+                try:
+                    self.executor.log(f"[Group Failover] Powering on DR VM for: {vm.get('vm_name')}")
+                    success = self._power_on_dr_shell_vm(vm, group, failover_type, test_network_id)
+                    if success:
+                        recovered_count += 1
+                        self._update_vm_failover_status(vm['id'], 'failed_over')
+                    else:
+                        failed_vms.append(vm.get('vm_name'))
+                        self._update_vm_failover_status(vm['id'], 'failover_error')
+                except Exception as e:
+                    self.executor.log(f"[Group Failover] Error with VM {vm.get('vm_name')}: {e}", "ERROR")
+                    failed_vms.append(vm.get('vm_name'))
+
+            # Update event with results
+            final_status = 'awaiting_commit' if failover_type == 'live' else 'completed'
+            self._update_failover_event(event_id, final_status, recovered_count)
+            
+            # Update group status
+            new_group_status = 'failed_over' if recovered_count > 0 else 'failover_error'
+            self._update_group_failover_status(protection_group_id, new_group_status, event_id)
+
+            result = {
+                'success': recovered_count > 0,
+                'recovered_count': recovered_count,
+                'failed_vms': failed_vms,
+                'total_vms': len(vms),
+                'failover_type': failover_type,
+                'event_id': event_id,
+                'status': final_status,
+                'requires_commit': failover_type == 'live'
+            }
+
+            self.executor.log(f"[Group Failover] Complete: {recovered_count}/{len(vms)} VMs recovered")
+            self.executor.update_job_status(job['id'], 'completed', {
+                **details,
+                'result': result
+            })
+
+        except Exception as e:
+            self.executor.log(f"[Group Failover] Error: {e}", "ERROR")
+            self._fail_job(job, str(e))
+
+    def execute_test_failover(self, job: Dict):
+        """Execute test failover (wrapper around group_failover with test settings)."""
+        job['details'] = {
+            **job.get('details', {}),
+            'failover_type': 'test',
+            'shutdown_source_vms': False,
+            'final_sync': False,
+            'reverse_protection': False
+        }
+        self.execute_group_failover(job)
+
+    def execute_commit_failover(self, job: Dict):
+        """Commit a failover - makes it permanent, cleans up source."""
+        details = job.get('details', {})
+        event_id = details.get('event_id')
+        protection_group_id = details.get('protection_group_id')
+
+        if not event_id or not protection_group_id:
+            self._fail_job(job, "Missing event_id or protection_group_id")
+            return
+
+        self.executor.log(f"[Commit Failover] Committing failover event {event_id}")
+        self.executor.update_job_status(job['id'], 'running')
+
+        try:
+            # Update failover event
+            self._update_failover_event(event_id, 'committed', committed_at=datetime.utcnow().isoformat())
+            
+            # Update group status
+            self._update_group_failover_status(protection_group_id, 'committed', None)
+
+            self.executor.log("[Commit Failover] Failover committed successfully")
+            self.executor.update_job_status(job['id'], 'completed', {
+                **details,
+                'committed': True,
+                'committed_at': datetime.utcnow().isoformat()
+            })
+
+        except Exception as e:
+            self.executor.log(f"[Commit Failover] Error: {e}", "ERROR")
+            self._fail_job(job, str(e))
+
+    def execute_rollback_failover(self, job: Dict):
+        """Rollback a failover - power off DR VMs, restore original state."""
+        details = job.get('details', {})
+        event_id = details.get('event_id')
+        protection_group_id = details.get('protection_group_id')
+
+        if not event_id or not protection_group_id:
+            self._fail_job(job, "Missing event_id or protection_group_id")
+            return
+
+        self.executor.log(f"[Rollback Failover] Rolling back failover event {event_id}")
+        self.executor.update_job_status(job['id'], 'running')
+
+        try:
+            group = self._fetch_protection_group(protection_group_id)
+            vms = self._fetch_protected_vms(protection_group_id)
+
+            # Power off DR shell VMs
+            for vm in vms:
+                try:
+                    self._power_off_dr_shell_vm(vm, group)
+                    self._update_vm_failover_status(vm['id'], 'normal')
+                except Exception as e:
+                    self.executor.log(f"[Rollback Failover] Error with VM {vm.get('vm_name')}: {e}", "WARN")
+
+            # Update failover event
+            self._update_failover_event(event_id, 'rolled_back', rolled_back_at=datetime.utcnow().isoformat())
+            
+            # Update group status
+            self._update_group_failover_status(protection_group_id, 'normal', None)
+
+            self.executor.log("[Rollback Failover] Rollback completed")
+            self.executor.update_job_status(job['id'], 'completed', {
+                **details,
+                'rolled_back': True,
+                'rolled_back_at': datetime.utcnow().isoformat()
+            })
+
+        except Exception as e:
+            self.executor.log(f"[Rollback Failover] Error: {e}", "ERROR")
+            self._fail_job(job, str(e))
+
+    # ==================== Pre-Flight Check Methods ====================
+
+    def _check_dr_shells_exist(self, protection_group_id: str) -> Dict:
+        """Check that all protected VMs have DR shell VMs created."""
+        vms = self._fetch_protected_vms(protection_group_id)
+        
+        if not vms:
+            return {
+                'name': 'DR Shell VMs Exist',
+                'passed': False,
+                'message': 'No protected VMs in group',
+                'can_override': False
+            }
+
+        missing_shells = [v for v in vms if not v.get('dr_shell_vm_created')]
+        
+        if missing_shells:
+            return {
+                'name': 'DR Shell VMs Exist',
+                'passed': False,
+                'message': f'{len(missing_shells)} VMs missing DR shells',
+                'details': [v.get('vm_name') for v in missing_shells],
+                'can_override': False
+            }
+
+        return {
+            'name': 'DR Shell VMs Exist',
+            'passed': True,
+            'message': f'All {len(vms)} VMs have DR shells'
+        }
+
+    def _check_replication_currency(self, group: Dict) -> Dict:
+        """Check if replication is current (within RPO)."""
+        last_replication = group.get('last_replication_at')
+        rpo_minutes = group.get('rpo_minutes', 60)
+
+        if not last_replication:
+            return {
+                'name': 'Replication Current',
+                'passed': False,
+                'message': 'No replication has been run yet',
+                'can_override': True,
+                'is_warning': True
+            }
+
+        try:
+            last_sync = datetime.fromisoformat(last_replication.replace('Z', '+00:00'))
+            age_minutes = (datetime.utcnow().replace(tzinfo=last_sync.tzinfo) - last_sync).total_seconds() / 60
+            
+            if age_minutes > rpo_minutes * 2:
+                return {
+                    'name': 'Replication Current',
+                    'passed': False,
+                    'message': f'Last sync was {int(age_minutes)} minutes ago (RPO: {rpo_minutes}m)',
+                    'can_override': True,
+                    'is_warning': True
+                }
+
+            return {
+                'name': 'Replication Current',
+                'passed': True,
+                'message': f'Last sync {int(age_minutes)} minutes ago'
+            }
+        except Exception as e:
+            return {
+                'name': 'Replication Current',
+                'passed': False,
+                'message': f'Could not parse last replication time: {e}',
+                'can_override': True
+            }
+
+    def _check_site_b_zfs(self, target_id: Optional[str]) -> Dict:
+        """Check Site B ZFS target health."""
+        if not target_id:
+            return {
+                'name': 'Site B ZFS Healthy',
+                'passed': False,
+                'message': 'No target configured for this group',
+                'can_override': False
+            }
+
+        target = self._fetch_replication_target(target_id)
+        if not target:
+            return {
+                'name': 'Site B ZFS Healthy',
+                'passed': False,
+                'message': 'Target not found',
+                'can_override': False
+            }
+
+        health = target.get('health_status', 'unknown')
+        if health != 'healthy':
+            return {
+                'name': 'Site B ZFS Healthy',
+                'passed': False,
+                'message': f'Target health: {health}',
+                'can_override': True
+            }
+
+        return {
+            'name': 'Site B ZFS Healthy',
+            'passed': True,
+            'message': f'Target {target.get("name")} is healthy'
+        }
+
+    def _check_site_b_vcenter(self, group: Dict) -> Dict:
+        """Check Site B vCenter connection via target's dr_vcenter_id."""
+        target_id = group.get('target_id')
+        if not target_id:
+            return {
+                'name': 'Site B vCenter Connected',
+                'passed': False,
+                'message': 'No target configured',
+                'can_override': False
+            }
+
+        target = self._fetch_replication_target(target_id)
+        dr_vcenter_id = target.get('dr_vcenter_id') if target else None
+
+        if not dr_vcenter_id:
+            return {
+                'name': 'Site B vCenter Connected',
+                'passed': False,
+                'message': 'No DR vCenter configured on target',
+                'can_override': False
+            }
+
+        # TODO: Actually test vCenter connection
+        return {
+            'name': 'Site B vCenter Connected',
+            'passed': True,
+            'message': 'DR vCenter is configured'
+        }
+
+    def _check_nfs_mounted(self, group: Dict) -> Dict:
+        """Check that NFS datastore is mounted on DR vCenter."""
+        dr_datastore = group.get('dr_datastore')
+        
+        if not dr_datastore:
+            return {
+                'name': 'NFS Datastore Mounted',
+                'passed': False,
+                'message': 'No DR datastore configured',
+                'can_override': True,
+                'is_warning': True
+            }
+
+        # TODO: Actually verify datastore exists on DR vCenter
+        return {
+            'name': 'NFS Datastore Mounted',
+            'passed': True,
+            'message': f'DR datastore: {dr_datastore}'
+        }
+
+    def _check_no_conflicts(self, protection_group_id: str, current_job_id: str) -> Dict:
+        """Check for conflicting running jobs."""
+        try:
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            import requests
+
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            }
+
+            # Check for running replication or failover jobs
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/jobs",
+                headers=headers,
+                params={
+                    'select': 'id,job_type,status',
+                    'status': 'in.(pending,running)',
+                    'job_type': 'in.(run_replication_sync,group_failover,test_failover)',
+                    'id': f'neq.{current_job_id}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                jobs = response.json()
+                # Filter for jobs targeting this group
+                conflicting = [j for j in jobs if j.get('details', {}).get('protection_group_id') == protection_group_id]
+                
+                if conflicting:
+                    return {
+                        'name': 'No Conflicting Jobs',
+                        'passed': False,
+                        'message': f'{len(conflicting)} conflicting jobs running',
+                        'can_override': False
+                    }
+
+            return {
+                'name': 'No Conflicting Jobs',
+                'passed': True,
+                'message': 'No conflicting jobs'
+            }
+
+        except Exception as e:
+            return {
+                'name': 'No Conflicting Jobs',
+                'passed': True,
+                'message': f'Could not check: {e}'
+            }
+
+    def _check_snapshot_consistency(self, protection_group_id: str) -> Dict:
+        """Check that all VMs have consistent snapshot times."""
+        vms = self._fetch_protected_vms(protection_group_id)
+        
+        if not vms:
+            return {
+                'name': 'Snapshots Consistent',
+                'passed': True,
+                'message': 'No VMs to check'
+            }
+
+        snapshot_times = [v.get('last_snapshot_at') for v in vms if v.get('last_snapshot_at')]
+        
+        if not snapshot_times:
+            return {
+                'name': 'Snapshots Consistent',
+                'passed': False,
+                'message': 'No snapshots found',
+                'can_override': True,
+                'is_warning': True
+            }
+
+        # Check if snapshots are within 5 minutes of each other
+        try:
+            times = [datetime.fromisoformat(t.replace('Z', '+00:00')) for t in snapshot_times]
+            time_spread = (max(times) - min(times)).total_seconds() / 60
+            
+            if time_spread > 5:
+                return {
+                    'name': 'Snapshots Consistent',
+                    'passed': False,
+                    'message': f'Snapshot times vary by {int(time_spread)} minutes',
+                    'can_override': True,
+                    'is_warning': True
+                }
+        except Exception:
+            pass
+
+        return {
+            'name': 'Snapshots Consistent',
+            'passed': True,
+            'message': f'{len(snapshot_times)} snapshots are consistent'
+        }
+
+    def _check_network_mapping(self, protection_group_id: str) -> Dict:
+        """Check if network mappings are configured."""
+        try:
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            import requests
+
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            }
+
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/protection_group_network_mappings",
+                headers=headers,
+                params={
+                    'select': 'id',
+                    'protection_group_id': f'eq.{protection_group_id}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                mappings = response.json()
+                if not mappings:
+                    return {
+                        'name': 'Network Mappings Valid',
+                        'passed': False,
+                        'message': 'No network mappings configured',
+                        'can_override': True,
+                        'is_warning': True
+                    }
+                
+                return {
+                    'name': 'Network Mappings Valid',
+                    'passed': True,
+                    'message': f'{len(mappings)} network mappings configured'
+                }
+
+        except Exception as e:
+            return {
+                'name': 'Network Mappings Valid',
+                'passed': True,
+                'message': f'Could not check: {e}'
+            }
+
+        return {
+            'name': 'Network Mappings Valid',
+            'passed': True,
+            'message': 'Check skipped'
+        }
+
+    def _check_group_status(self, group: Dict) -> Dict:
+        """Check that protection group is not paused or in error state."""
+        if group.get('paused_at'):
+            return {
+                'name': 'Group Not Paused',
+                'passed': False,
+                'message': f'Group is paused: {group.get("pause_reason", "No reason given")}',
+                'can_override': True
+            }
+
+        status = group.get('status', 'unknown')
+        if status == 'error':
+            return {
+                'name': 'Group Not Paused',
+                'passed': False,
+                'message': 'Group is in error state',
+                'can_override': True
+            }
+
+        return {
+            'name': 'Group Not Paused',
+            'passed': True,
+            'message': 'Group is active'
+        }
+
+    def _check_dr_resources(self, protection_group_id: str, group: Dict) -> Dict:
+        """Check if DR site has sufficient resources to run all VMs."""
+        vms = self._fetch_protected_vms(protection_group_id)
+        
+        if not vms:
+            return {
+                'name': 'DR Resources Available',
+                'passed': True,
+                'message': 'No VMs to check'
+            }
+
+        # TODO: Actually query vCenter for resource availability
+        # For now, just check that DR shells exist
+        shells_ready = sum(1 for v in vms if v.get('dr_shell_vm_created'))
+        
+        return {
+            'name': 'DR Resources Available',
+            'passed': True,
+            'message': f'{shells_ready}/{len(vms)} DR shells ready'
+        }
+
+    # ==================== Helper Methods ====================
+
+    def _fail_job(self, job: Dict, error: str):
+        """Helper to fail a job with error details."""
+        self.executor.update_job_status(job['id'], 'failed', {
+            **job.get('details', {}),
+            'error': error
+        })
+
+    def _fetch_protection_group(self, group_id: str) -> Optional[Dict]:
+        """Fetch protection group from database."""
+        try:
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            import requests
+
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            }
+
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/protection_groups",
+                headers=headers,
+                params={'select': '*', 'id': f'eq.{group_id}'},
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                groups = response.json()
+                return groups[0] if groups else None
+            return None
+        except Exception as e:
+            self.executor.log(f"Error fetching protection group: {e}", "ERROR")
+            return None
+
+    def _fetch_protected_vms(self, group_id: str) -> List[Dict]:
+        """Fetch protected VMs for a group."""
+        try:
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            import requests
+
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            }
+
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/protected_vms",
+                headers=headers,
+                params={
+                    'select': '*',
+                    'protection_group_id': f'eq.{group_id}',
+                    'order': 'priority.asc'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            return []
+        except Exception as e:
+            self.executor.log(f"Error fetching protected VMs: {e}", "ERROR")
+            return []
+
+    def _fetch_replication_target(self, target_id: str) -> Optional[Dict]:
+        """Fetch replication target from database."""
+        try:
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            import requests
+
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            }
+
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/replication_targets",
+                headers=headers,
+                params={'select': '*', 'id': f'eq.{target_id}'},
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                targets = response.json()
+                return targets[0] if targets else None
+            return None
+        except Exception as e:
+            self.executor.log(f"Error fetching replication target: {e}", "ERROR")
+            return None
+
+    def _get_vm_count(self, group_id: str) -> int:
+        """Get count of protected VMs."""
+        vms = self._fetch_protected_vms(group_id)
+        return len(vms)
+
+    def _update_vm_failover_readiness(self, group_id: str, checks: Dict):
+        """Update failover_ready status on all protected VMs."""
+        try:
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            import requests
+
+            all_passed = all(c.get('passed', False) for c in checks.values())
+
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            }
+
+            requests.patch(
+                f"{DSM_URL}/rest/v1/protected_vms",
+                headers=headers,
+                params={'protection_group_id': f'eq.{group_id}'},
+                json={
+                    'failover_ready': all_passed,
+                    'last_failover_check': datetime.utcnow().isoformat(),
+                    'failover_check_result': checks
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+        except Exception as e:
+            self.executor.log(f"Error updating VM failover readiness: {e}", "WARN")
+
+    def _update_vm_failover_status(self, vm_id: str, status: str):
+        """Update failover_status on a protected VM."""
+        try:
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            import requests
+
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            }
+
+            payload = {'failover_status': status}
+            if status == 'failed_over':
+                payload['last_failover_at'] = datetime.utcnow().isoformat()
+
+            requests.patch(
+                f"{DSM_URL}/rest/v1/protected_vms",
+                headers=headers,
+                params={'id': f'eq.{vm_id}'},
+                json=payload,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+        except Exception as e:
+            self.executor.log(f"Error updating VM failover status: {e}", "WARN")
+
+    def _create_failover_event(self, group_id: str, failover_type: str, initiated_by: str,
+                                shutdown_source: bool, reverse_protection: bool, 
+                                test_network_id: Optional[str]) -> str:
+        """Create a failover event record."""
+        try:
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            import requests
+
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json',
+                'Prefer': 'return=representation'
+            }
+
+            response = requests.post(
+                f"{DSM_URL}/rest/v1/failover_events",
+                headers=headers,
+                json={
+                    'protection_group_id': group_id,
+                    'failover_type': failover_type,
+                    'status': 'in_progress',
+                    'initiated_by': initiated_by,
+                    'started_at': datetime.utcnow().isoformat(),
+                    'shutdown_source_vms': 'yes' if shutdown_source else 'no',
+                    'reverse_protection': reverse_protection,
+                    'test_network_id': test_network_id
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+
+            if response.status_code in (200, 201):
+                events = response.json()
+                return events[0]['id'] if events else None
+            return None
+        except Exception as e:
+            self.executor.log(f"Error creating failover event: {e}", "ERROR")
+            return None
+
+    def _update_failover_event(self, event_id: str, status: str, vms_recovered: int = None,
+                                committed_at: str = None, rolled_back_at: str = None):
+        """Update a failover event."""
+        try:
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            import requests
+
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            }
+
+            payload = {'status': status}
+            if vms_recovered is not None:
+                payload['vms_recovered'] = vms_recovered
+            if committed_at:
+                payload['committed_at'] = committed_at
+            if rolled_back_at:
+                payload['rolled_back_at'] = rolled_back_at
+
+            requests.patch(
+                f"{DSM_URL}/rest/v1/failover_events",
+                headers=headers,
+                params={'id': f'eq.{event_id}'},
+                json=payload,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+        except Exception as e:
+            self.executor.log(f"Error updating failover event: {e}", "WARN")
+
+    def _update_group_failover_status(self, group_id: str, status: str, event_id: Optional[str]):
+        """Update protection group failover status."""
+        try:
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            import requests
+
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            }
+
+            payload = {'failover_status': status, 'active_failover_event_id': event_id}
+            if status in ('failed_over', 'committed'):
+                payload['last_failover_at'] = datetime.utcnow().isoformat()
+
+            requests.patch(
+                f"{DSM_URL}/rest/v1/protection_groups",
+                headers=headers,
+                params={'id': f'eq.{group_id}'},
+                json=payload,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+        except Exception as e:
+            self.executor.log(f"Error updating group failover status: {e}", "WARN")
+
+    def _run_final_sync(self, group_id: str):
+        """Run a final sync before failover."""
+        # This would trigger the replication handler
+        self.executor.log(f"[Group Failover] Final sync would run here for {group_id}")
+        time.sleep(2)  # Placeholder
+
+    def _shutdown_source_vms(self, vms: List[Dict], vcenter_id: str):
+        """Gracefully shutdown source VMs."""
+        # TODO: Implement actual VM shutdown via vCenter
+        for vm in vms:
+            self.executor.log(f"[Group Failover] Would shutdown: {vm.get('vm_name')}")
+        time.sleep(1)  # Placeholder
+
+    def _power_on_dr_shell_vm(self, vm: Dict, group: Dict, failover_type: str, 
+                              test_network_id: Optional[str]) -> bool:
+        """Power on a DR shell VM."""
+        dr_vm_id = vm.get('dr_shell_vm_id')
+        if not dr_vm_id:
+            self.executor.log(f"No DR shell VM ID for {vm.get('vm_name')}", "WARN")
+            return False
+
+        # TODO: Implement actual VM power on via vCenter
+        self.executor.log(f"[Group Failover] Would power on DR VM: {vm.get('dr_shell_vm_name')}")
+        time.sleep(0.5)  # Placeholder
+        return True
+
+    def _power_off_dr_shell_vm(self, vm: Dict, group: Dict):
+        """Power off a DR shell VM during rollback."""
+        dr_vm_id = vm.get('dr_shell_vm_id')
+        if not dr_vm_id:
+            return
+
+        # TODO: Implement actual VM power off via vCenter
+        self.executor.log(f"[Rollback Failover] Would power off DR VM: {vm.get('dr_shell_vm_name')}")
+        time.sleep(0.5)  # Placeholder

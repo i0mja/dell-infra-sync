@@ -16,6 +16,7 @@ from .network import NetworkHandler
 from .zfs_target import ZfsTargetHandler
 from .replication import ReplicationHandler
 from .sla_monitoring import SLAMonitoringHandler
+from .failover import FailoverHandler
 
 __all__ = [
     'IDMHandler',
@@ -33,5 +34,6 @@ __all__ = [
     'NetworkHandler',
     'ZfsTargetHandler',
     'ReplicationHandler',
-    'SLAMonitoringHandler'
+    'SLAMonitoringHandler',
+    'FailoverHandler'
 ]

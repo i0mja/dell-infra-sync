@@ -1856,7 +1856,12 @@ export type Database = {
           dr_shell_vm_created: boolean | null
           dr_shell_vm_id: string | null
           dr_shell_vm_name: string | null
+          failover_check_result: Json | null
+          failover_ready: boolean | null
+          failover_status: string | null
           id: string
+          last_failover_at: string | null
+          last_failover_check: string | null
           last_replication_at: string | null
           last_snapshot_at: string | null
           last_snapshot_name: string | null
@@ -1881,7 +1886,12 @@ export type Database = {
           dr_shell_vm_created?: boolean | null
           dr_shell_vm_id?: string | null
           dr_shell_vm_name?: string | null
+          failover_check_result?: Json | null
+          failover_ready?: boolean | null
+          failover_status?: string | null
           id?: string
+          last_failover_at?: string | null
+          last_failover_check?: string | null
           last_replication_at?: string | null
           last_snapshot_at?: string | null
           last_snapshot_name?: string | null
@@ -1906,7 +1916,12 @@ export type Database = {
           dr_shell_vm_created?: boolean | null
           dr_shell_vm_id?: string | null
           dr_shell_vm_name?: string | null
+          failover_check_result?: Json | null
+          failover_ready?: boolean | null
+          failover_status?: string | null
           id?: string
+          last_failover_at?: string | null
+          last_failover_check?: string | null
           last_replication_at?: string | null
           last_snapshot_at?: string | null
           last_snapshot_name?: string | null
@@ -1941,8 +1956,47 @@ export type Database = {
           },
         ]
       }
+      protection_group_network_mappings: {
+        Row: {
+          created_at: string | null
+          id: string
+          is_test_network: boolean | null
+          protection_group_id: string
+          source_network: string
+          target_network: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          is_test_network?: boolean | null
+          protection_group_id: string
+          source_network: string
+          target_network: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          is_test_network?: boolean | null
+          protection_group_id?: string
+          source_network?: string
+          target_network?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "protection_group_network_mappings_protection_group_id_fkey"
+            columns: ["protection_group_id"]
+            isOneToOne: false
+            referencedRelation: "protection_groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       protection_groups: {
         Row: {
+          active_failover_event_id: string | null
           boot_order: Json | null
           created_at: string | null
           created_by: string | null
@@ -1950,9 +2004,12 @@ export type Database = {
           description: string | null
           dr_dataset: string | null
           dr_datastore: string | null
+          failover_status: string | null
           id: string
           is_enabled: boolean | null
           journal_history_hours: number | null
+          last_failover_at: string | null
+          last_failover_type: string | null
           last_replication_at: string | null
           last_test_at: string | null
           name: string
@@ -1974,6 +2031,7 @@ export type Database = {
           updated_at: string | null
         }
         Insert: {
+          active_failover_event_id?: string | null
           boot_order?: Json | null
           created_at?: string | null
           created_by?: string | null
@@ -1981,9 +2039,12 @@ export type Database = {
           description?: string | null
           dr_dataset?: string | null
           dr_datastore?: string | null
+          failover_status?: string | null
           id?: string
           is_enabled?: boolean | null
           journal_history_hours?: number | null
+          last_failover_at?: string | null
+          last_failover_type?: string | null
           last_replication_at?: string | null
           last_test_at?: string | null
           name: string
@@ -2005,6 +2066,7 @@ export type Database = {
           updated_at?: string | null
         }
         Update: {
+          active_failover_event_id?: string | null
           boot_order?: Json | null
           created_at?: string | null
           created_by?: string | null
@@ -2012,9 +2074,12 @@ export type Database = {
           description?: string | null
           dr_dataset?: string | null
           dr_datastore?: string | null
+          failover_status?: string | null
           id?: string
           is_enabled?: boolean | null
           journal_history_hours?: number | null
+          last_failover_at?: string | null
+          last_failover_type?: string | null
           last_replication_at?: string | null
           last_test_at?: string | null
           name?: string
@@ -2036,6 +2101,13 @@ export type Database = {
           updated_at?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "protection_groups_active_failover_event_fkey"
+            columns: ["active_failover_event_id"]
+            isOneToOne: false
+            referencedRelation: "failover_events"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "protection_groups_replication_pair_id_fkey"
             columns: ["replication_pair_id"]
@@ -4712,6 +4784,8 @@ export type Database = {
         | "create_dr_shell"
         | "scheduled_replication_check"
         | "rpo_monitoring"
+        | "failover_preflight_check"
+        | "group_failover"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -4933,6 +5007,8 @@ export const Constants = {
         "create_dr_shell",
         "scheduled_replication_check",
         "rpo_monitoring",
+        "failover_preflight_check",
+        "group_failover",
       ],
       operation_type: [
         "idrac_api",
