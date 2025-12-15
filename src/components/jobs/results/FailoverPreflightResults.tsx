@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { 
   CheckCircle2, 
   XCircle, 
@@ -14,9 +15,13 @@ import {
   HardDrive,
   Activity,
   Layers,
-  Settings
+  Settings,
+  Wrench,
+  Wand2,
+  Key
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import type { Remediation } from "@/hooks/usePreflightRemediation";
 
 interface PreflightCheck {
   name: string;
@@ -25,6 +30,7 @@ interface PreflightCheck {
   can_override?: boolean;
   is_warning?: boolean;
   details?: string[];
+  remediation?: Remediation;
 }
 
 interface PreflightResult {
@@ -46,6 +52,7 @@ interface StepResult {
   passed: boolean;
   message: string;
   timestamp: string;
+  remediation?: Remediation;
 }
 
 interface FailoverPreflightResultsProps {
@@ -55,6 +62,9 @@ interface FailoverPreflightResultsProps {
     console_log?: string[];
     error?: string;
   };
+  onApplyFix?: (remediation: Remediation) => void;
+  onApplyAllFixes?: () => void;
+  isApplyingFix?: boolean;
 }
 
 const getCheckIcon = (checkKey: string) => {
@@ -62,6 +72,7 @@ const getCheckIcon = (checkKey: string) => {
     'dr_shell_vms_exist': <Server className="h-4 w-4" />,
     'replication_current': <Clock className="h-4 w-4" />,
     'site_b_zfs_healthy': <Database className="h-4 w-4" />,
+    'site_b_ssh_connectivity': <Key className="h-4 w-4" />,
     'site_b_vcenter_connected': <Activity className="h-4 w-4" />,
     'nfs_datastore_mounted': <HardDrive className="h-4 w-4" />,
     'no_conflicting_jobs': <Layers className="h-4 w-4" />,
@@ -73,7 +84,12 @@ const getCheckIcon = (checkKey: string) => {
   return icons[checkKey] || <Shield className="h-4 w-4" />;
 };
 
-export const FailoverPreflightResults = ({ details }: FailoverPreflightResultsProps) => {
+export const FailoverPreflightResults = ({ 
+  details, 
+  onApplyFix, 
+  onApplyAllFixes,
+  isApplyingFix 
+}: FailoverPreflightResultsProps) => {
   const result = details?.result;
   const stepResults = details?.step_results;
 
@@ -93,22 +109,39 @@ export const FailoverPreflightResults = ({ details }: FailoverPreflightResultsPr
   const warnings = result?.warnings || [];
   const isReady = result?.ready ?? (blockers.length === 0);
 
+  // Count auto-fixable issues
+  const autoFixableBlockers = blockers.filter(b => b.remediation?.can_auto_fix);
+  const autoFixableWarnings = warnings.filter(w => w.remediation?.can_auto_fix);
+  const totalAutoFixable = autoFixableBlockers.length + autoFixableWarnings.length;
+
   return (
     <div className="space-y-4">
       {/* Overall Status Card */}
       <Card className={`border-2 ${isReady ? 'border-success/50 bg-success/5' : 'border-destructive/50 bg-destructive/5'}`}>
         <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-lg">
-            {isReady ? (
-              <>
-                <CheckCircle2 className="h-5 w-5 text-success" />
-                <span className="text-success">Ready for Failover</span>
-              </>
-            ) : (
-              <>
-                <XCircle className="h-5 w-5 text-destructive" />
-                <span className="text-destructive">Not Ready for Failover</span>
-              </>
+          <CardTitle className="flex items-center justify-between text-lg">
+            <div className="flex items-center gap-2">
+              {isReady ? (
+                <>
+                  <CheckCircle2 className="h-5 w-5 text-success" />
+                  <span className="text-success">Ready for Failover</span>
+                </>
+              ) : (
+                <>
+                  <XCircle className="h-5 w-5 text-destructive" />
+                  <span className="text-destructive">Not Ready for Failover</span>
+                </>
+              )}
+            </div>
+            {totalAutoFixable > 0 && onApplyAllFixes && (
+              <Button 
+                size="sm" 
+                onClick={onApplyAllFixes}
+                disabled={isApplyingFix}
+              >
+                <Wand2 className="h-4 w-4 mr-1" />
+                Auto-Fix {totalAutoFixable} Issues
+              </Button>
             )}
           </CardTitle>
         </CardHeader>
@@ -167,9 +200,23 @@ export const FailoverPreflightResults = ({ details }: FailoverPreflightResultsPr
                   </div>
                   <p className="text-xs text-muted-foreground truncate">{check.message}</p>
                 </div>
-                {check.can_override && !check.passed && (
-                  <Badge variant="outline" className="text-xs flex-shrink-0">Override</Badge>
-                )}
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {check.can_override && !check.passed && (
+                    <Badge variant="outline" className="text-xs">Override</Badge>
+                  )}
+                  {!check.passed && check.remediation && onApplyFix && (
+                    <Button 
+                      size="sm" 
+                      variant="outline"
+                      className="h-7 text-xs"
+                      onClick={() => onApplyFix(check.remediation!)}
+                      disabled={isApplyingFix}
+                    >
+                      <Wrench className="h-3 w-3 mr-1" />
+                      Fix
+                    </Button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -183,16 +230,30 @@ export const FailoverPreflightResults = ({ details }: FailoverPreflightResultsPr
           <AlertTitle>Blockers ({blockers.length})</AlertTitle>
           <AlertDescription>
             <ScrollArea className="max-h-[150px]">
-              <ul className="space-y-1 mt-2">
+              <ul className="space-y-2 mt-2">
                 {blockers.map((blocker, idx) => (
-                  <li key={idx} className="flex items-start gap-2 text-sm">
-                    <span className="text-destructive mt-0.5">•</span>
-                    <div>
-                      <strong>{blocker.name}:</strong> {blocker.message}
-                      {blocker.can_override && (
-                        <Badge variant="outline" className="ml-2 text-xs">Can override</Badge>
-                      )}
+                  <li key={idx} className="flex items-start justify-between gap-2 text-sm">
+                    <div className="flex items-start gap-2">
+                      <span className="text-destructive mt-0.5">•</span>
+                      <div>
+                        <strong>{blocker.name}:</strong> {blocker.message}
+                        {blocker.can_override && (
+                          <Badge variant="outline" className="ml-2 text-xs">Can override</Badge>
+                        )}
+                      </div>
                     </div>
+                    {blocker.remediation && onApplyFix && (
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        className="h-6 text-xs shrink-0"
+                        onClick={() => onApplyFix(blocker.remediation!)}
+                        disabled={isApplyingFix}
+                      >
+                        <Wrench className="h-3 w-3 mr-1" />
+                        {blocker.remediation.can_auto_fix ? 'Fix' : 'Fix...'}
+                      </Button>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -208,13 +269,27 @@ export const FailoverPreflightResults = ({ details }: FailoverPreflightResultsPr
           <AlertTitle className="text-warning">Warnings ({warnings.length})</AlertTitle>
           <AlertDescription>
             <ScrollArea className="max-h-[150px]">
-              <ul className="space-y-1 mt-2">
+              <ul className="space-y-2 mt-2">
                 {warnings.map((warning, idx) => (
-                  <li key={idx} className="flex items-start gap-2 text-sm">
-                    <span className="text-warning mt-0.5">•</span>
-                    <div>
-                      <strong>{warning.name}:</strong> {warning.message}
+                  <li key={idx} className="flex items-start justify-between gap-2 text-sm">
+                    <div className="flex items-start gap-2">
+                      <span className="text-warning mt-0.5">•</span>
+                      <div>
+                        <strong>{warning.name}:</strong> {warning.message}
+                      </div>
                     </div>
+                    {warning.remediation && onApplyFix && (
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        className="h-6 text-xs shrink-0"
+                        onClick={() => onApplyFix(warning.remediation!)}
+                        disabled={isApplyingFix}
+                      >
+                        <Wrench className="h-3 w-3 mr-1" />
+                        {warning.remediation.can_auto_fix ? 'Fix' : 'Fix...'}
+                      </Button>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -247,9 +322,22 @@ export const FailoverPreflightResults = ({ details }: FailoverPreflightResultsPr
                     <span className="font-medium text-sm">{step.step}</span>
                     <span className="text-muted-foreground text-xs ml-2">{step.message}</span>
                   </div>
-                  <span className="text-xs text-muted-foreground flex-shrink-0">
-                    {new Date(step.timestamp).toLocaleTimeString()}
-                  </span>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {step.status !== 'success' && step.remediation && onApplyFix && (
+                      <Button 
+                        size="sm" 
+                        variant="ghost"
+                        className="h-6 text-xs"
+                        onClick={() => onApplyFix(step.remediation!)}
+                        disabled={isApplyingFix}
+                      >
+                        <Wrench className="h-3 w-3" />
+                      </Button>
+                    )}
+                    <span className="text-xs text-muted-foreground">
+                      {new Date(step.timestamp).toLocaleTimeString()}
+                    </span>
+                  </div>
                 </div>
               ))}
             </div>
