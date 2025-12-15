@@ -57,6 +57,22 @@ export function useJobProgress(jobId: string | null, enabled: boolean = true) {
           return typeof jobDetails.progress_percent === 'number' ? jobDetails.progress_percent : null;
         }
         
+        // Failover preflight: checks_completed / total_checks
+        if ('total_checks' in jobDetails && 'checks_completed' in jobDetails &&
+            typeof jobDetails.total_checks === 'number' && 
+            typeof jobDetails.checks_completed === 'number' &&
+            jobDetails.total_checks > 0) {
+          return Math.round((jobDetails.checks_completed / jobDetails.total_checks) * 100);
+        }
+
+        // Group failover: vms_processed / total_vms
+        if ('total_vms' in jobDetails && 'vms_processed' in jobDetails &&
+            typeof jobDetails.total_vms === 'number' && 
+            typeof jobDetails.vms_processed === 'number' &&
+            jobDetails.total_vms > 0) {
+          return Math.round((jobDetails.vms_processed / jobDetails.total_vms) * 100);
+        }
+        
         // vCenter sync: vms_processed / vms_total
         if ('vms_total' in jobDetails && 'vms_processed' in jobDetails && 
             typeof jobDetails.vms_total === 'number' && typeof jobDetails.vms_processed === 'number' && 
