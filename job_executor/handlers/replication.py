@@ -1097,6 +1097,8 @@ class ReplicationHandler(BaseHandler):
         - That VM was deployed from a zfs_target_template
         - The template has an ssh_key_id for SSH access
         """
+        self.executor.log(f"[SSH Lookup] Starting key search for hosting_vm_id={hosting_vm_id}")
+        
         try:
             # First, get the hosting VM from vcenter_vms
             response = requests.get(
@@ -1113,16 +1115,18 @@ class ReplicationHandler(BaseHandler):
                 timeout=10
             )
             if not response.ok:
+                self.executor.log(f"[SSH Lookup] Failed to fetch hosting VM: HTTP {response.status_code}", "WARNING")
                 return None
                 
             vms = response.json()
             if not vms:
-                self.executor.log(f"Hosting VM {hosting_vm_id} not found in vcenter_vms", "WARNING")
+                self.executor.log(f"[SSH Lookup] Hosting VM {hosting_vm_id} not found in vcenter_vms", "WARNING")
                 return None
             
             vm = vms[0]
             vm_name = vm.get('name', '')
-            self.executor.log(f"Looking up SSH key via hosting VM: {vm_name}")
+            vm_vcenter_id = vm.get('vcenter_id', '')
+            self.executor.log(f"[SSH Lookup] Found hosting VM: name='{vm_name}', vcenter_id='{vm_vcenter_id}'")
             
             # Find a zfs_target_template that matches this VM
             # Check by name pattern (e.g., VM "S16-VREP-02" might come from template "S16-VREP-TMP")
@@ -1131,7 +1135,7 @@ class ReplicationHandler(BaseHandler):
                 f"{DSM_URL}/rest/v1/zfs_target_templates",
                 params={
                     'is_active': 'eq.true',
-                    'select': 'id,name,ssh_key_id,template_name'
+                    'select': 'id,name,ssh_key_id,template_name,vcenter_id'
                 },
                 headers={
                     'apikey': SERVICE_ROLE_KEY,
@@ -1141,11 +1145,15 @@ class ReplicationHandler(BaseHandler):
                 timeout=10
             )
             if not response.ok:
+                self.executor.log(f"[SSH Lookup] Failed to fetch templates: HTTP {response.status_code}", "WARNING")
                 return None
             
             templates = response.json()
             if not templates:
+                self.executor.log("[SSH Lookup] No active templates found in zfs_target_templates", "WARNING")
                 return None
+            
+            self.executor.log(f"[SSH Lookup] Found {len(templates)} active templates to check")
             
             # Try to find a matching template
             import re
@@ -1164,24 +1172,36 @@ class ReplicationHandler(BaseHandler):
             
             vm_site = extract_site_prefix(vm_name)
             vm_is_repl = is_replication_appliance(vm_name)
+            self.executor.log(f"[SSH Lookup] VM analysis: site='{vm_site}', is_repl={vm_is_repl}")
+            
+            # Track templates with keys for vCenter fallback
+            vcenter_fallback_templates = []
             
             for template in templates:
-                if not template.get('ssh_key_id'):
-                    continue
-                    
                 template_name = template.get('name', '')
                 template_vm_name = template.get('template_name', '')
+                template_vcenter_id = template.get('vcenter_id', '')
+                has_key = bool(template.get('ssh_key_id'))
                 
+                self.executor.log(f"[SSH Lookup] Checking template '{template_name}': has_key={has_key}, vcenter={template_vcenter_id}")
+                
+                if not has_key:
+                    continue
+                
+                # Track for vCenter fallback
+                if template_vcenter_id and template_vcenter_id == vm_vcenter_id:
+                    vcenter_fallback_templates.append(template)
+                    
                 # Match if VM name starts with template name prefix (removing -TMP/-TEMPLATE suffixes)
                 name_base = template_name.replace('-TMP', '').replace('-TEMPLATE', '').replace('_TMP', '').replace('_TEMPLATE', '')
                 if name_base and vm_name.startswith(name_base):
-                    self.executor.log(f"Found matching template '{template_name}' for VM '{vm_name}'")
+                    self.executor.log(f"[SSH Lookup] ✓ Name prefix match: template '{template_name}' for VM '{vm_name}'")
                     return self._fetch_ssh_key_by_id(template['ssh_key_id'], hostname)
                 
                 # Also check template_name field (the VMware template VM name)
                 template_name_base = template_vm_name.replace('-TMP', '').replace('-TEMPLATE', '').replace('_TMP', '').replace('_TEMPLATE', '') if template_vm_name else ''
                 if template_name_base and vm_name.startswith(template_name_base):
-                    self.executor.log(f"Found matching template '{template_name}' via template_name field")
+                    self.executor.log(f"[SSH Lookup] ✓ Template VM name match: '{template_name}' via template_name field")
                     return self._fetch_ssh_key_by_id(template['ssh_key_id'], hostname)
                 
                 # Site-based fuzzy matching for replication appliances
@@ -1189,12 +1209,23 @@ class ReplicationHandler(BaseHandler):
                 template_site = extract_site_prefix(template_name)
                 template_is_repl = is_replication_appliance(template_name)
                 
+                self.executor.log(f"[SSH Lookup]   Template '{template_name}': site='{template_site}', is_repl={template_is_repl}")
+                
                 if vm_site and template_site and vm_site == template_site:
                     if vm_is_repl and template_is_repl:
-                        self.executor.log(f"Matched template '{template_name}' to VM '{vm_name}' by site prefix + replication pattern")
+                        self.executor.log(f"[SSH Lookup] ✓ Site + replication pattern match: template '{template_name}' to VM '{vm_name}'")
                         return self._fetch_ssh_key_by_id(template['ssh_key_id'], hostname)
             
+            # vCenter-based fallback: if name matching failed but VM is in same vCenter as a template
+            if vcenter_fallback_templates:
+                fallback = vcenter_fallback_templates[0]
+                self.executor.log(f"[SSH Lookup] ⚡ vCenter fallback: using template '{fallback.get('name')}' (same vCenter: {vm_vcenter_id})")
+                return self._fetch_ssh_key_by_id(fallback['ssh_key_id'], hostname)
+            
+            self.executor.log(f"[SSH Lookup] ✗ No template matched VM '{vm_name}' by name patterns", "WARNING")
+            
             # If no name match, check ssh_key_deployments for this hosting VM
+            self.executor.log(f"[SSH Lookup] Checking ssh_key_deployments for hosting_vm_id={hosting_vm_id}")
             response = requests.get(
                 f"{DSM_URL}/rest/v1/ssh_key_deployments",
                 params={
@@ -1212,11 +1243,17 @@ class ReplicationHandler(BaseHandler):
             if response.ok:
                 deployments = response.json()
                 if deployments:
-                    self.executor.log(f"Found SSH key deployment for hosting VM {vm_name}")
+                    self.executor.log(f"[SSH Lookup] ✓ Found SSH key deployment for hosting VM '{vm_name}'")
                     return self._fetch_ssh_key_by_id(deployments[0]['ssh_key_id'], hostname)
+                else:
+                    self.executor.log("[SSH Lookup] No ssh_key_deployments found for this VM", "WARNING")
+            else:
+                self.executor.log(f"[SSH Lookup] Failed to query ssh_key_deployments: HTTP {response.status_code}", "WARNING")
                     
         except Exception as e:
-            self.executor.log(f"Error fetching SSH key via hosting VM: {e}", "WARNING")
+            self.executor.log(f"[SSH Lookup] Error: {e}", "WARNING")
+        
+        self.executor.log("[SSH Lookup] ✗ No SSH key found via hosting VM", "WARNING")
         return None
     
     def _fetch_ssh_key_via_template(self, template_id: str, hostname: str) -> Optional[str]:
