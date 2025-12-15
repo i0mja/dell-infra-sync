@@ -5,6 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { 
   Shield, 
   Plus, 
@@ -23,12 +30,18 @@ import {
   RefreshCw,
   KeyRound,
   Link2,
+  Zap,
+  ChevronDown,
+  ClipboardCheck,
+  FlaskConical,
 } from "lucide-react";
 import { useProtectionGroups, useProtectedVMs, ProtectionGroup, useReplicationTargets } from "@/hooks/useReplication";
 import { formatDistanceToNow, differenceInDays } from "date-fns";
 import { ProtectedVMsTable } from "./ProtectedVMsTable";
 import { EditProtectionGroupDialog } from "./EditProtectionGroupDialog";
 import { CreateProtectionGroupWizard } from "./CreateProtectionGroupWizard";
+import { FailoverPreflightDialog } from "./FailoverPreflightDialog";
+import { GroupFailoverWizard } from "./GroupFailoverWizard";
 import { supabase } from "@/integrations/supabase/client";
 
 function formatBytes(bytes: number | null): string {
@@ -109,6 +122,9 @@ export function ProtectionGroupsPanel() {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [showCreateWizard, setShowCreateWizard] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
+  const [showPreflightDialog, setShowPreflightDialog] = useState(false);
+  const [showFailoverWizard, setShowFailoverWizard] = useState(false);
+  const [failoverType, setFailoverType] = useState<'test' | 'live'>('test');
   const [runningReplication, setRunningReplication] = useState<string | null>(null);
   const [pausingGroup, setPausingGroup] = useState<string | null>(null);
   const [exchangingKeys, setExchangingKeys] = useState(false);
@@ -382,6 +398,37 @@ export function ProtectionGroupsPanel() {
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button 
+                      size="sm" 
+                      variant="outline" 
+                      disabled={!hasTargetConfigured(selectedGroup) || vms.length === 0}
+                    >
+                      <Zap className="h-4 w-4 mr-1" />
+                      Failover
+                      <ChevronDown className="h-4 w-4 ml-1" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => setShowPreflightDialog(true)}>
+                      <ClipboardCheck className="h-4 w-4 mr-2" />
+                      Pre-Flight Check
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => { setFailoverType('test'); setShowFailoverWizard(true); }}>
+                      <FlaskConical className="h-4 w-4 mr-2" />
+                      Test Failover
+                    </DropdownMenuItem>
+                    <DropdownMenuItem 
+                      onClick={() => { setFailoverType('live'); setShowFailoverWizard(true); }}
+                      className="text-red-600 focus:text-red-600"
+                    >
+                      <AlertTriangle className="h-4 w-4 mr-2" />
+                      Live Failover
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <Button
                   size="sm"
                   variant="ghost"
@@ -506,6 +553,31 @@ export function ProtectionGroupsPanel() {
         open={showCreateWizard}
         onOpenChange={setShowCreateWizard}
       />
+
+      {/* Pre-Flight Check Dialog */}
+      {selectedGroup && (
+        <FailoverPreflightDialog
+          open={showPreflightDialog}
+          onOpenChange={setShowPreflightDialog}
+          groupId={selectedGroup.id}
+          groupName={selectedGroup.name}
+          onProceedToFailover={(force) => {
+            setShowPreflightDialog(false);
+            setShowFailoverWizard(true);
+          }}
+        />
+      )}
+
+      {/* Failover Wizard */}
+      {selectedGroup && (
+        <GroupFailoverWizard
+          open={showFailoverWizard}
+          onOpenChange={setShowFailoverWizard}
+          group={selectedGroup}
+          vms={vms}
+          initialFailoverType={failoverType}
+        />
+      )}
     </div>
   );
 }
