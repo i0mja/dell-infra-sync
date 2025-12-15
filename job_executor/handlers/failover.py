@@ -3,7 +3,7 @@ Failover Handler for Dell Server Manager Job Executor
 ======================================================
 
 Handles failover pre-flight checks and group failover operations.
-Implements 10 pre-flight checks before allowing failover to Site B.
+Implements 11 pre-flight checks before allowing failover to Site B.
 """
 
 import time
@@ -23,19 +23,20 @@ class FailoverHandler:
 
     def execute_failover_preflight_check(self, job: Dict):
         """
-        Run all 10 pre-flight checks for a protection group before failover.
+        Run all 11 pre-flight checks for a protection group before failover.
         
         Checks:
         1. DR Shell VMs exist for all protected VMs
         2. Replication is current (within RPO)
         3. Site B ZFS target is healthy
-        4. Site B vCenter is connected
-        5. NFS datastore is mounted and accessible
-        6. No conflicting jobs are running
-        7. All snapshots are consistent
-        8. Network mappings are configured
-        9. Protection group is not paused
-        10. DR resources (CPU/RAM) are available
+        4. Site B SSH Connectivity (NEW - actual connection test)
+        5. Site B vCenter is connected
+        6. NFS datastore is mounted and accessible
+        7. No conflicting jobs are running
+        8. All snapshots are consistent
+        9. Network mappings are configured
+        10. Protection group is not paused
+        11. DR resources (CPU/RAM) are available
         """
         details = job.get('details', {})
         protection_group_id = details.get('protection_group_id')
@@ -52,7 +53,7 @@ class FailoverHandler:
         # Initialize progress tracking
         console_log = []
         step_results = []
-        total_checks = 10
+        total_checks = 11
         checks_completed = 0
 
         def log_and_track(msg: str, level: str = "INFO"):
@@ -61,16 +62,19 @@ class FailoverHandler:
             console_log.append(f"[{timestamp}] {level}: {msg}")
             self.executor.log(f"[Failover Pre-Flight] {msg}", level)
 
-        def update_check_progress(check_name: str, passed: bool, message: str, is_warning: bool = False):
+        def update_check_progress(check_name: str, passed: bool, message: str, is_warning: bool = False, remediation: Dict = None):
             """Update step results and persist progress to DB."""
             nonlocal checks_completed
-            step_results.append({
+            step_result = {
                 'step': check_name,
                 'status': 'success' if passed else ('warning' if is_warning else 'failed'),
                 'passed': passed,
                 'message': message,
                 'timestamp': datetime.utcnow().isoformat()
-            })
+            }
+            if remediation:
+                step_result['remediation'] = remediation
+            step_results.append(step_result)
             checks_completed += 1
             progress = int((checks_completed / total_checks) * 100)
             
@@ -111,24 +115,26 @@ class FailoverHandler:
             warnings = []
 
             # 1. DR Shell VMs exist
-            log_and_track("Check 1/10: Verifying DR Shell VMs exist...")
+            log_and_track("Check 1/11: Verifying DR Shell VMs exist...")
             checks['dr_shell_vms_exist'] = self._check_dr_shells_exist(protection_group_id)
             update_check_progress(
                 'DR Shell VMs',
                 checks['dr_shell_vms_exist']['passed'],
-                checks['dr_shell_vms_exist']['message']
+                checks['dr_shell_vms_exist']['message'],
+                remediation=checks['dr_shell_vms_exist'].get('remediation')
             )
             if not checks['dr_shell_vms_exist']['passed']:
                 blockers.append(checks['dr_shell_vms_exist'])
 
             # 2. Replication currency
-            log_and_track("Check 2/10: Verifying replication currency...")
+            log_and_track("Check 2/11: Verifying replication currency...")
             checks['replication_current'] = self._check_replication_currency(group)
             update_check_progress(
                 'Replication Current',
                 checks['replication_current']['passed'],
                 checks['replication_current']['message'],
-                checks['replication_current'].get('is_warning', False)
+                checks['replication_current'].get('is_warning', False),
+                remediation=checks['replication_current'].get('remediation')
             )
             if not checks['replication_current']['passed']:
                 if checks['replication_current'].get('is_warning'):
@@ -137,57 +143,74 @@ class FailoverHandler:
                     blockers.append(checks['replication_current'])
 
             # 3. Site B ZFS target health
-            log_and_track("Check 3/10: Checking Site B ZFS health...")
+            log_and_track("Check 3/11: Checking Site B ZFS health...")
             checks['site_b_zfs_healthy'] = self._check_site_b_zfs(group.get('target_id'))
             update_check_progress(
                 'Site B ZFS Health',
                 checks['site_b_zfs_healthy']['passed'],
-                checks['site_b_zfs_healthy']['message']
+                checks['site_b_zfs_healthy']['message'],
+                remediation=checks['site_b_zfs_healthy'].get('remediation')
             )
             if not checks['site_b_zfs_healthy']['passed']:
                 blockers.append(checks['site_b_zfs_healthy'])
 
-            # 4. Site B vCenter connection
-            log_and_track("Check 4/10: Checking Site B vCenter connection...")
+            # 4. Site B SSH Connectivity (NEW - actual connection test)
+            log_and_track("Check 4/11: Testing Site B SSH connectivity...")
+            checks['site_b_ssh_connectivity'] = self._check_site_b_ssh_connectivity(group)
+            update_check_progress(
+                'Site B SSH',
+                checks['site_b_ssh_connectivity']['passed'],
+                checks['site_b_ssh_connectivity']['message'],
+                remediation=checks['site_b_ssh_connectivity'].get('remediation')
+            )
+            if not checks['site_b_ssh_connectivity']['passed']:
+                blockers.append(checks['site_b_ssh_connectivity'])
+
+            # 5. Site B vCenter connection
+            log_and_track("Check 5/11: Checking Site B vCenter connection...")
             checks['site_b_vcenter_connected'] = self._check_site_b_vcenter(group)
             update_check_progress(
                 'Site B vCenter',
                 checks['site_b_vcenter_connected']['passed'],
-                checks['site_b_vcenter_connected']['message']
+                checks['site_b_vcenter_connected']['message'],
+                remediation=checks['site_b_vcenter_connected'].get('remediation')
             )
             if not checks['site_b_vcenter_connected']['passed']:
                 blockers.append(checks['site_b_vcenter_connected'])
 
-            # 5. NFS datastore mounted
-            log_and_track("Check 5/10: Verifying NFS datastore is mounted...")
+            # 6. NFS datastore mounted
+            log_and_track("Check 6/11: Verifying NFS datastore is mounted...")
             checks['nfs_datastore_mounted'] = self._check_nfs_mounted(group)
             update_check_progress(
                 'NFS Datastore',
                 checks['nfs_datastore_mounted']['passed'],
-                checks['nfs_datastore_mounted']['message']
+                checks['nfs_datastore_mounted']['message'],
+                remediation=checks['nfs_datastore_mounted'].get('remediation')
             )
             if not checks['nfs_datastore_mounted']['passed']:
                 blockers.append(checks['nfs_datastore_mounted'])
 
-            # 6. No conflicting jobs
-            log_and_track("Check 6/10: Checking for conflicting jobs...")
+            # 7. No conflicting jobs
+            log_and_track("Check 7/11: Checking for conflicting jobs...")
             checks['no_conflicting_jobs'] = self._check_no_conflicts(protection_group_id, job_id)
             update_check_progress(
                 'No Conflicts',
                 checks['no_conflicting_jobs']['passed'],
-                checks['no_conflicting_jobs']['message']
+                checks['no_conflicting_jobs']['message'],
+                remediation=checks['no_conflicting_jobs'].get('remediation')
             )
             if not checks['no_conflicting_jobs']['passed']:
                 blockers.append(checks['no_conflicting_jobs'])
 
-            # 7. Snapshot consistency
-            log_and_track("Check 7/10: Verifying snapshot consistency...")
+            # 8. Snapshot consistency
+            log_and_track("Check 8/11: Verifying snapshot consistency...")
             checks['snapshots_consistent'] = self._check_snapshot_consistency(protection_group_id)
             update_check_progress(
                 'Snapshots',
                 checks['snapshots_consistent']['passed'],
                 checks['snapshots_consistent']['message'],
-                checks['snapshots_consistent'].get('is_warning', False)
+                checks['snapshots_consistent'].get('is_warning', False),
+                remediation=checks['snapshots_consistent'].get('remediation')
             )
             if not checks['snapshots_consistent']['passed']:
                 if checks['snapshots_consistent'].get('is_warning'):
@@ -195,37 +218,40 @@ class FailoverHandler:
                 else:
                     blockers.append(checks['snapshots_consistent'])
 
-            # 8. Network mapping
-            log_and_track("Check 8/10: Validating network mappings...")
+            # 9. Network mapping
+            log_and_track("Check 9/11: Validating network mappings...")
             checks['network_mapping_valid'] = self._check_network_mapping(protection_group_id)
             update_check_progress(
                 'Network Mapping',
                 checks['network_mapping_valid']['passed'],
                 checks['network_mapping_valid']['message'],
-                True  # Network mapping issues are warnings
+                True,  # Network mapping issues are warnings
+                remediation=checks['network_mapping_valid'].get('remediation')
             )
             if not checks['network_mapping_valid']['passed']:
                 warnings.append(checks['network_mapping_valid'])
 
-            # 9. Group not paused
-            log_and_track("Check 9/10: Checking group status...")
+            # 10. Group not paused
+            log_and_track("Check 10/11: Checking group status...")
             checks['group_not_paused'] = self._check_group_status(group)
             update_check_progress(
                 'Group Status',
                 checks['group_not_paused']['passed'],
-                checks['group_not_paused']['message']
+                checks['group_not_paused']['message'],
+                remediation=checks['group_not_paused'].get('remediation')
             )
             if not checks['group_not_paused']['passed']:
                 blockers.append(checks['group_not_paused'])
 
-            # 10. DR resources available
-            log_and_track("Check 10/10: Checking DR resource availability...")
+            # 11. DR resources available
+            log_and_track("Check 11/11: Checking DR resource availability...")
             checks['resources_available'] = self._check_dr_resources(protection_group_id, group)
             update_check_progress(
                 'DR Resources',
                 checks['resources_available']['passed'],
                 checks['resources_available']['message'],
-                checks['resources_available'].get('is_warning', False)
+                checks['resources_available'].get('is_warning', False),
+                remediation=checks['resources_available'].get('remediation')
             )
             if not checks['resources_available']['passed']:
                 if checks['resources_available'].get('is_warning'):
@@ -575,6 +601,204 @@ class FailoverHandler:
             'passed': True,
             'message': f'Target {target.get("name")} is healthy'
         }
+
+    def _check_site_b_ssh_connectivity(self, group: Dict) -> Dict:
+        """Check SSH connectivity to Site B ZFS target with actual connection test."""
+        target_id = group.get('target_id')
+        if not target_id:
+            return {
+                'name': 'Site B SSH Connectivity',
+                'passed': False,
+                'message': 'No target configured',
+                'can_override': False
+            }
+
+        target = self._fetch_replication_target(target_id)
+        if not target:
+            return {
+                'name': 'Site B SSH Connectivity',
+                'passed': False,
+                'message': 'Target not found',
+                'can_override': False
+            }
+
+        ssh_key_id = target.get('ssh_key_id')
+        hostname = target.get('hostname')
+        ssh_username = target.get('ssh_username', 'root')
+
+        # Check if SSH key is assigned
+        if not ssh_key_id:
+            return {
+                'name': 'Site B SSH Connectivity',
+                'passed': False,
+                'message': 'No SSH key assigned to target',
+                'can_override': False,
+                'remediation': {
+                    'action_type': 'assign_ssh_key',
+                    'description': 'Assign and deploy an SSH key to the target',
+                    'can_auto_fix': False,
+                    'requires_confirmation': True
+                }
+            }
+
+        # Check if SSH key is deployed
+        deployment = self._get_ssh_key_deployment(ssh_key_id, target_id)
+        if not deployment:
+            return {
+                'name': 'Site B SSH Connectivity',
+                'passed': False,
+                'message': 'SSH key not deployed to target',
+                'can_override': False,
+                'remediation': {
+                    'action_type': 'deploy_ssh_key',
+                    'job_type': 'ssh_key_deploy',
+                    'job_params': {'ssh_key_id': ssh_key_id, 'target_ids': [target_id]},
+                    'description': 'Deploy the SSH key to the target',
+                    'can_auto_fix': True
+                }
+            }
+
+        if deployment.get('status') != 'deployed':
+            return {
+                'name': 'Site B SSH Connectivity',
+                'passed': False,
+                'message': f"SSH key deployment status: {deployment.get('status', 'unknown')}",
+                'can_override': False,
+                'remediation': {
+                    'action_type': 'deploy_ssh_key',
+                    'job_type': 'ssh_key_deploy',
+                    'job_params': {'ssh_key_id': ssh_key_id, 'target_ids': [target_id]},
+                    'description': 'Re-deploy the SSH key to the target',
+                    'can_auto_fix': True
+                }
+            }
+
+        # Actually test SSH connection
+        ssh_result = self._test_ssh_connection(hostname, ssh_username, ssh_key_id)
+        if not ssh_result['success']:
+            return {
+                'name': 'Site B SSH Connectivity',
+                'passed': False,
+                'message': f"SSH connection failed: {ssh_result.get('error', 'Unknown error')}",
+                'can_override': True,
+                'remediation': {
+                    'action_type': 'redeploy_ssh_key',
+                    'job_type': 'ssh_key_deploy',
+                    'job_params': {'ssh_key_id': ssh_key_id, 'target_ids': [target_id], 'force': True},
+                    'description': 'Re-deploy SSH key (may require root password)',
+                    'requires_password': True,
+                    'can_auto_fix': False
+                }
+            }
+
+        return {
+            'name': 'Site B SSH Connectivity',
+            'passed': True,
+            'message': f'SSH connection to {hostname} successful'
+        }
+
+    def _get_ssh_key_deployment(self, ssh_key_id: str, target_id: str) -> Optional[Dict]:
+        """Fetch SSH key deployment status for a target."""
+        try:
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            import requests
+
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            }
+
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/ssh_key_deployments",
+                headers=headers,
+                params={
+                    'select': '*',
+                    'ssh_key_id': f'eq.{ssh_key_id}',
+                    'target_id': f'eq.{target_id}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                deployments = response.json()
+                return deployments[0] if deployments else None
+            return None
+        except Exception as e:
+            self.executor.log(f"Error fetching SSH key deployment: {e}", "ERROR")
+            return None
+
+    def _test_ssh_connection(self, hostname: str, username: str, ssh_key_id: str) -> Dict:
+        """Actually test SSH connection to target."""
+        try:
+            import paramiko
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            import requests
+
+            # Fetch SSH key
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            }
+
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/ssh_keys",
+                headers=headers,
+                params={'select': 'private_key_encrypted', 'id': f'eq.{ssh_key_id}'},
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+
+            if response.status_code != 200 or not response.json():
+                return {'success': False, 'error': 'SSH key not found'}
+
+            ssh_key_data = response.json()[0]
+            private_key_encrypted = ssh_key_data.get('private_key_encrypted')
+
+            if not private_key_encrypted:
+                return {'success': False, 'error': 'SSH private key not available'}
+
+            # Decrypt the private key
+            from job_executor.crypto import decrypt_value
+            private_key = decrypt_value(private_key_encrypted)
+
+            if not private_key:
+                return {'success': False, 'error': 'Failed to decrypt SSH key'}
+
+            # Create SSH client and test connection
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+            # Load private key
+            from io import StringIO
+            pkey = paramiko.RSAKey.from_private_key(StringIO(private_key))
+
+            # Attempt connection with timeout
+            client.connect(
+                hostname=hostname,
+                username=username,
+                pkey=pkey,
+                timeout=15,
+                banner_timeout=15,
+                auth_timeout=15
+            )
+
+            # Test with a simple command
+            stdin, stdout, stderr = client.exec_command('echo ok', timeout=10)
+            result = stdout.read().decode().strip()
+            client.close()
+
+            if result == 'ok':
+                return {'success': True}
+            else:
+                return {'success': False, 'error': 'SSH connection test command failed'}
+
+        except paramiko.AuthenticationException as e:
+            return {'success': False, 'error': f'Authentication failed: {e}'}
+        except paramiko.SSHException as e:
+            return {'success': False, 'error': f'SSH error: {e}'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
 
     def _check_site_b_vcenter(self, group: Dict) -> Dict:
         """Check Site B vCenter connection via target's dr_vcenter_id."""

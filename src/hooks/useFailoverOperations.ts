@@ -15,6 +15,15 @@ export interface PreflightCheckResult {
   message: string;
   is_warning?: boolean;
   can_override?: boolean;
+  remediation?: {
+    action_type: string;
+    job_type?: string;
+    job_params?: Record<string, unknown>;
+    description: string;
+    can_auto_fix: boolean;
+    requires_password?: boolean;
+    requires_confirmation?: boolean;
+  };
 }
 
 export interface PreflightResults {
