@@ -11,6 +11,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
 import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
 import { DiscoveryScanResults, VCenterSyncResults, CredentialTestResults, ScpResults, MultiServerResults, GenericResults, JobTimingCard, EsxiUpgradeResults, EsxiPreflightResults, JobProgressHeader, JobTasksTimeline, JobConsoleLog, StorageVMotionResults, ZfsDeploymentResults, ValidationPreflightResults, ZfsHealthCheckResults, ReplicationSyncResults, FailoverPreflightResults } from "./results";
+import { PendingJobWarning } from "@/components/activity/PendingJobWarning";
 interface Job {
   id: string;
   job_type: string;
@@ -265,6 +266,11 @@ export const JobDetailDialog = ({
           </DialogHeader>
 
           <ParentWindowBanner />
+          
+          {/* Show warning for pending jobs that require executor */}
+          {job.status === 'pending' && (
+            <PendingJobWarning job={job} />
+          )}
 
           <Tabs defaultValue="progress" className="w-full">
             <TabsList className="grid w-full grid-cols-3">

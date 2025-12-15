@@ -12,6 +12,7 @@ import { CommandDetailDialog } from "@/components/activity/CommandDetailDialog";
 import { JobsTable, Job } from "@/components/activity/JobsTable";
 import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
 import { StaleJobWarning } from "@/components/activity/StaleJobWarning";
+import { ExecutorStatusIndicator } from "@/components/activity/ExecutorStatusIndicator";
 import { ActivityTable } from "@/components/activity/ActivityTable";
 import { ActivityFilterToolbar } from "@/components/activity/ActivityFilterToolbar";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -683,7 +684,7 @@ export default function ActivityMonitor() {
         <div className="flex-1 flex flex-col overflow-hidden">
           <Tabs value={activeTab} onValueChange={handleTabChange} className="h-full flex flex-col">
             {/* Tab bar with Columns/Export buttons */}
-            <div className="flex items-center border-b bg-card px-4">
+            <div className="flex items-center justify-between border-b bg-card px-4">
               <TabsList className="h-auto p-0 bg-transparent gap-2">
                 <TabsTrigger 
                   value="operations"
@@ -717,15 +718,19 @@ export default function ActivityMonitor() {
 
             <div className="flex-1" />
 
-            <div
-              className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${
-                realtimeStatus === 'connected'
-                  ? 'bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/30'
-                  : 'bg-amber-500/10 text-amber-700 ring-1 ring-amber-500/30'
-              }`}
-            >
-              <span className="h-2 w-2 rounded-full bg-current" />
-              {realtimeStatus === 'connected' ? 'Live' : 'Paused'}
+            <div className="flex items-center gap-3">
+              <ExecutorStatusIndicator />
+              
+              <div
+                className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${
+                  realtimeStatus === 'connected'
+                    ? 'bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/30'
+                    : 'bg-amber-500/10 text-amber-700 ring-1 ring-amber-500/30'
+                }`}
+              >
+                <span className="h-2 w-2 rounded-full bg-current" />
+                {realtimeStatus === 'connected' ? 'Live' : 'Paused'}
+              </div>
             </div>
           </div>
 
