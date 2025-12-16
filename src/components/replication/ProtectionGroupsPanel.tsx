@@ -3,8 +3,18 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,8 +44,10 @@ import {
   ChevronDown,
   ClipboardCheck,
   FlaskConical,
+  Loader2,
 } from "lucide-react";
-import { useProtectionGroups, useProtectedVMs, ProtectionGroup, useReplicationTargets } from "@/hooks/useReplication";
+import { useProtectionGroups, useProtectedVMs, ProtectionGroup, useReplicationTargets, ReplicationTarget } from "@/hooks/useReplication";
+import { useToast } from "@/hooks/use-toast";
 import { formatDistanceToNow, differenceInDays } from "date-fns";
 import { ProtectedVMsTable } from "./ProtectedVMsTable";
 import { EditProtectionGroupDialog } from "./EditProtectionGroupDialog";
@@ -119,6 +131,7 @@ function PriorityBadge({ priority }: { priority?: string }) {
 export function ProtectionGroupsPanel() {
   const { groups, loading, updateGroup, deleteGroup, pauseGroup, runReplicationNow, exchangeSshKeys, refetch } = useProtectionGroups();
   const { targets } = useReplicationTargets();
+  const { toast } = useToast();
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [showCreateWizard, setShowCreateWizard] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
@@ -128,6 +141,14 @@ export function ProtectionGroupsPanel() {
   const [runningReplication, setRunningReplication] = useState<string | null>(null);
   const [pausingGroup, setPausingGroup] = useState<string | null>(null);
   const [exchangingKeys, setExchangingKeys] = useState(false);
+  
+  // SSH password dialog state
+  const [sshPasswordDialog, setSshPasswordDialog] = useState<{
+    open: boolean;
+    sourceTarget: ReplicationTarget | null;
+    destTarget: ReplicationTarget | null;
+  }>({ open: false, sourceTarget: null, destTarget: null });
+  const [sshPassword, setSshPassword] = useState('');
 
   const { vms, loading: vmsLoading, refetch: refetchVMs, addVMs, removeVM, batchMigrate } = useProtectedVMs(
     selectedGroupId || undefined
@@ -196,13 +217,48 @@ export function ProtectionGroupsPanel() {
     }
   };
 
-  const handleExchangeSshKeys = async () => {
+  const handleExchangeSshKeys = () => {
     if (!selectedTarget?.id || !partnerTarget?.id) return;
+    setSshPasswordDialog({ 
+      open: true, 
+      sourceTarget: selectedTarget as ReplicationTarget, 
+      destTarget: partnerTarget as unknown as ReplicationTarget 
+    });
+    setSshPassword('');
+  };
+
+  const submitSshKeyExchange = async () => {
+    const { sourceTarget, destTarget } = sshPasswordDialog;
+    if (!sourceTarget || !destTarget) return;
+    
     setExchangingKeys(true);
     try {
+      // Encrypt password before storing in job details
+      let encryptedPassword: string | undefined;
+      if (sshPassword) {
+        const { data: encryptData, error: encryptError } = await supabase.functions.invoke('encrypt-credentials', {
+          body: {
+            password: sshPassword,
+            type: 'return_only'
+          }
+        });
+        if (encryptError) throw encryptError;
+        encryptedPassword = encryptData?.encrypted;
+      }
+      
       await exchangeSshKeys({
-        sourceTargetId: selectedTarget.id,
-        destTargetId: partnerTarget.id,
+        sourceTargetId: sourceTarget.id,
+        destTargetId: destTarget.id,
+        adminPasswordEncrypted: encryptedPassword,
+      });
+      
+      setSshPasswordDialog({ open: false, sourceTarget: null, destTarget: null });
+      setSshPassword('');
+    } catch (err: any) {
+      toast({
+        title: 'Error',
+        description: err.message,
+        variant: 'destructive',
       });
     } finally {
       setExchangingKeys(false);
@@ -578,6 +634,66 @@ export function ProtectionGroupsPanel() {
           initialFailoverType={failoverType}
         />
       )}
+
+      {/* SSH Password Dialog for Key Exchange */}
+      <Dialog 
+        open={sshPasswordDialog.open} 
+        onOpenChange={(open) => {
+          if (!open) {
+            setSshPasswordDialog({ open: false, sourceTarget: null, destTarget: null });
+            setSshPassword('');
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5" />
+              SSH Key Exchange
+            </DialogTitle>
+            <DialogDescription>
+              Enter the root password for <strong>{sshPasswordDialog.sourceTarget?.name}</strong> to establish SSH key trust with <strong>{sshPasswordDialog.destTarget?.name}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="ssh-password">Root Password</Label>
+              <Input
+                id="ssh-password"
+                type="password" 
+                value={sshPassword} 
+                onChange={(e) => setSshPassword(e.target.value)}
+                placeholder="Enter root password"
+                autoComplete="off"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setSshPasswordDialog({ open: false, sourceTarget: null, destTarget: null });
+                setSshPassword('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={submitSshKeyExchange} 
+              disabled={exchangingKeys || !sshPassword.trim()}
+            >
+              {exchangingKeys ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Establishing Trust...
+                </>
+              ) : (
+                'Establish Trust'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

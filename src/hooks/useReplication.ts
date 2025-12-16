@@ -737,7 +737,15 @@ export function useProtectionGroups() {
 
   // Exchange SSH keys between paired targets
   const exchangeSshKeysMutation = useMutation({
-    mutationFn: async ({ sourceTargetId, destTargetId }: { sourceTargetId: string; destTargetId: string }) => {
+    mutationFn: async ({ 
+      sourceTargetId, 
+      destTargetId, 
+      adminPasswordEncrypted 
+    }: { 
+      sourceTargetId: string; 
+      destTargetId: string; 
+      adminPasswordEncrypted?: string;
+    }) => {
       const { data: { user } } = await supabase.auth.getUser();
       
       const { data: job, error } = await supabase
@@ -750,6 +758,7 @@ export function useProtectionGroups() {
           details: {
             source_target_id: sourceTargetId,
             destination_target_id: destTargetId,
+            admin_password_encrypted: adminPasswordEncrypted,
           },
         })
         .select()
