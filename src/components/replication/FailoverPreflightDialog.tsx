@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Dialog,
   DialogContent,
@@ -22,10 +23,12 @@ import {
   Zap,
   Wrench,
   Wand2,
+  ExternalLink,
 } from "lucide-react";
 import { useFailoverOperations, usePreflightJobStatus, PreflightCheckResult } from "@/hooks/useFailoverOperations";
 import { usePreflightRemediation, type Remediation } from "@/hooks/usePreflightRemediation";
 import { AdminPasswordDialog } from "./AdminPasswordDialog";
+import { toast } from "sonner";
 
 interface FailoverPreflightDialogProps {
   open: boolean;
@@ -42,6 +45,7 @@ export function FailoverPreflightDialog({
   groupName,
   onProceedToFailover,
 }: FailoverPreflightDialogProps) {
+  const navigate = useNavigate();
   const { runPreflightCheck } = useFailoverOperations(groupId);
   const { applyFix, applyAllFixes, getAutoFixableCount, getRemediations } = usePreflightRemediation();
   const [jobId, setJobId] = useState<string | null>(null);
@@ -102,11 +106,28 @@ export function FailoverPreflightDialog({
   };
 
   const handleApplyFix = (remediation: Remediation) => {
+    // Handle special UI-based remediations (wizard flows)
+    if (remediation.action_type === 'open_dr_shell_wizard') {
+      const vmNames = remediation.context?.vm_names || [];
+      toast.info(`Navigate to Protected VMs to create DR shells`, {
+        description: `${vmNames.length} VMs need DR shell configuration`,
+      });
+      // Navigate to protected VMs page with group filter
+      navigate(`/replication?tab=vms&group=${groupId}`);
+      onOpenChange(false);
+      return;
+    }
+
+    // Handle job-based remediations
     if (remediation.requires_password) {
       setPendingRemediation(remediation);
       setShowPasswordDialog(true);
-    } else {
+    } else if (remediation.job_type) {
       applyFix.mutate({ remediation });
+    } else {
+      toast.error("Cannot apply fix", {
+        description: "This remediation requires manual configuration",
+      });
     }
   };
 
@@ -266,8 +287,17 @@ export function FailoverPreflightDialog({
                                 onClick={() => handleApplyFix(check.remediation!)}
                                 disabled={isApplyingFix}
                               >
-                                <Wrench className="h-3 w-3 mr-1" />
-                                {check.remediation.can_auto_fix ? 'Fix' : 'Fix...'}
+                                {check.remediation.action_type === 'open_dr_shell_wizard' ? (
+                                  <>
+                                    <ExternalLink className="h-3 w-3 mr-1" />
+                                    Configure...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Wrench className="h-3 w-3 mr-1" />
+                                    {check.remediation.can_auto_fix ? 'Fix' : 'Fix...'}
+                                  </>
+                                )}
                               </Button>
                             )}
                           </div>

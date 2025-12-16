@@ -14,6 +14,12 @@ export interface Remediation {
   can_auto_fix: boolean;
   requires_password?: boolean;
   requires_confirmation?: boolean;
+  context?: {
+    vm_ids?: string[];
+    vm_names?: string[];
+    protection_group_id?: string;
+    [key: string]: unknown;
+  };
 }
 
 export interface CheckWithRemediation {
