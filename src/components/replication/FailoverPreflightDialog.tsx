@@ -57,8 +57,10 @@ export function FailoverPreflightDialog({
   const [pendingRemediation, setPendingRemediation] = useState<Remediation | null>(null);
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
   const [checkInProgress, setCheckInProgress] = useState(false);
+  const [remediationJobId, setRemediationJobId] = useState<string | null>(null);
 
   const { data: job, isLoading: polling } = usePreflightJobStatus(jobId || undefined);
+  const { data: remediationJob } = usePreflightJobStatus(remediationJobId || undefined);
 
   // Start pre-flight check when dialog opens
   useEffect(() => {
@@ -101,8 +103,26 @@ export function FailoverPreflightDialog({
       setResults(null);
       setPendingRemediation(null);
       setCheckInProgress(false);
+      setRemediationJobId(null);
     }
   }, [open]);
+
+  // Auto-refresh preflight when remediation job completes
+  useEffect(() => {
+    if (remediationJob?.status === 'completed') {
+      toast.success("Remediation completed", {
+        description: "Re-running safety checks...",
+      });
+      setRemediationJobId(null);
+      handleRunAgain();
+    } else if (remediationJob?.status === 'failed') {
+      const details = remediationJob.details as Record<string, unknown> | null;
+      toast.error("Remediation failed", {
+        description: (details?.error as string) || "Check logs for details",
+      });
+      setRemediationJobId(null);
+    }
+  }, [remediationJob?.status]);
 
   const handleRunAgain = () => {
     setJobId(null);
@@ -115,7 +135,7 @@ export function FailoverPreflightDialog({
     });
   };
 
-  const handleApplyFix = (remediation: Remediation) => {
+  const handleApplyFix = async (remediation: Remediation) => {
     // Handle special UI-based remediations (wizard flows)
     if (remediation.action_type === 'open_dr_shell_wizard') {
       const vmNames = remediation.context?.vm_names || [];
@@ -133,7 +153,17 @@ export function FailoverPreflightDialog({
       setPendingRemediation(remediation);
       setShowPasswordDialog(true);
     } else if (remediation.job_type) {
-      applyFix.mutate({ remediation });
+      try {
+        const job = await applyFix.mutateAsync({ remediation });
+        if (job?.id) {
+          setRemediationJobId(job.id);
+          toast.info("Applying fix...", {
+            description: "Monitoring remediation job progress",
+          });
+        }
+      } catch (error) {
+        // Error is already handled by the mutation's onError
+      }
     } else {
       toast.error("Cannot apply fix", {
         description: "This remediation requires manual configuration",
@@ -141,9 +171,16 @@ export function FailoverPreflightDialog({
     }
   };
 
-  const handlePasswordSubmit = (password: string) => {
+  const handlePasswordSubmit = async (password: string) => {
     if (pendingRemediation) {
-      applyFix.mutate({ remediation: pendingRemediation, adminPassword: password });
+      try {
+        const job = await applyFix.mutateAsync({ remediation: pendingRemediation, adminPassword: password });
+        if (job?.id) {
+          setRemediationJobId(job.id);
+        }
+      } catch (error) {
+        // Error handled by mutation
+      }
       setShowPasswordDialog(false);
       setPendingRemediation(null);
     }
@@ -161,7 +198,7 @@ export function FailoverPreflightDialog({
   };
 
   const isLoading = runPreflightCheck.isPending || checkInProgress || (!!jobId && !results);
-  const isApplyingFix = applyFix.isPending || applyAllFixes.isPending;
+  const isApplyingFix = applyFix.isPending || applyAllFixes.isPending || !!remediationJobId;
   const checks = results?.checks ? Object.values(results.checks) : [];
   const blockers = checks.filter(c => !c.passed && !c.is_warning);
   const warnings = checks.filter(c => !c.passed && c.is_warning);

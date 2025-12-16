@@ -796,13 +796,18 @@ class FailoverHandler:
                     'message': f'Datastore "{dr_datastore}" not found on DR vCenter',
                     'can_override': False,
                     'remediation': {
-                        'action_type': 'open_datastore_mount_wizard',
+                        'action_type': 'mount_datastore',
+                        'job_type': 'manage_datastore',
+                        'job_params': {
+                            'target_id': target_id,
+                            'operation': 'mount_all'
+                        },
                         'context': {
                             'vcenter_id': dr_vcenter_id,
                             'datastore_name': dr_datastore,
                             'target_id': target_id
                         },
-                        'description': 'Mount the NFS datastore on the DR vCenter hosts',
+                        'description': 'Mount the NFS datastore on all DR vCenter hosts',
                         'can_auto_fix': True
                     }
                 }
@@ -819,6 +824,11 @@ class FailoverHandler:
                     'can_override': False,
                     'remediation': {
                         'action_type': 'remount_datastore',
+                        'job_type': 'manage_datastore',
+                        'job_params': {
+                            'target_id': target_id,
+                            'operation': 'refresh'
+                        },
                         'context': {
                             'vcenter_id': dr_vcenter_id,
                             'datastore_name': dr_datastore,
@@ -838,13 +848,18 @@ class FailoverHandler:
                     'can_override': False,
                     'remediation': {
                         'action_type': 'mount_on_hosts',
+                        'job_type': 'manage_datastore',
+                        'job_params': {
+                            'target_id': target_id,
+                            'operation': 'mount_all'
+                        },
                         'context': {
                             'vcenter_id': dr_vcenter_id,
                             'datastore_name': dr_datastore,
                             'datastore_id': ds.get('id'),
                             'target_id': target_id
                         },
-                        'description': 'Mount the NFS datastore on DR vCenter hosts',
+                        'description': 'Mount the NFS datastore on all DR vCenter hosts',
                         'can_auto_fix': True
                     }
                 }

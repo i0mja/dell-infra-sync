@@ -3976,16 +3976,21 @@ class ZfsTargetHandler(BaseHandler):
         target_id = details.get('target_id')
         operation = details.get('operation', 'status')
         host_names = details.get('host_names', [])
+        is_remediation = details.get('is_remediation', False)
         
         job_details = {
             'operation': operation,
             'target_id': target_id,
             'host_names': host_names,
+            'is_remediation': is_remediation,
             'console_log': [],
             'results': {}
         }
         
-        self._log_console(job_id, 'INFO', f'Starting datastore management: {operation}', job_details)
+        if is_remediation:
+            self._log_console(job_id, 'INFO', f'🔧 Executing as remediation action: {operation}', job_details)
+        else:
+            self._log_console(job_id, 'INFO', f'Starting datastore management: {operation}', job_details)
         self.update_job_status(job_id, 'running', started_at=utc_now_iso(), details=job_details)
         
         try:

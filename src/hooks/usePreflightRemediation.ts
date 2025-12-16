@@ -9,12 +9,21 @@ type JobInsert = Database["public"]["Tables"]["jobs"]["Insert"];
 export interface Remediation {
   action_type: string;
   job_type?: string;
-  job_params?: Record<string, unknown>;
+  job_params?: {
+    target_id?: string;
+    operation?: string;
+    host_names?: string[];
+    [key: string]: unknown;
+  };
   description: string;
   can_auto_fix: boolean;
   requires_password?: boolean;
   requires_confirmation?: boolean;
   context?: {
+    vcenter_id?: string;
+    datastore_name?: string;
+    datastore_id?: string;
+    target_id?: string;
     vm_ids?: string[];
     vm_names?: string[];
     protection_group_id?: string;
@@ -43,7 +52,7 @@ export function usePreflightRemediation() {
         throw new Error("No job type specified for remediation");
       }
 
-      // Create the remediation job
+      // Create the remediation job - merge job_params with additional flags
       const jobParams: Record<string, unknown> = {
         ...remediation.job_params,
         is_remediation: true,
@@ -51,6 +60,11 @@ export function usePreflightRemediation() {
 
       if (adminPassword) {
         jobParams.admin_password = adminPassword;
+      }
+
+      // Add context info for logging purposes
+      if (remediation.context) {
+        jobParams.remediation_context = remediation.context;
       }
 
       const insertData: JobInsert = {
