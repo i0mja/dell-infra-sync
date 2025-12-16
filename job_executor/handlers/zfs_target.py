@@ -4002,21 +4002,31 @@ class ZfsTargetHandler(BaseHandler):
             job_details['target_name'] = target.get('name')
             job_details['hostname'] = target.get('hostname')
             
-            # Get datastore info
+            # FIXED: Allow explicit overrides for datastore_name and vcenter_id from job params
+            # This is critical for remediation jobs that need to target a specific vCenter
+            override_datastore_name = details.get('datastore_name')
+            override_vcenter_id = details.get('vcenter_id')
+            
+            # Get datastore info - use override if provided
             pool_name = target.get('zfs_pool', 'tank')
-            datastore_name = target.get('datastore_name') or f"nfs-{target.get('name')}"
+            datastore_name = override_datastore_name or target.get('datastore_name') or f"nfs-{target.get('name')}"
             nfs_path = target.get('nfs_export_path') or f'/{pool_name}/nfs'
             nfs_host = target.get('hostname')
             
             job_details['datastore_name'] = datastore_name
             job_details['nfs_path'] = nfs_path
             
+            if override_datastore_name:
+                self._log_console(job_id, 'INFO', f'Using override datastore: {datastore_name}', job_details)
+            if override_vcenter_id:
+                self._log_console(job_id, 'INFO', f'Using override vCenter ID: {override_vcenter_id}', job_details)
+            
             self._log_console(job_id, 'INFO', f'Datastore: {datastore_name} @ {nfs_host}:{nfs_path}', job_details)
             
-            # Connect to vCenter
-            vcenter_id = target.get('dr_vcenter_id')
+            # Connect to vCenter - use override if provided
+            vcenter_id = override_vcenter_id or target.get('dr_vcenter_id')
             if not vcenter_id:
-                raise Exception('No vCenter associated with this target')
+                raise Exception('No vCenter associated with this target (and no override provided)')
             
             vcenter = self._fetch_vcenter(vcenter_id)
             if not vcenter:
