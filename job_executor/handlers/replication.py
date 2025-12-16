@@ -885,8 +885,8 @@ class ReplicationHandler(BaseHandler):
 
     def _get_hosting_vm_hostname(self, hosting_vm_id: str) -> Optional[str]:
         """
-        Get the vCenter VM name to use as SSH hostname.
-        Prefers VM name (DNS resolvable) over IP address.
+        Get the vCenter VM hostname for SSH connection.
+        Prefers IP address (always reachable) over VM name (may not be in DNS).
         """
         try:
             response = requests.get(
@@ -906,13 +906,15 @@ class ReplicationHandler(BaseHandler):
                 vms = response.json()
                 if vms:
                     vm = vms[0]
-                    # Prefer VM name (DNS resolvable), fallback to IP
                     vm_name = vm.get('name')
                     vm_ip = vm.get('ip_address')
+                    # Prefer IP address (always reachable), fallback to VM name
+                    if vm_ip:
+                        self.executor.log(f"[SSH] Resolved hosting VM '{vm_name}' to IP: {vm_ip}")
+                        return vm_ip
                     if vm_name:
-                        self.executor.log(f"[SSH] Resolved hosting VM: {vm_name} (IP: {vm_ip})")
+                        self.executor.log(f"[SSH] Using VM name (no IP available): {vm_name}")
                         return vm_name
-                    return vm_ip
             return None
         except Exception as e:
             self.executor.log(f"Error fetching hosting VM {hosting_vm_id}: {e}", "WARNING")
