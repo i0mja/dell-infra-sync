@@ -45,6 +45,7 @@ class ZFSReplicationReal:
     
     Uses SSH to execute ZFS commands on source and target storage systems.
     Uses pyVmomi for DR shell VM creation at the DR vCenter.
+    Uses centralized SSHCredentialManager for credential lookup.
     """
     
     def __init__(self, executor=None):
@@ -55,11 +56,62 @@ class ZFSReplicationReal:
             executor: Optional reference to JobExecutor for DB access
         """
         self.executor = executor
+        self._ssh_manager = None
         
         if not PARAMIKO_AVAILABLE:
             logger.warning("paramiko not available - SSH operations will fail")
         if not PYVMOMI_AVAILABLE:
             logger.warning("pyVmomi not available - DR shell VM creation will fail")
+    
+    @property
+    def ssh_manager(self):
+        """Lazy-load centralized SSH credential manager."""
+        if self._ssh_manager is None and self.executor:
+            try:
+                from job_executor.ssh_utils import SSHCredentialManager
+                self._ssh_manager = SSHCredentialManager(self.executor)
+            except ImportError:
+                logger.warning("SSHCredentialManager not available")
+        return self._ssh_manager
+    
+    def _get_ssh_credentials_for_target(self, target_id: str = None, 
+                                         target: dict = None) -> dict:
+        """
+        Get SSH credentials using centralized lookup.
+        
+        Args:
+            target_id: Replication target ID to lookup
+            target: Pre-fetched target dict (optional, avoids DB lookup)
+            
+        Returns:
+            Dict with hostname, port, username, key_data/password, or empty dict
+        """
+        if not self.ssh_manager:
+            logger.warning("[SSH] No SSH manager available - executor not set")
+            return {}
+        
+        # Fetch target if only ID provided
+        if target_id and not target:
+            target = self._get_replication_target_settings(target_id)
+        
+        if not target:
+            logger.warning(f"[SSH] No target found for id={target_id}")
+            return {}
+        
+        # Use centralized credential lookup
+        creds = self.ssh_manager.get_credentials(target)
+        
+        if not creds:
+            logger.error(
+                f"[SSH] No credentials found for target {target.get('name', target_id)}. "
+                f"Checked: target.ssh_key_encrypted, target.ssh_key_id, "
+                f"hosting_vm templates, deployments, activity_settings. "
+                f"Solution: Assign an SSH key to the target or run SSH Key Exchange."
+            )
+            return {}
+        
+        logger.info(f"[SSH] Credentials found via: {creds.get('key_source', 'unknown')}")
+        return creds
     
     def _generate_snapshot_name(self, prefix: str = 'zerfaux') -> str:
         """Generate a ZFS snapshot name with timestamp"""
@@ -277,11 +329,12 @@ class ZFSReplicationReal:
     def check_target_health(self, target_hostname: str, zfs_pool: str,
                             ssh_username: str = None, ssh_port: int = 22,
                             ssh_key_path: str = None, ssh_key_data: str = None,
-                            ssh_password: str = None) -> Dict:
+                            ssh_password: str = None, target_id: str = None) -> Dict:
         """
         Check health of replication target.
         
         Connects via SSH and runs zpool status to verify health.
+        If no SSH credentials provided, attempts centralized lookup via target_id.
         
         Args:
             target_hostname: Target host address
@@ -291,11 +344,27 @@ class ZFSReplicationReal:
             ssh_key_path: Path to SSH key file
             ssh_key_data: Raw SSH private key content
             ssh_password: SSH password (fallback)
+            target_id: Replication target ID for auto credential lookup
             
         Returns:
             Dict with health check results
         """
         logger.info(f"Checking target health: {target_hostname}")
+        
+        # Auto-fetch credentials if not provided and target_id given
+        if not ssh_key_data and not ssh_key_path and not ssh_password and target_id:
+            logger.info(f"[check_target_health] No credentials provided, looking up via target_id={target_id}")
+            creds = self._get_ssh_credentials_for_target(target_id)
+            if creds:
+                ssh_key_data = creds.get('key_data')
+                ssh_key_path = creds.get('key_path')
+                ssh_password = creds.get('password')
+                ssh_username = creds.get('username', ssh_username)
+                ssh_port = creds.get('port', ssh_port)
+                # Use credential's resolved hostname if different (e.g., hosting VM IP)
+                if creds.get('hostname') and creds.get('hostname') != target_hostname:
+                    logger.info(f"[check_target_health] Using resolved hostname {creds['hostname']} instead of {target_hostname}")
+                    target_hostname = creds['hostname']
         
         if not PARAMIKO_AVAILABLE:
             return {
