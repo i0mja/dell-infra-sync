@@ -570,7 +570,10 @@ class ReplicationHandler(BaseHandler):
         Shared helper to avoid code duplication and support all key types.
         """
         if not key_path and not key_data:
+            self.executor.log("[SSH] _load_private_key: No key_path or key_data provided", "DEBUG")
             return None
+        
+        self.executor.log(f"[SSH] _load_private_key: key_path={bool(key_path)}, key_data_len={len(key_data) if key_data else 0}", "DEBUG")
         
         key_classes = [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]
         
@@ -585,7 +588,8 @@ class ReplicationHandler(BaseHandler):
                     pkey = key_class.from_private_key(key_file)
                     self.executor.log(f"[SSH] Loaded key as {key_class.__name__} from data")
                     return pkey
-            except Exception:
+            except Exception as e:
+                self.executor.log(f"[SSH] {key_class.__name__} parse failed: {type(e).__name__}: {e}", "DEBUG")
                 continue
         
         self.executor.log("[SSH] Failed to load key as any known type (Ed25519, RSA, ECDSA)", "WARNING")
@@ -3056,6 +3060,9 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
             if not creds:
                 return {'success': False, 'error': 'Could not get SSH credentials'}
             
+            # Debug logging for credentials
+            self.executor.log(f"[SSH Copy] Got creds for {creds['hostname']}: has_key_data={bool(creds.get('key_data'))}, has_key_path={bool(creds.get('key_path'))}, has_password={bool(creds.get('password'))}")
+            
             ssh = paramiko.SSHClient()
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             
@@ -3063,6 +3070,8 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
                 key_path=creds.get('key_path'),
                 key_data=creds.get('key_data')
             )
+            
+            self.executor.log(f"[SSH Copy] Key loaded successfully: {pkey is not None}, connecting to {creds['hostname']}...")
             
             ssh.connect(
                 hostname=creds['hostname'],
