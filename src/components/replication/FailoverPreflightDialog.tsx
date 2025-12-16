@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Progress } from "@/components/ui/progress";
 import {
   CheckCircle2,
   XCircle,
@@ -136,10 +137,30 @@ export function FailoverPreflightDialog({
   const passed = checks.filter(c => c.passed);
   const autoFixableCount = checks.filter(c => !c.passed && c.remediation?.can_auto_fix).length;
 
+  // Get progress from job details
+  const jobProgress = job?.details as Record<string, unknown> | null;
+  const currentCheck = (jobProgress?.current_step as string) || '';
+  const checksCompleted = (jobProgress?.checks_completed as number) || 0;
+  const totalChecks = (jobProgress?.total_checks as number) || 11;
+  const progressPercent = (jobProgress?.progress_percent as number) || 0;
+
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-lg">
+        <DialogContent 
+          className="max-w-lg"
+          onInteractOutside={(e) => {
+            // Prevent closing while running checks
+            if (isLoading) {
+              e.preventDefault();
+            }
+          }}
+          onEscapeKeyDown={(e) => {
+            if (isLoading) {
+              e.preventDefault();
+            }
+          }}
+        >
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Shield className="h-5 w-5" />
@@ -155,6 +176,16 @@ export function FailoverPreflightDialog({
               <div className="flex flex-col items-center justify-center py-12 gap-4">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 <p className="text-sm text-muted-foreground">Running safety checks...</p>
+                
+                {/* Progress indicator */}
+                {checksCompleted > 0 && (
+                  <>
+                    <Progress value={progressPercent} className="h-2 w-full max-w-xs" />
+                    <p className="text-xs text-muted-foreground text-center">
+                      {currentCheck}
+                    </p>
+                  </>
+                )}
               </div>
             ) : results ? (
               <div className="space-y-4">
