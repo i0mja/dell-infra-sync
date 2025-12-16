@@ -51,6 +51,16 @@ class ReplicationHandler(BaseHandler):
     def __init__(self, executor):
         super().__init__(executor)
         self.zfs_replication = ZFSReplicationReal(executor) if ZFS_AVAILABLE else None
+        # Centralized SSH credential manager - imported lazily to avoid circular imports
+        self._ssh_manager = None
+    
+    @property
+    def ssh_manager(self):
+        """Lazy-load SSH credential manager."""
+        if self._ssh_manager is None:
+            from job_executor.ssh_utils import SSHCredentialManager
+            self._ssh_manager = SSHCredentialManager(self.executor)
+        return self._ssh_manager
     
     # =========================================================================
     # Database Helper Methods
@@ -567,33 +577,9 @@ class ReplicationHandler(BaseHandler):
     def _load_private_key(self, key_path: str = None, key_data: str = None):
         """
         Load SSH private key, trying Ed25519, RSA, and ECDSA formats.
-        Shared helper to avoid code duplication and support all key types.
+        Delegates to centralized SSHCredentialManager.
         """
-        if not key_path and not key_data:
-            self.executor.log("[SSH] _load_private_key: No key_path or key_data provided", "DEBUG")
-            return None
-        
-        self.executor.log(f"[SSH] _load_private_key: key_path={bool(key_path)}, key_data_len={len(key_data) if key_data else 0}", "DEBUG")
-        
-        key_classes = [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]
-        
-        for key_class in key_classes:
-            try:
-                if key_path and key_path.strip():
-                    pkey = key_class.from_private_key_file(key_path)
-                    self.executor.log(f"[SSH] Loaded key as {key_class.__name__} from file")
-                    return pkey
-                elif key_data:
-                    key_file = io.StringIO(key_data)
-                    pkey = key_class.from_private_key(key_file)
-                    self.executor.log(f"[SSH] Loaded key as {key_class.__name__} from data")
-                    return pkey
-            except Exception as e:
-                self.executor.log(f"[SSH] {key_class.__name__} parse failed: {type(e).__name__}: {e}", "DEBUG")
-                continue
-        
-        self.executor.log("[SSH] Failed to load key as any known type (Ed25519, RSA, ECDSA)", "WARNING")
-        return None
+        return self.ssh_manager.load_private_key(key_path=key_path, key_data=key_data)
 
     def _test_ssh_connection(self, hostname: str, port: int, username: str, 
                               private_key: str = None) -> Dict:
@@ -967,183 +953,15 @@ class ReplicationHandler(BaseHandler):
     def _get_target_ssh_creds(self, target: Dict, password: str = None) -> Optional[Dict]:
         """
         Get SSH credentials for connecting to a replication target.
-        Returns dict with hostname, port, username, and key_path/key_data/password.
+        Delegates to centralized SSHCredentialManager for unified credential lookup.
         
-        Lookup order:
-        1. Direct ssh_key_encrypted on target
-        2. ssh_key_id reference on target → ssh_keys table
-        3. hosting_vm_id → vcenter_vms → zfs_target_templates → ssh_key_id
-        4. source_template_id → zfs_target_templates → ssh_key_id
-        5. ssh_key_deployments table
-        6. Global activity_settings SSH config
-        7. Provided password fallback
+        Returns dict with hostname, port, username, and key_path/key_data/password.
         
         Args:
             target: The replication target dict
             password: Optional password to use for authentication (e.g., from job details)
         """
-        try:
-            # Default to target hostname (NFS/ZFS share IP)
-            nfs_hostname = target.get('hostname')
-            port = target.get('port', 22)
-            username = target.get('ssh_username', 'root')
-            
-            # Determine SSH hostname - prefer vCenter VM name when hosting_vm_id is present
-            # The target.hostname is for NFS/ZFS share access, but SSH should go to the VM appliance
-            ssh_hostname = nfs_hostname
-            if target.get('hosting_vm_id'):
-                vm_hostname = self._get_hosting_vm_hostname(target['hosting_vm_id'])
-                if vm_hostname:
-                    self.executor.log(f"[SSH] Using hosting VM name '{vm_hostname}' instead of NFS IP '{nfs_hostname}'")
-                    ssh_hostname = vm_hostname
-            
-            if not ssh_hostname:
-                self.executor.log("Target has no hostname or hosting VM", "ERROR")
-                return None
-            
-            creds = {
-                'hostname': ssh_hostname,
-                'nfs_hostname': nfs_hostname,  # Keep original for reference
-                'port': port,
-                'username': username,
-                'key_path': None,
-                'key_data': None,
-                'password': None
-            }
-            
-            # Try to get SSH key from target's encrypted key first
-            if target.get('ssh_key_encrypted'):
-                key_data = self.executor.decrypt_password(target['ssh_key_encrypted'])
-                if key_data:
-                    creds['key_data'] = key_data
-                    self.executor.log(f"Using target-specific SSH key for {ssh_hostname}")
-                    return creds
-            
-            # Check if target has an ssh_key_id reference to ssh_keys table
-            if target.get('ssh_key_id'):
-                key_data = self._fetch_ssh_key_by_id(target['ssh_key_id'], ssh_hostname)
-                if key_data:
-                    creds['key_data'] = key_data
-                    return creds
-            
-            # Check via hosting_vm_id → vcenter_vms → zfs_target_templates chain
-            if target.get('hosting_vm_id'):
-                key_data = self._fetch_ssh_key_via_hosting_vm(target['hosting_vm_id'], ssh_hostname)
-                if key_data:
-                    creds['key_data'] = key_data
-                    return creds
-            
-            # Check via source_template_id → zfs_target_templates chain
-            if target.get('source_template_id'):
-                key_data = self._fetch_ssh_key_via_template(target['source_template_id'], ssh_hostname)
-                if key_data:
-                    creds['key_data'] = key_data
-                    return creds
-            
-            # Check ssh_key_deployments table for keys deployed to this target
-            if target.get('id'):
-                try:
-                    response = requests.get(
-                        f"{DSM_URL}/rest/v1/ssh_key_deployments",
-                        params={
-                            'replication_target_id': f"eq.{target['id']}",
-                            'status': 'eq.deployed',
-                            'select': 'ssh_key_id'
-                        },
-                        headers={
-                            'apikey': SERVICE_ROLE_KEY,
-                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
-                        },
-                        verify=VERIFY_SSL,
-                        timeout=10
-                    )
-                    if response.ok:
-                        deployments = response.json()
-                        if deployments:
-                            # Found a deployed key, fetch it
-                            key_response = requests.get(
-                                f"{DSM_URL}/rest/v1/ssh_keys",
-                                params={
-                                    'id': f"eq.{deployments[0]['ssh_key_id']}",
-                                    'select': 'id,private_key_encrypted,status'
-                                },
-                                headers={
-                                    'apikey': SERVICE_ROLE_KEY,
-                                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
-                                },
-                                verify=VERIFY_SSL,
-                                timeout=10
-                            )
-                            if key_response.ok:
-                                keys = key_response.json()
-                                if keys and keys[0].get('private_key_encrypted'):
-                                    if keys[0].get('status') in ('active', 'pending'):
-                                        key_data = self.executor.decrypt_password(keys[0]['private_key_encrypted'])
-                                        if key_data:
-                                            creds['key_data'] = key_data
-                                            self.executor.log(f"Using deployed SSH key for {ssh_hostname}")
-                                            return creds
-                except Exception as e:
-                    self.executor.log(f"Error checking ssh_key_deployments: {e}", "WARNING")
-            
-            # Fallback to activity_settings SSH configuration
-            try:
-                response = requests.get(
-                    f"{DSM_URL}/rest/v1/activity_settings",
-                    params={'select': '*', 'limit': '1'},
-                    headers={
-                        'apikey': SERVICE_ROLE_KEY,
-                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
-                    },
-                    verify=VERIFY_SSL,
-                    timeout=10
-                )
-                if response.ok:
-                    settings_list = response.json()
-                    if settings_list:
-                        settings = settings_list[0]
-                        
-                        # Check for encrypted SSH key in settings
-                        if settings.get('ssh_private_key_encrypted'):
-                            key_data = self.executor.decrypt_password(settings['ssh_private_key_encrypted'])
-                            if key_data:
-                                creds['key_data'] = key_data
-                                self.executor.log(f"Using global SSH key for {ssh_hostname}")
-                                return creds
-                        
-                        # Check for SSH key path
-                        if settings.get('ssh_private_key_path'):
-                            creds['key_path'] = settings['ssh_private_key_path']
-                            self.executor.log(f"Using SSH key path for {ssh_hostname}")
-                            return creds
-                        
-                        # Check for encrypted password
-                        if settings.get('ssh_password_encrypted'):
-                            password_from_settings = self.executor.decrypt_password(settings['ssh_password_encrypted'])
-                            if password_from_settings:
-                                creds['password'] = password_from_settings
-                                self.executor.log(f"Using SSH password from settings for {ssh_hostname}")
-                                return creds
-            except Exception as e:
-                self.executor.log(f"Error fetching activity_settings: {e}", "WARNING")
-            
-            # Use provided password as fallback (from job details)
-            if password:
-                creds['password'] = password
-                self.executor.log(f"Using provided password for {ssh_hostname}")
-                return creds
-            
-            # Build a helpful error message with VM name if available
-            vm_name = target.get('hosting_vm_name') or target.get('hosting_vm', {}).get('name')
-            if vm_name:
-                self.executor.log(f"No SSH credentials available for VM {vm_name} ({ssh_hostname}). Assign an SSH key in Edit Target or run SSH Key Exchange first.", "ERROR")
-            else:
-                self.executor.log(f"No SSH credentials available for {ssh_hostname}. Assign an SSH key in Edit Target or run SSH Key Exchange first.", "ERROR")
-            return None
-            
-        except Exception as e:
-            self.executor.log(f"Error getting target SSH credentials: {e}", "ERROR")
-            return None
+        return self.ssh_manager.get_credentials(target, password=password)
     
     def _fetch_ssh_key_by_id(self, ssh_key_id: str, hostname: str) -> Optional[str]:
         """

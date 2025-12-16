@@ -604,7 +604,12 @@ class FailoverHandler:
         }
 
     def _check_site_b_ssh_connectivity(self, group: Dict) -> Dict:
-        """Check SSH connectivity to Site B ZFS target with actual connection test."""
+        """
+        Check SSH connectivity to Site B ZFS target using centralized credential lookup.
+        Uses SSHCredentialManager for comprehensive credential lookup - same as replication.
+        """
+        from job_executor.ssh_utils import SSHCredentialManager
+        
         target_id = group.get('target_id')
         if not target_id:
             return {
@@ -623,59 +628,29 @@ class FailoverHandler:
                 'can_override': False
             }
 
-        ssh_key_id = target.get('ssh_key_id')
         hostname = target.get('hostname')
-        ssh_username = target.get('ssh_username', 'root')
-
-        # Check if SSH key is assigned
-        if not ssh_key_id:
+        
+        # Use centralized SSH credential manager (same lookup as replication!)
+        ssh_manager = SSHCredentialManager(self.executor)
+        creds = ssh_manager.get_credentials(target)
+        
+        if not creds:
             return {
                 'name': 'Site B SSH Connectivity',
                 'passed': False,
-                'message': 'No SSH key assigned to target',
+                'message': 'No SSH credentials found via any method',
                 'can_override': False,
                 'remediation': {
-                    'action_type': 'assign_ssh_key',
-                    'description': 'Assign and deploy an SSH key to the target',
-                    'can_auto_fix': False,
-                    'requires_confirmation': True
+                    'action_type': 'setup_ssh_key',
+                    'description': 'Deploy an SSH key to the target or run SSH Key Exchange',
+                    'requires_password': True,
+                    'can_auto_fix': False
                 }
             }
-
-        # Check if SSH key is deployed
-        deployment = self._get_ssh_key_deployment(ssh_key_id, target_id)
-        if not deployment:
-            return {
-                'name': 'Site B SSH Connectivity',
-                'passed': False,
-                'message': 'SSH key not deployed to target',
-                'can_override': False,
-                'remediation': {
-                    'action_type': 'deploy_ssh_key',
-                    'job_type': 'ssh_key_deploy',
-                    'job_params': {'ssh_key_id': ssh_key_id, 'target_ids': [target_id]},
-                    'description': 'Deploy the SSH key to the target',
-                    'can_auto_fix': True
-                }
-            }
-
-        if deployment.get('status') != 'deployed':
-            return {
-                'name': 'Site B SSH Connectivity',
-                'passed': False,
-                'message': f"SSH key deployment status: {deployment.get('status', 'unknown')}",
-                'can_override': False,
-                'remediation': {
-                    'action_type': 'deploy_ssh_key',
-                    'job_type': 'ssh_key_deploy',
-                    'job_params': {'ssh_key_id': ssh_key_id, 'target_ids': [target_id]},
-                    'description': 'Re-deploy the SSH key to the target',
-                    'can_auto_fix': True
-                }
-            }
-
-        # Actually test SSH connection
-        ssh_result = self._test_ssh_connection(hostname, ssh_username, ssh_key_id)
+        
+        # Actually test SSH connection using centralized test
+        ssh_result = ssh_manager.test_connection(creds)
+        
         if not ssh_result['success']:
             return {
                 'name': 'Site B SSH Connectivity',
@@ -685,134 +660,21 @@ class FailoverHandler:
                 'remediation': {
                     'action_type': 'redeploy_ssh_key',
                     'job_type': 'ssh_key_deploy',
-                    'job_params': {'ssh_key_id': ssh_key_id, 'target_ids': [target_id], 'force': True},
+                    'job_params': {'target_ids': [target_id], 'force': True},
                     'description': 'Re-deploy SSH key (may require root password)',
                     'requires_password': True,
                     'can_auto_fix': False
                 }
             }
 
+        key_source = creds.get('key_source', 'key')
         return {
             'name': 'Site B SSH Connectivity',
             'passed': True,
-            'message': f'SSH connection to {hostname} successful'
+            'message': f'SSH connection to {creds.get("hostname")} successful (via {key_source})'
         }
-
-    def _get_ssh_key_deployment(self, ssh_key_id: str, target_id: str) -> Optional[Dict]:
-        """Fetch SSH key deployment status for a target."""
-        try:
-            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
-            import requests
-
-            headers = {
-                'apikey': SERVICE_ROLE_KEY,
-                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
-            }
-
-            response = requests.get(
-                f"{DSM_URL}/rest/v1/ssh_key_deployments",
-                headers=headers,
-                params={
-                    'select': '*',
-                    'ssh_key_id': f'eq.{ssh_key_id}',
-                    'target_id': f'eq.{target_id}'
-                },
-                verify=VERIFY_SSL,
-                timeout=10
-            )
-
-            if response.status_code == 200:
-                deployments = response.json()
-                return deployments[0] if deployments else None
-            return None
-        except Exception as e:
-            self.executor.log(f"Error fetching SSH key deployment: {e}", "ERROR")
-            return None
-
-    def _test_ssh_connection(self, hostname: str, username: str, ssh_key_id: str) -> Dict:
-        """Actually test SSH connection to target."""
-        try:
-            import paramiko
-            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
-            import requests
-
-            # Fetch SSH key
-            headers = {
-                'apikey': SERVICE_ROLE_KEY,
-                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
-            }
-
-            response = requests.get(
-                f"{DSM_URL}/rest/v1/ssh_keys",
-                headers=headers,
-                params={'select': 'private_key_encrypted', 'id': f'eq.{ssh_key_id}'},
-                verify=VERIFY_SSL,
-                timeout=10
-            )
-
-            if response.status_code != 200 or not response.json():
-                return {'success': False, 'error': 'SSH key not found'}
-
-            ssh_key_data = response.json()[0]
-            private_key_encrypted = ssh_key_data.get('private_key_encrypted')
-
-            if not private_key_encrypted:
-                return {'success': False, 'error': 'SSH private key not available'}
-
-            # Decrypt the private key using executor's decrypt method
-            private_key = self.executor.decrypt_password(private_key_encrypted)
-
-            if not private_key:
-                return {'success': False, 'error': 'Failed to decrypt SSH key'}
-
-            # Create SSH client and test connection
-            client = paramiko.SSHClient()
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
-            # Load private key - try multiple key types (Ed25519 first, then RSA, ECDSA)
-            from io import StringIO
-            key_file = StringIO(private_key)
-            pkey = None
-            
-            # Ed25519 first since that's what we generate, then RSA/ECDSA
-            for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
-                try:
-                    key_file.seek(0)
-                    pkey = key_class.from_private_key(key_file)
-                    self.executor.log(f"[SSH] Loaded key as {key_class.__name__}")
-                    break
-                except Exception:  # Catch all exceptions including struct.error
-                    continue
-            
-            if not pkey:
-                return {'success': False, 'error': 'Unsupported SSH key type or invalid key format'}
-
-            # Attempt connection with timeout
-            client.connect(
-                hostname=hostname,
-                username=username,
-                pkey=pkey,
-                timeout=15,
-                banner_timeout=15,
-                auth_timeout=15
-            )
-
-            # Test with a simple command
-            stdin, stdout, stderr = client.exec_command('echo ok', timeout=10)
-            result = stdout.read().decode().strip()
-            client.close()
-
-            if result == 'ok':
-                return {'success': True}
-            else:
-                return {'success': False, 'error': 'SSH connection test command failed'}
-
-        except paramiko.AuthenticationException as e:
-            return {'success': False, 'error': f'Authentication failed: {e}'}
-        except paramiko.SSHException as e:
-            return {'success': False, 'error': f'SSH error: {e}'}
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
+    # Note: _get_ssh_key_deployment and _test_ssh_connection removed
+    # SSH functionality is now centralized in job_executor.ssh_utils.SSHCredentialManager
 
     def _check_site_b_vcenter(self, group: Dict) -> Dict:
         """Check Site B vCenter connection via target's dr_vcenter_id."""
