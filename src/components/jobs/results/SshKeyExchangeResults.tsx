@@ -54,15 +54,21 @@ export function SshKeyExchangeResults({ details, status }: SshKeyExchangeResults
   const {
     source_target,
     source_hostname,
+    source_nfs_ip,
     source_target_id,
     destination_target,
     destination_hostname,
+    destination_nfs_ip,
     destination_target_id,
     steps = [],
     error,
     failed_step,
     current_step
   } = details;
+
+  // Check if SSH host differs from NFS IP
+  const sourceHasDifferentSshHost = source_nfs_ip && source_hostname && source_nfs_ip !== source_hostname;
+  const destHasDifferentSshHost = destination_nfs_ip && destination_hostname && destination_nfs_ip !== destination_hostname;
 
   const isCompleted = status === 'completed';
   const isFailed = status === 'failed';
@@ -94,7 +100,12 @@ export function SshKeyExchangeResults({ details, status }: SshKeyExchangeResults
               </p>
               {source_hostname && (
                 <p className="text-xs text-muted-foreground font-mono">
-                  {source_hostname}
+                  SSH: {source_hostname}
+                </p>
+              )}
+              {sourceHasDifferentSshHost && source_nfs_ip && (
+                <p className="text-xs text-muted-foreground/70 font-mono">
+                  NFS: {source_nfs_ip}
                 </p>
               )}
             </div>
@@ -111,7 +122,12 @@ export function SshKeyExchangeResults({ details, status }: SshKeyExchangeResults
               </p>
               {destination_hostname && (
                 <p className="text-xs text-muted-foreground font-mono">
-                  {destination_hostname}
+                  SSH: {destination_hostname}
+                </p>
+              )}
+              {destHasDifferentSshHost && destination_nfs_ip && (
+                <p className="text-xs text-muted-foreground/70 font-mono">
+                  NFS: {destination_nfs_ip}
                 </p>
               )}
             </div>

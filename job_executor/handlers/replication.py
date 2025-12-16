@@ -883,6 +883,53 @@ class ReplicationHandler(BaseHandler):
         except:
             return 0
 
+    def _get_hosting_vm_hostname(self, hosting_vm_id: str) -> Optional[str]:
+        """
+        Get the vCenter VM name to use as SSH hostname.
+        Prefers VM name (DNS resolvable) over IP address.
+        """
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_vms",
+                params={
+                    'id': f"eq.{hosting_vm_id}",
+                    'select': 'name,ip_address'
+                },
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            if response.ok:
+                vms = response.json()
+                if vms:
+                    vm = vms[0]
+                    # Prefer VM name (DNS resolvable), fallback to IP
+                    vm_name = vm.get('name')
+                    vm_ip = vm.get('ip_address')
+                    if vm_name:
+                        self.executor.log(f"[SSH] Resolved hosting VM: {vm_name} (IP: {vm_ip})")
+                        return vm_name
+                    return vm_ip
+            return None
+        except Exception as e:
+            self.executor.log(f"Error fetching hosting VM {hosting_vm_id}: {e}", "WARNING")
+            return None
+
+    def _resolve_ssh_hostname(self, target: Dict) -> str:
+        """
+        Resolve the actual SSH hostname for a target.
+        If the target has a hosting_vm_id, use the VM name for SSH (DNS resolvable).
+        Otherwise fall back to the target's hostname (NFS/ZFS share IP).
+        """
+        if target.get('hosting_vm_id'):
+            vm_hostname = self._get_hosting_vm_hostname(target['hosting_vm_id'])
+            if vm_hostname:
+                return vm_hostname
+        return target.get('hostname', '')
+
     def _get_target_ssh_creds(self, target: Dict, password: str = None) -> Optional[Dict]:
         """
         Get SSH credentials for connecting to a replication target.
@@ -902,16 +949,27 @@ class ReplicationHandler(BaseHandler):
             password: Optional password to use for authentication (e.g., from job details)
         """
         try:
-            hostname = target.get('hostname')
+            # Default to target hostname (NFS/ZFS share IP)
+            nfs_hostname = target.get('hostname')
             port = target.get('port', 22)
             username = target.get('ssh_username', 'root')
             
-            if not hostname:
-                self.executor.log("Target has no hostname", "ERROR")
+            # Determine SSH hostname - prefer vCenter VM name when hosting_vm_id is present
+            # The target.hostname is for NFS/ZFS share access, but SSH should go to the VM appliance
+            ssh_hostname = nfs_hostname
+            if target.get('hosting_vm_id'):
+                vm_hostname = self._get_hosting_vm_hostname(target['hosting_vm_id'])
+                if vm_hostname:
+                    self.executor.log(f"[SSH] Using hosting VM name '{vm_hostname}' instead of NFS IP '{nfs_hostname}'")
+                    ssh_hostname = vm_hostname
+            
+            if not ssh_hostname:
+                self.executor.log("Target has no hostname or hosting VM", "ERROR")
                 return None
             
             creds = {
-                'hostname': hostname,
+                'hostname': ssh_hostname,
+                'nfs_hostname': nfs_hostname,  # Keep original for reference
                 'port': port,
                 'username': username,
                 'key_path': None,
@@ -2653,13 +2711,19 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
             if not dest_target:
                 raise ValueError(f"Destination target not found: {dest_target_id}")
             
+            # Get SSH hostnames (resolve via hosting_vm_id if available)
+            source_ssh_host = self._resolve_ssh_hostname(source_target)
+            dest_ssh_host = self._resolve_ssh_hostname(dest_target)
+            
             results = {
                 'source_target_id': source_target_id,
                 'source_target': source_target.get('name'),
-                'source_hostname': source_target.get('hostname'),
+                'source_nfs_ip': source_target.get('hostname'),  # ZFS/NFS share IP
+                'source_hostname': source_ssh_host,  # Actual SSH target (VM name or IP)
                 'destination_target_id': dest_target_id,
                 'destination_target': dest_target.get('name'),
-                'destination_hostname': dest_target.get('hostname'),
+                'destination_nfs_ip': dest_target.get('hostname'),  # ZFS/NFS share IP
+                'destination_hostname': dest_ssh_host,  # Actual SSH target (VM name or IP)
                 'steps': [],
                 'current_step': 'initializing'
             }
