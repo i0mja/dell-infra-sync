@@ -1114,12 +1114,40 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                           <div className="flex items-center gap-1.5">
                             <Database className="h-3 w-3 text-blue-500" />
                             <span className="font-medium text-sm">{target.linked_datastore.name}</span>
+                            {/* Warning if datastore is not accessible or has no hosts */}
+                            {!target.linked_datastore.accessible && (
+                              <Badge variant="destructive" className="text-xs px-1.5 py-0">
+                                <AlertCircle className="h-3 w-3 mr-0.5" />
+                                Not Accessible
+                              </Badge>
+                            )}
+                            {target.linked_datastore.accessible && target.linked_datastore.host_count === 0 && (
+                              <Badge variant="outline" className="text-xs px-1.5 py-0 border-amber-500 text-amber-600">
+                                <AlertCircle className="h-3 w-3 mr-0.5" />
+                                Unmounted
+                              </Badge>
+                            )}
                           </div>
                           {target.linked_datastore.capacity_bytes && target.linked_datastore.free_bytes && (
                             <div className="text-xs text-muted-foreground">
                               {Math.round((1 - target.linked_datastore.free_bytes / target.linked_datastore.capacity_bytes) * 100)}% used
                             </div>
                           )}
+                          {/* Show host count */}
+                          {target.linked_datastore.host_count !== undefined && (
+                            <div className="text-xs text-muted-foreground">
+                              Mounted on {target.linked_datastore.host_count} hosts
+                            </div>
+                          )}
+                        </div>
+                      ) : target.datastore_name ? (
+                        <div className="flex items-center gap-1.5">
+                          <Database className="h-3 w-3 text-amber-500" />
+                          <span className="text-sm text-amber-600">{target.datastore_name}</span>
+                          <Badge variant="outline" className="text-xs px-1.5 py-0 border-amber-500 text-amber-600">
+                            <AlertCircle className="h-3 w-3 mr-0.5" />
+                            Not Found
+                          </Badge>
                         </div>
                       ) : (
                         <div className="flex items-center gap-1.5 text-muted-foreground">

@@ -1242,3 +1242,90 @@ class VCenterDbUpsertMixin:
         if errors:
             result["error"] = "; ".join(errors)
         return result
+    
+    def detect_datastore_changes(
+        self,
+        source_vcenter_id: str,
+        synced_datastores: List[Dict]
+    ) -> Dict[str, Any]:
+        """
+        Detect datastores that have disappeared since last sync.
+        
+        Returns:
+            {
+                "disappeared": [...],  # All datastores that vanished
+                "critical": [...],     # Replication-linked datastores that vanished
+                "reappeared": [...]    # Previously missing datastores that are back
+            }
+        """
+        if not synced_datastores:
+            return {"disappeared": [], "critical": [], "reappeared": []}
+        
+        # Get list of MoRefs we just synced
+        synced_morefs = set(d.get('id', '') for d in synced_datastores if d.get('id'))
+        synced_names = set(d.get('name', '') for d in synced_datastores if d.get('name'))
+        
+        try:
+            # Fetch all existing datastores for this vCenter from DB
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_datastores",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                params={
+                    'source_vcenter_id': f'eq.{source_vcenter_id}',
+                    'select': 'id,name,vcenter_id,replication_target_id,accessible,host_count'
+                },
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+            
+            if response.status_code != 200:
+                self.log(f"  Warning: Could not fetch existing datastores for change detection: {response.status_code}", "WARN")
+                return {"disappeared": [], "critical": [], "reappeared": []}
+            
+            db_datastores = response.json()
+            
+            disappeared = []
+            critical = []
+            
+            for ds in db_datastores:
+                ds_moref = ds.get('vcenter_id', '')
+                ds_name = ds.get('name', '')
+                
+                # Check if this datastore is no longer in vCenter
+                # Match by MoRef primarily, fall back to name
+                if ds_moref not in synced_morefs and ds_name not in synced_names:
+                    disappeared.append({
+                        'id': ds.get('id'),
+                        'name': ds_name,
+                        'vcenter_id': ds_moref,
+                        'replication_target_id': ds.get('replication_target_id'),
+                        'was_accessible': ds.get('accessible', False),
+                        'host_count': ds.get('host_count', 0)
+                    })
+                    
+                    # Check if it's linked to a replication target - CRITICAL
+                    if ds.get('replication_target_id'):
+                        critical.append({
+                            'id': ds.get('id'),
+                            'name': ds_name,
+                            'vcenter_id': ds_moref,
+                            'replication_target_id': ds.get('replication_target_id'),
+                            'severity': 'critical',
+                            'reason': 'replication_linked_datastore_missing'
+                        })
+            
+            if disappeared:
+                self.log(f"  ⚠️ Detected {len(disappeared)} disappeared datastores, {len(critical)} critical", "WARN")
+            
+            return {
+                "disappeared": disappeared,
+                "critical": critical,
+                "reappeared": []  # Future: track datastores that come back
+            }
+            
+        except Exception as e:
+            self.log(f"  Warning: Datastore change detection failed: {e}", "WARN")
+            return {"disappeared": [], "critical": [], "reappeared": []}

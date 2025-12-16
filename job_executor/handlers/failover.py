@@ -718,7 +718,10 @@ class FailoverHandler:
         }
 
     def _check_nfs_mounted(self, group: Dict) -> Dict:
-        """Check that NFS datastore is mounted on DR vCenter."""
+        """Check that NFS datastore is mounted on DR vCenter - REAL implementation."""
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        import requests
+        
         dr_datastore = group.get('dr_datastore')
         
         if not dr_datastore:
@@ -730,12 +733,135 @@ class FailoverHandler:
                 'is_warning': True
             }
 
-        # TODO: Actually verify datastore exists on DR vCenter
-        return {
-            'name': 'NFS Datastore Mounted',
-            'passed': True,
-            'message': f'DR datastore: {dr_datastore}'
-        }
+        # Get DR vCenter from target
+        target_id = group.get('target_id')
+        if not target_id:
+            return {
+                'name': 'NFS Datastore Mounted',
+                'passed': False,
+                'message': 'No replication target configured',
+                'can_override': False
+            }
+
+        target = self._fetch_replication_target(target_id)
+        dr_vcenter_id = target.get('dr_vcenter_id') if target else None
+
+        if not dr_vcenter_id:
+            return {
+                'name': 'NFS Datastore Mounted',
+                'passed': False,
+                'message': 'No DR vCenter linked to target',
+                'can_override': True,
+                'is_warning': True,
+                'remediation': {
+                    'action_type': 'link_vcenter',
+                    'description': 'Link a DR vCenter to the replication target',
+                    'can_auto_fix': False
+                }
+            }
+
+        # Query vcenter_datastores for the datastore on DR vCenter
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+            }
+            
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_datastores",
+                params={
+                    'source_vcenter_id': f'eq.{dr_vcenter_id}',
+                    'name': f'eq.{dr_datastore}',
+                    'select': 'id,name,accessible,host_count,last_sync,replication_target_id'
+                },
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=15
+            )
+
+            if response.status_code != 200:
+                return {
+                    'name': 'NFS Datastore Mounted',
+                    'passed': False,
+                    'message': f'Failed to query datastores: HTTP {response.status_code}',
+                    'can_override': True
+                }
+
+            datastores = response.json()
+            
+            if not datastores:
+                return {
+                    'name': 'NFS Datastore Mounted',
+                    'passed': False,
+                    'message': f'Datastore "{dr_datastore}" not found on DR vCenter',
+                    'can_override': False,
+                    'remediation': {
+                        'action_type': 'open_datastore_mount_wizard',
+                        'context': {
+                            'vcenter_id': dr_vcenter_id,
+                            'datastore_name': dr_datastore,
+                            'target_id': target_id
+                        },
+                        'description': 'Mount the NFS datastore on the DR vCenter hosts',
+                        'can_auto_fix': True
+                    }
+                }
+
+            ds = datastores[0]
+            accessible = ds.get('accessible', False)
+            host_count = ds.get('host_count', 0)
+
+            if not accessible:
+                return {
+                    'name': 'NFS Datastore Mounted',
+                    'passed': False,
+                    'message': f'Datastore "{dr_datastore}" is not accessible',
+                    'can_override': False,
+                    'remediation': {
+                        'action_type': 'remount_datastore',
+                        'context': {
+                            'vcenter_id': dr_vcenter_id,
+                            'datastore_name': dr_datastore,
+                            'datastore_id': ds.get('id'),
+                            'target_id': target_id
+                        },
+                        'description': 'Re-mount the NFS datastore to make it accessible',
+                        'can_auto_fix': True
+                    }
+                }
+
+            if host_count == 0:
+                return {
+                    'name': 'NFS Datastore Mounted',
+                    'passed': False,
+                    'message': f'Datastore "{dr_datastore}" not mounted on any hosts',
+                    'can_override': False,
+                    'remediation': {
+                        'action_type': 'mount_on_hosts',
+                        'context': {
+                            'vcenter_id': dr_vcenter_id,
+                            'datastore_name': dr_datastore,
+                            'datastore_id': ds.get('id'),
+                            'target_id': target_id
+                        },
+                        'description': 'Mount the NFS datastore on DR vCenter hosts',
+                        'can_auto_fix': True
+                    }
+                }
+
+            return {
+                'name': 'NFS Datastore Mounted',
+                'passed': True,
+                'message': f'Datastore mounted on {host_count} hosts, accessible'
+            }
+
+        except Exception as e:
+            return {
+                'name': 'NFS Datastore Mounted',
+                'passed': False,
+                'message': f'Error checking datastore: {str(e)}',
+                'can_override': True
+            }
 
     def _check_no_conflicts(self, protection_group_id: str, current_job_id: str) -> Dict:
         """Check for conflicting running jobs."""

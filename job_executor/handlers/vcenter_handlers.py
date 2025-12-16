@@ -367,6 +367,57 @@ class VCenterHandlers(BaseHandler):
                     sync_errors.append(f"{err.get('object', 'unknown')}: {err.get('message', '')}")
             
             # =====================================================================
+            # Datastore Change Detection - Alert on critical missing datastores
+            # =====================================================================
+            try:
+                datastore_changes = self.executor.detect_datastore_changes(
+                    source_vcenter_id,
+                    inventory_result.get('datastores', [])
+                )
+                
+                critical_ds = datastore_changes.get('critical', [])
+                disappeared_ds = datastore_changes.get('disappeared', [])
+                
+                if critical_ds:
+                    # Log critical alert for replication-linked datastores
+                    for ds in critical_ds:
+                        alert_msg = f"CRITICAL: Replication datastore '{ds.get('name')}' disappeared from vCenter"
+                        self._log_console(alert_msg, "ERROR", job_details)
+                        sync_errors.append(alert_msg)
+                        
+                        # Log to activity monitor for visibility
+                        self.log_idrac_command(
+                            endpoint='/vcenter/sync',
+                            command_type='DATASTORE_DISAPPEARED',
+                            operation_type='vcenter_sync',
+                            full_url=f'{DSM_URL}/rest/v1/vcenter_datastores',
+                            success=False,
+                            details={
+                                'alert_type': 'datastore_disappeared',
+                                'datastore_name': ds.get('name'),
+                                'datastore_id': ds.get('id'),
+                                'vcenter_id': source_vcenter_id,
+                                'vcenter_name': vcenter_name,
+                                'replication_target_id': ds.get('replication_target_id'),
+                                'severity': 'critical',
+                                'message': alert_msg
+                            },
+                            source='job_executor',
+                            job_id=job['id']
+                        )
+                    
+                    # Trigger notification for critical datastore changes
+                    self._send_datastore_alert(critical_ds, source_vcenter_id, vcenter_name, job['id'])
+                
+                elif disappeared_ds:
+                    # Non-critical but noteworthy
+                    for ds in disappeared_ds:
+                        self._log_console(f"Warning: Datastore '{ds.get('name')}' no longer found in vCenter", "WARN", job_details)
+                        
+            except Exception as ds_change_err:
+                self.log(f"Warning: Datastore change detection failed: {ds_change_err}", "WARN")
+            
+            # =====================================================================
             # Alarms sync (always uses AlarmManager API - separate per spec)
             # =====================================================================
             if check_cancelled():
@@ -988,3 +1039,91 @@ class VCenterHandlers(BaseHandler):
                 completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )
+    
+    def _send_datastore_alert(self, critical_datastores: list, vcenter_id: str, vcenter_name: str, job_id: str):
+        """Send Teams/email notification for critical datastore changes."""
+        try:
+            # Fetch notification settings
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/notification_settings?limit=1",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.status_code != 200:
+                return
+            
+            settings = response.json()
+            if not settings:
+                return
+            
+            settings = settings[0]
+            teams_webhook = settings.get('teams_webhook_url')
+            
+            if not teams_webhook:
+                self.log("No Teams webhook configured - skipping datastore alert notification", "DEBUG")
+                return
+            
+            # Build alert message
+            ds_names = [ds.get('name', 'Unknown') for ds in critical_datastores]
+            ds_list = ', '.join(ds_names)
+            
+            message = {
+                "@type": "MessageCard",
+                "@context": "http://schema.org/extensions",
+                "themeColor": "FF0000",
+                "summary": f"Critical: Replication datastores missing from {vcenter_name}",
+                "sections": [{
+                    "activityTitle": "🚨 Critical Datastore Alert",
+                    "facts": [
+                        {"name": "vCenter", "value": vcenter_name},
+                        {"name": "Missing Datastores", "value": ds_list},
+                        {"name": "Impact", "value": "Replication and DR failover may be affected"},
+                        {"name": "Action Required", "value": "Re-mount datastores on vCenter hosts"}
+                    ],
+                    "markdown": True
+                }]
+            }
+            
+            # Send Teams notification
+            teams_response = requests.post(
+                teams_webhook,
+                json=message,
+                timeout=10
+            )
+            
+            if teams_response.status_code in [200, 202]:
+                self.log(f"✓ Teams alert sent for {len(critical_datastores)} missing datastores")
+                
+                # Log notification to notification_logs
+                requests.post(
+                    f"{DSM_URL}/rest/v1/notification_logs",
+                    headers={
+                        'apikey': SERVICE_ROLE_KEY,
+                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                        'Content-Type': 'application/json'
+                    },
+                    json={
+                        'notification_type': 'teams',
+                        'status': 'sent',
+                        'job_id': job_id,
+                        'severity': 'critical',
+                        'delivery_details': {
+                            'alert_type': 'datastore_disappeared',
+                            'datastores': ds_names,
+                            'vcenter_id': vcenter_id,
+                            'vcenter_name': vcenter_name
+                        }
+                    },
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+            else:
+                self.log(f"Teams alert failed: {teams_response.status_code}", "WARN")
+                
+        except Exception as e:
+            self.log(f"Failed to send datastore alert: {e}", "WARN")
