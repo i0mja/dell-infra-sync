@@ -2923,10 +2923,30 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
             pkey = None
             if creds.get('key_path') and creds['key_path'].strip():
                 self.executor.log(f"[SSH Key Gen] Loading private key from file: {creds['key_path']}")
-                pkey = paramiko.RSAKey.from_private_key_file(creds['key_path'])
+                # Try different key types (Ed25519, RSA, ECDSA)
+                for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                    try:
+                        pkey = key_class.from_private_key_file(creds['key_path'])
+                        self.executor.log(f"[SSH Key Gen] Loaded key as {key_class.__name__}")
+                        break
+                    except Exception:
+                        continue
+                if not pkey:
+                    self.executor.log(f"[SSH Key Gen] Failed to load key file as any known type", "WARNING")
             elif creds.get('key_data'):
                 self.executor.log(f"[SSH Key Gen] Loading private key from data (length: {len(creds['key_data'])})")
-                pkey = paramiko.RSAKey.from_private_key(io.StringIO(creds['key_data']))
+                # Try different key types (Ed25519, RSA, ECDSA)
+                key_file = io.StringIO(creds['key_data'])
+                for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
+                    try:
+                        key_file.seek(0)
+                        pkey = key_class.from_private_key(key_file)
+                        self.executor.log(f"[SSH Key Gen] Loaded key as {key_class.__name__}")
+                        break
+                    except Exception:
+                        continue
+                if not pkey:
+                    self.executor.log(f"[SSH Key Gen] Failed to load key data as any known type", "WARNING")
             
             auth_method = "key" if pkey else ("password" if creds.get('password') else "none")
             self.executor.log(f"[SSH Key Gen] Connecting to {creds['hostname']}:{creds['port']} as {creds['username']} using {auth_method} auth...")
