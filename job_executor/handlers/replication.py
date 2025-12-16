@@ -14,6 +14,7 @@ Handles all replication-related job types:
 """
 
 import io
+import socket
 import time
 from typing import Dict, Optional, List
 from datetime import datetime, timezone
@@ -2700,9 +2701,14 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
             admin_password = None
             admin_password_encrypted = details.get('admin_password_encrypted')
             if admin_password_encrypted:
+                self.executor.log(f"[{job_id}] Encrypted password found in job details, attempting decryption...")
                 admin_password = self.executor.decrypt_password(admin_password_encrypted)
                 if admin_password:
-                    self.executor.log(f"[{job_id}] Successfully decrypted admin password")
+                    self.executor.log(f"[{job_id}] ✓ Successfully decrypted admin password (length: {len(admin_password)})")
+                else:
+                    self.executor.log(f"[{job_id}] ✗ Password decryption returned None! Check encryption key.", "WARNING")
+            else:
+                self.executor.log(f"[{job_id}] ⚠ No admin_password_encrypted in job details - will try SSH key auth only", "WARNING")
             
             if not source_target_id or not dest_target_id:
                 raise ValueError("Both source_target_id and destination_target_id are required")
@@ -2739,6 +2745,13 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
             if not source_pub_key:
                 results['failed_step'] = 'source_key_generation'
                 results['error'] = f"Failed to get/generate SSH key on source target ({source_target.get('hostname')})"
+                results['debug_info'] = {
+                    'password_provided': admin_password is not None,
+                    'password_length': len(admin_password) if admin_password else 0,
+                    'hostname': source_target.get('hostname'),
+                    'target_name': source_target.get('name'),
+                    'ssh_host': source_ssh_host
+                }
                 raise Exception(results['error'])
             results['steps'].append('source_key_obtained')
             
@@ -2882,19 +2895,41 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
             self.executor.log("Paramiko not available for SSH operations", "ERROR")
             return None
         
+        hostname = target.get('hostname', 'unknown')
+        target_name = target.get('name', 'unknown')
+        
         try:
+            # Log whether we have a password
+            self.executor.log(f"[SSH Key Gen] Getting credentials for {target_name} ({hostname}), password provided: {password is not None}")
+            
             creds = self._get_target_ssh_creds(target, password=password)
             if not creds:
+                self.executor.log(f"[SSH Key Gen] No credentials returned for {hostname}", "ERROR")
                 return None
+            
+            # Log what credentials we got (without revealing sensitive data)
+            creds_info = (
+                f"hostname={creds.get('hostname')}, port={creds.get('port')}, "
+                f"username={creds.get('username')}, "
+                f"has_key_path={bool(creds.get('key_path'))}, "
+                f"has_key_data={bool(creds.get('key_data'))}, "
+                f"has_password={bool(creds.get('password'))}"
+            )
+            self.executor.log(f"[SSH Key Gen] Credentials for {target_name}: {creds_info}")
             
             ssh = paramiko.SSHClient()
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             
             pkey = None
             if creds.get('key_path') and creds['key_path'].strip():
+                self.executor.log(f"[SSH Key Gen] Loading private key from file: {creds['key_path']}")
                 pkey = paramiko.RSAKey.from_private_key_file(creds['key_path'])
             elif creds.get('key_data'):
+                self.executor.log(f"[SSH Key Gen] Loading private key from data (length: {len(creds['key_data'])})")
                 pkey = paramiko.RSAKey.from_private_key(io.StringIO(creds['key_data']))
+            
+            auth_method = "key" if pkey else ("password" if creds.get('password') else "none")
+            self.executor.log(f"[SSH Key Gen] Connecting to {creds['hostname']}:{creds['port']} as {creds['username']} using {auth_method} auth...")
             
             ssh.connect(
                 hostname=creds['hostname'],
@@ -2905,17 +2940,20 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
                 timeout=30
             )
             
+            self.executor.log(f"[SSH Key Gen] ✓ SSH connection established to {target_name}")
+            
             # Check if key exists
             stdin, stdout, stderr = ssh.exec_command('cat ~/.ssh/id_rsa.pub 2>/dev/null')
             exit_status = stdout.channel.recv_exit_status()
             pub_key = stdout.read().decode().strip()
             
             if exit_status == 0 and pub_key:
+                self.executor.log(f"[SSH Key Gen] ✓ Found existing SSH public key on {target_name}")
                 ssh.close()
                 return pub_key
             
             # Generate new key pair
-            self.executor.log("Generating new SSH key pair on target")
+            self.executor.log(f"[SSH Key Gen] No existing key found, generating new SSH key pair on {target_name}")
             cmd = 'ssh-keygen -t rsa -b 4096 -N "" -f ~/.ssh/id_rsa -q <<< y 2>/dev/null || true'
             stdin, stdout, stderr = ssh.exec_command(cmd)
             stdout.channel.recv_exit_status()
@@ -2928,11 +2966,30 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
             ssh.close()
             
             if exit_status == 0 and pub_key:
+                self.executor.log(f"[SSH Key Gen] ✓ Successfully generated new SSH key on {target_name}")
                 return pub_key
+            
+            self.executor.log(f"[SSH Key Gen] Failed to read generated public key from {target_name}", "ERROR")
             return None
             
+        except paramiko.AuthenticationException as e:
+            self.executor.log(
+                f"[SSH Key Gen] ✗ Authentication FAILED for {target_name} ({hostname}): {e} - "
+                f"Check password is correct and password auth is enabled on target (sshd_config PasswordAuthentication)", 
+                "ERROR"
+            )
+            return None
+        except paramiko.SSHException as e:
+            self.executor.log(f"[SSH Key Gen] ✗ SSH protocol error connecting to {target_name} ({hostname}): {e}", "ERROR")
+            return None
+        except socket.timeout as e:
+            self.executor.log(f"[SSH Key Gen] ✗ Connection timed out to {target_name} ({hostname}): {e}", "ERROR")
+            return None
+        except socket.error as e:
+            self.executor.log(f"[SSH Key Gen] ✗ Socket error connecting to {target_name} ({hostname}): {e} - Check SSH port 22 is open", "ERROR")
+            return None
         except Exception as e:
-            self.executor.log(f"Error getting/generating SSH key: {e}", "ERROR")
+            self.executor.log(f"[SSH Key Gen] ✗ Unexpected error for {target_name} ({hostname}): {type(e).__name__}: {e}", "ERROR")
             return None
     
     def _copy_ssh_key_to_target(self, target: Dict, pub_key: str, source_hostname: str, password: str = None) -> Dict:
