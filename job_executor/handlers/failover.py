@@ -718,7 +718,11 @@ class FailoverHandler:
         }
 
     def _check_nfs_mounted(self, group: Dict) -> Dict:
-        """Check that NFS datastore is mounted on DR vCenter - REAL implementation."""
+        """Check that NFS datastore is mounted on DR vCenter - REAL implementation.
+        
+        FIXED: Now looks up the datastore by name first to find the correct vCenter,
+        instead of assuming it's on target.dr_vcenter_id.
+        """
         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
         import requests
         
@@ -733,7 +737,7 @@ class FailoverHandler:
                 'is_warning': True
             }
 
-        # Get DR vCenter from target
+        # Get target for fallback vCenter and NFS info
         target_id = group.get('target_id')
         if not target_id:
             return {
@@ -744,35 +748,21 @@ class FailoverHandler:
             }
 
         target = self._fetch_replication_target(target_id)
-        dr_vcenter_id = target.get('dr_vcenter_id') if target else None
+        fallback_vcenter_id = target.get('dr_vcenter_id') if target else None
 
-        if not dr_vcenter_id:
-            return {
-                'name': 'NFS Datastore Mounted',
-                'passed': False,
-                'message': 'No DR vCenter linked to target',
-                'can_override': True,
-                'is_warning': True,
-                'remediation': {
-                    'action_type': 'link_vcenter',
-                    'description': 'Link a DR vCenter to the replication target',
-                    'can_auto_fix': False
-                }
-            }
-
-        # Query vcenter_datastores for the datastore on DR vCenter
         try:
             headers = {
                 'apikey': SERVICE_ROLE_KEY,
                 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
             }
             
+            # FIXED: First search for datastore by NAME only (not filtered by vCenter)
+            # This finds which vCenter actually has this datastore
             response = requests.get(
                 f"{DSM_URL}/rest/v1/vcenter_datastores",
                 params={
-                    'source_vcenter_id': f'eq.{dr_vcenter_id}',
                     'name': f'eq.{dr_datastore}',
-                    'select': 'id,name,accessible,host_count,last_sync,replication_target_id'
+                    'select': 'id,name,accessible,host_count,last_sync,replication_target_id,source_vcenter_id'
                 },
                 headers=headers,
                 verify=VERIFY_SSL,
@@ -790,29 +780,40 @@ class FailoverHandler:
             datastores = response.json()
             
             if not datastores:
+                # Datastore not found - need to mount it
+                # Find which target manages this datastore by looking at replication_targets
+                mount_target_id = self._find_target_for_datastore(dr_datastore) or target_id
+                mount_target = self._fetch_replication_target(mount_target_id) if mount_target_id != target_id else target
+                mount_vcenter_id = mount_target.get('dr_vcenter_id') if mount_target else fallback_vcenter_id
+                
                 return {
                     'name': 'NFS Datastore Mounted',
                     'passed': False,
-                    'message': f'Datastore "{dr_datastore}" not found on DR vCenter',
+                    'message': f'Datastore "{dr_datastore}" not found on any vCenter',
                     'can_override': False,
                     'remediation': {
                         'action_type': 'mount_datastore',
                         'job_type': 'manage_datastore',
                         'job_params': {
-                            'target_id': target_id,
-                            'operation': 'mount_all'
+                            'target_id': mount_target_id,
+                            'operation': 'mount_all',
+                            'datastore_name': dr_datastore,  # Explicit datastore override
+                            'vcenter_id': mount_vcenter_id   # Explicit vCenter override
                         },
                         'context': {
-                            'vcenter_id': dr_vcenter_id,
+                            'vcenter_id': mount_vcenter_id,
                             'datastore_name': dr_datastore,
-                            'target_id': target_id
+                            'target_id': mount_target_id
                         },
-                        'description': 'Mount the NFS datastore on all DR vCenter hosts',
+                        'description': f'Mount {dr_datastore} on all vCenter hosts',
                         'can_auto_fix': True
                     }
                 }
 
+            # Found the datastore - get the ACTUAL vCenter it's on
             ds = datastores[0]
+            actual_vcenter_id = ds.get('source_vcenter_id')
+            ds_target_id = ds.get('replication_target_id') or target_id
             accessible = ds.get('accessible', False)
             host_count = ds.get('host_count', 0)
 
@@ -826,16 +827,18 @@ class FailoverHandler:
                         'action_type': 'remount_datastore',
                         'job_type': 'manage_datastore',
                         'job_params': {
-                            'target_id': target_id,
-                            'operation': 'refresh'
+                            'target_id': ds_target_id,
+                            'operation': 'refresh',
+                            'datastore_name': dr_datastore,
+                            'vcenter_id': actual_vcenter_id
                         },
                         'context': {
-                            'vcenter_id': dr_vcenter_id,
+                            'vcenter_id': actual_vcenter_id,
                             'datastore_name': dr_datastore,
                             'datastore_id': ds.get('id'),
-                            'target_id': target_id
+                            'target_id': ds_target_id
                         },
-                        'description': 'Re-mount the NFS datastore to make it accessible',
+                        'description': f'Re-mount {dr_datastore} to make it accessible',
                         'can_auto_fix': True
                     }
                 }
@@ -850,16 +853,18 @@ class FailoverHandler:
                         'action_type': 'mount_on_hosts',
                         'job_type': 'manage_datastore',
                         'job_params': {
-                            'target_id': target_id,
-                            'operation': 'mount_all'
+                            'target_id': ds_target_id,
+                            'operation': 'mount_all',
+                            'datastore_name': dr_datastore,
+                            'vcenter_id': actual_vcenter_id
                         },
                         'context': {
-                            'vcenter_id': dr_vcenter_id,
+                            'vcenter_id': actual_vcenter_id,
                             'datastore_name': dr_datastore,
                             'datastore_id': ds.get('id'),
-                            'target_id': target_id
+                            'target_id': ds_target_id
                         },
-                        'description': 'Mount the NFS datastore on all DR vCenter hosts',
+                        'description': f'Mount {dr_datastore} on all vCenter hosts',
                         'can_auto_fix': True
                     }
                 }
@@ -877,6 +882,37 @@ class FailoverHandler:
                 'message': f'Error checking datastore: {str(e)}',
                 'can_override': True
             }
+
+    def _find_target_for_datastore(self, datastore_name: str) -> Optional[str]:
+        """Find the replication target that manages a given datastore by name."""
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        import requests
+        
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+            }
+            
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/replication_targets",
+                params={
+                    'datastore_name': f'eq.{datastore_name}',
+                    'select': 'id,name,hostname,dr_vcenter_id'
+                },
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                targets = response.json()
+                if targets:
+                    return targets[0].get('id')
+        except Exception:
+            pass
+        
+        return None
 
     def _check_no_conflicts(self, protection_group_id: str, current_job_id: str) -> Dict:
         """Check for conflicting running jobs."""
