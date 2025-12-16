@@ -56,14 +56,18 @@ export function FailoverPreflightDialog({
   } | null>(null);
   const [pendingRemediation, setPendingRemediation] = useState<Remediation | null>(null);
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
+  const [checkInProgress, setCheckInProgress] = useState(false);
 
   const { data: job, isLoading: polling } = usePreflightJobStatus(jobId || undefined);
 
   // Start pre-flight check when dialog opens
   useEffect(() => {
-    if (open && !jobId && !results) {
+    if (open && !jobId && !results && !checkInProgress) {
+      setCheckInProgress(true);
       runPreflightCheck.mutateAsync(groupId).then((job) => {
         setJobId(job.id);
+      }).catch(() => {
+        setCheckInProgress(false);
       });
     }
   }, [open, groupId]);
@@ -73,6 +77,7 @@ export function FailoverPreflightDialog({
     const details = job?.details as Record<string, unknown> | null;
     if (job?.status === 'completed' && details?.result) {
       setResults(details.result as typeof results);
+      setCheckInProgress(false);
     } else if (job?.status === 'failed') {
       setResults({
         checks: {
@@ -85,6 +90,7 @@ export function FailoverPreflightDialog({
         ready: false,
         can_force: false,
       });
+      setCheckInProgress(false);
     }
   }, [job]);
 
@@ -94,14 +100,18 @@ export function FailoverPreflightDialog({
       setJobId(null);
       setResults(null);
       setPendingRemediation(null);
+      setCheckInProgress(false);
     }
   }, [open]);
 
   const handleRunAgain = () => {
     setJobId(null);
     setResults(null);
+    setCheckInProgress(true);
     runPreflightCheck.mutateAsync(groupId).then((job) => {
       setJobId(job.id);
+    }).catch(() => {
+      setCheckInProgress(false);
     });
   };
 
@@ -150,7 +160,7 @@ export function FailoverPreflightDialog({
     }
   };
 
-  const isLoading = runPreflightCheck.isPending || (polling && !results);
+  const isLoading = runPreflightCheck.isPending || checkInProgress || (!!jobId && !results);
   const isApplyingFix = applyFix.isPending || applyAllFixes.isPending;
   const checks = results?.checks ? Object.values(results.checks) : [];
   const blockers = checks.filter(c => !c.passed && !c.is_warning);
@@ -196,9 +206,11 @@ export function FailoverPreflightDialog({
             {isLoading ? (
               <div className="flex flex-col items-center justify-center py-12 gap-4">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                <p className="text-sm text-muted-foreground">Running safety checks...</p>
+                <p className="text-sm text-muted-foreground">
+                  {!jobId ? 'Starting safety checks...' : 'Running safety checks...'}
+                </p>
                 
-                {/* Progress indicator */}
+                {/* Progress indicator - only show once we have job progress */}
                 {checksCompleted > 0 && (
                   <>
                     <Progress value={progressPercent} className="h-2 w-full max-w-xs" />
@@ -356,11 +368,7 @@ export function FailoverPreflightDialog({
                   </div>
                 )}
               </div>
-            ) : (
-              <div className="text-center py-8 text-muted-foreground">
-                <p>No results yet</p>
-              </div>
-            )}
+            ) : null}
           </ScrollArea>
 
           <Separator />
