@@ -769,17 +769,19 @@ class FailoverHandler:
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-            # Load private key - try multiple key types (RSA, Ed25519, ECDSA)
+            # Load private key - try multiple key types (Ed25519 first, then RSA, ECDSA)
             from io import StringIO
             key_file = StringIO(private_key)
             pkey = None
             
-            for key_class in [paramiko.RSAKey, paramiko.Ed25519Key, paramiko.ECDSAKey]:
+            # Ed25519 first since that's what we generate, then RSA/ECDSA
+            for key_class in [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]:
                 try:
                     key_file.seek(0)
                     pkey = key_class.from_private_key(key_file)
+                    self.executor.log(f"[SSH] Loaded key as {key_class.__name__}")
                     break
-                except paramiko.SSHException:
+                except Exception:  # Catch all exceptions including struct.error
                     continue
             
             if not pkey:
