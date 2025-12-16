@@ -982,26 +982,26 @@ class ReplicationHandler(BaseHandler):
                 key_data = self.executor.decrypt_password(target['ssh_key_encrypted'])
                 if key_data:
                     creds['key_data'] = key_data
-                    self.executor.log(f"Using target-specific SSH key for {hostname}")
+                    self.executor.log(f"Using target-specific SSH key for {ssh_hostname}")
                     return creds
             
             # Check if target has an ssh_key_id reference to ssh_keys table
             if target.get('ssh_key_id'):
-                key_data = self._fetch_ssh_key_by_id(target['ssh_key_id'], hostname)
+                key_data = self._fetch_ssh_key_by_id(target['ssh_key_id'], ssh_hostname)
                 if key_data:
                     creds['key_data'] = key_data
                     return creds
             
             # Check via hosting_vm_id → vcenter_vms → zfs_target_templates chain
             if target.get('hosting_vm_id'):
-                key_data = self._fetch_ssh_key_via_hosting_vm(target['hosting_vm_id'], hostname)
+                key_data = self._fetch_ssh_key_via_hosting_vm(target['hosting_vm_id'], ssh_hostname)
                 if key_data:
                     creds['key_data'] = key_data
                     return creds
             
             # Check via source_template_id → zfs_target_templates chain
             if target.get('source_template_id'):
-                key_data = self._fetch_ssh_key_via_template(target['source_template_id'], hostname)
+                key_data = self._fetch_ssh_key_via_template(target['source_template_id'], ssh_hostname)
                 if key_data:
                     creds['key_data'] = key_data
                     return creds
@@ -1047,7 +1047,7 @@ class ReplicationHandler(BaseHandler):
                                         key_data = self.executor.decrypt_password(keys[0]['private_key_encrypted'])
                                         if key_data:
                                             creds['key_data'] = key_data
-                                            self.executor.log(f"Using deployed SSH key for {hostname}")
+                                            self.executor.log(f"Using deployed SSH key for {ssh_hostname}")
                                             return creds
                 except Exception as e:
                     self.executor.log(f"Error checking ssh_key_deployments: {e}", "WARNING")
@@ -1074,13 +1074,13 @@ class ReplicationHandler(BaseHandler):
                             key_data = self.executor.decrypt_password(settings['ssh_private_key_encrypted'])
                             if key_data:
                                 creds['key_data'] = key_data
-                                self.executor.log(f"Using global SSH key for {hostname}")
+                                self.executor.log(f"Using global SSH key for {ssh_hostname}")
                                 return creds
                         
                         # Check for SSH key path
                         if settings.get('ssh_private_key_path'):
                             creds['key_path'] = settings['ssh_private_key_path']
-                            self.executor.log(f"Using SSH key path for {hostname}")
+                            self.executor.log(f"Using SSH key path for {ssh_hostname}")
                             return creds
                         
                         # Check for encrypted password
@@ -1088,7 +1088,7 @@ class ReplicationHandler(BaseHandler):
                             password_from_settings = self.executor.decrypt_password(settings['ssh_password_encrypted'])
                             if password_from_settings:
                                 creds['password'] = password_from_settings
-                                self.executor.log(f"Using SSH password from settings for {hostname}")
+                                self.executor.log(f"Using SSH password from settings for {ssh_hostname}")
                                 return creds
             except Exception as e:
                 self.executor.log(f"Error fetching activity_settings: {e}", "WARNING")
@@ -1096,15 +1096,15 @@ class ReplicationHandler(BaseHandler):
             # Use provided password as fallback (from job details)
             if password:
                 creds['password'] = password
-                self.executor.log(f"Using provided password for {hostname}")
+                self.executor.log(f"Using provided password for {ssh_hostname}")
                 return creds
             
             # Build a helpful error message with VM name if available
             vm_name = target.get('hosting_vm_name') or target.get('hosting_vm', {}).get('name')
             if vm_name:
-                self.executor.log(f"No SSH credentials available for VM {vm_name} ({hostname}). Assign an SSH key in Edit Target or run SSH Key Exchange first.", "ERROR")
+                self.executor.log(f"No SSH credentials available for VM {vm_name} ({ssh_hostname}). Assign an SSH key in Edit Target or run SSH Key Exchange first.", "ERROR")
             else:
-                self.executor.log(f"No SSH credentials available for {hostname}. Assign an SSH key in Edit Target or run SSH Key Exchange first.", "ERROR")
+                self.executor.log(f"No SSH credentials available for {ssh_hostname}. Assign an SSH key in Edit Target or run SSH Key Exchange first.", "ERROR")
             return None
             
         except Exception as e:
@@ -1590,6 +1590,8 @@ class ReplicationHandler(BaseHandler):
             
             # Get SSH credentials for target using comprehensive lookup
             ssh_creds = self._get_target_ssh_creds(target)
+            if not ssh_creds:
+                raise ValueError(f"No SSH credentials available for target '{target.get('name')}'. Configure an SSH key or run SSH Key Exchange first.")
             ssh_hostname = ssh_creds.get('hostname')
             ssh_username = ssh_creds.get('username', 'root')
             ssh_port = ssh_creds.get('port', 22)
