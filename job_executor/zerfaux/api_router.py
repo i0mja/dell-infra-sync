@@ -354,10 +354,12 @@ class ZerfauxAPIRouter:
             handler._send_error('Target not found', 404)
             return True
         
-        # Check target health
+        # Check target health - pass target_id for auto credential lookup
         target = targets[0]
         health = self.zfs_replication.check_target_health(
-            target['hostname'], target['zfs_pool']
+            target['hostname'], 
+            target['zfs_pool'],
+            target_id=target_id  # Auto-fetch SSH credentials
         )
         target['health_check'] = health
         
