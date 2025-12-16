@@ -120,6 +120,8 @@ export function DrShellVmWizard({
   const [networkName, setNetworkName] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobProgress, setJobProgress] = useState<string>('Queuing job...');
+  const [autoSelectedVcenter, setAutoSelectedVcenter] = useState(false);
+  const [autoSelectedDatastore, setAutoSelectedDatastore] = useState(false);
   
   const { plan, loading: planLoading, fetchPlan, createDRShell, vcenters, drDatastores, datastoresLoading, drNetworks, networksLoading } = useDRShellPlan(vm?.id, selectedDrVcenterId);
   
@@ -153,14 +155,45 @@ export function DrShellVmWizard({
       setNetworkName("");
       setJobId(null);
       setJobProgress('Queuing job...');
+      setAutoSelectedVcenter(false);
+      setAutoSelectedDatastore(false);
       fetchPlan();
     }
   }, [open, vm, fetchPlan]);
   
-  // Reset datastore selection when DR vCenter changes
+  // Auto-select DR vCenter from protection group's target configuration
   useEffect(() => {
-    setSelectedDatastoreId(null);
-  }, [selectedDrVcenterId]);
+    if (plan && !selectedDrVcenterId) {
+      const extendedPlan = plan as any;
+      // Priority: DR target's dr_vcenter_id > Source target's dr_vcenter_id
+      const drVcenterId = extendedPlan.dr_target?.dr_vcenter_id || 
+                          extendedPlan.source_target?.dr_vcenter_id;
+      if (drVcenterId) {
+        setSelectedDrVcenterId(drVcenterId);
+        setAutoSelectedVcenter(true);
+      }
+    }
+  }, [plan, selectedDrVcenterId]);
+
+  // Auto-select datastore from protection group configuration when datastores load
+  useEffect(() => {
+    if (drDatastores && drDatastores.length > 0 && !selectedDatastoreId && plan) {
+      const extendedPlan = plan as any;
+      // Priority: protection_group.dr_datastore > dr_target.datastore_name > source_target.datastore_name
+      const expectedDatastoreName = 
+        extendedPlan.protection_group?.dr_datastore ||
+        extendedPlan.dr_target?.datastore_name ||
+        extendedPlan.source_target?.datastore_name;
+      
+      if (expectedDatastoreName) {
+        const matchingDatastore = drDatastores.find(ds => ds.name === expectedDatastoreName);
+        if (matchingDatastore) {
+          setSelectedDatastoreId(matchingDatastore.id);
+          setAutoSelectedDatastore(true);
+        }
+      }
+    }
+  }, [drDatastores, plan, selectedDatastoreId]);
 
   // Update config from plan when loaded - use vcenter_vm data for accurate CPU/memory
   useEffect(() => {
@@ -355,10 +388,24 @@ export function DrShellVmWizard({
             </h4>
             <div className="space-y-2">
               <div className="space-y-1.5">
-                <Label className="text-xs">Select DR vCenter</Label>
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs">Select DR vCenter</Label>
+                  {autoSelectedVcenter && selectedDrVcenterId && (
+                    <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
+                      <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" />
+                      Auto-selected
+                    </Badge>
+                  )}
+                </div>
                 <Select
                   value={selectedDrVcenterId || ''}
-                  onValueChange={setSelectedDrVcenterId}
+                  onValueChange={(val) => {
+                    setSelectedDrVcenterId(val);
+                    setAutoSelectedVcenter(false);
+                    // Reset datastore when vCenter changes
+                    setSelectedDatastoreId(null);
+                    setAutoSelectedDatastore(false);
+                  }}
                 >
                   <SelectTrigger className="h-8 text-xs">
                     <SelectValue placeholder="Select DR vCenter..." />
@@ -388,17 +435,28 @@ export function DrShellVmWizard({
                 <div className="space-y-2 pt-2 border-t">
                   {/* Datastore Selection */}
                   <div className="space-y-1.5">
-                    <Label className="flex items-center gap-1.5 text-xs">
-                      <HardDrive className="h-3 w-3" />
-                      Target Datastore
-                    </Label>
+                    <div className="flex items-center justify-between">
+                      <Label className="flex items-center gap-1.5 text-xs">
+                        <HardDrive className="h-3 w-3" />
+                        Target Datastore
+                      </Label>
+                      {autoSelectedDatastore && selectedDatastoreId && (
+                        <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
+                          <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" />
+                          Auto-selected
+                        </Badge>
+                      )}
+                    </div>
                     {datastoresLoading ? (
                       <Skeleton className="h-8 w-full" />
                     ) : (
                       <>
                         <Select
                           value={selectedDatastoreId || ''}
-                          onValueChange={setSelectedDatastoreId}
+                          onValueChange={(val) => {
+                            setSelectedDatastoreId(val);
+                            setAutoSelectedDatastore(false);
+                          }}
                         >
                           <SelectTrigger className="h-8 text-xs">
                             <SelectValue placeholder="Select datastore..." />

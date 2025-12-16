@@ -1288,7 +1288,7 @@ export function useDRShellPlan(protectedVmId?: string, selectedDrVcenterId?: str
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // Fetch protected VM with protection group info
+  // Fetch protected VM with protection group info AND full target chain for auto-selection
   const { data: plan, isLoading: loading, refetch: fetchPlan } = useQuery({
     queryKey: ['dr-shell-plan', protectedVmId],
     queryFn: async () => {
@@ -1298,7 +1298,7 @@ export function useDRShellPlan(protectedVmId?: string, selectedDrVcenterId?: str
         .select(`
           *,
           protection_group:protection_groups(
-            id, name, source_vcenter_id, target_id, protection_datastore
+            id, name, source_vcenter_id, target_id, protection_datastore, dr_datastore
           ),
           vcenter_vm:vcenter_vms!protected_vms_vm_id_fkey(
             id, name, cpu_count, memory_mb, guest_os, power_state
@@ -1307,6 +1307,34 @@ export function useDRShellPlan(protectedVmId?: string, selectedDrVcenterId?: str
         .eq('id', protectedVmId)
         .single();
       if (error) throw error;
+      
+      // If we have a target_id, fetch the source target with DR vCenter and partner target (DR target)
+      if (data?.protection_group?.target_id) {
+        const { data: sourceTarget, error: targetErr } = await supabase
+          .from('replication_targets')
+          .select('id, name, dr_vcenter_id, partner_target_id, datastore_name')
+          .eq('id', data.protection_group.target_id)
+          .single();
+        
+        if (!targetErr && sourceTarget) {
+          // Add source target to plan
+          (data as any).source_target = sourceTarget;
+          
+          // If partner (DR) target exists, fetch its datastore_name
+          if (sourceTarget.partner_target_id) {
+            const { data: drTarget } = await supabase
+              .from('replication_targets')
+              .select('id, name, datastore_name, dr_vcenter_id')
+              .eq('id', sourceTarget.partner_target_id)
+              .single();
+            
+            if (drTarget) {
+              (data as any).dr_target = drTarget;
+            }
+          }
+        }
+      }
+      
       return data;
     },
     enabled: !!protectedVmId
