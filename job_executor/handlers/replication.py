@@ -564,6 +564,33 @@ class ReplicationHandler(BaseHandler):
             'private_key': private_key
         }
     
+    def _load_private_key(self, key_path: str = None, key_data: str = None):
+        """
+        Load SSH private key, trying Ed25519, RSA, and ECDSA formats.
+        Shared helper to avoid code duplication and support all key types.
+        """
+        if not key_path and not key_data:
+            return None
+        
+        key_classes = [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]
+        
+        for key_class in key_classes:
+            try:
+                if key_path and key_path.strip():
+                    pkey = key_class.from_private_key_file(key_path)
+                    self.executor.log(f"[SSH] Loaded key as {key_class.__name__} from file")
+                    return pkey
+                elif key_data:
+                    key_file = io.StringIO(key_data)
+                    pkey = key_class.from_private_key(key_file)
+                    self.executor.log(f"[SSH] Loaded key as {key_class.__name__} from data")
+                    return pkey
+            except Exception:
+                continue
+        
+        self.executor.log("[SSH] Failed to load key as any known type (Ed25519, RSA, ECDSA)", "WARNING")
+        return None
+
     def _test_ssh_connection(self, hostname: str, port: int, username: str, 
                               private_key: str = None) -> Dict:
         """Test SSH connection to a target"""
@@ -3032,11 +3059,10 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
             ssh = paramiko.SSHClient()
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             
-            pkey = None
-            if creds.get('key_path') and creds['key_path'].strip():
-                pkey = paramiko.RSAKey.from_private_key_file(creds['key_path'])
-            elif creds.get('key_data'):
-                pkey = paramiko.RSAKey.from_private_key(io.StringIO(creds['key_data']))
+            pkey = self._load_private_key(
+                key_path=creds.get('key_path'),
+                key_data=creds.get('key_data')
+            )
             
             ssh.connect(
                 hostname=creds['hostname'],
@@ -3084,11 +3110,10 @@ chmod 600 ~/.ssh/authorized_keys
             ssh = paramiko.SSHClient()
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             
-            pkey = None
-            if creds.get('key_path') and creds['key_path'].strip():
-                pkey = paramiko.RSAKey.from_private_key_file(creds['key_path'])
-            elif creds.get('key_data'):
-                pkey = paramiko.RSAKey.from_private_key(io.StringIO(creds['key_data']))
+            pkey = self._load_private_key(
+                key_path=creds.get('key_path'),
+                key_data=creds.get('key_data')
+            )
             
             ssh.connect(
                 hostname=creds['hostname'],
@@ -3355,9 +3380,7 @@ chmod 600 ~/.ssh/authorized_keys
                         ssh = paramiko.SSHClient()
                         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                         
-                        pkey = None
-                        if creds.get('key_data'):
-                            pkey = paramiko.RSAKey.from_private_key(io.StringIO(creds['key_data']))
+                        pkey = self._load_private_key(key_data=creds.get('key_data'))
                         
                         ssh.connect(
                             hostname=creds['hostname'],

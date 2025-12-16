@@ -2462,17 +2462,21 @@ modprobe error: {result['stdout']} {result['stderr']}
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             
-            # Parse the private key
-            key_file = io.StringIO(private_key)
-            try:
-                pkey = paramiko.RSAKey.from_private_key(key_file)
-            except:
-                key_file = io.StringIO(private_key)
+            # Parse the private key - try Ed25519, RSA, ECDSA
+            pkey = None
+            key_classes = [paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey]
+            for key_class in key_classes:
                 try:
-                    pkey = paramiko.Ed25519Key.from_private_key(key_file)
-                except:
                     key_file = io.StringIO(private_key)
-                    pkey = paramiko.ECDSAKey.from_private_key(key_file)
+                    pkey = key_class.from_private_key(key_file)
+                    self.log(f'[SSH] Loaded key as {key_class.__name__}')
+                    break
+                except Exception:
+                    continue
+            
+            if not pkey:
+                self.log('[SSH] Failed to load key as any known type', 'ERROR')
+                return None
             
             client.connect(
                 hostname=host,

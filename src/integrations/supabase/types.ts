@@ -3490,6 +3490,7 @@ export type Database = {
           description: string | null
           expires_at: string | null
           id: string
+          key_algorithm: string | null
           key_type: string
           last_used_at: string | null
           name: string
@@ -3510,6 +3511,7 @@ export type Database = {
           description?: string | null
           expires_at?: string | null
           id?: string
+          key_algorithm?: string | null
           key_type?: string
           last_used_at?: string | null
           name: string
@@ -3530,6 +3532,7 @@ export type Database = {
           description?: string | null
           expires_at?: string | null
           id?: string
+          key_algorithm?: string | null
           key_type?: string
           last_used_at?: string | null
           name?: string
