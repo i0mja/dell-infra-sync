@@ -619,31 +619,164 @@ class VCenterHandlers(BaseHandler):
             )
     
     def execute_vcenter_connectivity_test(self, job: Dict):
-        """Test vCenter connectivity"""
+        """Test vCenter connectivity - validates credentials against the vcenters table"""
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        from job_executor.utils import _safe_json_parse
+        import time
+        
+        start_time = time.time()
+        job_details = job.get('details', {})
+        vcenter_id = job_details.get('vcenter_id')
+        
         try:
-            self.log(f"Starting vCenter connectivity test job: {job['id']}")
+            self.log(f"Starting vCenter connectivity test job: {job['id']} for vcenter_id: {vcenter_id}")
             self.update_job_status(
                 job['id'], 
                 'running', 
                 started_at=utc_now_iso(),
-                details={"current_step": "Testing vCenter connectivity"}
+                details={"current_step": "Fetching vCenter credentials", "vcenter_id": vcenter_id}
             )
             
-            # Implementation placeholder
+            if not vcenter_id:
+                raise ValueError("vcenter_id is required for connectivity test")
+            
+            # Fetch vCenter configuration from database
+            vcenter_url = f"{DSM_URL}/rest/v1/vcenters?id=eq.{vcenter_id}&select=*"
+            response = requests.get(
+                vcenter_url,
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL
+            )
+            
+            if response.status_code != 200:
+                raise Exception(f"Failed to fetch vCenter configuration: {response.status_code}")
+            
+            vcenters_list = _safe_json_parse(response)
+            if not vcenters_list:
+                raise Exception(f"vCenter not found with id: {vcenter_id}")
+            
+            vcenter_config = vcenters_list[0]
+            vcenter_name = vcenter_config.get('name', 'Unknown')
+            vcenter_host = vcenter_config.get('host')
+            vcenter_username = vcenter_config.get('username')
+            
+            self.log(f"Testing connectivity to vCenter: {vcenter_name} ({vcenter_host}) as {vcenter_username}")
+            
+            self.update_job_status(
+                job['id'], 
+                'running', 
+                details={
+                    "current_step": "Connecting to vCenter",
+                    "vcenter_id": vcenter_id,
+                    "vcenter_name": vcenter_name,
+                    "vcenter_host": vcenter_host,
+                    "username": vcenter_username
+                }
+            )
+            
+            # Actually test the connection using the executor's connect method
+            vc = self.executor.connect_vcenter(vcenter_config)
+            
+            if not vc:
+                raise Exception(f"Failed to connect to vCenter {vcenter_name} - connection returned None")
+            
+            # Get version info for verification
+            try:
+                content = vc.RetrieveContent()
+                about = content.about
+                vcenter_version = about.version
+                vcenter_build = about.build
+                vcenter_type = about.fullName
+                
+                self.log(f"Successfully connected to {vcenter_name}: {vcenter_type} (version {vcenter_version}, build {vcenter_build})")
+            except Exception as ver_err:
+                self.log(f"Connected but failed to get version info: {ver_err}", "WARNING")
+                vcenter_version = "unknown"
+                vcenter_build = "unknown"
+                vcenter_type = "unknown"
+            
+            # Disconnect
+            try:
+                from pyVim.connect import Disconnect
+                Disconnect(vc)
+            except:
+                pass
+            
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            
+            # Update vCenter last_sync timestamp to indicate successful connection test
+            try:
+                update_url = f"{DSM_URL}/rest/v1/vcenters?id=eq.{vcenter_id}"
+                requests.patch(
+                    update_url,
+                    headers={
+                        'apikey': SERVICE_ROLE_KEY,
+                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    },
+                    json={'last_sync': utc_now_iso()},
+                    verify=VERIFY_SSL
+                )
+            except Exception as upd_err:
+                self.log(f"Failed to update last_sync: {upd_err}", "WARNING")
+            
             self.update_job_status(
                 job['id'], 
                 'completed',
                 completed_at=utc_now_iso(),
-                details={"result": "Connectivity test completed"}
+                details={
+                    "result": "Connectivity test passed",
+                    "vcenter_id": vcenter_id,
+                    "vcenter_name": vcenter_name,
+                    "vcenter_host": vcenter_host,
+                    "username": vcenter_username,
+                    "version": vcenter_version,
+                    "build": vcenter_build,
+                    "product": vcenter_type,
+                    "response_time_ms": elapsed_ms
+                }
             )
             
+            self.log(f"vCenter connectivity test PASSED for {vcenter_name} in {elapsed_ms}ms")
+            
         except Exception as e:
-            self.log(f"vCenter connectivity test failed: {e}", "ERROR")
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            error_msg = str(e)
+            
+            # Check for specific vCenter/vim errors
+            is_auth_error = 'InvalidLogin' in error_msg or 'incorrect user name or password' in error_msg.lower()
+            is_ssl_error = 'SSL' in error_msg or 'certificate' in error_msg.lower()
+            is_connection_error = 'Connection refused' in error_msg or 'timed out' in error_msg.lower() or 'unreachable' in error_msg.lower()
+            
+            if is_auth_error:
+                error_category = "authentication"
+                user_message = "Invalid credentials - check username and password"
+            elif is_ssl_error:
+                error_category = "ssl"
+                user_message = "SSL/Certificate error - check SSL settings"
+            elif is_connection_error:
+                error_category = "network"
+                user_message = "Network error - check host address and port"
+            else:
+                error_category = "unknown"
+                user_message = error_msg
+            
+            self.log(f"vCenter connectivity test FAILED: {error_msg}", "ERROR")
             self.update_job_status(
                 job['id'], 
                 'failed',
                 completed_at=utc_now_iso(),
-                details={'error': str(e)}
+                details={
+                    'error': user_message,
+                    'error_category': error_category,
+                    'error_details': error_msg,
+                    'vcenter_id': vcenter_id,
+                    'response_time_ms': elapsed_ms
+                }
             )
     
     def execute_openmanage_sync(self, job: Dict):
