@@ -73,6 +73,8 @@ export interface ReplicationTarget {
     type?: string;
     capacity_bytes?: number;
     free_bytes?: number;
+    accessible?: boolean;
+    host_count?: number;
   } | null;
   // Joined partner target info
   partner_target?: {
@@ -221,7 +223,7 @@ export function useReplicationTargets() {
           ? supabase.from('vcenter_vms').select('id, name, ip_address, power_state, vcenter_id').in('id', hostingVmIds)
           : { data: [] },
         targetIds.length > 0
-          ? supabase.from('vcenter_datastores').select('id, name, type, capacity_bytes, free_bytes, replication_target_id').in('replication_target_id', targetIds)
+          ? supabase.from('vcenter_datastores').select('id, name, type, capacity_bytes, free_bytes, accessible, host_count, replication_target_id').in('replication_target_id', targetIds)
           : { data: [] },
         partnerIds.length > 0
           ? supabase.from('replication_targets').select('id, name, hostname, zfs_pool, health_status, dr_vcenter_id, ssh_trust_established').in('id', partnerIds)
