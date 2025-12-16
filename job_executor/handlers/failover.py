@@ -520,7 +520,19 @@ class FailoverHandler:
                 'passed': False,
                 'message': f'{len(missing_shells)} VMs missing DR shells',
                 'details': [v.get('vm_name') for v in missing_shells],
-                'can_override': False
+                'can_override': False,
+                'remediation': {
+                    'action_type': 'create_dr_shells',
+                    'job_type': 'create_dr_shell',
+                    'job_params': {
+                        'vm_ids': [v.get('id') for v in missing_shells],
+                        'protection_group_id': protection_group_id,
+                        'batch_mode': True
+                    },
+                    'description': f'Create DR shell VMs for {len(missing_shells)} VMs',
+                    'can_auto_fix': False,
+                    'requires_confirmation': True
+                }
             }
 
         return {

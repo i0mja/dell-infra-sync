@@ -128,6 +128,13 @@ export function GroupFailoverWizard({
   const warnings = checks.filter((c: any) => !c.passed && c.is_warning);
   const canProceed = preflightResults?.ready || (preflightResults?.can_force && forceOverride);
 
+  // Get progress from job details for preflight
+  const preflightProgress = preflightJob?.details as Record<string, unknown> | null;
+  const currentCheck = (preflightProgress?.current_step as string) || '';
+  const checksCompleted = (preflightProgress?.checks_completed as number) || 0;
+  const totalChecks = (preflightProgress?.total_checks as number) || 11;
+  const progressPercent = (preflightProgress?.progress_percent as number) || 0;
+
   const renderStep = () => {
     switch (step) {
       case 'preflight':
@@ -137,6 +144,16 @@ export function GroupFailoverWizard({
               <div className="flex flex-col items-center justify-center py-12 gap-4">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 <p className="text-sm text-muted-foreground">Running pre-flight safety checks...</p>
+                
+                {/* Progress indicator */}
+                {checksCompleted > 0 && (
+                  <>
+                    <Progress value={progressPercent} className="h-2 w-full max-w-xs" />
+                    <p className="text-xs text-muted-foreground text-center">
+                      {currentCheck}
+                    </p>
+                  </>
+                )}
               </div>
             ) : (
               <>
@@ -486,7 +503,20 @@ export function GroupFailoverWizard({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent 
+        className="max-w-lg"
+        onInteractOutside={(e) => {
+          // Prevent closing during preflight or execution
+          if (step === 'preflight' || step === 'executing') {
+            e.preventDefault();
+          }
+        }}
+        onEscapeKeyDown={(e) => {
+          if (step === 'preflight' || step === 'executing') {
+            e.preventDefault();
+          }
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {failoverType === 'live' ? (
