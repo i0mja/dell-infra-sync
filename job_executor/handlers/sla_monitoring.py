@@ -83,9 +83,13 @@ class SLAMonitoringHandler(BaseHandler):
                 details={
                     'triggered_syncs': triggered,
                     'skipped': skipped,
-                    'groups_checked': len(groups)
+                    'groups_checked': len(groups),
+                    'next_run_scheduled': True
                 }
             )
+            
+            # Schedule next run (every 60 seconds)
+            self._schedule_next_sla_job('scheduled_replication_check', 60)
             
         except Exception as e:
             self.executor.log(f"[SLA] Scheduled replication check failed: {e}", "ERROR")
@@ -94,6 +98,8 @@ class SLAMonitoringHandler(BaseHandler):
                 completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )
+            # Still reschedule even on failure to maintain continuous monitoring
+            self._schedule_next_sla_job('scheduled_replication_check', 60)
     
     # =========================================================================
     # RPO Monitoring
@@ -191,9 +197,13 @@ class SLAMonitoringHandler(BaseHandler):
                 details={
                     'groups_checked': len(groups),
                     'rpo_violations': len(violations),
-                    'test_overdue': len(test_overdue)
+                    'test_overdue': len(test_overdue),
+                    'next_run_scheduled': True
                 }
             )
+            
+            # Schedule next run (every 5 minutes = 300 seconds)
+            self._schedule_next_sla_job('rpo_monitoring', 300)
             
         except Exception as e:
             self.executor.log(f"[SLA] RPO monitoring failed: {e}", "ERROR")
@@ -202,10 +212,76 @@ class SLAMonitoringHandler(BaseHandler):
                 completed_at=utc_now_iso(),
                 details={'error': str(e)}
             )
+            # Still reschedule even on failure to maintain continuous monitoring
+            self._schedule_next_sla_job('rpo_monitoring', 300)
     
     # =========================================================================
     # Helper Methods
     # =========================================================================
+    
+    def _schedule_next_sla_job(self, job_type: str, interval_seconds: int):
+        """
+        Schedule the next SLA monitoring job after current one completes.
+        
+        This ensures continuous monitoring by creating a new pending job
+        that will run after the specified interval.
+        """
+        try:
+            # First check if there's already a pending/running job of this type
+            check_response = requests.get(
+                f"{DSM_URL}/rest/v1/jobs",
+                params={
+                    'job_type': f'eq.{job_type}',
+                    'status': 'in.(pending,running)',
+                    'select': 'id'
+                },
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if check_response.ok and check_response.json():
+                # Already have a pending/running job, don't create duplicate
+                self.executor.log(f"[SLA] {job_type} already has pending job, skipping reschedule")
+                return
+            
+            # Calculate when next job should start
+            next_run = datetime.now(timezone.utc) + timedelta(seconds=interval_seconds)
+            
+            # Create next monitoring job with schedule_at
+            response = requests.post(
+                f"{DSM_URL}/rest/v1/jobs",
+                json={
+                    'job_type': job_type,
+                    'status': 'pending',
+                    'schedule_at': next_run.isoformat(),
+                    'details': {
+                        'is_internal': True,
+                        'interval_seconds': interval_seconds,
+                        'scheduled_at': utc_now_iso(),
+                        'auto_rescheduled': True
+                    }
+                },
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.ok:
+                self.executor.log(f"[SLA] Scheduled next {job_type} in {interval_seconds}s")
+            else:
+                self.executor.log(f"[SLA] Failed to schedule next {job_type}: {response.status_code}", "WARN")
+                
+        except Exception as e:
+            self.executor.log(f"[SLA] Error scheduling next {job_type}: {e}", "ERROR")
     
     def _get_eligible_protection_groups(self) -> List[Dict]:
         """Get protection groups that are enabled, not paused, and have a schedule"""
