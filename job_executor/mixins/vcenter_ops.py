@@ -861,6 +861,382 @@ class VCenterMixin:
             self.log(f"Failed to fetch vCenter settings: {e}", "ERROR")
             return None
 
+    # =========================================================================
+    # Live vCenter Entity Querying with Auto-Sync
+    # =========================================================================
+    
+    def get_live_entity(self, vcenter_id: str, entity_type: str, identifier: str, 
+                        auto_sync: bool = True) -> Dict:
+        """
+        Query live vCenter for entity status, optionally sync DB on mismatch.
+        
+        This is the canonical way to check real vCenter state instead of trusting
+        potentially stale database records. Use this for pre-flight checks and
+        critical operations.
+        
+        Args:
+            vcenter_id: Database ID of the vCenter to query
+            entity_type: One of 'datastore', 'vm', 'host', 'cluster', 'network'
+            identifier: Name or MoRef of the entity to find
+            auto_sync: If True, update database when live data differs from cached
+            
+        Returns:
+            {
+                'live': True,  # Indicates this is live vCenter data
+                'found': bool,
+                'data': dict or None,  # Entity details if found
+                'synced': bool,  # True if DB was updated
+                'error': str or None
+            }
+        """
+        result = {'live': True, 'found': False, 'data': None, 'synced': False, 'error': None}
+        
+        try:
+            vcenter_settings = self.get_vcenter_settings(vcenter_id)
+            if not vcenter_settings:
+                result['error'] = f"vCenter {vcenter_id} not found in database"
+                return result
+            
+            vc = self.connect_vcenter(settings=vcenter_settings, force_reconnect=True)
+            if not vc:
+                result['error'] = f"Failed to connect to vCenter {vcenter_settings.get('host')}"
+                return result
+            
+            content = vc.RetrieveContent()
+            
+            # Dispatch to entity-specific handler
+            if entity_type == 'datastore':
+                result = self._get_live_datastore_impl(content, vcenter_id, identifier, auto_sync)
+            elif entity_type == 'vm':
+                result = self._get_live_vm_impl(content, vcenter_id, identifier, auto_sync)
+            elif entity_type == 'host':
+                result = self._get_live_host_impl(content, vcenter_id, identifier, auto_sync)
+            elif entity_type == 'network':
+                result = self._get_live_network_impl(content, vcenter_id, identifier, auto_sync)
+            else:
+                result['error'] = f"Unknown entity type: {entity_type}"
+                
+            result['live'] = True
+            return result
+            
+        except Exception as e:
+            self.log(f"[get_live_entity] Error querying {entity_type} '{identifier}': {e}", "ERROR")
+            result['error'] = str(e)
+            return result
+    
+    def get_live_datastore(self, vcenter_id: str, datastore_name: str, 
+                           auto_sync: bool = True) -> Dict:
+        """
+        Query live vCenter for datastore status.
+        
+        Returns:
+            {
+                'live': True,
+                'found': bool,
+                'data': {
+                    'name': str,
+                    'accessible': bool,
+                    'capacity_bytes': int,
+                    'free_bytes': int,
+                    'type': str,  # NFS, VMFS, etc.
+                    'hosts_mounted': int,
+                    'host_details': [{'name': str, 'mounted': bool, 'accessible': bool}]
+                },
+                'synced': bool,
+                'error': str or None
+            }
+        """
+        return self.get_live_entity(vcenter_id, 'datastore', datastore_name, auto_sync)
+    
+    def _get_live_datastore_impl(self, content, vcenter_id: str, datastore_name: str, 
+                                  auto_sync: bool) -> Dict:
+        """Internal implementation of live datastore query."""
+        result = {'live': True, 'found': False, 'data': None, 'synced': False, 'error': None}
+        
+        # Recursive search through all datacenters, folders, and StoragePods
+        datastore = self._find_datastore_in_vcenter(content, datastore_name)
+        
+        if not datastore:
+            self.log(f"[get_live_datastore] Datastore '{datastore_name}' NOT found in vCenter", "WARN")
+            # If auto_sync and DB says it exists, mark it as inaccessible
+            if auto_sync:
+                self._sync_datastore_not_found(vcenter_id, datastore_name)
+                result['synced'] = True
+            return result
+        
+        result['found'] = True
+        
+        # Extract datastore details
+        try:
+            summary = datastore.summary
+            host_mounts = []
+            hosts_mounted = 0
+            
+            for host_mount in datastore.host:
+                mount_info = host_mount.mountInfo
+                host_obj = host_mount.key
+                host_detail = {
+                    'name': host_obj.name if host_obj else 'unknown',
+                    'moref': str(host_obj._moId) if host_obj else None,
+                    'mounted': mount_info.mounted if mount_info else False,
+                    'accessible': mount_info.accessible if mount_info else False,
+                    'path': mount_info.path if mount_info else None
+                }
+                host_mounts.append(host_detail)
+                if host_detail['mounted'] and host_detail['accessible']:
+                    hosts_mounted += 1
+            
+            result['data'] = {
+                'name': summary.name,
+                'moref': str(datastore._moId),
+                'accessible': summary.accessible,
+                'capacity_bytes': summary.capacity,
+                'free_bytes': summary.freeSpace,
+                'type': summary.type,  # NFS, VMFS, VSAN, etc.
+                'url': summary.url if hasattr(summary, 'url') else None,
+                'hosts_mounted': hosts_mounted,
+                'hosts_total': len(host_mounts),
+                'host_details': host_mounts
+            }
+            
+            self.log(f"[get_live_datastore] Found '{datastore_name}': accessible={summary.accessible}, hosts={hosts_mounted}/{len(host_mounts)}")
+            
+            # Auto-sync to DB if enabled
+            if auto_sync:
+                synced = self._sync_datastore_to_db(vcenter_id, result['data'])
+                result['synced'] = synced
+                
+        except Exception as e:
+            self.log(f"[get_live_datastore] Error extracting datastore details: {e}", "WARN")
+            result['error'] = str(e)
+        
+        return result
+    
+    def _find_datastore_in_vcenter(self, content, datastore_name: str):
+        """
+        Recursively search for datastore in vCenter, including StoragePods.
+        
+        This handles:
+        - Direct children of datastoreFolder
+        - Datastores inside StoragePods (datastore clusters)
+        - Nested folder structures
+        """
+        def search_folder(folder, depth=0):
+            if depth > 10:  # Prevent infinite recursion
+                return None
+            try:
+                for item in folder.childEntity:
+                    # Direct datastore match
+                    if isinstance(item, vim.Datastore):
+                        if item.name == datastore_name:
+                            return item
+                    # StoragePod (datastore cluster) - search children
+                    elif isinstance(item, vim.StoragePod):
+                        for ds in item.childEntity:
+                            if isinstance(ds, vim.Datastore) and ds.name == datastore_name:
+                                return ds
+                    # Nested folder - recurse
+                    elif hasattr(item, 'childEntity'):
+                        result = search_folder(item, depth + 1)
+                        if result:
+                            return result
+            except Exception as e:
+                self.log(f"[_find_datastore] Error searching folder: {e}", "DEBUG")
+            return None
+        
+        # Search all datacenters
+        for dc in content.rootFolder.childEntity:
+            if isinstance(dc, vim.Datacenter):
+                if hasattr(dc, 'datastoreFolder') and dc.datastoreFolder:
+                    result = search_folder(dc.datastoreFolder)
+                    if result:
+                        return result
+        
+        return None
+    
+    def _sync_datastore_to_db(self, vcenter_id: str, live_data: Dict) -> bool:
+        """Update vcenter_datastores table with live data."""
+        try:
+            now = utc_now_iso()
+            
+            # Check if record exists
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_datastores?vcenter_id=eq.{vcenter_id}&name=eq.{live_data['name']}&select=id",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL
+            )
+            
+            existing = _safe_json_parse(response) if response.status_code == 200 else []
+            
+            update_data = {
+                'vcenter_id': vcenter_id,
+                'name': live_data['name'],
+                'type': live_data['type'],
+                'capacity_bytes': live_data['capacity_bytes'],
+                'free_space_bytes': live_data['free_bytes'],
+                'accessible': live_data['accessible'],
+                'url': live_data.get('url'),
+                'updated_at': now
+            }
+            
+            if existing:
+                # Update existing record
+                response = requests.patch(
+                    f"{DSM_URL}/rest/v1/vcenter_datastores?id=eq.{existing[0]['id']}",
+                    headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}', 
+                             'Content-Type': 'application/json', 'Prefer': 'return=minimal'},
+                    json=update_data,
+                    verify=VERIFY_SSL
+                )
+            else:
+                # Insert new record
+                update_data['created_at'] = now
+                response = requests.post(
+                    f"{DSM_URL}/rest/v1/vcenter_datastores",
+                    headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                             'Content-Type': 'application/json', 'Prefer': 'return=minimal'},
+                    json=update_data,
+                    verify=VERIFY_SSL
+                )
+            
+            if response.status_code in [200, 201, 204]:
+                self.log(f"[_sync_datastore_to_db] Synced '{live_data['name']}' to database")
+                return True
+            else:
+                self.log(f"[_sync_datastore_to_db] Failed to sync: {response.status_code}", "WARN")
+                return False
+                
+        except Exception as e:
+            self.log(f"[_sync_datastore_to_db] Error: {e}", "WARN")
+            return False
+    
+    def _sync_datastore_not_found(self, vcenter_id: str, datastore_name: str) -> bool:
+        """Mark datastore as inaccessible in DB when not found in live vCenter."""
+        try:
+            response = requests.patch(
+                f"{DSM_URL}/rest/v1/vcenter_datastores?vcenter_id=eq.{vcenter_id}&name=eq.{datastore_name}",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                         'Content-Type': 'application/json', 'Prefer': 'return=minimal'},
+                json={'accessible': False, 'updated_at': utc_now_iso()},
+                verify=VERIFY_SSL
+            )
+            if response.status_code in [200, 204]:
+                self.log(f"[_sync_datastore_not_found] Marked '{datastore_name}' as inaccessible")
+                return True
+            return False
+        except Exception as e:
+            self.log(f"[_sync_datastore_not_found] Error: {e}", "WARN")
+            return False
+    
+    def _get_live_vm_impl(self, content, vcenter_id: str, vm_identifier: str, 
+                          auto_sync: bool) -> Dict:
+        """Internal implementation of live VM query."""
+        result = {'live': True, 'found': False, 'data': None, 'synced': False, 'error': None}
+        
+        try:
+            # Search for VM by name or MoRef
+            vm_view = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.VirtualMachine], True
+            )
+            
+            target_vm = None
+            for vm in vm_view.view:
+                if vm.name == vm_identifier or str(vm._moId) == vm_identifier:
+                    target_vm = vm
+                    break
+            
+            vm_view.Destroy()
+            
+            if not target_vm:
+                return result
+            
+            result['found'] = True
+            result['data'] = {
+                'name': target_vm.name,
+                'moref': str(target_vm._moId),
+                'power_state': str(target_vm.runtime.powerState) if target_vm.runtime else 'unknown',
+                'guest_os': target_vm.summary.config.guestFullName if target_vm.summary and target_vm.summary.config else None,
+                'num_cpu': target_vm.summary.config.numCpu if target_vm.summary and target_vm.summary.config else None,
+                'memory_mb': target_vm.summary.config.memorySizeMB if target_vm.summary and target_vm.summary.config else None,
+                'host': target_vm.runtime.host.name if target_vm.runtime and target_vm.runtime.host else None
+            }
+            
+        except Exception as e:
+            result['error'] = str(e)
+        
+        return result
+    
+    def _get_live_host_impl(self, content, vcenter_id: str, host_identifier: str,
+                            auto_sync: bool) -> Dict:
+        """Internal implementation of live host query."""
+        result = {'live': True, 'found': False, 'data': None, 'synced': False, 'error': None}
+        
+        try:
+            host_view = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.HostSystem], True
+            )
+            
+            target_host = None
+            for host in host_view.view:
+                if host.name == host_identifier or str(host._moId) == host_identifier:
+                    target_host = host
+                    break
+            
+            host_view.Destroy()
+            
+            if not target_host:
+                return result
+            
+            result['found'] = True
+            runtime = target_host.runtime
+            result['data'] = {
+                'name': target_host.name,
+                'moref': str(target_host._moId),
+                'connection_state': str(runtime.connectionState) if runtime else 'unknown',
+                'power_state': str(runtime.powerState) if runtime else 'unknown',
+                'in_maintenance_mode': runtime.inMaintenanceMode if runtime else False,
+                'cluster': target_host.parent.name if isinstance(target_host.parent, vim.ClusterComputeResource) else None
+            }
+            
+        except Exception as e:
+            result['error'] = str(e)
+        
+        return result
+    
+    def _get_live_network_impl(self, content, vcenter_id: str, network_identifier: str,
+                               auto_sync: bool) -> Dict:
+        """Internal implementation of live network query."""
+        result = {'live': True, 'found': False, 'data': None, 'synced': False, 'error': None}
+        
+        try:
+            network_view = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.Network], True
+            )
+            
+            target_network = None
+            for net in network_view.view:
+                if net.name == network_identifier or str(net._moId) == network_identifier:
+                    target_network = net
+                    break
+            
+            network_view.Destroy()
+            
+            if not target_network:
+                return result
+            
+            result['found'] = True
+            result['data'] = {
+                'name': target_network.name,
+                'moref': str(target_network._moId),
+                'accessible': target_network.summary.accessible if hasattr(target_network, 'summary') else True,
+                'type': type(target_network).__name__  # DistributedVirtualPortgroup, Network, etc.
+            }
+            
+        except Exception as e:
+            result['error'] = str(e)
+        
+        return result
+
     def connect_vcenter(self, settings=None, force_reconnect=False):
         """Connect to vCenter if not already connected, with session validation.
         
