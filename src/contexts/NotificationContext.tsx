@@ -3,7 +3,10 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
-import { INTERNAL_JOB_TYPES } from '@/lib/job-constants';
+import { INTERNAL_JOB_TYPES, SLA_MONITORING_JOB_TYPES } from '@/lib/job-constants';
+
+// Combined list of job types to filter from notifications
+const FILTERED_JOB_TYPES = [...INTERNAL_JOB_TYPES, ...SLA_MONITORING_JOB_TYPES];
 
 type Job = Database['public']['Tables']['jobs']['Row'];
 type IdracCommand = Database['public']['Tables']['idrac_commands']['Row'];
@@ -178,7 +181,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         .from('jobs')
         .select('*')
         .in('status', ['pending', 'running'])
-        .not('job_type', 'in', `(${INTERNAL_JOB_TYPES.join(',')})`)
+        .not('job_type', 'in', `(${FILTERED_JOB_TYPES.join(',')})`)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -422,8 +425,8 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
           const newJob = payload.new as Job | null;
           const oldJob = payload.old as Job | null;
           
-          // Skip notifications for internal job types
-          if (newJob && (INTERNAL_JOB_TYPES as readonly string[]).includes(newJob.job_type)) {
+          // Skip notifications for internal and SLA monitoring job types
+          if (newJob && (FILTERED_JOB_TYPES as readonly string[]).includes(newJob.job_type)) {
             return;
           }
           
