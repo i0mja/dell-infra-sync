@@ -23,6 +23,7 @@ import { useActiveJobs } from "@/hooks/useActiveJobs";
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { useAuth } from "@/hooks/useAuth";
+import { INTERNAL_JOB_TYPES, SLA_MONITORING_JOB_TYPES } from "@/lib/job-constants";
 interface IdracCommand {
   id: string;
   timestamp: string;
@@ -79,6 +80,9 @@ export default function ActivityMonitor() {
   const [activityTargetFilter, setActivityTargetFilter] = useState("all");
   const [activityStatusFilter, setActivityStatusFilter] = useState("all");
   const [activityTimeRange, setActivityTimeRange] = useState("24h");
+  
+  // SLA monitoring job visibility setting
+  const [showSlaMonitoringJobs, setShowSlaMonitoringJobs] = useState(false);
 
   // Connection state
   const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
@@ -121,18 +125,28 @@ export default function ActivityMonitor() {
   // Fetch active jobs for live view with real-time updates
   const { activeJobs, refetch: refetchActiveJobs } = useActiveJobs();
 
-  // Internal job types that should not appear in Activity Monitor
-  const INTERNAL_JOB_TYPES = [
-    'idm_authenticate',
-    'idm_test_auth',
-    'idm_test_connection',
-    'idm_network_check',
-    'idm_test_ad_connection',
-    'idm_search_groups',
-    'idm_search_ad_groups',
-    'idm_search_ad_users',
-    'idm_sync_users',
-  ];
+  // Fetch SLA monitoring jobs visibility setting
+  useEffect(() => {
+    const fetchActivitySettings = async () => {
+      const { data } = await supabase
+        .from('activity_settings')
+        .select('show_sla_monitoring_jobs')
+        .maybeSingle();
+      if (data) {
+        setShowSlaMonitoringJobs(data.show_sla_monitoring_jobs ?? false);
+      }
+    };
+    fetchActivitySettings();
+  }, []);
+
+  // Calculate filtered job types based on setting
+  const filteredJobTypes = useMemo(() => {
+    const types: string[] = [...INTERNAL_JOB_TYPES];
+    if (!showSlaMonitoringJobs) {
+      types.push(...SLA_MONITORING_JOB_TYPES);
+    }
+    return types;
+  }, [showSlaMonitoringJobs]);
 
   // Calculate time range
   const getTimeRangeDate = (filter: string) => {
@@ -150,13 +164,13 @@ export default function ActivityMonitor() {
 
   // Fetch jobs with all filters applied at database level
   const { data: jobsData, refetch: refetchJobs } = useQuery({
-    queryKey: ['activity-jobs', jobsStatusFilter, jobsTypeFilter, jobsTimeRange],
+    queryKey: ['activity-jobs', jobsStatusFilter, jobsTypeFilter, jobsTimeRange, filteredJobTypes],
     queryFn: async () => {
       let query = supabase
         .from('jobs')
         .select('*')
         .is('parent_job_id', null)
-        .not('job_type', 'in', `(${INTERNAL_JOB_TYPES.join(',')})`)
+        .not('job_type', 'in', `(${filteredJobTypes.join(',')})`)
         .order('created_at', { ascending: false })
         .limit(200);
 

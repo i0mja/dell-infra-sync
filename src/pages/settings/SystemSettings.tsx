@@ -41,6 +41,7 @@ export function SystemSettings() {
   const [lastCleanupAt, setLastCleanupAt] = useState<string | null>(null);
   const [logLevel, setLogLevel] = useState<'all' | 'errors_only' | 'slow_only'>('all');
   const [slowCommandThreshold, setSlowCommandThreshold] = useState(5000);
+  const [showSlaMonitoringJobs, setShowSlaMonitoringJobs] = useState(false);
 
   // Job Settings
   const [jobRetentionDays, setJobRetentionDays] = useState(90);
@@ -98,6 +99,7 @@ export function SystemSettings() {
       setStalePendingHours(data.stale_pending_hours || 24);
       setStaleRunningHours(data.stale_running_hours || 48);
       setAutoCancelStaleJobs(data.auto_cancel_stale_jobs ?? true);
+      setShowSlaMonitoringJobs(data.show_sla_monitoring_jobs ?? false);
       
       // Load Job Executor URL from database
       if (data.job_executor_url) {
@@ -180,6 +182,7 @@ export function SystemSettings() {
         stale_pending_hours: stalePendingHours,
         stale_running_hours: staleRunningHours,
         auto_cancel_stale_jobs: autoCancelStaleJobs,
+        show_sla_monitoring_jobs: showSlaMonitoringJobs,
       };
 
       if (activitySettingsId) {
@@ -607,6 +610,19 @@ export function SystemSettings() {
               value={slowCommandThreshold}
               onChange={(e) => setSlowCommandThreshold(parseInt(e.target.value) || 5000)}
               min={1000}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label>Show SLA Monitoring Jobs</Label>
+              <p className="text-sm text-muted-foreground">
+                Display scheduled replication checks and RPO monitoring jobs in Activity Monitor
+              </p>
+            </div>
+            <Switch
+              checked={showSlaMonitoringJobs}
+              onCheckedChange={setShowSlaMonitoringJobs}
             />
           </div>
 
