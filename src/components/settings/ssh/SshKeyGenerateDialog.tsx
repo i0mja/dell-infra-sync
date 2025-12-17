@@ -127,7 +127,8 @@ export function SshKeyGenerateDialog({
     if (!generatedKey) return '';
     // Escape single quotes in the key for shell safety
     const escapedKey = generatedKey.replace(/'/g, "'\\''");
-    return `echo '${escapedKey}' >> ~/.ssh/authorized_keys`;
+    // Robust command: creates ~/.ssh if needed, sets correct permissions (like ssh-copy-id)
+    return `mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '${escapedKey}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys`;
   }, [generatedKey]);
 
   const copyOneLiner = useCallback(() => {
@@ -301,7 +302,7 @@ export function SshKeyGenerateDialog({
                 {getOneLiner()}
               </div>
               <p className="text-xs text-muted-foreground">
-                Paste this directly into the target server terminal to authorize the key.
+                Paste into target server terminal. Creates ~/.ssh if needed and sets correct permissions.
               </p>
             </div>
           </div>
