@@ -58,8 +58,13 @@ export function usePreflightRemediation() {
         is_remediation: true,
       };
 
+      // Encrypt password before storing in job details (required by ssh_key_deploy handler)
       if (adminPassword) {
-        jobParams.admin_password = adminPassword;
+        const { data: encryptData, error: encryptError } = await supabase.functions.invoke('encrypt-credentials', {
+          body: { password: adminPassword, type: 'return_only' }
+        });
+        if (encryptError) throw encryptError;
+        jobParams.admin_password_encrypted = encryptData?.encrypted;
       }
 
       // Add context info for logging purposes

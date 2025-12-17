@@ -53,6 +53,7 @@ import {
   RefreshCw,
   MonitorCheck,
   Eye,
+  Key,
 } from "lucide-react";
 import { useReplicationTargets, ReplicationTarget, TargetDependencies } from "@/hooks/useReplication";
 import { useSshKeys, SshKey } from "@/hooks/useSshKeys";
@@ -65,6 +66,7 @@ import { PairedZfsDeployWizard } from "./PairedZfsDeployWizard";
 import { DecommissionTargetDialog, DecommissionOption } from "./DecommissionTargetDialog";
 import { DatastoreManagementDialog } from "./DatastoreManagementDialog";
 import { ZfsTargetHealthDialog } from "./ZfsTargetHealthDialog";
+import { DeploySshKeyDialog } from "./DeploySshKeyDialog";
 
 interface ReplicationTargetsPanelProps {
   onAddTarget?: () => void;
@@ -120,6 +122,10 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
   const [showHealthDialog, setShowHealthDialog] = useState(false);
   const [healthResults, setHealthResults] = useState<any>(null);
   const [healthTarget, setHealthTarget] = useState<ReplicationTarget | null>(null);
+  
+  // Deploy SSH Key dialog state
+  const [showDeploySshKeyDialog, setShowDeploySshKeyDialog] = useState(false);
+  const [deploySshKeyTarget, setDeploySshKeyTarget] = useState<ReplicationTarget | null>(null);
   
   // Form for creating paired targets (source + DR)
   const [formData, setFormData] = useState({
@@ -1227,6 +1233,13 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                             <Database className="h-4 w-4 mr-2" />
                             Manage Datastore
                           </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => {
+                            setDeploySshKeyTarget(target);
+                            setShowDeploySshKeyDialog(true);
+                          }}>
+                            <Key className="h-4 w-4 mr-2" />
+                            Deploy SSH Key
+                          </DropdownMenuItem>
                           {/* Scan for VM option - useful when VM not linked */}
                           {!target.hosting_vm && target.dr_vcenter_id && (
                             <DropdownMenuItem 
@@ -1478,6 +1491,14 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
         partnerName={healthTarget?.partner_target?.name}
         onRefresh={() => healthTarget && handleHealthCheck(healthTarget, true)}
         refreshing={healthCheckingId === healthTarget?.id}
+      />
+
+      {/* Deploy SSH Key Dialog */}
+      <DeploySshKeyDialog
+        open={showDeploySshKeyDialog}
+        onOpenChange={setShowDeploySshKeyDialog}
+        target={deploySshKeyTarget}
+        onDeployComplete={() => refetch()}
       />
     </Card>
   );
