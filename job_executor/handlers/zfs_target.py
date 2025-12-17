@@ -32,7 +32,7 @@ from pyVim.connect import SmartConnect, Disconnect
 from pyVmomi import vim
 
 from job_executor.handlers.base import BaseHandler
-from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL, ZFS_NFS_SHARE_OPTIONS
 from job_executor.utils import utc_now_iso
 
 
@@ -1592,7 +1592,9 @@ class ZfsTargetHandler(BaseHandler):
         self._log_console(job_id, 'INFO', f'Configuring NFS share for {dataset}...', details)
         
         # Set NFS share properties
-        share_opts = f'rw,no_root_squash,async'
+        # CRITICAL: Include 'nohide' to expose child datasets (VM folders) through NFS
+        # Without nohide, ZFS child datasets create separate mount points that are hidden from NFS clients
+        share_opts = ZFS_NFS_SHARE_OPTIONS
         if nfs_network and nfs_network != '*':
             share_opts = f'{nfs_network}({share_opts})'
         else:
@@ -2745,11 +2747,11 @@ class ZfsTargetHandler(BaseHandler):
                 nfs_network = details.get('nfs_network', '10.0.0.0/8')
                 nfs_path = f'/{pool_name}/nfs'
                 
-                # Set NFS share via ZFS
-                result = self._ssh_exec(f'zfs set sharenfs="rw,no_root_squash,async,no_subtree_check" {pool_name}/nfs', job_id=job_id)
+                # CRITICAL: Include 'nohide' to expose child datasets (VM folders) through NFS
+                result = self._ssh_exec(f'zfs set sharenfs="{ZFS_NFS_SHARE_OPTIONS}" {pool_name}/nfs', job_id=job_id)
                 
-                # Also add to /etc/exports as backup
-                export_line = f'{nfs_path} {nfs_network}(rw,sync,no_root_squash,no_subtree_check)'
+                # Also add to /etc/exports as backup (with nohide for nested mount visibility)
+                export_line = f'{nfs_path} {nfs_network}({ZFS_NFS_SHARE_OPTIONS})'
                 result = self._ssh_exec(f'grep -q "{nfs_path}" /etc/exports || echo "{export_line}" >> /etc/exports', job_id=job_id)
                 
                 # Export and restart NFS
