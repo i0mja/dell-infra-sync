@@ -615,48 +615,89 @@ class FailoverHandler:
             'message': f'Target {target.get("name")} is healthy'
         }
 
+    def _get_site_b_target(self, group: Dict) -> Optional[Dict]:
+        """
+        Get the Site B (DR) target for a protection group.
+        
+        This correctly identifies the DR target by checking:
+        1. If the group's target is itself a DR site, use it directly
+        2. Otherwise, get the partner_target_id (the actual DR site)
+        
+        This ensures pre-flight checks test the ACTUAL Site B, not the primary site.
+        """
+        target_id = group.get('target_id')
+        if not target_id:
+            return None
+        
+        target = self._fetch_replication_target(target_id)
+        if not target:
+            return None
+        
+        # If the target is already a DR site, use it directly
+        if target.get('site_role') == 'dr':
+            self.executor.log(f"[Site B] Target {target.get('name')} is already DR site")
+            return target
+        
+        # Otherwise, get the partner (DR) target
+        partner_id = target.get('partner_target_id')
+        if partner_id:
+            partner_target = self._fetch_replication_target(partner_id)
+            if partner_target:
+                self.executor.log(f"[Site B] Using partner target {partner_target.get('name')} as Site B (instead of {target.get('name')})")
+                return partner_target
+            else:
+                self.executor.log(f"[Site B] Partner target {partner_id} not found", "WARNING")
+        
+        # No partner configured - return the original target with a warning
+        self.executor.log(f"[Site B] No partner target configured, using {target.get('name')}", "WARNING")
+        return target
+
     def _check_site_b_ssh_connectivity(self, group: Dict) -> Dict:
         """
         Check SSH connectivity to Site B ZFS target using centralized credential lookup.
         Uses SSHCredentialManager for comprehensive credential lookup - same as replication.
+        
+        IMPORTANT: Tests the PARTNER target (actual DR site), not the primary target.
         """
         from job_executor.ssh_utils import SSHCredentialManager
         
-        target_id = group.get('target_id')
-        if not target_id:
+        # Get the correct Site B target (partner/DR site)
+        site_b_target = self._get_site_b_target(group)
+        
+        if not site_b_target:
             return {
                 'name': 'Site B SSH Connectivity',
                 'passed': False,
-                'message': 'No target configured',
+                'message': 'No Site B target configured',
                 'can_override': False
             }
 
-        target = self._fetch_replication_target(target_id)
-        if not target:
-            return {
-                'name': 'Site B SSH Connectivity',
-                'passed': False,
-                'message': 'Target not found',
-                'can_override': False
-            }
-
-        hostname = target.get('hostname')
+        site_b_target_id = site_b_target.get('id')
+        hostname = site_b_target.get('hostname')
+        target_name = site_b_target.get('name', hostname)
         
         # Use centralized SSH credential manager (same lookup as replication!)
         ssh_manager = SSHCredentialManager(self.executor)
-        creds = ssh_manager.get_credentials(target)
+        creds = ssh_manager.get_credentials(site_b_target)
         
         if not creds:
             return {
                 'name': 'Site B SSH Connectivity',
                 'passed': False,
-                'message': 'No SSH credentials found via any method',
+                'message': f'No SSH credentials found for {target_name} ({hostname})',
                 'can_override': False,
                 'remediation': {
                     'action_type': 'setup_ssh_key',
-                    'description': 'Deploy an SSH key to the target or run SSH Key Exchange',
+                    'job_type': 'ssh_key_deploy',
+                    'job_params': {'target_ids': [site_b_target_id], 'force': True},
+                    'description': f'Deploy SSH key to {target_name}',
                     'requires_password': True,
-                    'can_auto_fix': False
+                    'can_auto_fix': False,
+                    'context': {
+                        'target_id': site_b_target_id,
+                        'target_name': target_name,
+                        'hostname': hostname
+                    }
                 }
             }
         
@@ -667,15 +708,20 @@ class FailoverHandler:
             return {
                 'name': 'Site B SSH Connectivity',
                 'passed': False,
-                'message': f"SSH connection failed: {ssh_result.get('error', 'Unknown error')}",
+                'message': f"SSH to {target_name} ({hostname}) failed: {ssh_result.get('error', 'Unknown error')}",
                 'can_override': True,
                 'remediation': {
                     'action_type': 'redeploy_ssh_key',
                     'job_type': 'ssh_key_deploy',
-                    'job_params': {'target_ids': [target_id], 'force': True},
-                    'description': 'Re-deploy SSH key (may require root password)',
+                    'job_params': {'target_ids': [site_b_target_id], 'force': True},
+                    'description': f'Re-deploy SSH key to {target_name} (may require root password)',
                     'requires_password': True,
-                    'can_auto_fix': False
+                    'can_auto_fix': False,
+                    'context': {
+                        'target_id': site_b_target_id,
+                        'target_name': target_name,
+                        'hostname': hostname
+                    }
                 }
             }
 
@@ -683,30 +729,33 @@ class FailoverHandler:
         return {
             'name': 'Site B SSH Connectivity',
             'passed': True,
-            'message': f'SSH connection to {creds.get("hostname")} successful (via {key_source})'
+            'message': f'SSH to {target_name} ({hostname}) successful (via {key_source})'
         }
-    # Note: _get_ssh_key_deployment and _test_ssh_connection removed
-    # SSH functionality is now centralized in job_executor.ssh_utils.SSHCredentialManager
 
     def _check_site_b_vcenter(self, group: Dict) -> Dict:
-        """Check Site B vCenter connection via target's dr_vcenter_id."""
-        target_id = group.get('target_id')
-        if not target_id:
+        """Check Site B vCenter connection via target's dr_vcenter_id.
+        
+        IMPORTANT: Uses the PARTNER target (actual DR site) for vCenter lookup.
+        """
+        # Get the correct Site B target (partner/DR site)
+        site_b_target = self._get_site_b_target(group)
+        
+        if not site_b_target:
             return {
                 'name': 'Site B vCenter Connected',
                 'passed': False,
-                'message': 'No target configured',
+                'message': 'No Site B target configured',
                 'can_override': False
             }
 
-        target = self._fetch_replication_target(target_id)
-        dr_vcenter_id = target.get('dr_vcenter_id') if target else None
+        target_name = site_b_target.get('name', site_b_target.get('hostname'))
+        dr_vcenter_id = site_b_target.get('dr_vcenter_id')
 
         if not dr_vcenter_id:
             return {
                 'name': 'Site B vCenter Connected',
                 'passed': False,
-                'message': 'No DR vCenter configured on target',
+                'message': f'No DR vCenter configured on {target_name}',
                 'can_override': False
             }
 
@@ -714,7 +763,7 @@ class FailoverHandler:
         return {
             'name': 'Site B vCenter Connected',
             'passed': True,
-            'message': 'DR vCenter is configured'
+            'message': f'DR vCenter configured on {target_name}'
         }
 
     def _check_nfs_mounted(self, group: Dict) -> Dict:
