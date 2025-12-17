@@ -1647,7 +1647,7 @@ class ReplicationHandler(BaseHandler):
                                 dr_hostname = dr_ssh_creds.get('hostname')
                                 dr_username = dr_ssh_creds.get('username', 'root')
                                 dr_port = dr_ssh_creds.get('port', 22)
-                                dr_key_data = dr_ssh_creds.get('ssh_key_data')
+                                dr_key_data = dr_ssh_creds.get('key_data') or dr_ssh_creds.get('private_key')
                                 
                                 if dr_hostname and self.zfs_replication:
                                     # Pre-sync SSH connectivity check to Site B
