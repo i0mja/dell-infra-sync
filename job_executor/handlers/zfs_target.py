@@ -4230,6 +4230,45 @@ class ZfsTargetHandler(BaseHandler):
                 
                 self._log_console(job_id, 'INFO', f'Refresh complete: {results["mounted_count"]} succeeded, {results["failed_count"]} failed', job_details)
             
+            elif operation == 'rescan':
+                # Rescan datastore to refresh vCenter's file listing
+                self._log_console(job_id, 'INFO', 'Rescanning datastore to refresh vCenter file listing...', job_details)
+                
+                # Find the datastore object
+                target_datastore = None
+                for host in all_hosts:
+                    if host.runtime.connectionState == 'connected':
+                        for ds in host.datastore:
+                            if ds and ds.name == datastore_name:
+                                target_datastore = ds
+                                break
+                    if target_datastore:
+                        break
+                
+                if not target_datastore:
+                    raise Exception(f'Datastore {datastore_name} not found in vCenter')
+                
+                try:
+                    # RefreshDatastoreStorageInfo refreshes the storage info which includes file listing
+                    target_datastore.RefreshDatastoreStorageInfo()
+                    self._log_console(job_id, 'INFO', f'Triggered storage info refresh on {datastore_name}', job_details)
+                    
+                    # Also refresh the datastore browser by calling Refresh on the datastore
+                    try:
+                        target_datastore.Refresh()
+                        self._log_console(job_id, 'INFO', f'Refreshed datastore {datastore_name}', job_details)
+                    except Exception as refresh_err:
+                        self._log_console(job_id, 'WARN', f'Datastore.Refresh() not available: {refresh_err}', job_details)
+                    
+                    results['rescan_status'] = 'completed'
+                    results['message'] = f'Datastore {datastore_name} rescanned successfully. vCenter file listing should now be up to date.'
+                    
+                except Exception as rescan_err:
+                    self._log_console(job_id, 'ERROR', f'Rescan failed: {rescan_err}', job_details)
+                    results['rescan_status'] = 'failed'
+                    results['error'] = str(rescan_err)
+                    results['failed_count'] = 1
+            
             else:
                 raise Exception(f'Unknown operation: {operation}')
             
