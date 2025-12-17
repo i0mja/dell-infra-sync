@@ -54,6 +54,7 @@ import {
   MonitorCheck,
   Eye,
   Key,
+  Power,
 } from "lucide-react";
 import { useReplicationTargets, ReplicationTarget, TargetDependencies } from "@/hooks/useReplication";
 import { useSshKeys, SshKey } from "@/hooks/useSshKeys";
@@ -98,9 +99,10 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
   const [healthCheckingId, setHealthCheckingId] = useState<string | null>(null);
   const [scanningVmForId, setScanningVmForId] = useState<string | null>(null);
   const [rescanningId, setRescanningId] = useState<string | null>(null);
+  const [remountingId, setRemountingId] = useState<string | null>(null);
   
   // Datastore management hook
-  const { rescanDatastore } = useDatastoreManagement();
+  const { rescanDatastore, refreshMounts } = useDatastoreManagement();
   
   // Fetch VMs for the editing target's vCenter (for VM selector)
   const { data: vcenterVms = [], isLoading: loadingVms } = useVCenterVMs(editingTarget?.dr_vcenter_id);
@@ -498,6 +500,25 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
       await rescanDatastore(target.id);
     } finally {
       setRescanningId(null);
+    }
+  };
+
+  // Remount datastore - unmount and remount NFS on all ESXi hosts
+  const handleRemountDatastore = async (target: ReplicationTarget) => {
+    if (!target.datastore_name) {
+      toast({
+        title: "No datastore configured",
+        description: "This target doesn't have a datastore configured",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    setRemountingId(target.id);
+    try {
+      await refreshMounts(target.id);
+    } finally {
+      setRemountingId(null);
     }
   };
 
@@ -1269,6 +1290,20 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                                 <RefreshCw className="h-4 w-4 mr-2" />
                               )}
                               Rescan Datastore
+                            </DropdownMenuItem>
+                          )}
+                          {/* Remount datastore - unmount and remount NFS on all ESXi hosts */}
+                          {target.datastore_name && (
+                            <DropdownMenuItem 
+                              onClick={() => handleRemountDatastore(target)}
+                              disabled={remountingId === target.id}
+                            >
+                              {remountingId === target.id ? (
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              ) : (
+                                <Power className="h-4 w-4 mr-2" />
+                              )}
+                              Remount Datastore
                             </DropdownMenuItem>
                           )}
                           <DropdownMenuItem onClick={() => {
