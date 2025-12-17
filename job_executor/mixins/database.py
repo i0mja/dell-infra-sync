@@ -2,7 +2,7 @@
 
 import requests
 from typing import List, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from job_executor.utils import _safe_json_parse
 
 
@@ -40,8 +40,12 @@ class DatabaseMixin:
                 for job in jobs:
                     # Check if scheduled time has passed
                     if job.get('schedule_at'):
-                        scheduled_time = datetime.fromisoformat(job['schedule_at'].replace('Z', '+00:00'))
-                        if scheduled_time > datetime.now():
+                        try:
+                            scheduled_time = datetime.fromisoformat(job['schedule_at'].replace('Z', '+00:00'))
+                            if scheduled_time > datetime.now(timezone.utc):
+                                continue
+                        except Exception as e:
+                            self.log(f"Error parsing schedule_at for job {job.get('id')}: {e}", "WARN")
                             continue
                     
                     ready_jobs.append(job)
