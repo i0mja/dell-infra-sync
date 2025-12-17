@@ -678,6 +678,40 @@ class FailoverHandler:
         
         # Use centralized SSH credential manager (same lookup as replication!)
         ssh_manager = SSHCredentialManager(self.executor)
+        
+        # Check if key is assigned but not deployed (common issue causing auth failures)
+        deployment_status = ssh_manager.check_deployment_status(site_b_target)
+        
+        if deployment_status['has_assigned_key'] and not deployment_status['has_deployment']:
+            # Key assigned but never deployed - this will definitely fail
+            key_name = deployment_status['ssh_key_name'] or 'Unknown'
+            return {
+                'name': 'Site B SSH Connectivity',
+                'passed': False,
+                'message': f'SSH key "{key_name}" assigned but not deployed to {target_name}',
+                'can_override': False,
+                'is_warning': True,
+                'remediation': {
+                    'action_type': 'deploy_assigned_key',
+                    'job_type': 'ssh_key_deploy',
+                    'job_params': {
+                        'ssh_key_id': deployment_status['ssh_key_id'],
+                        'target_ids': [site_b_target_id],
+                        'force': True
+                    },
+                    'description': f'Deploy "{key_name}" key to {target_name}',
+                    'requires_password': True,
+                    'can_auto_fix': False,
+                    'context': {
+                        'target_id': site_b_target_id,
+                        'target_name': target_name,
+                        'hostname': hostname,
+                        'ssh_key_id': deployment_status['ssh_key_id'],
+                        'ssh_key_name': key_name
+                    }
+                }
+            }
+        
         creds = ssh_manager.get_credentials(site_b_target)
         
         if not creds:
