@@ -9,6 +9,8 @@ import { DrQuickActions } from "./DrQuickActions";
 import { DrOnboarding } from "./DrOnboarding";
 import { OnboardZfsTargetWizard } from "./OnboardZfsTargetWizard";
 import { ActiveReplicationsCard } from "./ActiveReplicationsCard";
+import { SLAMonitoringStatus } from "./SLAMonitoringStatus";
+import { SLAViolationsPanel } from "./SLAViolationsPanel";
 import { useProtectionGroups } from "@/hooks/useReplication";
 
 export function DrReplicationTab() {
@@ -40,6 +42,9 @@ export function DrReplicationTab() {
           <div className="lg:col-span-1">
             <ActiveReplicationsCard />
           </div>
+          <div className="lg:col-span-1">
+            <SLAMonitoringStatus />
+          </div>
         </div>
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList>
@@ -47,6 +52,7 @@ export function DrReplicationTab() {
             <TabsTrigger value="targets">ZFS Targets</TabsTrigger>
             <TabsTrigger value="pairs">Replication Pairs</TabsTrigger>
             <TabsTrigger value="jobs">Replication Jobs</TabsTrigger>
+            <TabsTrigger value="sla">SLA Violations</TabsTrigger>
           </TabsList>
           <TabsContent value="groups" className="mt-4">
             <ProtectionGroupsPanel />
@@ -59,6 +65,9 @@ export function DrReplicationTab() {
           </TabsContent>
           <TabsContent value="jobs" className="mt-4">
             <ReplicationJobsPanel />
+          </TabsContent>
+          <TabsContent value="sla" className="mt-4">
+            <SLAViolationsPanel />
           </TabsContent>
         </Tabs>
       </div>
