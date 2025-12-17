@@ -476,6 +476,65 @@ class ReplicationHandler(BaseHandler):
         # Also log to executor output
         self.executor.log(message, level)
     
+    def _find_datastore_recursive(self, content, datastore_name: str):
+        """Recursively search for datastore, including in StoragePods and nested folders.
+        
+        vCenter datastores can be located in:
+        - Direct children of datacenter's datastoreFolder
+        - Inside StoragePods (datastore clusters)
+        - Inside nested folders
+        
+        This method handles all cases.
+        """
+        from pyVmomi import vim
+        
+        def search_folder(folder):
+            if not hasattr(folder, 'childEntity'):
+                return None
+            for item in folder.childEntity:
+                # Direct datastore match
+                if isinstance(item, vim.Datastore) and item.name == datastore_name:
+                    return item
+                # Check StoragePod (datastore cluster)
+                if isinstance(item, vim.StoragePod):
+                    for ds in item.childEntity:
+                        if isinstance(ds, vim.Datastore) and ds.name == datastore_name:
+                            return ds
+                # Recurse into folders
+                if hasattr(item, 'childEntity'):
+                    result = search_folder(item)
+                    if result:
+                        return result
+            return None
+        
+        for dc in content.rootFolder.childEntity:
+            if hasattr(dc, 'datastoreFolder'):
+                result = search_folder(dc.datastoreFolder)
+                if result:
+                    return result
+        return None
+    
+    def _collect_datastore_names(self, folder, names: list, depth: int = 0):
+        """Recursively collect all datastore names for debugging output."""
+        from pyVmomi import vim
+        
+        if depth > 10:  # Prevent infinite recursion
+            return
+        
+        if not hasattr(folder, 'childEntity'):
+            return
+        
+        for item in folder.childEntity:
+            if isinstance(item, vim.Datastore):
+                names.append(item.name)
+            elif isinstance(item, vim.StoragePod):
+                names.append(f"[StoragePod: {item.name}]")
+                for ds in item.childEntity:
+                    if isinstance(ds, vim.Datastore):
+                        names.append(f"  - {ds.name}")
+            elif hasattr(item, 'childEntity'):
+                self._collect_datastore_names(item, names, depth + 1)
+    
     def _create_job_task(self, job_id: str, log_message: str, status: str = 'running') -> Optional[str]:
         """Create a job task for progress tracking"""
         try:
@@ -4225,20 +4284,22 @@ chmod 600 ~/.ssh/authorized_keys
                     'progress_percent': 30
                 })
                 
-                # Step 6: Find target datastore
+                # Step 6: Find target datastore (recursive search including StoragePods)
                 self._add_console_log(job_id, f"Looking for datastore: {datastore_name}")
-                datastore = None
-                for dc in content.rootFolder.childEntity:
-                    if hasattr(dc, 'datastoreFolder'):
-                        for ds in dc.datastoreFolder.childEntity:
-                            if hasattr(ds, 'name') and ds.name == datastore_name:
-                                datastore = ds
-                                break
-                    if datastore:
-                        break
+                datastore = self._find_datastore_recursive(content, datastore_name)
                 
                 if not datastore:
-                    raise ValueError(f"Datastore not found: {datastore_name}")
+                    # List available datastores for debugging
+                    available = []
+                    for dc in content.rootFolder.childEntity:
+                        if hasattr(dc, 'datastoreFolder'):
+                            self._collect_datastore_names(dc.datastoreFolder, available)
+                    
+                    available_list = ', '.join(available[:15])
+                    if len(available) > 15:
+                        available_list += f' ... and {len(available) - 15} more'
+                    
+                    raise ValueError(f"Datastore not found: {datastore_name}. Available on this vCenter: [{available_list}]")
                 
                 # Step 7: Find a cluster/host to create VM on
                 cluster = None
