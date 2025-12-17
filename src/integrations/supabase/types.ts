@@ -42,6 +42,7 @@ export type Database = {
           scp_share_path: string | null
           scp_share_type: string | null
           scp_share_username: string | null
+          show_sla_monitoring_jobs: boolean | null
           slow_command_threshold_ms: number
           stale_pending_hours: number | null
           stale_running_hours: number | null
@@ -76,6 +77,7 @@ export type Database = {
           scp_share_path?: string | null
           scp_share_type?: string | null
           scp_share_username?: string | null
+          show_sla_monitoring_jobs?: boolean | null
           slow_command_threshold_ms?: number
           stale_pending_hours?: number | null
           stale_running_hours?: number | null
@@ -110,6 +112,7 @@ export type Database = {
           scp_share_path?: string | null
           scp_share_type?: string | null
           scp_share_username?: string | null
+          show_sla_monitoring_jobs?: boolean | null
           slow_command_threshold_ms?: number
           stale_pending_hours?: number | null
           stale_running_hours?: number | null

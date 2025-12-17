@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { INTERNAL_JOB_TYPES } from "@/lib/job-constants";
+import { INTERNAL_JOB_TYPES, SLA_MONITORING_JOB_TYPES } from "@/lib/job-constants";
+import { useMemo, useState, useEffect } from "react";
 
 interface JobTask {
   id: string;
@@ -29,8 +30,33 @@ interface JobWithProgress {
 }
 
 export function useJobsWithProgress() {
+  const [showSlaMonitoringJobs, setShowSlaMonitoringJobs] = useState(false);
+
+  // Fetch SLA monitoring jobs visibility setting
+  useEffect(() => {
+    const fetchSetting = async () => {
+      const { data } = await supabase
+        .from('activity_settings')
+        .select('show_sla_monitoring_jobs')
+        .maybeSingle();
+      if (data) {
+        setShowSlaMonitoringJobs(data.show_sla_monitoring_jobs ?? false);
+      }
+    };
+    fetchSetting();
+  }, []);
+
+  // Calculate filtered job types based on setting
+  const filteredJobTypes = useMemo(() => {
+    const types: string[] = [...INTERNAL_JOB_TYPES];
+    if (!showSlaMonitoringJobs) {
+      types.push(...SLA_MONITORING_JOB_TYPES);
+    }
+    return types;
+  }, [showSlaMonitoringJobs]);
+
   return useQuery({
-    queryKey: ['active-jobs-with-progress'],
+    queryKey: ['active-jobs-with-progress', filteredJobTypes],
     queryFn: async () => {
       // Fetch active parent jobs (excluding internal job types)
       const { data: jobs, error: jobsError } = await supabase
@@ -38,7 +64,7 @@ export function useJobsWithProgress() {
         .select("*")
         .is("parent_job_id", null)
         .in("status", ["pending", "running"])
-        .not("job_type", "in", `(${INTERNAL_JOB_TYPES.join(',')})`)
+        .not("job_type", "in", `(${filteredJobTypes.join(',')})`)
         .order("created_at", { ascending: false });
 
       if (jobsError) throw jobsError;

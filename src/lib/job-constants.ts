@@ -12,4 +12,12 @@ export const INTERNAL_JOB_TYPES = [
   'idm_sync_users',
 ] as const;
 
+// SLA monitoring job types - hidden by default but can be shown via settings
+export const SLA_MONITORING_JOB_TYPES = [
+  'scheduled_replication_check',
+  'rpo_monitoring',
+] as const;
+
+export type SlaMonitoringJobType = typeof SLA_MONITORING_JOB_TYPES[number];
+
 export type InternalJobType = typeof INTERNAL_JOB_TYPES[number];
