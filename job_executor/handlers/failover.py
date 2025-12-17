@@ -718,13 +718,16 @@ class FailoverHandler:
         }
 
     def _check_nfs_mounted(self, group: Dict) -> Dict:
-        """Check that NFS datastore is mounted on DR vCenter - REAL implementation.
+        """Check that NFS datastore is mounted on DR vCenter - LIVE vCenter API query.
         
-        FIXED: Now looks up the datastore by name first to find the correct vCenter,
-        instead of assuming it's on target.dr_vcenter_id.
+        FIXED: Queries live vCenter API directly instead of trusting stale database records.
+        This ensures accurate detection of datastore mount status.
         """
         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
         import requests
+        import ssl
+        from pyVim.connect import SmartConnect, Disconnect
+        from pyVmomi import vim
         
         dr_datastore = group.get('dr_datastore')
         
@@ -737,7 +740,7 @@ class FailoverHandler:
                 'is_warning': True
             }
 
-        # Get target for fallback vCenter and NFS info
+        # Get target for vCenter info
         target_id = group.get('target_id')
         if not target_id:
             return {
@@ -748,21 +751,202 @@ class FailoverHandler:
             }
 
         target = self._fetch_replication_target(target_id)
-        fallback_vcenter_id = target.get('dr_vcenter_id') if target else None
+        if not target:
+            return {
+                'name': 'NFS Datastore Mounted',
+                'passed': False,
+                'message': 'Replication target not found',
+                'can_override': False
+            }
 
+        # Find which target/vCenter manages this datastore
+        resolved_target_id = self._find_target_for_datastore(dr_datastore)
+        if resolved_target_id and resolved_target_id != target_id:
+            # Found a different target that manages this datastore
+            resolved_target = self._fetch_replication_target(resolved_target_id)
+            vcenter_id = resolved_target.get('dr_vcenter_id') if resolved_target else target.get('dr_vcenter_id')
+            effective_target_id = resolved_target_id
+        else:
+            vcenter_id = target.get('dr_vcenter_id')
+            effective_target_id = target_id
+
+        if not vcenter_id:
+            return {
+                'name': 'NFS Datastore Mounted',
+                'passed': False,
+                'message': 'No DR vCenter configured on target',
+                'can_override': False
+            }
+
+        # Fetch vCenter credentials
+        vcenter = self._fetch_vcenter(vcenter_id)
+        if not vcenter:
+            return {
+                'name': 'NFS Datastore Mounted',
+                'passed': False,
+                'message': f'vCenter not found: {vcenter_id}',
+                'can_override': False
+            }
+
+        try:
+            # Query LIVE vCenter API
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            
+            si = SmartConnect(
+                host=vcenter['host'],
+                user=vcenter['username'],
+                pwd=vcenter['password'],
+                port=vcenter.get('port', 443),
+                sslContext=context
+            )
+            
+            try:
+                content = si.RetrieveContent()
+                
+                # Recursive search for datastore (handles StoragePods and nested folders)
+                datastore = self._find_datastore_recursive(content, dr_datastore)
+                
+                if not datastore:
+                    return {
+                        'name': 'NFS Datastore Mounted',
+                        'passed': False,
+                        'message': f'Datastore "{dr_datastore}" not found on vCenter {vcenter["host"]}',
+                        'can_override': False,
+                        'remediation': {
+                            'action_type': 'mount_datastore',
+                            'job_type': 'manage_datastore',
+                            'job_params': {
+                                'target_id': effective_target_id,
+                                'operation': 'mount_all',
+                                'datastore_name': dr_datastore,
+                                'vcenter_id': vcenter_id
+                            },
+                            'context': {
+                                'vcenter_id': vcenter_id,
+                                'vcenter_host': vcenter['host'],
+                                'datastore_name': dr_datastore,
+                                'target_id': effective_target_id
+                            },
+                            'description': f'Mount {dr_datastore} on vCenter {vcenter["host"]}',
+                            'can_auto_fix': True
+                        }
+                    }
+                
+                # Check accessibility and host count
+                accessible = datastore.summary.accessible if hasattr(datastore.summary, 'accessible') else False
+                hosts_mounted = len([h for h in datastore.host if h.mountInfo.mounted]) if hasattr(datastore, 'host') else 0
+                
+                if not accessible:
+                    return {
+                        'name': 'NFS Datastore Mounted',
+                        'passed': False,
+                        'message': f'Datastore "{dr_datastore}" is not accessible',
+                        'can_override': False,
+                        'remediation': {
+                            'action_type': 'remount_datastore',
+                            'job_type': 'manage_datastore',
+                            'job_params': {
+                                'target_id': effective_target_id,
+                                'operation': 'refresh',
+                                'datastore_name': dr_datastore,
+                                'vcenter_id': vcenter_id
+                            },
+                            'context': {
+                                'vcenter_id': vcenter_id,
+                                'datastore_name': dr_datastore,
+                                'target_id': effective_target_id
+                            },
+                            'description': f'Re-mount {dr_datastore} to make it accessible',
+                            'can_auto_fix': True
+                        }
+                    }
+                
+                if hosts_mounted == 0:
+                    return {
+                        'name': 'NFS Datastore Mounted',
+                        'passed': False,
+                        'message': f'Datastore "{dr_datastore}" not mounted on any hosts',
+                        'can_override': False,
+                        'remediation': {
+                            'action_type': 'mount_on_hosts',
+                            'job_type': 'manage_datastore',
+                            'job_params': {
+                                'target_id': effective_target_id,
+                                'operation': 'mount_all',
+                                'datastore_name': dr_datastore,
+                                'vcenter_id': vcenter_id
+                            },
+                            'context': {
+                                'vcenter_id': vcenter_id,
+                                'datastore_name': dr_datastore,
+                                'target_id': effective_target_id
+                            },
+                            'description': f'Mount {dr_datastore} on all vCenter hosts',
+                            'can_auto_fix': True
+                        }
+                    }
+                
+                return {
+                    'name': 'NFS Datastore Mounted',
+                    'passed': True,
+                    'message': f'Datastore mounted on {hosts_mounted} hosts, accessible (live vCenter check)'
+                }
+            finally:
+                Disconnect(si)
+                
+        except Exception as e:
+            self.executor.log(f"[Failover Pre-Flight] Live vCenter check failed: {e}", "WARNING")
+            # Fallback to database check if live vCenter fails
+            return self._check_nfs_mounted_from_db(group, dr_datastore, target, effective_target_id, vcenter_id)
+
+    def _find_datastore_recursive(self, content, datastore_name: str):
+        """Recursively search for datastore, including in StoragePods and nested folders."""
+        from pyVmomi import vim
+        
+        def search_folder(folder):
+            if not hasattr(folder, 'childEntity'):
+                return None
+            for item in folder.childEntity:
+                # Direct datastore match
+                if isinstance(item, vim.Datastore) and item.name == datastore_name:
+                    return item
+                # Check StoragePod (datastore cluster)
+                if isinstance(item, vim.StoragePod):
+                    for ds in item.childEntity:
+                        if isinstance(ds, vim.Datastore) and ds.name == datastore_name:
+                            return ds
+                # Recurse into folders
+                if hasattr(item, 'childEntity'):
+                    result = search_folder(item)
+                    if result:
+                        return result
+            return None
+        
+        for dc in content.rootFolder.childEntity:
+            if hasattr(dc, 'datastoreFolder'):
+                result = search_folder(dc.datastoreFolder)
+                if result:
+                    return result
+        return None
+
+    def _check_nfs_mounted_from_db(self, group: Dict, dr_datastore: str, target: Dict, effective_target_id: str, vcenter_id: str) -> Dict:
+        """Fallback: Check datastore status from database when live vCenter check fails."""
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        import requests
+        
         try:
             headers = {
                 'apikey': SERVICE_ROLE_KEY,
                 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
             }
             
-            # FIXED: First search for datastore by NAME only (not filtered by vCenter)
-            # This finds which vCenter actually has this datastore
             response = requests.get(
                 f"{DSM_URL}/rest/v1/vcenter_datastores",
                 params={
                     'name': f'eq.{dr_datastore}',
-                    'select': 'id,name,accessible,host_count,last_sync,replication_target_id,source_vcenter_id'
+                    'select': 'id,name,accessible,host_count,last_sync'
                 },
                 headers=headers,
                 verify=VERIFY_SSL,
@@ -780,91 +964,47 @@ class FailoverHandler:
             datastores = response.json()
             
             if not datastores:
-                # Datastore not found - need to mount it
-                # Find which target manages this datastore by looking at replication_targets
-                mount_target_id = self._find_target_for_datastore(dr_datastore) or target_id
-                mount_target = self._fetch_replication_target(mount_target_id) if mount_target_id != target_id else target
-                mount_vcenter_id = mount_target.get('dr_vcenter_id') if mount_target else fallback_vcenter_id
-                
                 return {
                     'name': 'NFS Datastore Mounted',
                     'passed': False,
-                    'message': f'Datastore "{dr_datastore}" not found on any vCenter',
+                    'message': f'Datastore "{dr_datastore}" not found (database fallback)',
                     'can_override': False,
                     'remediation': {
                         'action_type': 'mount_datastore',
                         'job_type': 'manage_datastore',
                         'job_params': {
-                            'target_id': mount_target_id,
+                            'target_id': effective_target_id,
                             'operation': 'mount_all',
-                            'datastore_name': dr_datastore,  # Explicit datastore override
-                            'vcenter_id': mount_vcenter_id   # Explicit vCenter override
-                        },
-                        'context': {
-                            'vcenter_id': mount_vcenter_id,
                             'datastore_name': dr_datastore,
-                            'target_id': mount_target_id
+                            'vcenter_id': vcenter_id
                         },
                         'description': f'Mount {dr_datastore} on all vCenter hosts',
                         'can_auto_fix': True
                     }
                 }
 
-            # Found the datastore - get the ACTUAL vCenter it's on
             ds = datastores[0]
-            actual_vcenter_id = ds.get('source_vcenter_id')
-            ds_target_id = ds.get('replication_target_id') or target_id
             accessible = ds.get('accessible', False)
             host_count = ds.get('host_count', 0)
+            last_sync = ds.get('last_sync', 'unknown')
 
-            if not accessible:
+            if not accessible or host_count == 0:
                 return {
                     'name': 'NFS Datastore Mounted',
                     'passed': False,
-                    'message': f'Datastore "{dr_datastore}" is not accessible',
+                    'message': f'Datastore not accessible (DB fallback, last sync: {last_sync})',
                     'can_override': False,
+                    'is_warning': True,
                     'remediation': {
-                        'action_type': 'remount_datastore',
+                        'action_type': 'mount_datastore',
                         'job_type': 'manage_datastore',
                         'job_params': {
-                            'target_id': ds_target_id,
-                            'operation': 'refresh',
-                            'datastore_name': dr_datastore,
-                            'vcenter_id': actual_vcenter_id
-                        },
-                        'context': {
-                            'vcenter_id': actual_vcenter_id,
-                            'datastore_name': dr_datastore,
-                            'datastore_id': ds.get('id'),
-                            'target_id': ds_target_id
-                        },
-                        'description': f'Re-mount {dr_datastore} to make it accessible',
-                        'can_auto_fix': True
-                    }
-                }
-
-            if host_count == 0:
-                return {
-                    'name': 'NFS Datastore Mounted',
-                    'passed': False,
-                    'message': f'Datastore "{dr_datastore}" not mounted on any hosts',
-                    'can_override': False,
-                    'remediation': {
-                        'action_type': 'mount_on_hosts',
-                        'job_type': 'manage_datastore',
-                        'job_params': {
-                            'target_id': ds_target_id,
+                            'target_id': effective_target_id,
                             'operation': 'mount_all',
                             'datastore_name': dr_datastore,
-                            'vcenter_id': actual_vcenter_id
+                            'vcenter_id': vcenter_id
                         },
-                        'context': {
-                            'vcenter_id': actual_vcenter_id,
-                            'datastore_name': dr_datastore,
-                            'datastore_id': ds.get('id'),
-                            'target_id': ds_target_id
-                        },
-                        'description': f'Mount {dr_datastore} on all vCenter hosts',
+                        'description': f'Mount/refresh {dr_datastore}',
                         'can_auto_fix': True
                     }
                 }
@@ -872,7 +1012,8 @@ class FailoverHandler:
             return {
                 'name': 'NFS Datastore Mounted',
                 'passed': True,
-                'message': f'Datastore mounted on {host_count} hosts, accessible'
+                'message': f'Datastore mounted on {host_count} hosts (DB fallback, last sync: {last_sync})',
+                'is_warning': True  # Warn that this is stale data
             }
 
         except Exception as e:
@@ -884,7 +1025,13 @@ class FailoverHandler:
             }
 
     def _find_target_for_datastore(self, datastore_name: str) -> Optional[str]:
-        """Find the replication target that manages a given datastore by name."""
+        """Find the replication target that manages a given datastore.
+        
+        Matches by:
+        1. Exact datastore_name match in replication_targets
+        2. Pattern match: "NFS-{hostname}" where hostname is target's name/hostname
+        3. Pattern match: "nfs-{target_name}" for older naming convention
+        """
         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
         import requests
         
@@ -894,6 +1041,7 @@ class FailoverHandler:
                 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
             }
             
+            # Try 1: Exact datastore_name match
             response = requests.get(
                 f"{DSM_URL}/rest/v1/replication_targets",
                 params={
@@ -908,9 +1056,88 @@ class FailoverHandler:
             if response.status_code == 200:
                 targets = response.json()
                 if targets:
+                    self.executor.log(f"[Failover] Found target by exact datastore_name: {targets[0].get('name')}")
                     return targets[0].get('id')
-        except Exception:
-            pass
+            
+            # Try 2: Pattern match for "NFS-{hostname}" or "nfs-{name}"
+            # E.g., "NFS-zfs-lyo-vrep-02" → look for target with hostname/name containing "zfs-lyo-vrep-02"
+            pattern_prefixes = ['NFS-', 'nfs-']
+            for prefix in pattern_prefixes:
+                if datastore_name.startswith(prefix):
+                    target_pattern = datastore_name[len(prefix):]  # Remove prefix
+                    
+                    # Search by hostname containing the pattern
+                    response = requests.get(
+                        f"{DSM_URL}/rest/v1/replication_targets",
+                        params={
+                            'hostname': f'ilike.*{target_pattern}*',
+                            'select': 'id,name,hostname,dr_vcenter_id'
+                        },
+                        headers=headers,
+                        verify=VERIFY_SSL,
+                        timeout=10
+                    )
+                    
+                    if response.status_code == 200:
+                        targets = response.json()
+                        if targets:
+                            self.executor.log(f"[Failover] Found target by hostname pattern '{target_pattern}': {targets[0].get('name')}")
+                            return targets[0].get('id')
+                    
+                    # Search by name containing the pattern
+                    response = requests.get(
+                        f"{DSM_URL}/rest/v1/replication_targets",
+                        params={
+                            'name': f'ilike.*{target_pattern}*',
+                            'select': 'id,name,hostname,dr_vcenter_id'
+                        },
+                        headers=headers,
+                        verify=VERIFY_SSL,
+                        timeout=10
+                    )
+                    
+                    if response.status_code == 200:
+                        targets = response.json()
+                        if targets:
+                            self.executor.log(f"[Failover] Found target by name pattern '{target_pattern}': {targets[0].get('name')}")
+                            return targets[0].get('id')
+        except Exception as e:
+            self.executor.log(f"[Failover] Error finding target for datastore: {e}", "WARNING")
+        
+        return None
+
+    def _fetch_vcenter(self, vcenter_id: str) -> Optional[Dict]:
+        """Fetch vCenter details with decrypted password."""
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        import requests
+        
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+            }
+            
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenters",
+                params={
+                    'id': f'eq.{vcenter_id}',
+                    'select': 'id,name,host,username,password_encrypted,port'
+                },
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                vcenters = response.json()
+                if vcenters:
+                    vc = vcenters[0]
+                    # Decrypt password
+                    if vc.get('password_encrypted'):
+                        vc['password'] = self.executor.decrypt_password(vc['password_encrypted'])
+                    return vc
+        except Exception as e:
+            self.executor.log(f"[Failover] Error fetching vCenter: {e}", "WARNING")
         
         return None
 
