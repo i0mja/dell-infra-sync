@@ -312,6 +312,78 @@ class SSHCredentialManager:
         self.log("[SSH] Failed to load key as any known type (Ed25519, RSA, ECDSA)", "WARNING")
         return None
     
+    def check_deployment_status(self, target: Dict) -> Dict:
+        """
+        Check if an assigned SSH key has been deployed to the target.
+        
+        This helps identify cases where a key is assigned but not yet deployed,
+        which would cause "No authentication methods available" errors.
+        
+        Returns:
+            Dict with:
+            - has_assigned_key: bool - True if ssh_key_id is set on target
+            - has_deployment: bool - True if deployment record exists
+            - deployment_status: str - Current deployment status or None
+            - ssh_key_id: str - The assigned key ID
+            - ssh_key_name: str - Name of the assigned key
+        """
+        result = {
+            'has_assigned_key': False,
+            'has_deployment': False,
+            'deployment_status': None,
+            'ssh_key_id': None,
+            'ssh_key_name': None
+        }
+        
+        ssh_key_id = target.get('ssh_key_id')
+        if not ssh_key_id:
+            return result
+        
+        result['has_assigned_key'] = True
+        result['ssh_key_id'] = ssh_key_id
+        
+        try:
+            # Get key name
+            key_response = requests.get(
+                f"{DSM_URL}/rest/v1/ssh_keys",
+                params={'id': f'eq.{ssh_key_id}', 'select': 'name'},
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            if key_response.ok and key_response.json():
+                result['ssh_key_name'] = key_response.json()[0].get('name')
+            
+            # Check for deployment record
+            target_id = target.get('id')
+            if target_id:
+                dep_response = requests.get(
+                    f"{DSM_URL}/rest/v1/ssh_key_deployments",
+                    params={
+                        'ssh_key_id': f'eq.{ssh_key_id}',
+                        'replication_target_id': f'eq.{target_id}',
+                        'select': 'status,deployed_at'
+                    },
+                    headers={
+                        'apikey': SERVICE_ROLE_KEY,
+                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                    },
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+                if dep_response.ok and dep_response.json():
+                    deployment = dep_response.json()[0]
+                    result['has_deployment'] = True
+                    result['deployment_status'] = deployment.get('status')
+                    
+        except Exception as e:
+            self.log(f"[SSH] Error checking deployment status: {e}", "WARNING")
+        
+        return result
+    
     # =========================================================================
     # Private Helper Methods
     # =========================================================================
