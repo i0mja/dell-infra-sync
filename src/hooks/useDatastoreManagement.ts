@@ -25,7 +25,8 @@ export type DatastoreOperation =
   | 'unmount_hosts' 
   | 'unmount_all' 
   | 'refresh'
-  | 'scan';
+  | 'scan'
+  | 'rescan';
 
 export function useDatastoreManagement() {
   const [loading, setLoading] = useState(false);
@@ -106,6 +107,51 @@ export function useDatastoreManagement() {
     return createDatastoreJob(targetId, 'refresh');
   };
 
+  const rescanDatastore = async (targetId: string) => {
+    try {
+      setLoading(true);
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        throw new Error('Authentication required');
+      }
+
+      const { data: job, error } = await supabase
+        .from('jobs')
+        .insert({
+          job_type: 'manage_datastore',
+          status: 'pending',
+          created_by: user.id,
+          details: {
+            target_id: targetId,
+            operation: 'rescan',
+          },
+          target_scope: {}
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      toast({
+        title: "Rescan job created",
+        description: "vCenter will refresh its view of the datastore contents",
+      });
+
+      return job.id;
+    } catch (error) {
+      console.error('Failed to create rescan job:', error);
+      toast({
+        title: "Failed to create rescan job",
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: "destructive",
+      });
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const scanDatastoreStatus = async (targetId: string) => {
     try {
       setLoading(true);
@@ -160,6 +206,7 @@ export function useDatastoreManagement() {
     unmountFromHosts,
     unmountFromAllHosts,
     refreshMounts,
+    rescanDatastore,
     scanDatastoreStatus,
     createDatastoreJob,
   };

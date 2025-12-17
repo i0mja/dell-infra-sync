@@ -67,6 +67,7 @@ import { DecommissionTargetDialog, DecommissionOption } from "./DecommissionTarg
 import { DatastoreManagementDialog } from "./DatastoreManagementDialog";
 import { ZfsTargetHealthDialog } from "./ZfsTargetHealthDialog";
 import { DeploySshKeyDialog } from "./DeploySshKeyDialog";
+import { useDatastoreManagement } from "@/hooks/useDatastoreManagement";
 
 interface ReplicationTargetsPanelProps {
   onAddTarget?: () => void;
@@ -96,6 +97,10 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
   const [editingTarget, setEditingTarget] = useState<any>(null);
   const [healthCheckingId, setHealthCheckingId] = useState<string | null>(null);
   const [scanningVmForId, setScanningVmForId] = useState<string | null>(null);
+  const [rescanningId, setRescanningId] = useState<string | null>(null);
+  
+  // Datastore management hook
+  const { rescanDatastore } = useDatastoreManagement();
   
   // Fetch VMs for the editing target's vCenter (for VM selector)
   const { data: vcenterVms = [], isLoading: loadingVms } = useVCenterVMs(editingTarget?.dr_vcenter_id);
@@ -474,6 +479,25 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
       });
     } finally {
       setScanningVmForId(null);
+    }
+  };
+
+  // Rescan datastore to refresh vCenter file listing
+  const handleRescanDatastore = async (target: ReplicationTarget) => {
+    if (!target.datastore_name) {
+      toast({
+        title: "No datastore configured",
+        description: "This target doesn't have a datastore configured",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    setRescanningId(target.id);
+    try {
+      await rescanDatastore(target.id);
+    } finally {
+      setRescanningId(null);
     }
   };
 
@@ -1233,6 +1257,20 @@ export function ReplicationTargetsPanel({ onAddTarget }: ReplicationTargetsPanel
                             <Database className="h-4 w-4 mr-2" />
                             Manage Datastore
                           </DropdownMenuItem>
+                          {/* Rescan datastore to refresh vCenter file listing */}
+                          {target.datastore_name && (
+                            <DropdownMenuItem 
+                              onClick={() => handleRescanDatastore(target)}
+                              disabled={rescanningId === target.id}
+                            >
+                              {rescanningId === target.id ? (
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              ) : (
+                                <RefreshCw className="h-4 w-4 mr-2" />
+                              )}
+                              Rescan Datastore
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem onClick={() => {
                             setDeploySshKeyTarget(target);
                             setShowDeploySshKeyDialog(true);
