@@ -52,3 +52,8 @@ MEDIA_SERVER_PORT = int(os.getenv("MEDIA_SERVER_PORT", "8888"))
 MEDIA_SERVER_ENABLED = os.getenv("MEDIA_SERVER_ENABLED", "true").lower() == "true"
 ISO_MAX_STORAGE_GB = int(os.getenv("ISO_MAX_STORAGE_GB", "100"))
 FIRMWARE_MAX_STORAGE_GB = int(os.getenv("FIRMWARE_MAX_STORAGE_GB", "200"))
+
+# ZFS NFS Export Options
+# CRITICAL: 'nohide' is required for ZFS child datasets (VM folders) to be visible via NFS
+# Without 'nohide', ESXi cannot see files in child datasets even with crossmnt enabled
+ZFS_NFS_SHARE_OPTIONS = "rw,no_root_squash,async,no_subtree_check,crossmnt,nohide"
