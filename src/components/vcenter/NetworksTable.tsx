@@ -10,7 +10,9 @@ import { TablePagination } from "@/components/ui/table-pagination";
 import type { VCenterNetwork } from "@/hooks/useVCenterData";
 
 interface GroupedNetwork {
-  name: string;
+  groupKey: string;
+  displayName: string;
+  networkNames: string[];
   networks: VCenterNetwork[];
   totalHostCount: number;
   totalVmCount: number;
@@ -85,16 +87,29 @@ export function NetworksTable({
     });
   }, [networks, searchTerm, typeFilter, vlanFilter]);
 
-  // Group networks by name
+  // Group networks by VLAN ID (with name fallback)
   const groupedNetworks = useMemo(() => {
     if (!groupByName) return null;
 
     const groups = new Map<string, GroupedNetwork>();
     
     filteredNetworks.forEach(net => {
-      if (!groups.has(net.name)) {
-        groups.set(net.name, {
-          name: net.name,
+      // Create grouping key: prioritize VLAN ID, then VLAN range, fallback to name
+      let groupKey: string;
+      if (net.vlan_id) {
+        groupKey = `vlan:${net.vlan_id}`;
+      } else if (net.vlan_range) {
+        groupKey = `vlan_range:${net.vlan_range}`;
+      } else {
+        groupKey = `name:${net.name}`;
+      }
+      
+      if (!groups.has(groupKey)) {
+        // Display name: use first network name (will collect aliases)
+        groups.set(groupKey, {
+          groupKey,
+          displayName: net.name,
+          networkNames: [],
           networks: [],
           totalHostCount: 0,
           totalVmCount: 0,
@@ -105,10 +120,15 @@ export function NetworksTable({
           vcenterNames: [],
         });
       }
-      const group = groups.get(net.name)!;
+      const group = groups.get(groupKey)!;
       group.networks.push(net);
       group.totalHostCount += net.host_count || 0;
       group.totalVmCount += net.vm_count || 0;
+      
+      // Collect unique network names for aliases
+      if (!group.networkNames.includes(net.name)) {
+        group.networkNames.push(net.name);
+      }
       
       // Track unique vCenters
       if (net.source_vcenter_id) {
@@ -131,13 +151,13 @@ export function NetworksTable({
     return [...groupedNetworks].sort((a, b) => {
       let aVal: any, bVal: any;
       switch (sortField) {
-        case 'name': aVal = a.name; bVal = b.name; break;
+        case 'name': aVal = a.displayName; bVal = b.displayName; break;
         case 'network_type': aVal = a.networkType; bVal = b.networkType; break;
         case 'vlan_id': aVal = a.vlanId; bVal = b.vlanId; break;
         case 'host_count': aVal = a.totalHostCount; bVal = b.totalHostCount; break;
         case 'vm_count': aVal = a.totalVmCount; bVal = b.totalVmCount; break;
         case 'site_count': aVal = a.siteCount; bVal = b.siteCount; break;
-        default: aVal = a.name; bVal = b.name;
+        default: aVal = a.displayName; bVal = b.displayName;
       }
       return compareValues(aVal, bVal, sortDirection);
     });
@@ -188,7 +208,7 @@ export function NetworksTable({
       if (selectedNetworks.size === groupedNetworks.length) { 
         setSelectedNetworks(new Set()); 
       } else { 
-        setSelectedNetworks(new Set(groupedNetworks.map((g) => g.name))); 
+        setSelectedNetworks(new Set(groupedNetworks.map((g) => g.groupKey))); 
       }
     } else {
       if (selectedNetworks.size === filteredNetworks.length) { 
@@ -306,7 +326,7 @@ export function NetworksTable({
               // Grouped view
               paginatedGroupedItems.map((group) => (
                 <TableRow
-                  key={group.name}
+                  key={group.groupKey}
                   className="cursor-pointer hover:bg-muted/50"
                   onClick={() => {
                     if (group.networks.length > 0) {
@@ -317,19 +337,28 @@ export function NetworksTable({
                 >
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <Checkbox
-                      checked={selectedNetworks.has(group.name)}
-                      onCheckedChange={() => toggleNetwork(group.name)}
+                      checked={selectedNetworks.has(group.groupKey)}
+                      onCheckedChange={() => toggleNetwork(group.groupKey)}
                     />
                   </TableCell>
                   {isColVisible("name") && (
                     <TableCell>
-                      <div className="flex items-center gap-2">
-                        {group.networkType === 'distributed' ? (
-                          <Network className="h-4 w-4 text-primary" />
-                        ) : (
-                          <Wifi className="h-4 w-4 text-muted-foreground" />
+                      <div className="flex flex-col">
+                        <div className="flex items-center gap-2">
+                          {group.networkType === 'distributed' ? (
+                            <Network className="h-4 w-4 text-primary" />
+                          ) : (
+                            <Wifi className="h-4 w-4 text-muted-foreground" />
+                          )}
+                          <span className="font-medium">{group.displayName}</span>
+                        </div>
+                        {/* Show aliases if network names differ across sites */}
+                        {group.networkNames.length > 1 && (
+                          <span className="text-xs text-muted-foreground ml-6">
+                            aka: {group.networkNames.filter(n => n !== group.displayName).slice(0, 3).join(', ')}
+                            {group.networkNames.length > 4 && ` +${group.networkNames.length - 4} more`}
+                          </span>
                         )}
-                        <span className="font-medium">{group.name}</span>
                       </div>
                     </TableCell>
                   )}
