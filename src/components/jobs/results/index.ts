@@ -20,3 +20,4 @@ export { ZfsHealthCheckResults } from './ZfsHealthCheckResults';
 export { ReplicationSyncResults } from './ReplicationSyncResults';
 export { FailoverPreflightResults } from './FailoverPreflightResults';
 export { SshKeyExchangeResults } from './SshKeyExchangeResults';
+export { SLAMonitoringResults } from './SLAMonitoringResults';
