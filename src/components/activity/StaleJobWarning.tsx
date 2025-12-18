@@ -1,4 +1,4 @@
-import { AlertTriangle, XCircle, Settings } from "lucide-react";
+import { AlertTriangle, XCircle, Settings, Clock, Loader2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Job } from "./JobsTable";
@@ -8,11 +8,39 @@ interface StaleJobWarningProps {
   staleJobs: Job[];
   onCancelJobs: (jobIds: string[]) => Promise<void>;
   onDismiss: () => void;
+  executorBusy?: boolean;
+  queuedCount?: number;
 }
 
-export function StaleJobWarning({ staleJobs, onCancelJobs, onDismiss }: StaleJobWarningProps) {
+export function StaleJobWarning({ 
+  staleJobs, 
+  onCancelJobs, 
+  onDismiss,
+  executorBusy = false,
+  queuedCount = 0
+}: StaleJobWarningProps) {
   const navigate = useNavigate();
 
+  // Executor busy mode - informational, not a warning
+  if (executorBusy && queuedCount > 0) {
+    return (
+      <Alert className="mb-4 border-blue-500/50 bg-blue-500/10">
+        <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />
+        <AlertTitle className="text-blue-500">Executor Busy</AlertTitle>
+        <AlertDescription className="text-muted-foreground">
+          <p className="mb-2 flex items-center gap-2">
+            <Clock className="h-3 w-3" />
+            {queuedCount} job{queuedCount > 1 ? "s" : ""} queued - waiting for current job to complete
+          </p>
+          <p className="text-xs">
+            Jobs will be processed in order. The executor is actively working on other tasks.
+          </p>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  // No stale jobs - don't render anything
   if (staleJobs.length === 0) return null;
 
   const jobTypes = [...new Set(staleJobs.map(j => j.job_type))];
