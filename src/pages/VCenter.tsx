@@ -154,30 +154,39 @@ export default function VCenter() {
   const fetchHosts = async () => {
     try {
       setHostsLoading(true);
+      
+      // Fetch hosts
       let query = supabase
         .from("vcenter_hosts")
-        .select(`
-          *,
-          linked_server:servers!servers_vcenter_host_id_fkey(id, hostname)
-        `);
+        .select("*");
 
-      // Filter by selectedVCenterId if not "all"
       if (selectedVCenterId && selectedVCenterId !== "all") {
         query = query.eq("source_vcenter_id", selectedVCenterId);
       }
 
-      const { data, error } = await query
+      const { data: hostsData, error: hostsError } = await query
         .order("cluster", { ascending: true })
         .order("name", { ascending: true });
 
-      if (error) throw error;
-      
-      // Map the data to include server_id from the joined server (reverse FK)
-      const hostsWithLinks = (data || []).map(host => ({
+      if (hostsError) throw hostsError;
+
+      // Fetch servers that are linked to vcenter hosts (to get reverse link)
+      const { data: linkedServers } = await supabase
+        .from("servers")
+        .select("id, vcenter_host_id")
+        .not("vcenter_host_id", "is", null);
+
+      // Create a lookup map: vcenter_host_id -> server_id
+      const hostToServerMap = new Map(
+        (linkedServers || []).map(s => [s.vcenter_host_id, s.id])
+      );
+
+      // Merge - use existing server_id or get from servers table
+      const hostsWithLinks = (hostsData || []).map(host => ({
         ...host,
-        server_id: host.linked_server?.[0]?.id || host.server_id || null,
+        server_id: host.server_id || hostToServerMap.get(host.id) || null,
       }));
-      
+
       setHosts(hostsWithLinks);
     } catch (error: any) {
       toast({
