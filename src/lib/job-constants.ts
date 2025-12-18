@@ -21,3 +21,10 @@ export const SLA_MONITORING_JOB_TYPES = [
 export type SlaMonitoringJobType = typeof SLA_MONITORING_JOB_TYPES[number];
 
 export type InternalJobType = typeof INTERNAL_JOB_TYPES[number];
+
+/**
+ * Check if a job type is an SLA monitoring job
+ */
+export function isSlaMonitoringJob(jobType: string): boolean {
+  return SLA_MONITORING_JOB_TYPES.includes(jobType as SlaMonitoringJobType);
+}

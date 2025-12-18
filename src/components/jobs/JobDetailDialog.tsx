@@ -6,13 +6,15 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CheckCircle, XCircle, PlayCircle, Clock, AlertCircle, ListChecks, Link2, ExternalLink, Calendar, Minimize2 } from "lucide-react";
+import { CheckCircle, XCircle, PlayCircle, Clock, AlertCircle, ListChecks, Link2, ExternalLink, Calendar, Minimize2, Settings } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
 import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
-import { DiscoveryScanResults, VCenterSyncResults, CredentialTestResults, ScpResults, MultiServerResults, GenericResults, JobTimingCard, EsxiUpgradeResults, EsxiPreflightResults, JobProgressHeader, JobTasksTimeline, JobConsoleLog, StorageVMotionResults, ZfsDeploymentResults, ValidationPreflightResults, ZfsHealthCheckResults, ReplicationSyncResults, FailoverPreflightResults, SshKeyExchangeResults } from "./results";
+import { DiscoveryScanResults, VCenterSyncResults, CredentialTestResults, ScpResults, MultiServerResults, GenericResults, JobTimingCard, EsxiUpgradeResults, EsxiPreflightResults, JobProgressHeader, JobTasksTimeline, JobConsoleLog, StorageVMotionResults, ZfsDeploymentResults, ValidationPreflightResults, ZfsHealthCheckResults, ReplicationSyncResults, FailoverPreflightResults, SshKeyExchangeResults, SLAMonitoringResults } from "./results";
 import { PendingJobWarning } from "@/components/activity/PendingJobWarning";
 import { toast } from "sonner";
+import { getScheduledJobConfig } from "@/lib/scheduled-jobs";
+import { ScheduledJobContextPanel } from "./ScheduledJobContextPanel";
 interface Job {
   id: string;
   job_type: string;
@@ -53,6 +55,10 @@ export const JobDetailDialog = ({
   // Check if this is a workflow job type (safe even when job is null)
   const workflowJobTypes = ['prepare_host_for_update', 'verify_host_after_update', 'rolling_cluster_update'];
   const isWorkflowJob = job ? workflowJobTypes.includes(job.job_type) : false;
+  
+  // Check if this is a scheduled job type
+  const scheduledJobConfig = job ? getScheduledJobConfig(job.job_type) : null;
+  const isScheduledJob = !!scheduledJobConfig;
   useEffect(() => {
     if (!open || !job) return;
 
@@ -212,6 +218,9 @@ export const JobDetailDialog = ({
         return <FailoverPreflightResults details={job.details} />;
       case 'exchange_ssh_keys':
         return <SshKeyExchangeResults details={job.details} status={job.status} />;
+      case 'scheduled_replication_check':
+      case 'rpo_monitoring':
+        return <SLAMonitoringResults details={job.details} jobType={job.job_type as 'scheduled_replication_check' | 'rpo_monitoring'} />;
       default:
         return <GenericResults details={job.details} />;
     }
@@ -299,10 +308,16 @@ export const JobDetailDialog = ({
           )}
 
           <Tabs defaultValue="progress" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
+            <TabsList className={`grid w-full ${isScheduledJob ? 'grid-cols-4' : 'grid-cols-3'}`}>
               <TabsTrigger value="progress">Progress</TabsTrigger>
               <TabsTrigger value="console">Console</TabsTrigger>
               <TabsTrigger value="results">Results</TabsTrigger>
+              {isScheduledJob && (
+                <TabsTrigger value="configuration" className="flex items-center gap-1">
+                  <Settings className="h-3 w-3" />
+                  Config
+                </TabsTrigger>
+              )}
             </TabsList>
 
             <TabsContent value="progress" className="space-y-4 mt-4">
@@ -407,6 +422,17 @@ export const JobDetailDialog = ({
                   </CardContent>
                 </Card>}
             </TabsContent>
+
+            {/* Configuration Tab for Scheduled Jobs */}
+            {isScheduledJob && scheduledJobConfig && (
+              <TabsContent value="configuration" className="mt-4">
+                <ScheduledJobContextPanel 
+                  jobType={job.job_type}
+                  config={scheduledJobConfig}
+                  jobDetails={job.details}
+                />
+              </TabsContent>
+            )}
 
           </Tabs>
         </DialogContent>}

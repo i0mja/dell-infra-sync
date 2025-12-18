@@ -86,6 +86,16 @@ export const JOB_LABELS: Record<string, JobLabelInfo> = {
   // SLA Monitoring
   cluster_health_check: { label: "Cluster Health", icon: MonitorCheck, description: "Checking cluster health" },
   sla_cluster_safety: { label: "SLA Safety Check", icon: Shield, description: "SLA safety check" },
+  scheduled_replication_check: { 
+    label: "Scheduled Replication Check", 
+    icon: Clock, 
+    description: "Auto-triggers replication syncs based on schedules" 
+  },
+  rpo_monitoring: { 
+    label: "RPO Monitoring", 
+    icon: AlertTriangle, 
+    description: "Monitors RPO compliance and sends alerts" 
+  },
   
   // Scheduled
   scheduled_job: { label: "Scheduled Job", icon: Clock, description: "Running scheduled job" },
