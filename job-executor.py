@@ -1067,6 +1067,8 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
             # SLA Monitoring handlers
             'scheduled_replication_check': self.sla_monitoring_handler.execute_scheduled_replication_check,
             'rpo_monitoring': self.sla_monitoring_handler.execute_rpo_monitoring,
+            # vCenter scheduled sync
+            'scheduled_vcenter_sync': self.vcenter_handler.execute_scheduled_vcenter_sync,
         }
         
         handler = handler_map.get(job_type)
@@ -1167,6 +1169,46 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
                 
         except Exception as e:
             self.log(f"[SLA] Error ensuring monitoring jobs: {e}", "WARN")
+    
+    def _ensure_vcenter_sync_jobs(self):
+        """Create recurring vCenter sync scheduler job if it doesn't exist"""
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            # Check for scheduled_vcenter_sync job
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/jobs",
+                params={
+                    'job_type': 'eq.scheduled_vcenter_sync',
+                    'status': 'in.(pending,running)',
+                    'select': 'id'
+                },
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.ok and not response.json():
+                # Create scheduled vCenter sync job
+                requests.post(
+                    f"{DSM_URL}/rest/v1/jobs",
+                    json={
+                        'job_type': 'scheduled_vcenter_sync',
+                        'status': 'pending',
+                        'details': {'is_internal': True, 'interval_seconds': 60}
+                    },
+                    headers=headers,
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+                self.log("[vCenter] Created scheduled_vcenter_sync job")
+                
+        except Exception as e:
+            self.log(f"[vCenter] Error ensuring sync jobs: {e}", "WARN")
 
     def execute_storage_vmotion(self, job: Dict):
         """
@@ -1557,6 +1599,9 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
         
         # Ensure SLA monitoring jobs exist
         self._ensure_sla_monitoring_jobs()
+        
+        # Ensure vCenter scheduled sync job exists
+        self._ensure_vcenter_sync_jobs()
         
         try:
             while self.running:

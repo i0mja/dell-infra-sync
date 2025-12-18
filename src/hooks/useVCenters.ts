@@ -34,6 +34,7 @@ export interface VCenterFormData {
   port: number;
   verify_ssl: boolean;
   sync_enabled: boolean;
+  sync_interval_minutes?: number;
   color?: string;
   is_primary?: boolean;
   site_code?: string;
@@ -103,6 +104,7 @@ export function useVCenters() {
           port: data.port,
           verify_ssl: data.verify_ssl,
           sync_enabled: data.sync_enabled,
+          sync_interval_minutes: data.sync_interval_minutes || 15,
           color: data.color || "#6366f1",
           is_primary: data.is_primary || false,
           site_code: data.site_code || null,

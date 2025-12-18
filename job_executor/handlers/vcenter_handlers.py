@@ -1127,3 +1127,199 @@ class VCenterHandlers(BaseHandler):
                 
         except Exception as e:
             self.log(f"Failed to send datastore alert: {e}", "WARN")
+    
+    def execute_scheduled_vcenter_sync(self, job: Dict):
+        """
+        Scheduled job that checks all vCenters and triggers syncs based on their configured intervals.
+        Runs every 60 seconds to check if any vCenter needs syncing.
+        """
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        from job_executor.utils import utc_now_iso
+        from datetime import datetime, timedelta
+        
+        job_id = job['id']
+        job_details = job.get('details', {})
+        
+        try:
+            self.log("[vCenter Scheduler] Starting scheduled vCenter sync check...")
+            self.update_job_status(job_id, 'running', started_at=utc_now_iso(), details={
+                'current_step': 'Checking vCenter sync schedules',
+                'is_internal': True
+            })
+            
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            # Fetch all vCenters with sync_enabled=true
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenters",
+                params={
+                    'sync_enabled': 'eq.true',
+                    'select': 'id,name,sync_interval_minutes,last_sync'
+                },
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.status_code != 200:
+                raise Exception(f"Failed to fetch vCenters: {response.status_code}")
+            
+            vcenters = response.json() or []
+            syncs_triggered = 0
+            checked_count = len(vcenters)
+            
+            now = datetime.now()
+            
+            for vc in vcenters:
+                vc_id = vc['id']
+                vc_name = vc.get('name', 'Unknown')
+                interval_minutes = vc.get('sync_interval_minutes') or 15
+                last_sync = vc.get('last_sync')
+                
+                # Calculate if sync is due
+                should_sync = False
+                if not last_sync:
+                    # Never synced - trigger now
+                    should_sync = True
+                    self.log(f"[vCenter Scheduler] {vc_name}: Never synced, triggering...")
+                else:
+                    try:
+                        # Parse last_sync timestamp
+                        last_sync_dt = datetime.fromisoformat(last_sync.replace('Z', '+00:00'))
+                        next_sync_at = last_sync_dt + timedelta(minutes=interval_minutes)
+                        now_utc = datetime.now().astimezone()
+                        
+                        if now_utc >= next_sync_at:
+                            should_sync = True
+                            self.log(f"[vCenter Scheduler] {vc_name}: Due for sync (last: {last_sync})")
+                    except Exception as parse_err:
+                        self.log(f"[vCenter Scheduler] {vc_name}: Error parsing last_sync: {parse_err}", "WARN")
+                        should_sync = True
+                
+                if should_sync:
+                    # Check if a sync is already running for this vCenter
+                    running_check = requests.get(
+                        f"{DSM_URL}/rest/v1/jobs",
+                        params={
+                            'job_type': 'eq.vcenter_sync',
+                            'status': 'in.(pending,running)',
+                            'select': 'id'
+                        },
+                        headers=headers,
+                        verify=VERIFY_SSL,
+                        timeout=10
+                    )
+                    
+                    existing_jobs = running_check.json() if running_check.ok else []
+                    
+                    # Also check details for this specific vCenter
+                    has_running_sync = False
+                    for existing_job in existing_jobs:
+                        job_check = requests.get(
+                            f"{DSM_URL}/rest/v1/jobs",
+                            params={
+                                'id': f"eq.{existing_job['id']}",
+                                'select': 'details'
+                            },
+                            headers=headers,
+                            verify=VERIFY_SSL,
+                            timeout=10
+                        )
+                        if job_check.ok:
+                            job_data = job_check.json()
+                            if job_data and job_data[0].get('details', {}).get('vcenter_id') == vc_id:
+                                has_running_sync = True
+                                break
+                    
+                    if has_running_sync:
+                        self.log(f"[vCenter Scheduler] {vc_name}: Sync already in progress, skipping")
+                        continue
+                    
+                    # Create vcenter_sync job
+                    sync_job = requests.post(
+                        f"{DSM_URL}/rest/v1/jobs",
+                        headers={**headers, 'Prefer': 'return=representation'},
+                        json={
+                            'job_type': 'vcenter_sync',
+                            'status': 'pending',
+                            'target_scope': {'vcenter_ids': [vc_id]},
+                            'details': {
+                                'vcenter_id': vc_id,
+                                'vcenter_name': vc_name,
+                                'triggered_by': 'scheduled_sync',
+                                'scheduled_interval_minutes': interval_minutes
+                            }
+                        },
+                        verify=VERIFY_SSL,
+                        timeout=10
+                    )
+                    
+                    if sync_job.ok:
+                        syncs_triggered += 1
+                        self.log(f"[vCenter Scheduler] {vc_name}: Triggered sync job")
+                    else:
+                        self.log(f"[vCenter Scheduler] {vc_name}: Failed to create sync job: {sync_job.status_code}", "WARN")
+            
+            # Self-reschedule: create next scheduled_vcenter_sync job
+            next_run_at = (datetime.now() + timedelta(seconds=60)).isoformat() + 'Z'
+            
+            requests.post(
+                f"{DSM_URL}/rest/v1/jobs",
+                headers=headers,
+                json={
+                    'job_type': 'scheduled_vcenter_sync',
+                    'status': 'pending',
+                    'schedule_at': next_run_at,
+                    'details': {'is_internal': True, 'interval_seconds': 60}
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            self.log(f"[vCenter Scheduler] Complete: checked {checked_count} vCenters, triggered {syncs_triggered} syncs")
+            
+            self.update_job_status(
+                job_id, 'completed',
+                completed_at=utc_now_iso(),
+                details={
+                    'is_internal': True,
+                    'vcenters_checked': checked_count,
+                    'syncs_triggered': syncs_triggered,
+                    'next_check_at': next_run_at
+                }
+            )
+            
+        except Exception as e:
+            self.log(f"[vCenter Scheduler] Error: {e}", "ERROR")
+            
+            # Still try to reschedule even on error
+            try:
+                next_run_at = (datetime.now() + timedelta(seconds=60)).isoformat() + 'Z'
+                requests.post(
+                    f"{DSM_URL}/rest/v1/jobs",
+                    headers={
+                        'apikey': SERVICE_ROLE_KEY,
+                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                        'Content-Type': 'application/json'
+                    },
+                    json={
+                        'job_type': 'scheduled_vcenter_sync',
+                        'status': 'pending',
+                        'schedule_at': next_run_at,
+                        'details': {'is_internal': True, 'interval_seconds': 60}
+                    },
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+            except:
+                pass
+            
+            self.update_job_status(
+                job_id, 'failed',
+                completed_at=utc_now_iso(),
+                details={'error': str(e), 'is_internal': True}
+            )

@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2 } from "lucide-react";
 import { z } from "zod";
 import type { VCenterFormData, VCenter } from "@/hooks/useVCenters";
@@ -15,6 +16,19 @@ interface VCenterFormProps {
   submitLabel?: string;
 }
 
+const SYNC_INTERVAL_OPTIONS = [
+  { value: 5, label: "Every 5 minutes" },
+  { value: 10, label: "Every 10 minutes" },
+  { value: 15, label: "Every 15 minutes (Default)" },
+  { value: 30, label: "Every 30 minutes" },
+  { value: 60, label: "Every hour" },
+  { value: 120, label: "Every 2 hours" },
+  { value: 240, label: "Every 4 hours" },
+  { value: 360, label: "Every 6 hours" },
+  { value: 720, label: "Every 12 hours" },
+  { value: 1440, label: "Daily" },
+];
+
 const vCenterSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(255),
   datacenter_location: z.string().trim().max(255).optional(),
@@ -24,6 +38,7 @@ const vCenterSchema = z.object({
   port: z.number().int().min(1).max(65535),
   verify_ssl: z.boolean(),
   sync_enabled: z.boolean(),
+  sync_interval_minutes: z.number().int().min(5).max(1440).optional(),
   color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
   is_primary: z.boolean().optional(),
   site_code: z.string().trim().max(5).optional(),
@@ -48,6 +63,7 @@ export function VCenterForm({
     port: initialData?.port ?? 443,
     verify_ssl: initialData?.verify_ssl ?? true,
     sync_enabled: initialData?.sync_enabled ?? true,
+    sync_interval_minutes: (initialData as any)?.sync_interval_minutes ?? 15,
     color: initialData?.color ?? "#6366f1",
     is_primary: initialData?.is_primary ?? false,
     site_code: initialData?.site_code ?? "",
@@ -235,6 +251,29 @@ export function VCenterForm({
             disabled={loading}
           />
         </div>
+
+        {formData.sync_enabled && (
+          <div className="grid gap-2">
+            <Label htmlFor="sync_interval">Sync Interval</Label>
+            <Select
+              value={formData.sync_interval_minutes?.toString() ?? "15"}
+              onValueChange={(value) => setFormData({ ...formData, sync_interval_minutes: parseInt(value) })}
+              disabled={loading}
+            >
+              <SelectTrigger id="sync_interval">
+                <SelectValue placeholder="Select interval" />
+              </SelectTrigger>
+              <SelectContent>
+                {SYNC_INTERVAL_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value.toString()}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">How often to sync hosts, VMs, and datastores</p>
+          </div>
+        )}
 
         {/* Gold Image Selector */}
         <div className="pt-4 border-t">

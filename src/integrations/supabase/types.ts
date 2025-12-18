@@ -4837,6 +4837,7 @@ export type Database = {
         | "rpo_monitoring"
         | "failover_preflight_check"
         | "group_failover"
+        | "scheduled_vcenter_sync"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -5060,6 +5061,7 @@ export const Constants = {
         "rpo_monitoring",
         "failover_preflight_check",
         "group_failover",
+        "scheduled_vcenter_sync",
       ],
       operation_type: [
         "idrac_api",
