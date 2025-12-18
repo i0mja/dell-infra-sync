@@ -1172,7 +1172,7 @@ class VCenterHandlers(BaseHandler):
             syncs_triggered = 0
             checked_count = len(vcenters)
             
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             
             for vc in vcenters:
                 vc_id = vc['id']
@@ -1265,7 +1265,7 @@ class VCenterHandlers(BaseHandler):
                         self.log(f"[vCenter Scheduler] {vc_name}: Failed to create sync job: {sync_job.status_code}", "WARN")
             
             # Self-reschedule: create next scheduled_vcenter_sync job
-            next_run_at = (datetime.now() + timedelta(seconds=60)).isoformat() + 'Z'
+            next_run_at = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat().replace('+00:00', 'Z')
             
             requests.post(
                 f"{DSM_URL}/rest/v1/jobs",
@@ -1298,7 +1298,7 @@ class VCenterHandlers(BaseHandler):
             
             # Still try to reschedule even on error
             try:
-                next_run_at = (datetime.now() + timedelta(seconds=60)).isoformat() + 'Z'
+                next_run_at = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat().replace('+00:00', 'Z')
                 requests.post(
                     f"{DSM_URL}/rest/v1/jobs",
                     headers={
