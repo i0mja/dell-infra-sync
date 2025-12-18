@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Badge } from "@/components/ui/badge";
 import { compareValues } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -120,6 +120,16 @@ export function VMsTable({
 
   // Apply pagination
   const pagination = usePagination(filteredVms, "vcenter-vms-pagination", 50);
+
+  // Auto-navigate to page containing selected VM
+  useEffect(() => {
+    if (selectedVmId) {
+      const vmIndex = filteredVms.findIndex(vm => vm.id === selectedVmId);
+      if (vmIndex >= 0) {
+        pagination.goToItemIndex(vmIndex);
+      }
+    }
+  }, [selectedVmId]);
 
   const handleSort = (field: string) => {
     if (sortField === field) {
