@@ -2,8 +2,10 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { X, RefreshCcw, Link2 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { X, RefreshCcw, Link2, ExternalLink, Star, Loader2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { DatastoreVM } from "@/hooks/useDatastoreVMs";
 
 interface VCenterHost {
   id: string;
@@ -29,11 +31,23 @@ interface VCenterDetailsSidebarProps {
   selectedVm?: any;
   selectedClusterData?: any;
   selectedDatastore?: any;
+  datastoreVMs?: DatastoreVM[];
+  datastoreVMsLoading?: boolean;
   onClusterUpdate: (clusterName?: string) => void;
   onClose: () => void;
   onHostSync?: (host: VCenterHost) => void;
   onViewLinkedServer?: (host: VCenterHost) => void;
   onLinkToServer?: (host: VCenterHost) => void;
+  onNavigateToVM?: (vmId: string) => void;
+}
+
+// Helper to format bytes to human-readable
+function formatBytes(bytes: number | null): string {
+  if (bytes === null || bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }
 
 export function VCenterDetailsSidebar({
@@ -42,11 +56,14 @@ export function VCenterDetailsSidebar({
   selectedVm,
   selectedClusterData,
   selectedDatastore,
+  datastoreVMs,
+  datastoreVMsLoading,
   onClusterUpdate,
   onClose,
   onHostSync,
   onViewLinkedServer,
   onLinkToServer,
+  onNavigateToVM,
 }: VCenterDetailsSidebarProps) {
   
   // VM Details View
@@ -282,11 +299,73 @@ export function VCenterDetailsSidebar({
                   <p className="text-xs text-muted-foreground">Hosts</p>
                   <p className="text-sm">{selectedDatastore.host_count || 0}</p>
                 </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">VMs</p>
-                  <p className="text-sm">{selectedDatastore.vm_count || 0}</p>
-                </div>
               </div>
+            </div>
+
+            <Separator />
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-medium text-muted-foreground">
+                  Virtual Machines ({datastoreVMs?.length || selectedDatastore.vm_count || 0})
+                </h3>
+                {datastoreVMs && datastoreVMs.length > 0 && onNavigateToVM && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-xs px-2"
+                    onClick={() => onNavigateToVM(datastoreVMs[0].id)}
+                  >
+                    View All
+                    <ExternalLink className="ml-1 h-3 w-3" />
+                  </Button>
+                )}
+              </div>
+
+              {datastoreVMsLoading ? (
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => (
+                    <Skeleton key={i} className="h-10 w-full" />
+                  ))}
+                </div>
+              ) : datastoreVMs && datastoreVMs.length > 0 ? (
+                <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
+                  {datastoreVMs.map((vm) => (
+                    <button
+                      key={vm.id}
+                      onClick={() => onNavigateToVM?.(vm.id)}
+                      className="w-full flex items-center justify-between p-2 rounded-md hover:bg-muted/50 transition-colors text-left group"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span
+                          className={`h-2 w-2 rounded-full flex-shrink-0 ${
+                            vm.power_state === "poweredOn"
+                              ? "bg-green-500"
+                              : vm.power_state === "poweredOff"
+                              ? "bg-red-500"
+                              : "bg-yellow-500"
+                          }`}
+                        />
+                        <span className="text-sm truncate">{vm.name}</span>
+                        {vm.is_primary_datastore && (
+                          <Star className="h-3 w-3 text-yellow-500 flex-shrink-0" />
+                        )}
+                      </div>
+                      <span className="text-xs text-muted-foreground flex-shrink-0 ml-2">
+                        {formatBytes(vm.committed_bytes)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No VMs on this datastore</p>
+              )}
+
+              {datastoreVMs && datastoreVMs.some((vm) => vm.is_primary_datastore) && (
+                <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
+                  <Star className="h-3 w-3 text-yellow-500" /> Primary datastore
+                </p>
+              )}
             </div>
           </div>
         </ScrollArea>

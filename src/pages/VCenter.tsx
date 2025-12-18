@@ -20,6 +20,7 @@ import { useVCenterData } from "@/hooks/useVCenterData";
 import { useVCenters } from "@/hooks/useVCenters";
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { useSavedViews } from "@/hooks/useSavedViews";
+import { useDatastoreVMs } from "@/hooks/useDatastoreVMs";
 import { Button } from "@/components/ui/button";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
@@ -123,6 +124,9 @@ export default function VCenter() {
   const { vms, clusters, datastores, alarms, networks, loading: vmsLoading, refetch: refetchVCenterData } = useVCenterData(
     selectedVCenterId === "all" ? null : selectedVCenterId
   );
+  
+  // Fetch VMs for selected datastore
+  const { data: datastoreVMs, isLoading: datastoreVMsLoading } = useDatastoreVMs(selectedDatastoreId);
   
   // Networks filters
   const [networksSearch, setNetworksSearch] = useState("");
@@ -439,6 +443,13 @@ export default function VCenter() {
 
   const handleDatastoreClick = (datastoreId: string) => {
     setSelectedDatastoreId(selectedDatastoreId === datastoreId ? null : datastoreId);
+  };
+
+  // Navigate to VMs tab and select a specific VM
+  const handleNavigateToVM = (vmId: string) => {
+    setActiveTab("vms");
+    setSelectedDatastoreId(null);
+    setSelectedVmId(vmId);
   };
 
   const handleHostSync = async (hostId: string) => {
@@ -935,11 +946,14 @@ export default function VCenter() {
             selectedVm={selectedVm}
             selectedClusterData={selectedClusterData}
             selectedDatastore={selectedDatastore}
+            datastoreVMs={datastoreVMs}
+            datastoreVMsLoading={datastoreVMsLoading}
             onClusterUpdate={() => {}}
             onClose={handleCloseSidebar}
             onHostSync={(host) => handleHostSync(host.id)}
             onViewLinkedServer={(host) => handleViewLinkedServer(host.server_id!)}
             onLinkToServer={(host) => handleLinkToServer(host.id)}
+            onNavigateToVM={handleNavigateToVM}
           />
         )}
         
