@@ -1,13 +1,11 @@
 import { useState, useEffect, useMemo } from "react";
+import { Link } from "react-router-dom";
 import { formatDistanceToNow, differenceInSeconds, isPast } from "date-fns";
 import { 
   Clock, 
   RefreshCw, 
   CheckCircle2, 
-  AlertCircle, 
   Timer,
-  ChevronDown,
-  ChevronUp,
   Settings,
   Server,
   Shield,
@@ -15,8 +13,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { SCHEDULED_BACKGROUND_JOB_TYPES } from "@/lib/job-constants";
@@ -47,33 +45,32 @@ const BACKGROUND_TASK_REGISTRY: BackgroundTaskConfig[] = [
     label: 'vCenter Sync',
     icon: Server,
     description: 'Synchronizes VM and host data from vCenter',
-    settingsPath: '/settings/vcenter',
+    settingsPath: '/vcenter',
   },
   {
     type: 'scheduled_replication_check',
     label: 'Replication Check',
     icon: Shield,
     description: 'Verifies replication status for protection groups',
-    settingsPath: '/disaster-recovery',
+    settingsPath: '/vcenter?tab=replication',
   },
   {
     type: 'rpo_monitoring',
     label: 'RPO Monitoring',
     icon: Activity,
     description: 'Monitors Recovery Point Objectives',
-    settingsPath: '/disaster-recovery',
+    settingsPath: '/vcenter?tab=replication',
   },
 ];
 
 export function BackgroundTaskManager() {
   const { session } = useAuth();
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
   const [jobs, setJobs] = useState<BackgroundJob[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchBackgroundJobs = async () => {
     try {
-      // Fetch recent jobs for each background task type
       const { data, error } = await supabase
         .from("jobs")
         .select("*")
@@ -95,7 +92,6 @@ export function BackgroundTaskManager() {
 
     fetchBackgroundJobs();
 
-    // Subscribe to job changes
     const channel = supabase
       .channel(`background-jobs-${Date.now()}`)
       .on(
@@ -116,7 +112,6 @@ export function BackgroundTaskManager() {
     };
   }, [session]);
 
-  // Group jobs by type and get the latest status for each
   const taskStatuses = useMemo(() => {
     const statusMap = new Map<string, {
       running: BackgroundJob | null;
@@ -139,7 +134,6 @@ export function BackgroundTaskManager() {
     return statusMap;
   }, [jobs]);
 
-  // Count active background tasks
   const activeCount = useMemo(() => {
     let count = 0;
     taskStatuses.forEach(status => {
@@ -169,106 +163,105 @@ export function BackgroundTaskManager() {
   };
 
   return (
-    <Card className="border-dashed">
-      <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-        <CardHeader className="py-3 px-4">
-          <CollapsibleTrigger asChild>
-            <div className="flex items-center justify-between cursor-pointer">
-              <div className="flex items-center gap-2">
-                <Clock className="h-4 w-4 text-muted-foreground" />
-                <CardTitle className="text-sm font-medium">Background Tasks</CardTitle>
-                {activeCount > 0 && (
-                  <Badge variant="secondary" className="text-xs">
-                    {activeCount} active
-                  </Badge>
-                )}
-              </div>
-              <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-                {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              </Button>
-            </div>
-          </CollapsibleTrigger>
-        </CardHeader>
+    <Popover open={isOpen} onOpenChange={setIsOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 gap-2 text-xs font-medium"
+        >
+          <Clock className="h-3.5 w-3.5" />
+          Background Tasks
+          {activeCount > 0 && (
+            <Badge variant="secondary" className="h-5 px-1.5 text-xs">
+              {activeCount}
+            </Badge>
+          )}
+        </Button>
+      </PopoverTrigger>
+      
+      <PopoverContent className="w-80 p-0" align="start">
+        <div className="p-3 border-b">
+          <h4 className="font-medium text-sm">Background Tasks</h4>
+          <p className="text-xs text-muted-foreground">Scheduled and running background jobs</p>
+        </div>
         
-        <CollapsibleContent>
-          <CardContent className="pt-0 px-4 pb-4">
-            <div className="space-y-2">
-              {BACKGROUND_TASK_REGISTRY.map((task) => {
-                const { state, job } = getTaskStatus(task.type);
-                const Icon = task.icon;
-                const countdown = job && state === 'scheduled' ? getScheduleCountdown(job) : null;
-                const lastRun = taskStatuses.get(task.type)?.lastCompleted;
-                
-                return (
-                  <div 
-                    key={task.type}
-                    className={cn(
-                      "flex items-center gap-3 p-2 rounded-md border bg-card/50",
-                      state === 'running' && "border-blue-500/30 bg-blue-500/5",
-                      state === 'scheduled' && "border-muted"
-                    )}
-                  >
-                    <div className={cn(
-                      "p-1.5 rounded-md",
-                      state === 'running' ? "bg-blue-500/10 text-blue-600" : 
-                      state === 'scheduled' ? "bg-amber-500/10 text-amber-600" :
-                      "bg-muted text-muted-foreground"
-                    )}>
-                      <Icon className="h-4 w-4" />
-                    </div>
-                    
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-sm">{task.label}</span>
-                        {state === 'running' && (
-                          <Badge variant="outline" className="text-xs border-blue-500 text-blue-500 bg-blue-500/10">
-                            <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
-                            Running
-                          </Badge>
-                        )}
-                        {state === 'scheduled' && countdown && (
-                          <Badge variant="outline" className="text-xs border-amber-500 text-amber-500 bg-amber-500/10">
-                            <Timer className="h-3 w-3 mr-1" />
-                            In {countdown}
-                          </Badge>
-                        )}
-                        {state === 'idle' && lastRun && (
-                          <Badge variant="outline" className="text-xs text-muted-foreground">
-                            <CheckCircle2 className="h-3 w-3 mr-1" />
-                            {formatDistanceToNow(new Date(lastRun.completed_at!), { addSuffix: true })}
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {task.description}
-                      </p>
-                    </div>
-                    
-                    {task.settingsPath && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 text-muted-foreground shrink-0"
-                        asChild
-                      >
-                        <a href={task.settingsPath}>
-                          <Settings className="h-3.5 w-3.5" />
-                        </a>
-                      </Button>
-                    )}
-                  </div>
-                );
-              })}
+        <ScrollArea className="max-h-[300px]">
+          <div className="p-2 space-y-1">
+            {BACKGROUND_TASK_REGISTRY.map((task) => {
+              const { state, job } = getTaskStatus(task.type);
+              const Icon = task.icon;
+              const countdown = job && state === 'scheduled' ? getScheduleCountdown(job) : null;
+              const lastRun = taskStatuses.get(task.type)?.lastCompleted;
               
-              {BACKGROUND_TASK_REGISTRY.length === 0 && (
-                <div className="text-center py-4 text-sm text-muted-foreground">
-                  No background tasks configured
+              return (
+                <div 
+                  key={task.type}
+                  className={cn(
+                    "flex items-center gap-2 p-2 rounded-md",
+                    state === 'running' && "bg-blue-500/10",
+                    state === 'scheduled' && "bg-amber-500/5",
+                    state === 'idle' && "hover:bg-muted/50"
+                  )}
+                >
+                  <div className={cn(
+                    "p-1.5 rounded-md shrink-0",
+                    state === 'running' ? "bg-blue-500/10 text-blue-600" : 
+                    state === 'scheduled' ? "bg-amber-500/10 text-amber-600" :
+                    "bg-muted text-muted-foreground"
+                  )}>
+                    <Icon className="h-3.5 w-3.5" />
+                  </div>
+                  
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-medium text-xs">{task.label}</span>
+                      {state === 'running' && (
+                        <RefreshCw className="h-3 w-3 text-blue-500 animate-spin" />
+                      )}
+                      {state === 'scheduled' && countdown && (
+                        <span className="text-xs text-amber-600">
+                          <Timer className="h-3 w-3 inline mr-0.5" />
+                          {countdown}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground truncate">
+                      {state === 'idle' && lastRun ? (
+                        <>
+                          <CheckCircle2 className="h-2.5 w-2.5 inline mr-0.5" />
+                          {formatDistanceToNow(new Date(lastRun.completed_at!), { addSuffix: true })}
+                        </>
+                      ) : (
+                        task.description
+                      )}
+                    </p>
+                  </div>
+                  
+                  {task.settingsPath && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-muted-foreground shrink-0"
+                      asChild
+                    >
+                      <Link to={task.settingsPath}>
+                        <Settings className="h-3 w-3" />
+                      </Link>
+                    </Button>
+                  )}
                 </div>
-              )}
-            </div>
-          </CardContent>
-        </CollapsibleContent>
-      </Collapsible>
-    </Card>
+              );
+            })}
+            
+            {BACKGROUND_TASK_REGISTRY.length === 0 && (
+              <div className="text-center py-4 text-xs text-muted-foreground">
+                No background tasks configured
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+      </PopoverContent>
+    </Popover>
   );
 }
