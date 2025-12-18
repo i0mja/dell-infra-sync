@@ -11,6 +11,7 @@ interface UsePaginationReturn<T> {
   goToLastPage: () => void;
   goToNextPage: () => void;
   goToPrevPage: () => void;
+  goToItemIndex: (index: number) => void;
   canGoNext: boolean;
   canGoPrev: boolean;
   startIndex: number;
@@ -77,6 +78,13 @@ export function usePagination<T>(
   const goToLastPage = () => setPage(totalPages);
   const goToNextPage = () => setPage(currentPage + 1);
   const goToPrevPage = () => setPage(currentPage - 1);
+  
+  const goToItemIndex = (index: number) => {
+    if (index >= 0 && index < items.length) {
+      const targetPage = Math.floor(index / pageSize) + 1;
+      setPage(targetPage);
+    }
+  };
 
   const canGoNext = currentPage < totalPages;
   const canGoPrev = currentPage > 1;
@@ -96,6 +104,7 @@ export function usePagination<T>(
     goToLastPage,
     goToNextPage,
     goToPrevPage,
+    goToItemIndex,
     canGoNext,
     canGoPrev,
     startIndex,
