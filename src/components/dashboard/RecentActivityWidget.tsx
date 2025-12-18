@@ -7,18 +7,10 @@ import { formatDistanceToNow } from "date-fns";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { INTERNAL_JOB_TYPES, SLA_MONITORING_JOB_TYPES } from "@/lib/job-constants";
 
-const INTERNAL_JOB_TYPES = [
-  'idm_authenticate',
-  'idm_test_auth',
-  'idm_test_connection',
-  'idm_network_check',
-  'idm_test_ad_connection',
-  'idm_search_groups',
-  'idm_search_ad_groups',
-  'idm_search_ad_users',
-  'idm_sync_users',
-];
+// Combine all hidden job types for filtering
+const HIDDEN_JOB_TYPES = [...INTERNAL_JOB_TYPES, ...SLA_MONITORING_JOB_TYPES];
 
 const JOB_TYPE_LABELS: Record<string, string> = {
   discovery_scan: 'Discovery Scan',
@@ -58,7 +50,7 @@ export const RecentActivityWidget = () => {
         .from('jobs')
         .select('id, job_type, status, created_at, completed_at, target_scope')
         .is('parent_job_id', null)
-        .not('job_type', 'in', `(${INTERNAL_JOB_TYPES.join(',')})`)
+        .not('job_type', 'in', `(${HIDDEN_JOB_TYPES.join(',')})`)
         .order('created_at', { ascending: false })
         .limit(6);
       return data || [];
