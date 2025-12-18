@@ -156,7 +156,10 @@ export default function VCenter() {
       setHostsLoading(true);
       let query = supabase
         .from("vcenter_hosts")
-        .select("*");
+        .select(`
+          *,
+          linked_server:servers!servers_vcenter_host_id_fkey(id, hostname)
+        `);
 
       // Filter by selectedVCenterId if not "all"
       if (selectedVCenterId && selectedVCenterId !== "all") {
@@ -168,7 +171,14 @@ export default function VCenter() {
         .order("name", { ascending: true });
 
       if (error) throw error;
-      setHosts(data || []);
+      
+      // Map the data to include server_id from the joined server (reverse FK)
+      const hostsWithLinks = (data || []).map(host => ({
+        ...host,
+        server_id: host.linked_server?.[0]?.id || host.server_id || null,
+      }));
+      
+      setHosts(hostsWithLinks);
     } catch (error: any) {
       toast({
         title: "Error fetching hosts",
