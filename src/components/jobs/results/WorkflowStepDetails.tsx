@@ -39,8 +39,9 @@ export const WorkflowStepDetails = ({ stepName, stepNumber, details }: WorkflowS
     return <UpdatesAvailableView updates={details.updates} totalCount={details.available_updates} />;
   }
 
-  // 3. Pre-flight check results
-  if (details.vcsa_detected !== undefined || details.total_hosts !== undefined) {
+  // 3. Pre-flight check results (including update check summary)
+  if (details.vcsa_detected !== undefined || details.total_hosts !== undefined || 
+      details.hosts_needing_updates !== undefined || details.host_update_status !== undefined) {
     return <PreFlightResultsView details={details} />;
   }
 
@@ -53,10 +54,16 @@ export const WorkflowStepDetails = ({ stepName, stepNumber, details }: WorkflowS
   return <FormattedDetailsView details={details} />;
 };
 
-// Pre-flight check results component
+// Pre-flight check results component (including update availability summary)
 const PreFlightResultsView = ({ details }: { details: any }) => {
+  const hostsNeedingUpdates = details.hosts_needing_updates;
+  const hostsUpToDate = details.hosts_up_to_date;
+  const totalHosts = details.total_hosts;
+  const hostUpdateStatus = details.host_update_status;
+
   return (
-    <div className="space-y-2 p-3 bg-muted/50 rounded-md">
+    <div className="space-y-3 p-3 bg-muted/50 rounded-md">
+      {/* Basic info grid */}
       <div className="grid grid-cols-2 gap-3 text-sm">
         {details.target_type && (
           <div className="flex items-center gap-2">
@@ -65,11 +72,11 @@ const PreFlightResultsView = ({ details }: { details: any }) => {
             <span className="font-medium capitalize">{details.target_type}</span>
           </div>
         )}
-        {details.total_hosts !== undefined && (
+        {totalHosts !== undefined && (
           <div className="flex items-center gap-2">
             <Server className="h-4 w-4 text-muted-foreground" />
             <span className="text-muted-foreground">Hosts:</span>
-            <span className="font-medium">{details.total_hosts} detected</span>
+            <span className="font-medium">{totalHosts} detected</span>
           </div>
         )}
         {details.vcsa_host && (
@@ -90,6 +97,63 @@ const PreFlightResultsView = ({ details }: { details: any }) => {
           </div>
         )}
       </div>
+
+      {/* Update availability summary (when pre-flight includes update check) */}
+      {hostsNeedingUpdates !== undefined && (
+        <div className="border-t border-border/50 pt-3 space-y-2">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <RefreshCw className="h-4 w-4 text-blue-500" />
+            Update Availability Check
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            {hostsNeedingUpdates > 0 ? (
+              <div className="flex items-center gap-2 p-2 bg-blue-500/10 rounded border border-blue-500/20">
+                <Package className="h-4 w-4 text-blue-500" />
+                <span className="text-blue-700 dark:text-blue-400 font-medium">
+                  {hostsNeedingUpdates} need updates
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 p-2 bg-green-500/10 rounded border border-green-500/20 col-span-2">
+                <CheckCircle className="h-4 w-4 text-green-500" />
+                <span className="text-green-700 dark:text-green-400 font-medium">
+                  All hosts are up to date
+                </span>
+              </div>
+            )}
+            {hostsUpToDate > 0 && hostsNeedingUpdates > 0 && (
+              <div className="flex items-center gap-2 p-2 bg-green-500/10 rounded border border-green-500/20">
+                <CheckCircle className="h-4 w-4 text-green-500" />
+                <span className="text-green-700 dark:text-green-400 font-medium">
+                  {hostsUpToDate} already current
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Per-host update status */}
+          {hostUpdateStatus && Array.isArray(hostUpdateStatus) && hostUpdateStatus.length > 0 && (
+            <div className="space-y-1 text-xs">
+              {hostUpdateStatus.map((host: any, idx: number) => (
+                <div key={idx} className="flex items-center justify-between py-1 border-b border-border/30 last:border-0">
+                  <span className="font-medium truncate">{host.name}</span>
+                  {host.needs_update ? (
+                    <Badge variant="outline" className="text-xs bg-blue-500/10 border-blue-500/30 text-blue-700 dark:text-blue-400">
+                      {host.update_count} update{host.update_count !== 1 ? 's' : ''}
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-xs bg-green-500/10 border-green-500/30 text-green-700 dark:text-green-400">
+                      <CheckCircle className="h-3 w-3 mr-1" />
+                      Current
+                    </Badge>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {details.vcsa_detected && (
         <div className="flex items-center gap-2 text-xs text-green-600 dark:text-green-400 mt-2">
           <CheckCircle className="h-3 w-3" />

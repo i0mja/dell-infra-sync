@@ -99,11 +99,21 @@ class ClusterHandler(BaseHandler):
         job: Dict, 
         eligible_hosts: List[Dict],
         cleanup_state: Dict,
-        check_maintenance_blockers: bool = True
+        check_maintenance_blockers: bool = True,
+        check_available_updates: bool = False,
+        firmware_source: str = 'manual_repository',
+        dell_catalog_url: str = None
     ) -> Dict[str, Dict]:
         """
-        Phase 0: Test iDRAC connectivity and analyze maintenance blockers for ALL hosts.
-        Returns dict mapping server_id -> {credentials, session_validated, server, maintenance_blockers}
+        Phase 0: Test iDRAC connectivity, analyze maintenance blockers, and optionally
+        check for available firmware updates for ALL hosts BEFORE any changes are made.
+        
+        When check_available_updates=True, this queries Dell catalog for each host to
+        determine if updates are needed. This allows early exit if no hosts need updates,
+        avoiding unnecessary HA disable and SCP backups.
+        
+        Returns dict mapping server_id -> {credentials, session_validated, server, 
+            maintenance_blockers, available_updates, needs_update}
         Raises exception if ANY host fails pre-flight.
         """
         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
@@ -114,10 +124,15 @@ class ClusterHandler(BaseHandler):
         self.log("PHASE 0: PRE-FLIGHT CHECKS (ALL HOSTS)")
         self.log("=" * 80)
         
+        if check_available_updates and firmware_source == 'dell_online_catalog':
+            self.log("  → Including firmware update availability check")
+        
         host_credentials = {}
         failed_hosts = []
         all_maintenance_blockers = {}
         critical_blockers_found = False
+        total_hosts_needing_updates = 0
+        total_available_updates = 0
         
         for idx, host in enumerate(eligible_hosts, 1):
             # Check for cancellation (no graceful cancel during pre-flight)
@@ -126,6 +141,12 @@ class ClusterHandler(BaseHandler):
                 raise Exception("Job cancelled during pre-flight checks")
             
             self.log(f"  [{idx}/{len(eligible_hosts)}] Checking {host['name']}...")
+            
+            # Update job with pre-flight progress
+            self.update_job_details_field(job['id'], {
+                'current_step': f'Pre-flight check: {host["name"]} ({idx}/{len(eligible_hosts)})',
+                'preflight_progress': int((idx / len(eligible_hosts)) * 100)
+            })
             
             try:
                 # Fetch server details
@@ -157,8 +178,18 @@ class ClusterHandler(BaseHandler):
                 
                 self.log(f"    ✓ iDRAC connectivity OK")
                 
+                # Initialize credential entry
+                host_creds = {
+                    'username': username,
+                    'password': password,
+                    'server': server,
+                    'validated': True,
+                    'maintenance_blockers': None,
+                    'available_updates': [],
+                    'needs_update': False
+                }
+                
                 # Analyze maintenance blockers if this host has vCenter link
-                blocker_analysis = None
                 if check_maintenance_blockers and host.get('id'):  # host['id'] is vcenter_host_id
                     self.log(f"    Analyzing maintenance blockers...")
                     blocker_analysis = self.executor.analyze_maintenance_blockers(
@@ -168,6 +199,7 @@ class ClusterHandler(BaseHandler):
                     
                     if blocker_analysis:
                         all_maintenance_blockers[host['server_id']] = blocker_analysis
+                        host_creds['maintenance_blockers'] = blocker_analysis
                         
                         # Check for critical blockers
                         critical_blockers = [b for b in blocker_analysis.get('blockers', []) 
@@ -183,13 +215,55 @@ class ClusterHandler(BaseHandler):
                         else:
                             self.log(f"    ✓ No maintenance blockers detected")
                 
-                host_credentials[host['server_id']] = {
-                    'username': username,
-                    'password': password,
-                    'server': server,
-                    'validated': True,
-                    'maintenance_blockers': blocker_analysis
-                }
+                # Check for available firmware updates (if enabled and using Dell catalog)
+                if check_available_updates and firmware_source == 'dell_online_catalog':
+                    self.log(f"    Checking for available updates...")
+                    try:
+                        from job_executor.dell_redfish import DellOperations, DellRedfishAdapter
+                        adapter = DellRedfishAdapter(
+                            self.executor.throttler, 
+                            self.executor._get_dell_logger(), 
+                            self.executor._log_dell_redfish_command
+                        )
+                        dell_ops = DellOperations(adapter)
+                        
+                        catalog_url = dell_catalog_url or 'https://downloads.dell.com/catalog/Catalog.xml'
+                        check_result = dell_ops.check_available_catalog_updates(
+                            ip=server['ip_address'],
+                            username=username,
+                            password=password,
+                            catalog_url=catalog_url,
+                            server_id=host['server_id'],
+                            job_id=job['id'],
+                            user_id=job.get('created_by')
+                        )
+                        
+                        available_updates = check_result.get('available_updates', [])
+                        host_creds['available_updates'] = available_updates
+                        host_creds['needs_update'] = len(available_updates) > 0
+                        
+                        if available_updates:
+                            total_hosts_needing_updates += 1
+                            total_available_updates += len(available_updates)
+                            self.log(f"    ✓ {len(available_updates)} update(s) available")
+                            # Log first few updates
+                            for upd in available_updates[:3]:
+                                upd_name = upd.get('name', upd.get('component', 'Unknown'))[:40]
+                                upd_ver = upd.get('version', 'N/A')
+                                self.log(f"      - {upd_name} → {upd_ver}")
+                            if len(available_updates) > 3:
+                                self.log(f"      ... and {len(available_updates) - 3} more")
+                        else:
+                            self.log(f"    ✓ Already up to date - no updates needed")
+                            
+                    except Exception as update_check_error:
+                        self.log(f"    ⚠️ Could not check for updates: {update_check_error}", "WARN")
+                        self.log(f"    → Will attempt update anyway", "WARN")
+                        # Mark as needs_update=True to be safe - we'll check again during the actual update
+                        host_creds['needs_update'] = True
+                        host_creds['update_check_error'] = str(update_check_error)
+                
+                host_credentials[host['server_id']] = host_creds
                 
             except Exception as e:
                 self.log(f"    ✗ FAILED: {e}", "ERROR")
@@ -199,10 +273,17 @@ class ClusterHandler(BaseHandler):
             error_summary = ", ".join([f"{h['host']}: {h['error']}" for h in failed_hosts])
             raise Exception(f"Pre-flight checks failed for {len(failed_hosts)} hosts: {error_summary}")
         
-        # Update job details with maintenance blocker analysis
+        # Update job details with pre-flight results
         job_details = job.get('details', {})
         job_details['maintenance_blockers'] = all_maintenance_blockers
         job_details['critical_blockers_found'] = critical_blockers_found
+        
+        if check_available_updates and firmware_source == 'dell_online_catalog':
+            job_details['preflight_update_check'] = {
+                'hosts_needing_updates': total_hosts_needing_updates,
+                'hosts_up_to_date': len(eligible_hosts) - total_hosts_needing_updates,
+                'total_available_updates': total_available_updates
+            }
         
         self.executor.update_job_status(
             job['id'],
@@ -211,6 +292,8 @@ class ClusterHandler(BaseHandler):
         )
         
         self.log(f"  ✓ All {len(eligible_hosts)} hosts passed pre-flight checks")
+        if check_available_updates and firmware_source == 'dell_online_catalog':
+            self.log(f"  📊 Update summary: {total_hosts_needing_updates}/{len(eligible_hosts)} hosts need updates ({total_available_updates} total updates)")
         if critical_blockers_found:
             self.log(f"  ⚠️ WARNING: Critical maintenance blockers detected - review before proceeding", "WARN")
         
@@ -1163,17 +1246,13 @@ class ClusterHandler(BaseHandler):
                 'ha_original_state': None
             }
             
-            # =================================================================
-            # HA MANAGEMENT: DISABLE BEFORE MAINTENANCE OPERATIONS
-            # =================================================================
-            # Get cluster name from first eligible host
+            # Get cluster name from first eligible host (needed for HA management later)
             cluster_name = None
             source_vcenter_id = None
             
             for host in eligible_hosts:
                 server = self.get_server_by_id(host['server_id'])
                 if server and server.get('vcenter_host_id'):
-                    # Fetch host details to get cluster name
                     try:
                         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
                         response = requests.get(
@@ -1191,7 +1270,113 @@ class ClusterHandler(BaseHandler):
                     except Exception as e:
                         self.log(f"  Warning: Could not determine cluster name: {e}", "WARN")
             
-            # Disable HA on cluster if we found a cluster name
+            # =================================================================
+            # PHASE 0: PRE-FLIGHT CHECKS WITH UPDATE AVAILABILITY CHECK
+            # =================================================================
+            # This phase now includes checking for available firmware updates
+            # BEFORE we disable HA or run SCP backups - allowing early exit
+            # if no hosts need updates
+            firmware_source = details.get('firmware_source', 'manual_repository')
+            dell_catalog_url = details.get('dell_catalog_url', 'https://downloads.dell.com/catalog/Catalog.xml')
+            check_updates_in_preflight = firmware_source == 'dell_online_catalog'
+            
+            self._log_workflow_step(job['id'], 'rolling_cluster_update', 0,
+                f"Pre-flight checks ({len(eligible_hosts)} hosts)", 'running',
+                step_details={'checking_updates': check_updates_in_preflight})
+            
+            host_credentials = self._execute_batch_preflight_checks(
+                job, eligible_hosts, cleanup_state,
+                check_maintenance_blockers=True,
+                check_available_updates=check_updates_in_preflight,
+                firmware_source=firmware_source,
+                dell_catalog_url=dell_catalog_url
+            )
+            
+            # Determine which hosts actually need updates
+            hosts_needing_updates = []
+            hosts_up_to_date = []
+            
+            for host in eligible_hosts:
+                creds = host_credentials.get(host['server_id'], {})
+                if creds.get('needs_update', True):  # Default to True for safety
+                    hosts_needing_updates.append(host)
+                else:
+                    hosts_up_to_date.append(host)
+            
+            # Log pre-flight completion with update summary
+            preflight_details = {
+                'total_hosts': len(eligible_hosts),
+                'hosts_needing_updates': len(hosts_needing_updates),
+                'hosts_up_to_date': len(hosts_up_to_date)
+            }
+            
+            if check_updates_in_preflight:
+                # Include list of hosts and their status
+                preflight_details['host_update_status'] = [
+                    {
+                        'name': h['name'],
+                        'needs_update': host_credentials.get(h['server_id'], {}).get('needs_update', True),
+                        'update_count': len(host_credentials.get(h['server_id'], {}).get('available_updates', []))
+                    }
+                    for h in eligible_hosts
+                ]
+            
+            self._log_workflow_step(job['id'], 'rolling_cluster_update', 0,
+                f"Pre-flight checks ({len(eligible_hosts)} hosts)", 'completed',
+                step_details=preflight_details)
+            
+            # =================================================================
+            # EARLY EXIT: NO UPDATES NEEDED
+            # =================================================================
+            if check_updates_in_preflight and len(hosts_needing_updates) == 0:
+                self.log("")
+                self.log("=" * 80)
+                self.log("✓ ALL HOSTS ARE UP TO DATE - NO UPDATES NEEDED")
+                self.log("=" * 80)
+                self.log(f"  Checked {len(eligible_hosts)} hosts against Dell catalog")
+                self.log(f"  No firmware updates are available")
+                self.log(f"  Skipping HA disable and SCP backups (not needed)")
+                
+                workflow_results['no_updates_needed'] = True
+                workflow_results['hosts_checked'] = len(eligible_hosts)
+                workflow_results['all_hosts_current'] = True
+                workflow_results['total_time_seconds'] = int(time.time() - workflow_start)
+                
+                self._log_workflow_step(job['id'], 'rolling_cluster_update', 1,
+                    f"Early exit - no updates needed", 'completed',
+                    step_details={
+                        'no_updates_needed': True,
+                        'hosts_checked': len(eligible_hosts),
+                        'message': 'All hosts are already up to date'
+                    })
+                
+                self.update_job_status(
+                    job['id'],
+                    'completed',
+                    completed_at=utc_now_iso(),
+                    details={
+                        'no_updates_needed': True,
+                        'message': f'All {len(eligible_hosts)} hosts are already up to date - no action required',
+                        'hosts_checked': len(eligible_hosts),
+                        'workflow_results': workflow_results
+                    }
+                )
+                
+                self.log("")
+                self.log(f"✓ Job completed - no action required (all hosts current)")
+                return  # Early exit - no HA disable, no backups, no updates
+            
+            # Log update summary if some hosts need updates
+            if check_updates_in_preflight and hosts_up_to_date:
+                self.log("")
+                self.log(f"  📊 Update summary: {len(hosts_needing_updates)} hosts need updates, {len(hosts_up_to_date)} already current")
+                for host in hosts_up_to_date:
+                    self.log(f"    ✓ {host['name']} - already up to date (will skip)")
+            
+            # =================================================================
+            # HA MANAGEMENT: DISABLE BEFORE MAINTENANCE OPERATIONS
+            # =================================================================
+            # Only disable HA if we have hosts that need updates
             if cluster_name and source_vcenter_id:
                 self.log("")
                 self.log("=" * 80)
@@ -1279,39 +1464,45 @@ class ClusterHandler(BaseHandler):
                 self.log("  ℹ No cluster identified for HA management (standalone hosts or no vCenter link)")
             
             # =================================================================
-            # PHASE 0: PRE-FLIGHT CHECKS (ALL HOSTS)
-            # =================================================================
-            self._log_workflow_step(job['id'], 'rolling_cluster_update', 0,
-                f"Pre-flight checks ({len(eligible_hosts)} hosts)", 'running')
-            
-            host_credentials = self._execute_batch_preflight_checks(
-                job, eligible_hosts, cleanup_state
-            )
-            
-            self._log_workflow_step(job['id'], 'rolling_cluster_update', 0,
-                f"Pre-flight checks ({len(eligible_hosts)} hosts)", 'completed')
-            
-            # =================================================================
-            # PHASE 1: BATCH SCP BACKUPS (ALL HOSTS)
+            # PHASE 1: BATCH SCP BACKUPS (ONLY HOSTS NEEDING UPDATES)
             # =================================================================
             backup_results = {}
             if backup_scp:
                 parallel_backups = details.get('parallel_backups', False)
                 max_parallel_backups = details.get('max_parallel_backups', 3)
                 
-                self._log_workflow_step(job['id'], 'rolling_cluster_update', 1,
-                    f"SCP backups ({len(eligible_hosts)} hosts)", 'running')
+                # Only backup hosts that need updates
+                hosts_to_backup = hosts_needing_updates if check_updates_in_preflight else eligible_hosts
                 
-                backup_results = self._execute_batch_scp_backups(
-                    job, eligible_hosts, host_credentials, cleanup_state,
-                    parallel=parallel_backups,
-                    max_parallel=max_parallel_backups
-                )
-                
-                successful_backups = sum(1 for r in backup_results.values() if r.get('success'))
-                self._log_workflow_step(job['id'], 'rolling_cluster_update', 1,
-                    f"SCP backups ({len(eligible_hosts)} hosts)", 'completed',
-                    step_details={'successful': successful_backups, 'total': len(eligible_hosts)})
+                if len(hosts_to_backup) > 0:
+                    if check_updates_in_preflight and len(hosts_to_backup) < len(eligible_hosts):
+                        self.log("")
+                        self.log(f"  ℹ SCP backups will only run for {len(hosts_to_backup)}/{len(eligible_hosts)} hosts (those needing updates)")
+                    
+                    self._log_workflow_step(job['id'], 'rolling_cluster_update', 1,
+                        f"SCP backups ({len(hosts_to_backup)} hosts)", 'running',
+                        step_details={'hosts_to_backup': len(hosts_to_backup), 'skipped': len(eligible_hosts) - len(hosts_to_backup)})
+                    
+                    backup_results = self._execute_batch_scp_backups(
+                        job, hosts_to_backup, host_credentials, cleanup_state,
+                        parallel=parallel_backups,
+                        max_parallel=max_parallel_backups
+                    )
+                    
+                    successful_backups = sum(1 for r in backup_results.values() if r.get('success'))
+                    self._log_workflow_step(job['id'], 'rolling_cluster_update', 1,
+                        f"SCP backups ({len(hosts_to_backup)} hosts)", 'completed',
+                        step_details={
+                            'successful': successful_backups, 
+                            'total': len(hosts_to_backup),
+                            'skipped_up_to_date': len(eligible_hosts) - len(hosts_to_backup)
+                        })
+                else:
+                    self.log("")
+                    self.log("  ℹ No hosts need SCP backup (all up to date)")
+                    self._log_workflow_step(job['id'], 'rolling_cluster_update', 1,
+                        f"SCP backups (skipped)", 'completed',
+                        step_details={'skipped': True, 'reason': 'No hosts need updates'})
             
             # =================================================================
             # PHASE 2: SEQUENTIAL HOST UPDATES
