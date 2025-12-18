@@ -121,8 +121,7 @@ export const CommandsTable = ({
   return (
     <div
       className={cn(
-        "flex flex-col h-full overflow-hidden rounded-lg border",
-        isLive ? "border-emerald-500/30" : "border-border",
+        "flex flex-col h-full overflow-hidden",
         className
       )}
     >
