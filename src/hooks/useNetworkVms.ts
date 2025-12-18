@@ -22,13 +22,21 @@ export interface NetworkVm {
   };
 }
 
-export function useNetworkVms(networkId: string | null) {
+export function useNetworkVms(
+  networkIds: string | string[] | null,
+  vcenterFilter?: string | null
+) {
   const [vms, setVms] = useState<NetworkVm[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchVms = useCallback(async () => {
-    if (!networkId) {
+    // Normalize to array
+    const ids = networkIds 
+      ? (Array.isArray(networkIds) ? networkIds : [networkIds]).filter(Boolean)
+      : [];
+    
+    if (ids.length === 0) {
       setVms([]);
       return;
     }
@@ -37,7 +45,7 @@ export function useNetworkVms(networkId: string | null) {
     setError(null);
 
     try {
-      const { data, error: fetchError } = await supabase
+      let query = supabase
         .from("vcenter_network_vms")
         .select(`
           id,
@@ -58,8 +66,15 @@ export function useNetworkVms(networkId: string | null) {
             cluster_name
           )
         `)
-        .eq("network_id", networkId)
+        .in("network_id", ids)
         .order("last_sync", { ascending: false });
+
+      // Apply vCenter filter if specified and not "all"
+      if (vcenterFilter && vcenterFilter !== "all") {
+        query = query.eq("source_vcenter_id", vcenterFilter);
+      }
+
+      const { data, error: fetchError } = await query;
 
       if (fetchError) {
         throw fetchError;
@@ -79,7 +94,7 @@ export function useNetworkVms(networkId: string | null) {
     } finally {
       setLoading(false);
     }
-  }, [networkId]);
+  }, [networkIds, vcenterFilter]);
 
   useEffect(() => {
     fetchVms();

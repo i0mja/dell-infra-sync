@@ -143,6 +143,7 @@ export default function VCenter() {
   const [networksTypeFilter, setNetworksTypeFilter] = useState("all");
   const [networksVlanFilter, setNetworksVlanFilter] = useState("all");
   const [selectedNetworkId, setSelectedNetworkId] = useState<string | null>(null);
+  const [selectedGroupedNetworks, setSelectedGroupedNetworks] = useState<typeof networks>([]);
   const [networksGroupByName, setNetworksGroupByName] = useState(true);
   const networksColumnVisibility = useColumnVisibility("vcenter-networks-columns", ["name", "type", "vlan", "sites", "hosts", "vms"]);
 
@@ -940,7 +941,15 @@ export default function VCenter() {
               <NetworksTable
                 networks={networks}
                 selectedNetworkId={selectedNetworkId}
-                onNetworkClick={(net) => setSelectedNetworkId(selectedNetworkId === net.id ? null : net.id)}
+                onNetworkClick={(net, groupedNets) => {
+                  if (selectedNetworkId === net.id) {
+                    setSelectedNetworkId(null);
+                    setSelectedGroupedNetworks([]);
+                  } else {
+                    setSelectedNetworkId(net.id);
+                    setSelectedGroupedNetworks(groupedNets || [net]);
+                  }
+                }}
                 loading={vmsLoading}
                 searchTerm={networksSearch}
                 typeFilter={networksTypeFilter}
@@ -992,8 +1001,14 @@ export default function VCenter() {
         {selectedNetwork && !hasSelection && (
           <NetworkDetailsSidebar
             network={selectedNetwork}
-            onClose={() => setSelectedNetworkId(null)}
+            groupedNetworks={selectedGroupedNetworks.length > 0 ? selectedGroupedNetworks : undefined}
+            selectedVCenterId={selectedVCenterId}
+            onClose={() => {
+              setSelectedNetworkId(null);
+              setSelectedGroupedNetworks([]);
+            }}
             vcenterName={selectedNetworkVCenterName}
+            vcenterMap={new Map(vcenters.map(vc => [vc.id, vc.name]))}
           />
         )}
       </div>
