@@ -230,7 +230,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
                 'apikey': SERVICE_ROLE_KEY,
                 'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
                 'Content-Type': 'application/json',
-                'Prefer': 'resolution=merge-duplicates'
+                'Prefer': 'return=minimal'
             }
             
             heartbeat_data = {
@@ -250,15 +250,46 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
                 ]
             }
             
-            response = requests.post(
+            # Use PATCH with filter to upsert by executor_id (avoids 409 conflicts)
+            response = requests.patch(
                 f"{DSM_URL}/rest/v1/executor_heartbeats",
                 headers=headers,
+                params={'executor_id': f'eq.{self.executor_id}'},
                 json=heartbeat_data,
                 verify=VERIFY_SSL,
                 timeout=5
             )
             
-            if response.status_code in (200, 201):
+            # If no rows matched (204 with no rows), insert instead
+            if response.status_code == 204:
+                # Check if we actually updated anything by doing a count
+                # If not found, do an insert
+                check_response = requests.get(
+                    f"{DSM_URL}/rest/v1/executor_heartbeats",
+                    headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                    params={'executor_id': f'eq.{self.executor_id}', 'select': 'id'},
+                    verify=VERIFY_SSL,
+                    timeout=5
+                )
+                if check_response.status_code == 200:
+                    data = check_response.json()
+                    if not data:
+                        # No existing record, insert new one
+                        insert_headers = {
+                            'apikey': SERVICE_ROLE_KEY,
+                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=minimal'
+                        }
+                        requests.post(
+                            f"{DSM_URL}/rest/v1/executor_heartbeats",
+                            headers=insert_headers,
+                            json=heartbeat_data,
+                            verify=VERIFY_SSL,
+                            timeout=5
+                        )
+                self.last_heartbeat_time = current_time
+            elif response.status_code in (200, 201):
                 self.last_heartbeat_time = current_time
             else:
                 # Log but don't fail - heartbeat is non-critical

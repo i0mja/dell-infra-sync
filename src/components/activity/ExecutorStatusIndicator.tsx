@@ -1,86 +1,11 @@
-import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Activity, AlertTriangle, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-
-interface ExecutorHeartbeat {
-  id: string;
-  executor_id: string;
-  hostname: string | null;
-  ip_address: string | null;
-  version: string | null;
-  last_seen_at: string;
-  poll_count: number;
-  jobs_processed: number;
-  startup_time: string | null;
-  last_error: string | null;
-}
-
-type ExecutorStatus = 'online' | 'idle' | 'offline' | 'unknown';
+import { useJobExecutor } from "@/contexts/JobExecutorContext";
 
 export function ExecutorStatusIndicator() {
-  const [status, setStatus] = useState<ExecutorStatus>('unknown');
-
-  const { data: heartbeat, isLoading, refetch } = useQuery({
-    queryKey: ['executor-heartbeat'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('executor_heartbeats')
-        .select('*')
-        .order('last_seen_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      
-      if (error) throw error;
-      return data as ExecutorHeartbeat | null;
-    },
-    refetchInterval: 10000, // Poll every 10 seconds
-  });
-
-  // Subscribe to realtime updates
-  useEffect(() => {
-    const channel = supabase
-      .channel('executor-heartbeat-realtime')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'executor_heartbeats'
-        },
-        () => {
-          refetch();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      channel.unsubscribe();
-    };
-  }, [refetch]);
-
-  // Calculate status based on last_seen_at
-  useEffect(() => {
-    if (!heartbeat) {
-      setStatus('unknown');
-      return;
-    }
-
-    const lastSeen = new Date(heartbeat.last_seen_at);
-    const now = new Date();
-    const diffSeconds = (now.getTime() - lastSeen.getTime()) / 1000;
-
-    if (diffSeconds < 30) {
-      setStatus('online');
-    } else if (diffSeconds < 120) {
-      setStatus('idle');
-    } else {
-      setStatus('offline');
-    }
-  }, [heartbeat]);
+  const { status, heartbeat, isLoading } = useJobExecutor();
 
   const getStatusConfig = () => {
     switch (status) {
@@ -125,7 +50,6 @@ export function ExecutorStatusIndicator() {
   }
 
   const config = getStatusConfig();
-  const Icon = config.icon;
 
   return (
     <TooltipProvider>

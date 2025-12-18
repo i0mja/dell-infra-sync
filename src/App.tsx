@@ -8,6 +8,7 @@ import { AuthProvider } from "@/hooks/useAuth";
 import { NotificationProvider } from "@/contexts/NotificationContext";
 import { MinimizedJobsProvider } from "@/contexts/MinimizedJobsContext";
 import { ServerOperationsProvider } from "@/contexts/ServerOperationsContext";
+import { JobExecutorProvider } from "@/contexts/JobExecutorContext";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { GlobalMinimizedJobs } from "@/components/jobs/GlobalMinimizedJobs";
 import Layout from "@/components/Layout";
@@ -32,27 +33,29 @@ const App = () => (
           <Sonner />
           <BrowserRouter>
             <AuthProvider>
-              <MinimizedJobsProvider>
-                <NotificationProvider>
-                  <ServerOperationsProvider>
-                    <GlobalMinimizedJobs />
-                    <Routes>
-                    <Route path="/auth" element={<Auth />} />
-                    <Route path="/" element={<Layout />}>
-                      <Route index element={<Dashboard />} />
-              <Route path="servers" element={<Servers />} />
-              <Route path="vcenter" element={<VCenter />} />
-              <Route path="replication" element={<Navigate to="/vcenter?tab=replication" replace />} />
-              <Route path="maintenance-planner" element={<MaintenancePlanner />} />
-              <Route path="activity" element={<ActivityMonitor />} />
-              <Route path="reports" element={<Reports />} />
-              <Route path="settings" element={<Settings />} />
-                    </Route>
-                    <Route path="*" element={<NotFound />} />
-                    </Routes>
-                  </ServerOperationsProvider>
-                </NotificationProvider>
-              </MinimizedJobsProvider>
+              <JobExecutorProvider>
+                <MinimizedJobsProvider>
+                  <NotificationProvider>
+                    <ServerOperationsProvider>
+                      <GlobalMinimizedJobs />
+                      <Routes>
+                      <Route path="/auth" element={<Auth />} />
+                      <Route path="/" element={<Layout />}>
+                        <Route index element={<Dashboard />} />
+                <Route path="servers" element={<Servers />} />
+                <Route path="vcenter" element={<VCenter />} />
+                <Route path="replication" element={<Navigate to="/vcenter?tab=replication" replace />} />
+                <Route path="maintenance-planner" element={<MaintenancePlanner />} />
+                <Route path="activity" element={<ActivityMonitor />} />
+                <Route path="reports" element={<Reports />} />
+                <Route path="settings" element={<Settings />} />
+                      </Route>
+                      <Route path="*" element={<NotFound />} />
+                      </Routes>
+                    </ServerOperationsProvider>
+                  </NotificationProvider>
+                </MinimizedJobsProvider>
+              </JobExecutorProvider>
             </AuthProvider>
           </BrowserRouter>
         </TooltipProvider>

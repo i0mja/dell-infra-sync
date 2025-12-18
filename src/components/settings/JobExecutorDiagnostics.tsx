@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -6,8 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { CheckCircle2, XCircle, Loader2, AlertCircle, ChevronDown, ChevronUp, Copy, Clock, Activity, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { testJobExecutorConnectivity, testCredentialAccess, testIdracReachability } from "@/lib/diagnostics";
-import { getJobExecutorStatus, JobExecutorStatusResponse } from "@/lib/job-executor-api";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { useJobExecutor } from "@/contexts/JobExecutorContext";
 
 interface DiagnosticTest {
   id: string;
@@ -21,9 +21,8 @@ interface DiagnosticTest {
 
 export function JobExecutorDiagnostics() {
   const { toast } = useToast();
+  const { apiStatus, isLoading: statusLoading, refreshApiStatus } = useJobExecutor();
   const [running, setRunning] = useState(false);
-  const [executorStatus, setExecutorStatus] = useState<JobExecutorStatusResponse | null>(null);
-  const [statusLoading, setStatusLoading] = useState(true);
   const [tests, setTests] = useState<DiagnosticTest[]>([
     {
       id: 'executor-ping',
@@ -46,19 +45,8 @@ export function JobExecutorDiagnostics() {
   ]);
   const [expandedTests, setExpandedTests] = useState<Set<string>>(new Set());
 
-  // Fetch executor status on mount and periodically
-  const fetchStatus = async () => {
-    setStatusLoading(true);
-    const status = await getJobExecutorStatus();
-    setExecutorStatus(status);
-    setStatusLoading(false);
-  };
-
-  useEffect(() => {
-    fetchStatus();
-    const interval = setInterval(fetchStatus, 10000); // Refresh every 10s
-    return () => clearInterval(interval);
-  }, []);
+  // Use context for status - renamed from executorStatus
+  const executorStatus = apiStatus;
 
   const updateTest = (id: string, updates: Partial<DiagnosticTest>) => {
     setTests(prev => prev.map(test => 
@@ -274,7 +262,7 @@ export function JobExecutorDiagnostics() {
                 </Badge>
               )}
             </div>
-            <Button variant="ghost" size="sm" onClick={fetchStatus} disabled={statusLoading}>
+            <Button variant="ghost" size="sm" onClick={() => refreshApiStatus()} disabled={statusLoading}>
               <RefreshCw className={`h-4 w-4 ${statusLoading ? 'animate-spin' : ''}`} />
             </Button>
           </div>
