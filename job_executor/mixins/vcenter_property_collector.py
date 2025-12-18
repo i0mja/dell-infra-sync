@@ -50,6 +50,7 @@ def _get_host_properties() -> List[str]:
     return [
         "name",
         "hardware.systemInfo.serialNumber",
+        "hardware.systemInfo.otherIdentifyingInfo",  # Fallback for ESXi 7.x serial/ServiceTag
         "hardware.cpuInfo",
         "hardware.memorySize",
         "summary.runtime.powerState",
@@ -927,10 +928,16 @@ def _host_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
     # Connection state as status
     connection_state = str(props.get("summary.runtime.connectionState", ""))
     
+    # Get serial from primary property, fallback to otherIdentifyingInfo for ESXi 7.x
+    serial_number = props.get("hardware.systemInfo.serialNumber", "") or ""
+    if not serial_number:
+        other_info = props.get("hardware.systemInfo.otherIdentifyingInfo")
+        serial_number = _extract_serial_from_other_info(other_info)
+    
     return {
         "id": moref,
         "name": props.get("name", ""),
-        "serial_number": props.get("hardware.systemInfo.serialNumber", ""),
+        "serial_number": serial_number,
         "cluster_name": lookups.get("host_moref_to_cluster_name", {}).get(moref, ""),
         "cluster_moref": lookups.get("host_moref_to_cluster", {}).get(moref, ""),
         "power_state": str(props.get("summary.runtime.powerState", "")),
@@ -946,6 +953,39 @@ def _host_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
         "esxi_version": esxi_version_full,
         "maintenance_mode": maintenance_mode,
     }
+
+
+def _extract_serial_from_other_info(other_info) -> str:
+    """
+    Extract serial/service tag from otherIdentifyingInfo array.
+    
+    Dell servers store ServiceTag in otherIdentifyingInfo on ESXi 7.x
+    where hardware.systemInfo.serialNumber may be empty.
+    
+    Args:
+        other_info: List of HostSystemIdentificationInfo objects
+        
+    Returns:
+        Serial number string or empty string if not found
+    """
+    if not other_info:
+        return ""
+    
+    # Look for ServiceTag or EnclosureSerialNumberTag identifiers
+    for info in other_info:
+        try:
+            id_type = getattr(info, 'identifierType', None)
+            if id_type:
+                key_str = str(getattr(id_type, 'key', ''))
+                # Dell uses ServiceTag for the server serial
+                if 'ServiceTag' in key_str or 'SerialNumber' in key_str:
+                    value = getattr(info, 'identifierValue', '') or ''
+                    if value:
+                        return str(value)
+        except Exception:
+            continue
+    
+    return ""
 
 
 def _safe_cpu_info(cpu_info) -> Dict[str, Any]:
