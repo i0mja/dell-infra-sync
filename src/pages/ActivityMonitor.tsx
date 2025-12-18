@@ -658,11 +658,20 @@ export default function ActivityMonitor() {
     const runningJobs = jobs.filter(j => j.status === 'running');
     const hasRunningJobs = runningJobs.length > 0;
     
-    // Find pending jobs that have been waiting
+    // Find pending jobs that have been waiting PAST their scheduled time
     const pendingOldJobs = jobs.filter(job => {
       if (job.status !== 'pending' || job.started_at) return false;
-      const createdAt = new Date(job.created_at).getTime();
-      const ageSeconds = (now - createdAt) / 1000;
+      
+      // If job has a schedule_at time, use that as the reference
+      // A job is only "waiting too long" if its scheduled time has passed
+      const referenceTime = job.schedule_at 
+        ? new Date(job.schedule_at).getTime() 
+        : new Date(job.created_at).getTime();
+      
+      // If scheduled time is in the future, job is NOT stale - it's waiting for its time
+      if (job.schedule_at && referenceTime > now) return false;
+      
+      const ageSeconds = (now - referenceTime) / 1000;
       return ageSeconds > STALE_THRESHOLD_SECONDS;
     });
     

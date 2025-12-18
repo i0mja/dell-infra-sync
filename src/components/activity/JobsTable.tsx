@@ -21,6 +21,8 @@ import {
   Flag,
   AlertTriangle,
   Server,
+  Clock,
+  Timer,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -52,7 +54,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow, differenceInSeconds, format, isPast } from "date-fns";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { usePagination } from "@/hooks/usePagination";
@@ -65,6 +67,7 @@ export interface Job {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+  schedule_at: string | null;
   details: any;
   target_scope: any;
   created_by?: string;
@@ -271,16 +274,27 @@ export function JobsTable({
           </Badge>
         );
       case "pending":
+        const scheduled = job && isJobScheduled(job);
+        const countdown = job && getScheduleCountdown(job);
         return (
           <div className="flex items-center gap-1">
-            <Badge variant="secondary" className="text-xs">
-              Pending
-            </Badge>
-            {stale && (
-              <Badge variant="outline" className="text-xs border-amber-500 text-amber-500">
-                <AlertTriangle className="h-3 w-3 mr-1" />
-                Not Picked Up
+            {scheduled ? (
+              <Badge variant="outline" className="text-xs border-blue-500 text-blue-500 bg-blue-500/10">
+                <Clock className="h-3 w-3 mr-1" />
+                Scheduled {countdown && `(${countdown})`}
               </Badge>
+            ) : (
+              <>
+                <Badge variant="secondary" className="text-xs">
+                  Pending
+                </Badge>
+                {stale && (
+                  <Badge variant="outline" className="text-xs border-amber-500 text-amber-500">
+                    <AlertTriangle className="h-3 w-3 mr-1" />
+                    Not Picked Up
+                  </Badge>
+                )}
+              </>
             )}
           </div>
         );
@@ -379,10 +393,36 @@ export function JobsTable({
   const canRetryJob = (job: Job) => ["failed", "cancelled"].includes(job.status);
   const canDeleteJob = (job: Job) => ["completed", "failed", "cancelled"].includes(job.status);
 
-  // Check if a pending job is stale (not picked up after 60 seconds)
+  // Check if a job is scheduled for the future
+  const isJobScheduled = (job: Job): boolean => {
+    if (!job.schedule_at || job.status !== 'pending') return false;
+    return !isPast(new Date(job.schedule_at));
+  };
+
+  // Get time until scheduled execution
+  const getScheduleCountdown = (job: Job): string | null => {
+    if (!job.schedule_at) return null;
+    const scheduleDate = new Date(job.schedule_at);
+    if (isPast(scheduleDate)) return null;
+    const seconds = differenceInSeconds(scheduleDate, new Date());
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+    return format(scheduleDate, 'HH:mm');
+  };
+
+  // Check if a pending job is stale (not picked up after 60 seconds PAST its scheduled time)
   const isJobStale = (job: Job): boolean => {
     if (job.status !== 'pending' || job.started_at) return false;
-    const ageSeconds = (Date.now() - new Date(job.created_at).getTime()) / 1000;
+    
+    // If scheduled for future, not stale
+    if (isJobScheduled(job)) return false;
+    
+    // Use schedule_at if present, otherwise created_at
+    const referenceTime = job.schedule_at 
+      ? new Date(job.schedule_at).getTime() 
+      : new Date(job.created_at).getTime();
+    
+    const ageSeconds = (Date.now() - referenceTime) / 1000;
     return ageSeconds > 60;
   };
 
