@@ -3,10 +3,10 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
-import { INTERNAL_JOB_TYPES, SLA_MONITORING_JOB_TYPES } from '@/lib/job-constants';
+import { INTERNAL_JOB_TYPES, SCHEDULED_BACKGROUND_JOB_TYPES } from '@/lib/job-constants';
 
 // Combined list of job types to filter from notifications
-const FILTERED_JOB_TYPES = [...INTERNAL_JOB_TYPES, ...SLA_MONITORING_JOB_TYPES];
+const FILTERED_JOB_TYPES = [...INTERNAL_JOB_TYPES, ...SCHEDULED_BACKGROUND_JOB_TYPES];
 
 type Job = Database['public']['Tables']['jobs']['Row'];
 type IdracCommand = Database['public']['Tables']['idrac_commands']['Row'];
