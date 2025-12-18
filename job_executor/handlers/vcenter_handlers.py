@@ -288,6 +288,15 @@ class VCenterHandlers(BaseHandler):
             inventory_result = sync_vcenter_fast(content, source_vcenter_id)
             fetch_time = int((time.time() - inventory_start) * 1000)
             
+            # DEBUG: Enhanced logging for Marseille VM count diagnosis
+            vm_count = len(inventory_result.get('vms', []))
+            host_count = len(inventory_result.get('hosts', []))
+            self._log_console(f"DEBUG: PropertyCollector returned {vm_count} VMs, {host_count} hosts for {vcenter_name}", "INFO", job_details)
+            if vm_count < 100:
+                # Log sample VM names if count seems low
+                sample_vms = [v.get('name', 'unknown') for v in inventory_result.get('vms', [])[:10]]
+                self._log_console(f"DEBUG: Sample VMs: {sample_vms}", "INFO", job_details)
+            
             self._log_console(f"PropertyCollector fetched {inventory_result.get('total_objects', 0)} objects in {fetch_time}ms", "INFO", job_details)
             
             if 'inventory' in phase_tasks:

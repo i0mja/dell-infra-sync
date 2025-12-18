@@ -327,7 +327,17 @@ def collect_vcenter_inventory(
             objects.extend(result.objects or [])
             token = result.token
         
-        logger.info(f"PropertyCollector fetched {len(objects)} objects")
+        logger.info(f"PropertyCollector fetched {len(objects)} TOTAL objects (before categorization)")
+        
+        # DEBUG: Count objects by type before categorization for diagnosis
+        type_counts = {}
+        for oc in objects:
+            try:
+                type_name = type(oc.obj).__name__
+                type_counts[type_name] = type_counts.get(type_name, 0) + 1
+            except:
+                type_counts['unknown'] = type_counts.get('unknown', 0) + 1
+        logger.info(f"PropertyCollector objects by type: {type_counts}")
         
         # Parse and categorize objects
         for obj_content in objects:
@@ -403,10 +413,15 @@ def collect_vcenter_inventory(
     
     fetch_time_ms = int((time.time() - start_time) * 1000)
     
-    # Summary logging for diagnostics
-    logger.info(f"PropertyCollector categorized: {len(clusters)} clusters, {len(hosts)} hosts, "
-                f"{len(vms)} VMs, {len(datastores)} datastores, {len(networks)} networks, "
-                f"{len(dvpgs)} DVPGs, {len(dvswitches)} DVSwitches")
+    # Summary logging for diagnostics - ENHANCED for debugging Marseille VM count issue
+    logger.info(f"PropertyCollector FINAL COUNTS: clusters={len(clusters)}, hosts={len(hosts)}, "
+                f"vms={len(vms)}, datastores={len(datastores)}, networks={len(networks)}, "
+                f"dvpgs={len(dvpgs)}, dvswitches={len(dvswitches)}")
+    
+    # DEBUG: Log first few VM names to verify we're getting expected VMs
+    if vms:
+        sample_vm_names = [props.get('name', 'unknown') for _, props in vms[:5]]
+        logger.info(f"Sample VMs fetched (first 5): {sample_vm_names}")
     
     # FALLBACK: If PropertyCollector returned no networks/DVPGs, use direct datacenter traversal
     if len(networks) == 0 and len(dvpgs) == 0 and len(dvswitches) == 0:
