@@ -71,6 +71,61 @@ export function UnifiedStatusHeader() {
     refetchInterval: 30000,
   });
 
+  // Fetch protection groups with target info for root cause detection
+  const { data: protectionGroups = [] } = useQuery({
+    queryKey: ['protection-groups-for-diagnosis'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('protection_groups')
+        .select(`
+          id,
+          name,
+          target_id,
+          replication_schedule,
+          last_replication_at,
+          paused_at,
+          is_enabled,
+          replication_targets (
+            health_status,
+            ssh_trust_established
+          )
+        `);
+      return data || [];
+    },
+    refetchInterval: 30000,
+  });
+
+  // Helper to get primary root cause for a violation
+  const getPrimaryCause = (violation: SLAViolation): string | null => {
+    const group = protectionGroups.find((g: any) => g.id === violation.protection_group_id);
+    if (!group) return null;
+
+    // Check in priority order - most fundamental issues first
+    if (!group.target_id) return "No ZFS target";
+    if (!group.replication_schedule) return "No schedule";
+    if (group.paused_at) return "Paused";
+    if (!group.is_enabled) return "Disabled";
+    
+    // Check target health
+    const target = group.replication_targets;
+    if (target) {
+      if (target.health_status === 'offline' || target.health_status === 'error') {
+        return "Target offline";
+      }
+      if (target.health_status === 'degraded') {
+        return "Target degraded";
+      }
+      if (!target.ssh_trust_established) {
+        return "SSH not configured";
+      }
+    }
+    
+    // Check if never synced
+    if (!group.last_replication_at) return "Never synced";
+    
+    return null; // Config looks OK, just overdue
+  };
+
   const runningJobs = activeJobs.filter(j => j.status === 'running');
   const pendingJobs = activeJobs.filter(j => j.status === 'pending');
   const criticalViolations = violations.filter(v => v.severity === 'critical');
@@ -202,32 +257,38 @@ export function UnifiedStatusHeader() {
                 <div className="space-y-2">
                   <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">SLA Issues</h4>
                   <div className="grid gap-1">
-                    {violations.slice(0, 5).map((v) => (
-                      <button
-                        key={v.id}
-                        onClick={() => setSelectedGroupId(v.protection_group_id)}
-                        className={cn(
-                          "flex items-center gap-2 text-sm w-full text-left",
-                          "p-2 rounded-md hover:bg-muted/50 transition-colors cursor-pointer",
-                          "group"
-                        )}
-                      >
-                        {v.severity === 'critical' ? (
-                          <AlertTriangle className="h-3 w-3 text-destructive flex-shrink-0" />
-                        ) : (
-                          <Clock className="h-3 w-3 text-amber-500 flex-shrink-0" />
-                        )}
-                        <span className="text-muted-foreground flex-shrink-0">
-                          {v.details?.group_name || 'Protection Group'}:
-                        </span>
-                        <span className="flex-1 truncate">
-                          {v.violation_type === 'rpo_breach' 
-                            ? `RPO ${v.details?.current_rpo_minutes}m (target: ${v.details?.target_rpo_minutes}m)`
-                            : 'Test overdue'}
-                        </span>
-                        <ExternalLink className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
-                      </button>
-                    ))}
+                    {violations.slice(0, 5).map((v) => {
+                      const primaryCause = getPrimaryCause(v);
+                      return (
+                        <button
+                          key={v.id}
+                          onClick={() => setSelectedGroupId(v.protection_group_id)}
+                          className={cn(
+                            "flex items-center gap-2 text-sm w-full text-left",
+                            "p-2 rounded-md hover:bg-muted/50 transition-colors cursor-pointer",
+                            "group"
+                          )}
+                        >
+                          {v.severity === 'critical' ? (
+                            <AlertTriangle className="h-3 w-3 text-destructive flex-shrink-0" />
+                          ) : (
+                            <Clock className="h-3 w-3 text-amber-500 flex-shrink-0" />
+                          )}
+                          <span className="text-muted-foreground flex-shrink-0">
+                            {v.details?.group_name || 'Protection Group'}:
+                          </span>
+                          <span className="flex-1 truncate">
+                            {v.violation_type === 'rpo_breach' 
+                              ? `RPO ${v.details?.current_rpo_minutes}m (target: ${v.details?.target_rpo_minutes}m)`
+                              : 'Test overdue'}
+                            {primaryCause && (
+                              <span className="text-destructive/80 ml-1.5">• {primaryCause}</span>
+                            )}
+                          </span>
+                          <ExternalLink className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}
