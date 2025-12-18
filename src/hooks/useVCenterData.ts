@@ -248,7 +248,7 @@ export function useVCenterData(selectedVCenterId?: string | null) {
     return { data: allData, count: totalCount || allData.length };
   };
 
-  // Helper to fetch Networks in batches
+  // Helper to fetch Networks in batches with live VM counts from junction table
   const fetchNetworksInBatches = async (filterValue?: string): Promise<{ data: VCenterNetwork[], count: number }> => {
     const allData: VCenterNetwork[] = [];
     let from = 0;
@@ -259,7 +259,7 @@ export function useVCenterData(selectedVCenterId?: string | null) {
     while (hasMore) {
       let query = supabase
         .from("vcenter_networks")
-        .select("*", { count: from === 0 ? 'exact' : undefined })
+        .select("*, vcenter_network_vms(count)", { count: from === 0 ? 'exact' : undefined })
         .order("name", { ascending: true })
         .range(from, from + batchSize - 1);
 
@@ -271,7 +271,13 @@ export function useVCenterData(selectedVCenterId?: string | null) {
       if (error) throw error;
 
       if (data && data.length > 0) {
-        allData.push(...data);
+        // Map data to include live vm_count from junction table
+        const networksWithCounts = data.map((net: any) => ({
+          ...net,
+          vm_count: net.vcenter_network_vms?.[0]?.count || 0,
+          vcenter_network_vms: undefined, // Remove the nested object
+        }));
+        allData.push(...networksWithCounts);
         if (from === 0 && count !== null) {
           totalCount = count;
         }
