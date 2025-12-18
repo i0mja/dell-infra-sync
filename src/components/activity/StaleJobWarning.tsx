@@ -41,7 +41,7 @@ export function StaleJobWarning({ staleJobs, onCancelJobs, onDismiss }: StaleJob
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => navigate("/settings/system")}
+            onClick={() => navigate("/settings?tab=system")}
           >
             <Settings className="h-3 w-3 mr-1" />
             System Health

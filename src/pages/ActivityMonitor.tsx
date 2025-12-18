@@ -661,7 +661,7 @@ export default function ActivityMonitor() {
           description: "Jobs have been pending for over 60 seconds. Job Executor may not be running.",
           action: {
             label: "View System Health",
-            onClick: () => navigate('/settings/system')
+            onClick: () => navigate('/settings?tab=system')
           }
         });
       }
