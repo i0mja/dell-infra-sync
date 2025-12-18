@@ -133,6 +133,20 @@ export const ServerUpdateWizard = ({
     }
   }, [open, targetType]);
 
+  // Sync preSelectedTarget to internal state when dialog opens
+  useEffect(() => {
+    if (open && preSelectedTarget) {
+      setTargetType(preSelectedTarget.type);
+      if (preSelectedTarget.type === 'cluster' && preSelectedTarget.id) {
+        setSelectedCluster(preSelectedTarget.id);
+      } else if (preSelectedTarget.type === 'group' && preSelectedTarget.id) {
+        setSelectedGroup(preSelectedTarget.id);
+      } else if (preSelectedTarget.type === 'servers' && preSelectedTarget.ids) {
+        setSelectedServerIds(preSelectedTarget.ids);
+      }
+    }
+  }, [open, preSelectedTarget]);
+
   useEffect(() => {
     if (targetType === 'cluster' && selectedCluster) {
       fetchClusterInfo();
