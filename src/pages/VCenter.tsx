@@ -241,14 +241,23 @@ export default function VCenter() {
     };
   }, [selectedVCenterId]);
 
-  // Handle URL params for tab and cluster selection
+  // Handle URL params for tab, cluster selection, and settings dialog
   useEffect(() => {
     const tabParam = searchParams.get('tab');
     const clusterParam = searchParams.get('cluster');
+    const settingsParam = searchParams.get('settings');
     
     // Set active tab from URL param
     if (tabParam && ['hosts', 'vms', 'clusters', 'datastores', 'networks', 'esxi-profiles', 'replication'].includes(tabParam)) {
       setActiveTab(tabParam);
+    }
+    
+    // Auto-open settings dialog from URL param
+    if (settingsParam === 'true') {
+      setSettingsOpen(true);
+      // Clear the settings param after opening
+      searchParams.delete('settings');
+      setSearchParams(searchParams, { replace: true });
     }
     
     // Auto-select cluster by name or ID
