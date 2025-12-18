@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, BarChart3, CheckCircle2, Download, RefreshCw, Zap } from "lucide-react";
+import { AlertCircle, BarChart3, CheckCircle2, Download, RefreshCw } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,7 +11,6 @@ import {
 interface ActivityStatsBarProps {
   totalCommands: number;
   successRate: number;
-  activeJobs: number;
   failedCount: number;
   liveStatus: 'connecting' | 'connected' | 'disconnected';
   onRefresh: () => void;
@@ -22,7 +21,6 @@ interface ActivityStatsBarProps {
 export const ActivityStatsBar = ({
   totalCommands,
   successRate,
-  activeJobs,
   failedCount,
   liveStatus,
   onRefresh,
@@ -55,12 +53,6 @@ export const ActivityStatsBar = ({
             <CheckCircle2 className="h-4 w-4 text-green-500" />
             <span className="text-muted-foreground">Success:</span>
             <span className="font-semibold">{successRate.toFixed(1)}%</span>
-          </div>
-          <div className="hidden h-4 w-px bg-border sm:block" />
-          <div className="flex items-center gap-2 whitespace-nowrap">
-            <Zap className="h-4 w-4 text-primary" />
-            <span className="text-muted-foreground">Live Jobs:</span>
-            <span className="font-semibold">{activeJobs}</span>
           </div>
           <div className="hidden h-4 w-px bg-border sm:block" />
           <div className="flex items-center gap-2 whitespace-nowrap">

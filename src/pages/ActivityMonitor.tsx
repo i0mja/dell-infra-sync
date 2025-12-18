@@ -15,6 +15,7 @@ import { StaleJobWarning } from "@/components/activity/StaleJobWarning";
 import { ExecutorStatusIndicator } from "@/components/activity/ExecutorStatusIndicator";
 import { ActivityTable } from "@/components/activity/ActivityTable";
 import { ActivityFilterToolbar } from "@/components/activity/ActivityFilterToolbar";
+import { RunningJobsPopover } from "@/components/activity/RunningJobsPopover";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMediaQuery } from "@/hooks/use-media-query";
@@ -685,7 +686,6 @@ export default function ActivityMonitor() {
       <ActivityStatsBar
         totalCommands={commands.length}
         successRate={calculateSuccessRate()}
-        activeJobs={activeJobs.length}
         failedCount={commands.filter(c => !c.success).length}
         liveStatus={realtimeStatus}
         onRefresh={handleManualRefresh}
@@ -720,15 +720,25 @@ export default function ActivityMonitor() {
                 </TabsTrigger>
               </TabsList>
             
-            {activeJobs.length > 0 && activeTab === "operations" && (
-              <>
-                <div className="w-px h-6 bg-border mx-2" />
-                <div className="inline-flex items-center gap-2 px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 text-xs">
-                  <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
-                  {activeJobs.length} running
-                </div>
-              </>
-            )}
+              <RunningJobsPopover
+                jobs={activeJobs}
+                onCancelJob={handleCancelJob}
+                onViewJob={(jobId) => {
+                  const job = jobs.find(j => j.id === jobId);
+                  if (job) handleViewJobDetails(job);
+                }}
+                onViewAllRunning={() => {
+                  setJobsStatusFilter('running');
+                  setActiveTab('operations');
+                }}
+                onCancelAllRunning={() => {
+                  const runningJobIds = activeJobs.filter(j => j.status === 'running').map(j => j.id);
+                  if (runningJobIds.length > 0) {
+                    handleBulkCancel(runningJobIds);
+                  }
+                }}
+                canManage={canManage}
+              />
 
             <div className="flex-1" />
 
