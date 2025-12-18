@@ -195,7 +195,7 @@ export const ServerUpdateWizard = ({
         name: selectedCluster,
         total: hosts.length,
         linked: hosts.filter(h => h.server_id).length,
-        connected: hosts.filter(h => h.status === 'connected').length
+        connected: hosts.filter(h => h.status === 'online').length
       });
     }
   };
