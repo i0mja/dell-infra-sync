@@ -494,6 +494,65 @@ export default function VCenter() {
     }
   };
 
+  // Handle safety check - creates a cluster_safety_check job
+  const handleSafetyCheck = async (clusterName: string) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        toast({ title: "Authentication required", variant: "destructive" });
+        return;
+      }
+
+      const { error } = await supabase.from("jobs").insert({
+        job_type: "cluster_safety_check" as any,
+        status: "pending",
+        created_by: user.id,
+        target_scope: {},
+        details: { 
+          cluster_name: clusterName,
+          min_required_hosts: 2,
+          check_drs: true,
+          check_ha: true
+        }
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: "Safety check started",
+        description: `Running safety check on cluster ${clusterName}`
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to start safety check",
+        description: error.message,
+        variant: "destructive"
+      });
+    }
+  };
+
+  // Handle navigate to hosts - switches to Hosts tab filtered by cluster
+  const handleNavigateToHosts = (clusterName: string) => {
+    setActiveTab('hosts');
+    setHostsClusterFilter(clusterName);
+    setSelectedClusterId(null);
+    toast({
+      title: "Filtered to cluster hosts",
+      description: `Showing hosts in ${clusterName}`
+    });
+  };
+
+  // Handle navigate to VMs - switches to VMs tab filtered by cluster
+  const handleNavigateToVMs = (clusterName: string) => {
+    setActiveTab('vms');
+    setVmsClusterFilter(clusterName);
+    setSelectedClusterId(null);
+    toast({
+      title: "Filtered to cluster VMs",
+      description: `Showing VMs in ${clusterName}`
+    });
+  };
+
   const handleHostSync = async (hostId: string) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -990,7 +1049,7 @@ export default function VCenter() {
 
         {/* Fixed sidebar - only shows when something is selected */}
         {hasSelection && (
-          <VCenterDetailsSidebar 
+        <VCenterDetailsSidebar 
             selectedHost={selectedHost}
             selectedCluster={null}
             selectedVm={selectedVm}
@@ -1007,6 +1066,9 @@ export default function VCenter() {
             onLinkToServer={(host) => handleLinkToServer(host.id)}
             onNavigateToVM={handleNavigateToVM}
             onNavigateToDatastore={handleNavigateToDatastore}
+            onSafetyCheck={handleSafetyCheck}
+            onNavigateToHosts={handleNavigateToHosts}
+            onNavigateToVMs={handleNavigateToVMs}
           />
         )}
         
