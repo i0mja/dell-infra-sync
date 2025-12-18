@@ -86,6 +86,27 @@ export const SCHEDULED_JOB_REGISTRY: Record<string, ScheduledJobConfig> = {
     }
   },
 
+  scheduled_vcenter_sync: {
+    jobType: 'scheduled_vcenter_sync',
+    label: 'Scheduled vCenter Sync',
+    description: 'Automatically synchronizes inventory from vCenter servers on a configured schedule. Keeps VM, host, and datastore data up to date.',
+    icon: RefreshCw,
+    schedule: { 
+      interval: 'Configurable (default: 15 min)', 
+      configurable: true,
+      settingsPath: '/vcenter'
+    },
+    relatedEntity: { 
+      type: 'vcenter', 
+      getEntityId: (d) => d?.vcenter_id || null,
+      label: 'vCenter Servers'
+    },
+    actions: {
+      viewSettings: '/vcenter',
+      viewEntities: '/vcenter',
+    }
+  },
+
   cluster_safety_check: {
     jobType: 'cluster_safety_check',
     label: 'Cluster Safety Check',
