@@ -724,7 +724,7 @@ export default function ActivityMonitor() {
                 jobs={activeJobs}
                 onCancelJob={handleCancelJob}
                 onViewJob={(jobId) => {
-                  const job = jobs.find(j => j.id === jobId);
+                  const job = activeJobs.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
                   if (job) handleViewJobDetails(job);
                 }}
                 onViewAllRunning={() => {
