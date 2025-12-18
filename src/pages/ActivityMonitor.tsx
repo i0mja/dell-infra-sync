@@ -846,7 +846,7 @@ export default function ActivityMonitor() {
             />
           </TabsContent>
 
-          <TabsContent value="activity" className="flex-1 mt-0 overflow-auto p-4">
+          <TabsContent value="activity" className="flex-1 mt-0 overflow-auto">
             <ActivityTable
               activities={filteredActivities}
               isLoading={activitiesLoading}

@@ -74,7 +74,7 @@ export function ActivityTable({ activities, isLoading }: ActivityTableProps) {
   }
 
   return (
-    <div className="rounded-md border">
+    <div className="flex flex-col h-full overflow-hidden">
       <Table>
         <TableHeader>
           <TableRow>
