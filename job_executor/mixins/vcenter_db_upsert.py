@@ -115,7 +115,12 @@ class VCenterDbUpsertMixin:
         results["networks"] = net_result
         
         # 5. Upsert VMs (phase 4)
-        self.log(f"{prefix}Upserting {len(inventory['vms'])} VMs...")
+        # DEBUG: Enhanced logging for Marseille VM sync diagnosis
+        self.log(f"{prefix}Upserting {len(inventory['vms'])} VMs from inventory...")
+        if len(inventory['vms']) < 100:
+            # Log all VM names if count is suspiciously low
+            vm_names = [vm.get('name', 'unknown') for vm in inventory['vms'][:20]]
+            self.log(f"{prefix}  DEBUG: VM names (first 20): {vm_names}")
         if progress_callback:
             progress_callback(80, f"{prefix}Syncing VMs...", 4)
         
@@ -823,7 +828,11 @@ class VCenterDbUpsertMixin:
         host_id_map: Dict[str, str] = None
     ) -> Dict[str, int]:
         """Batch upsert VMs."""
+        # DEBUG: Log incoming VM count for diagnosis
+        self.log(f"  _upsert_vms_batch: Received {len(vms)} VMs for vCenter {source_vcenter_id}")
+        
         if not vms:
+            self.log(f"  _upsert_vms_batch: No VMs to upsert!", "WARN")
             return {"synced": 0, "total": 0}
         
         headers = {
