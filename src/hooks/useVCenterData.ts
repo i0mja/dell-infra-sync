@@ -25,6 +25,7 @@ export interface VCenterCluster {
   id: string;
   cluster_name: string;
   vcenter_id: string | null;
+  source_vcenter_id: string | null;
   host_count: number | null;
   vm_count: number | null;
   ha_enabled: boolean | null;

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Badge } from "@/components/ui/badge";
 import { compareValues } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -84,6 +84,16 @@ export function DatastoresTable({
 
   // Apply pagination
   const pagination = usePagination(filteredDatastores, "vcenter-datastores-pagination", 50);
+
+  // Auto-navigate to page containing selected datastore
+  useEffect(() => {
+    if (selectedDatastoreId && filteredDatastores.length > 0) {
+      const index = filteredDatastores.findIndex(ds => ds.id === selectedDatastoreId);
+      if (index >= 0) {
+        pagination.goToItemIndex(index);
+      }
+    }
+  }, [selectedDatastoreId, filteredDatastores.length]);
 
   const handleSort = (field: string) => {
     if (sortField === field) {

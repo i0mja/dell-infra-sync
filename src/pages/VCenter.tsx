@@ -21,6 +21,7 @@ import { useVCenters } from "@/hooks/useVCenters";
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { useSavedViews } from "@/hooks/useSavedViews";
 import { useDatastoreVMs } from "@/hooks/useDatastoreVMs";
+import { useClusterDatastores } from "@/hooks/useClusterDatastores";
 import { Button } from "@/components/ui/button";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
@@ -127,6 +128,15 @@ export default function VCenter() {
   
   // Fetch VMs for selected datastore
   const { data: datastoreVMs, isLoading: datastoreVMsLoading } = useDatastoreVMs(selectedDatastoreId);
+  
+  // Find cluster info for the hook (derive directly to avoid dependency issues)
+  const selectedClusterForHook = clusters.find(c => c.id === selectedClusterId);
+  
+  // Fetch datastores for selected cluster
+  const { data: clusterDatastores, isLoading: clusterDatastoresLoading } = useClusterDatastores(
+    selectedClusterForHook?.source_vcenter_id,
+    selectedClusterForHook?.cluster_name
+  );
   
   // Networks filters
   const [networksSearch, setNetworksSearch] = useState("");
@@ -449,7 +459,16 @@ export default function VCenter() {
   const handleNavigateToVM = (vmId: string) => {
     setActiveTab("vms");
     setSelectedDatastoreId(null);
+    setSelectedClusterId(null);
     setSelectedVmId(vmId);
+  };
+
+  // Navigate to Datastores tab and select a specific datastore
+  const handleNavigateToDatastore = (datastoreId: string) => {
+    setActiveTab("datastores");
+    setSelectedClusterId(null);
+    setSelectedVmId(null);
+    setSelectedDatastoreId(datastoreId);
   };
 
   const handleHostSync = async (hostId: string) => {
@@ -948,12 +967,15 @@ export default function VCenter() {
             selectedDatastore={selectedDatastore}
             datastoreVMs={datastoreVMs}
             datastoreVMsLoading={datastoreVMsLoading}
+            clusterDatastores={clusterDatastores}
+            clusterDatastoresLoading={clusterDatastoresLoading}
             onClusterUpdate={() => {}}
             onClose={handleCloseSidebar}
             onHostSync={(host) => handleHostSync(host.id)}
             onViewLinkedServer={(host) => handleViewLinkedServer(host.server_id!)}
             onLinkToServer={(host) => handleLinkToServer(host.id)}
             onNavigateToVM={handleNavigateToVM}
+            onNavigateToDatastore={handleNavigateToDatastore}
           />
         )}
         
