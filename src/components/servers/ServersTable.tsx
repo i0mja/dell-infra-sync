@@ -307,16 +307,22 @@ export function ServersTable({
     selected.forEach((server) => onServerRefresh(server));
   };
 
-  const copyToClipboard = async (value: string | null | undefined, label: string) => {
+  const handleCopyToClipboard = async (value: string | null | undefined, label: string) => {
     if (!value) {
       toast({ title: `No ${label.toLowerCase()} to copy`, variant: "destructive" });
       return;
     }
 
-    try {
-      await navigator.clipboard.writeText(value);
-    } catch (error: any) {
-      toast({ title: "Copy failed", description: error?.message, variant: "destructive" });
+    const { copyToClipboard } = await import("@/lib/clipboard");
+    const success = await copyToClipboard(value);
+    if (success) {
+      toast({ title: "Copied", description: `${label} copied to clipboard` });
+    } else {
+      toast({ 
+        title: "Copy failed", 
+        description: "Unable to access clipboard. Try using HTTPS or a different browser.",
+        variant: "destructive" 
+      });
     }
   };
 
@@ -716,15 +722,15 @@ export function ServersTable({
                       </TableRow>
                     </ContextMenuTrigger>
                     <ContextMenuContent className="w-56 bg-background">
-                      <ContextMenuItem onClick={() => copyToClipboard(server.ip_address, "IP Address")}>
+                      <ContextMenuItem onClick={() => handleCopyToClipboard(server.ip_address, "IP Address")}>
                         <ClipboardCopy className="mr-2 h-4 w-4" />
                         Copy IP Address
                       </ContextMenuItem>
-                      <ContextMenuItem onClick={() => copyToClipboard(server.hostname, "Hostname")}>
+                      <ContextMenuItem onClick={() => handleCopyToClipboard(server.hostname, "Hostname")}>
                         <ClipboardCopy className="mr-2 h-4 w-4" />
                         Copy Hostname
                       </ContextMenuItem>
-                      <ContextMenuItem onClick={() => copyToClipboard(server.service_tag, "Service Tag")}>
+                      <ContextMenuItem onClick={() => handleCopyToClipboard(server.service_tag, "Service Tag")}>
                         <ClipboardCopy className="mr-2 h-4 w-4" />
                         Copy Service Tag
                       </ContextMenuItem>
@@ -899,7 +905,7 @@ export function ServersTable({
                             Export to CSV
                           </ContextMenuItem>
                           
-                          <ContextMenuItem onClick={() => copyToClipboard(group.name, "Group Name")}>
+                          <ContextMenuItem onClick={() => handleCopyToClipboard(group.name, "Group Name")}>
                             <ClipboardCopy className="mr-2 h-4 w-4" />
                             Copy Group Name
                           </ContextMenuItem>
@@ -977,15 +983,15 @@ export function ServersTable({
                               </TableRow>
                             </ContextMenuTrigger>
                             <ContextMenuContent className="w-56 bg-background">
-                              <ContextMenuItem onClick={() => copyToClipboard(server.ip_address, "IP Address")}>
+                              <ContextMenuItem onClick={() => handleCopyToClipboard(server.ip_address, "IP Address")}>
                                 <ClipboardCopy className="mr-2 h-4 w-4" />
                                 Copy IP Address
                               </ContextMenuItem>
-                              <ContextMenuItem onClick={() => copyToClipboard(server.hostname, "Hostname")}>
+                              <ContextMenuItem onClick={() => handleCopyToClipboard(server.hostname, "Hostname")}>
                                 <ClipboardCopy className="mr-2 h-4 w-4" />
                                 Copy Hostname
                               </ContextMenuItem>
-                              <ContextMenuItem onClick={() => copyToClipboard(server.service_tag, "Service Tag")}>
+                              <ContextMenuItem onClick={() => handleCopyToClipboard(server.service_tag, "Service Tag")}>
                                 <ClipboardCopy className="mr-2 h-4 w-4" />
                                 Copy Service Tag
                               </ContextMenuItem>
