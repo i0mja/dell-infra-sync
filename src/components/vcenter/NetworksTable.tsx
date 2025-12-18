@@ -24,7 +24,7 @@ interface GroupedNetwork {
 interface NetworksTableProps {
   networks: VCenterNetwork[];
   selectedNetworkId: string | null;
-  onNetworkClick: (network: VCenterNetwork) => void;
+  onNetworkClick: (network: VCenterNetwork, groupedNetworks?: VCenterNetwork[]) => void;
   loading: boolean;
   searchTerm: string;
   typeFilter: string;
@@ -310,7 +310,8 @@ export function NetworksTable({
                   className="cursor-pointer hover:bg-muted/50"
                   onClick={() => {
                     if (group.networks.length > 0) {
-                      onNetworkClick(group.networks[0]);
+                      // Pass first network for display, but also pass ALL networks in the group
+                      onNetworkClick(group.networks[0], group.networks);
                     }
                   }}
                 >
