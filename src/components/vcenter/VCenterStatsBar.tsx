@@ -3,7 +3,14 @@ import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Settings, Activity, RefreshCw, RefreshCcw, Loader2, Database, Link as LinkIcon, HardDrive, AlertTriangle, ChevronDown, XCircle, AlertCircle } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Settings, Activity, RefreshCcw, Loader2, Database, Link as LinkIcon, HardDrive, AlertTriangle, ChevronDown, XCircle, AlertCircle, Server, Network, Folder } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
 import type { VCenterAlarm } from "@/hooks/useVCenterData";
@@ -18,15 +25,10 @@ interface VCenterStatsBarProps {
   lastSync: string | null;
   mode: 'job-executor' | 'cloud';
   syncing: boolean;
-  testing: boolean;
   onSettings: () => void;
-  onTest: () => void;
   onSync: () => void;
-  onSyncAll: () => void;
-  syncingAll: boolean;
-  onRefresh: () => void;
-  onClusterUpdate: () => void;
-  hasActiveClusters: boolean;
+  onPartialSync: (scope: 'vms' | 'hosts' | 'clusters' | 'datastores' | 'networks') => void;
+  partialSyncing: string | null;
   vcenters?: Array<{ id: string; name: string; color: string | null }>;
   selectedVCenterId?: string | null;
   onVCenterChange?: (vcenterId: string | null) => void;
@@ -42,15 +44,10 @@ export function VCenterStatsBar({
   lastSync,
   mode,
   syncing,
-  testing,
   onSettings,
-  onTest,
   onSync,
-  onSyncAll,
-  syncingAll,
-  onRefresh,
-  onClusterUpdate,
-  hasActiveClusters,
+  onPartialSync,
+  partialSyncing,
   vcenters = [],
   selectedVCenterId,
   onVCenterChange,
@@ -87,6 +84,9 @@ export function VCenterStatsBar({
         return <Badge variant="outline" className="text-xs">{status || "Unknown"}</Badge>;
     }
   };
+
+  const isSyncing = syncing || !!partialSyncing;
+
   return (
     <div className="border-b bg-card">
       <div className="flex flex-col gap-2 px-3 py-2 sm:px-4 lg:flex-row lg:items-center lg:justify-between">
@@ -283,74 +283,55 @@ export function VCenterStatsBar({
             Settings
           </Button>
 
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs px-2"
-            onClick={onTest}
-            disabled={testing}
-          >
-            {testing ? (
-              <>
-                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                Test...
-              </>
-            ) : (
-              <>
-                <Activity className="mr-1 h-3.5 w-3.5" />
-                Test
-              </>
-            )}
-          </Button>
-
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs px-2"
-            onClick={onClusterUpdate}
-            disabled={!hasActiveClusters}
-          >
-            <RefreshCcw className="mr-1 h-3.5 w-3.5" />
-            Cluster
-          </Button>
-
-          <Button size="sm" className="h-7 text-xs px-2" onClick={onSync} disabled={syncing || syncingAll}>
-            {syncing ? (
-              <>
-                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                Sync...
-              </>
-            ) : (
-              <>
-                <RefreshCcw className="mr-1 h-3.5 w-3.5" />
-                Sync
-              </>
-            )}
-          </Button>
-
-          <Button 
-            variant="default" 
-            size="sm" 
-            className="h-7 text-xs px-2" 
-            onClick={onSyncAll} 
-            disabled={syncing || syncingAll || vcenters.length === 0}
-          >
-            {syncingAll ? (
-              <>
-                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                Syncing All...
-              </>
-            ) : (
-              <>
-                <RefreshCcw className="mr-1 h-3.5 w-3.5" />
-                Sync All
-              </>
-            )}
-          </Button>
-
-          <Button variant="outline" size="sm" className="h-7 w-7 p-0" onClick={onRefresh}>
-            <RefreshCw className="h-3.5 w-3.5" />
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button 
+                size="sm" 
+                className="h-7 text-xs px-2" 
+                disabled={isSyncing || vcenters.length === 0}
+              >
+                {isSyncing ? (
+                  <>
+                    <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                    {partialSyncing ? `Syncing ${partialSyncing}...` : 'Syncing...'}
+                  </>
+                ) : (
+                  <>
+                    <RefreshCcw className="mr-1 h-3.5 w-3.5" />
+                    Sync
+                    <ChevronDown className="ml-1 h-3 w-3" />
+                  </>
+                )}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem onClick={onSync}>
+                <RefreshCcw className="mr-2 h-4 w-4" />
+                Sync All vCenters
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => onPartialSync('hosts')}>
+                <Server className="mr-2 h-4 w-4" />
+                Hosts Only
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onPartialSync('vms')}>
+                <Activity className="mr-2 h-4 w-4" />
+                VMs Only
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onPartialSync('clusters')}>
+                <Database className="mr-2 h-4 w-4" />
+                Clusters Only
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onPartialSync('datastores')}>
+                <Folder className="mr-2 h-4 w-4" />
+                Datastores Only
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onPartialSync('networks')}>
+                <Network className="mr-2 h-4 w-4" />
+                Networks Only
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <Badge variant="outline" className="gap-1.5 text-xs h-6">
             <span className={`h-1.5 w-1.5 rounded-full ${mode === 'job-executor' ? 'bg-blue-500' : 'bg-emerald-500'}`} />

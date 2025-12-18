@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
-import { logActivityDirect } from "@/hooks/useActivityLog";
 import { VCenterStatsBar } from "@/components/vcenter/VCenterStatsBar";
 import { HostsTable } from "@/components/vcenter/HostsTable";
 import { HostFilterToolbar } from "@/components/vcenter/HostFilterToolbar";
@@ -13,8 +12,6 @@ import { ClustersFilterToolbar } from "@/components/vcenter/ClustersFilterToolba
 import { DatastoresTable } from "@/components/vcenter/DatastoresTable";
 import { DatastoresFilterToolbar } from "@/components/vcenter/DatastoresFilterToolbar";
 import { VCenterManagementDialog } from "@/components/vcenter/VCenterManagementDialog";
-import { VCenterConnectivityDialog } from "@/components/vcenter/VCenterConnectivityDialog";
-import { ClusterUpdateWizard } from "@/components/jobs/ClusterUpdateWizard";
 import { VCenterDetailsSidebar } from "@/components/vcenter/VCenterDetailsSidebar";
 import { NetworkDetailsSidebar } from "@/components/vcenter/NetworkDetailsSidebar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -109,14 +106,8 @@ export default function VCenter() {
   const [selectedDatastoreId, setSelectedDatastoreId] = useState<string | null>(null);
   const [selectedVCenterId, setSelectedVCenterId] = useState<string | null>("all");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [testDialogOpen, setTestDialogOpen] = useState(false);
-  const [clusterUpdateOpen, setClusterUpdateOpen] = useState(false);
-  const [selectedClusterForUpdate, setSelectedClusterForUpdate] = useState<string | undefined>();
-  const [preSelectedClusterForUpdate, setPreSelectedClusterForUpdate] = useState<string | undefined>();
   const [syncing, setSyncing] = useState(false);
-  const [syncingAll, setSyncingAll] = useState(false);
   const [partialSyncing, setPartialSyncing] = useState<string | null>(null);
-  const [testing, setTesting] = useState(false);
   const [vcenterHost, setVcenterHost] = useState("");
   const [activeTab, setActiveTab] = useState("hosts");
   const [deleteHostDialogOpen, setDeleteHostDialogOpen] = useState(false);
@@ -315,115 +306,11 @@ export default function VCenter() {
     return new Date(host.last_sync) > new Date(latest) ? host.last_sync : latest;
   }, null as string | null);
 
-  const handleTestConnectivity = async () => {
-    try {
-      setTesting(true);
-      const { data: { user } } = await supabase.auth.getUser();
-      
-      if (!user) {
-        toast({
-          title: "Authentication required",
-          description: "Please log in to test connectivity",
-          variant: "destructive",
-        });
-        return;
-      }
+  // Removed handleTestConnectivity and handleSyncNow - consolidated into handleSync
 
-      const { data, error } = await supabase.from("jobs").insert({
-        job_type: "vcenter_connectivity_test",
-        status: "pending",
-        created_by: user.id,
-        details: { test_type: "full_connectivity_test" },
-      }).select().single();
-
-      if (error) throw error;
-
-      toast({
-        title: "Connectivity test started",
-        description: `Job ${data.id} created`,
-      });
-
-      // Log activity
-      logActivityDirect('connectivity_test', 'vcenter', 'vCenter', { test_type: 'full_connectivity_test' }, { success: true });
-
-      setTestDialogOpen(true);
-    } catch (error: any) {
-      toast({
-        title: "Failed to start connectivity test",
-        description: error.message,
-        variant: "destructive",
-      });
-
-      // Log failed activity
-      logActivityDirect('connectivity_test', 'vcenter', 'vCenter', { test_type: 'full_connectivity_test' }, { success: false, error: error.message });
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  const handleSyncNow = async () => {
+  const handleSync = async () => {
     try {
       setSyncing(true);
-      const { data: { user } } = await supabase.auth.getUser();
-      
-      if (!user) {
-        toast({
-          title: "Authentication required",
-          description: "Please log in to sync",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      if (isPrivateNetwork(vcenterHost)) {
-        const { data, error } = await supabase.from("jobs").insert({
-          job_type: "vcenter_sync",
-          status: "pending",
-          created_by: user.id,
-          target_scope: { type: 'all' },
-          details: { sync_type: "full_sync" },
-        }).select().single();
-
-        if (error) throw error;
-
-        toast({
-          title: "vCenter sync started",
-          description: "Job Executor will handle the sync for private network",
-          action: (
-            <Button variant="outline" size="sm" onClick={() => navigate('/maintenance-planner?tab=jobs')}>
-              View Jobs
-            </Button>
-          ),
-        });
-      } else {
-        const { error } = await supabase.functions.invoke("sync-vcenter-direct", {
-          body: { syncType: "full" },
-        });
-
-        if (error) throw error;
-
-        toast({
-          title: "vCenter sync completed",
-          description: "Data has been synchronized",
-        });
-        
-        fetchHosts();
-        refetchVCenterData();
-      }
-    } catch (error: any) {
-      toast({
-        title: "Sync failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  const handleSyncAllVCenters = async () => {
-    try {
-      setSyncingAll(true);
       const { data: { user } } = await supabase.auth.getUser();
       
       if (!user) {
@@ -476,7 +363,7 @@ export default function VCenter() {
         variant: "destructive",
       });
     } finally {
-      setSyncingAll(false);
+      setSyncing(false);
     }
   };
 
@@ -537,10 +424,6 @@ export default function VCenter() {
     }
   };
 
-  const handleClusterUpdate = (clusterName?: string) => {
-    setSelectedClusterForUpdate(clusterName);
-    setClusterUpdateOpen(true);
-  };
 
   const handleHostClick = (host: VCenterHost) => {
     setSelectedHostId(selectedHostId === host.id ? null : host.id);
@@ -714,18 +597,10 @@ export default function VCenter() {
         lastSync={lastSync}
         mode={isPrivateNetwork(vcenterHost) ? "job-executor" : "cloud"}
         syncing={syncing}
-        testing={testing}
         onSettings={() => setSettingsOpen(true)}
-        onTest={handleTestConnectivity}
-        onSync={handleSyncNow}
-        onSyncAll={handleSyncAllVCenters}
-        syncingAll={syncingAll}
-        onRefresh={() => {
-          fetchHosts();
-          refetchVCenterData();
-        }}
-        onClusterUpdate={() => handleClusterUpdate()}
-        hasActiveClusters={uniqueClusters.length > 0}
+        onSync={handleSync}
+        onPartialSync={handlePartialSync}
+        partialSyncing={partialSyncing}
         vcenters={vcenters.map(vc => ({ id: vc.id, name: vc.name, color: vc.color }))}
         selectedVCenterId={selectedVCenterId}
         onVCenterChange={setSelectedVCenterId}
@@ -955,10 +830,10 @@ export default function VCenter() {
                 onHostClick={handleHostClick}
                 onClusterClick={() => {}}
                 onHostSync={(host) => handleHostSync(host.id)}
-                onClusterUpdate={handleClusterUpdate}
+                onClusterUpdate={() => {}}
                 onViewLinkedServer={(host) => handleViewLinkedServer(host.server_id!)}
                 onLinkToServer={(host) => handleLinkToServer(host.id)}
-                onSync={handleSyncNow}
+                onSync={handleSync}
                 loading={hostsLoading}
                 onHostDelete={handleHostDelete}
                 onBulkDelete={handleBulkHostDelete}
@@ -1060,7 +935,7 @@ export default function VCenter() {
             selectedVm={selectedVm}
             selectedClusterData={selectedClusterData}
             selectedDatastore={selectedDatastore}
-            onClusterUpdate={handleClusterUpdate}
+            onClusterUpdate={() => {}}
             onClose={handleCloseSidebar}
             onHostSync={(host) => handleHostSync(host.id)}
             onViewLinkedServer={(host) => handleViewLinkedServer(host.server_id!)}
@@ -1086,7 +961,7 @@ export default function VCenter() {
           refetchVCenterData();
         }}
       />
-      <VCenterConnectivityDialog open={testDialogOpen} onOpenChange={setTestDialogOpen} results={null} />
+      
       
       <AlertDialog open={deleteHostDialogOpen} onOpenChange={setDeleteHostDialogOpen}>
         <AlertDialogContent>
@@ -1131,27 +1006,6 @@ export default function VCenter() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <ClusterUpdateWizard
-        open={clusterUpdateOpen}
-        onOpenChange={(open) => {
-          setClusterUpdateOpen(open);
-          if (!open) {
-            setSelectedClusterForUpdate(undefined);
-            setPreSelectedClusterForUpdate(undefined);
-          }
-        }}
-        preSelectedCluster={preSelectedClusterForUpdate || selectedClusterForUpdate}
-        onClusterExpansionRequest={(clusterName) => {
-          setClusterUpdateOpen(false);
-          setSelectedClusterForUpdate(undefined);
-          setPreSelectedClusterForUpdate(clusterName);
-          
-          // Re-open wizard after a short delay with cluster pre-selected
-          setTimeout(() => {
-            setClusterUpdateOpen(true);
-          }, 100);
-        }}
-      />
     </div>
   );
 }
