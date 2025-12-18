@@ -94,7 +94,7 @@ export const SCHEDULED_JOB_REGISTRY: Record<string, ScheduledJobConfig> = {
     schedule: { 
       interval: 'Configurable (default: 15 min)', 
       configurable: true,
-      settingsPath: '/vcenter'
+      settingsPath: '/vcenter?settings=true'
     },
     relatedEntity: { 
       type: 'vcenter', 
@@ -102,7 +102,7 @@ export const SCHEDULED_JOB_REGISTRY: Record<string, ScheduledJobConfig> = {
       label: 'vCenter Servers'
     },
     actions: {
-      viewSettings: '/vcenter',
+      viewSettings: '/vcenter?settings=true',
       viewEntities: '/vcenter',
     }
   },
