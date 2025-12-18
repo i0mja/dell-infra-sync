@@ -19,7 +19,10 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Search, Columns3, Download, Save } from "lucide-react";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Search, Columns3, Download, Save, List, LayoutGrid } from "lucide-react";
+
+export type JobsViewMode = "list" | "summary";
 
 interface JobsFilterToolbarProps {
   searchTerm: string;
@@ -30,6 +33,9 @@ interface JobsFilterToolbarProps {
   onJobTypeFilterChange: (value: string) => void;
   timeRangeFilter: string;
   onTimeRangeFilterChange: (value: string) => void;
+  // View mode toggle
+  viewMode?: JobsViewMode;
+  onViewModeChange?: (mode: JobsViewMode) => void;
   // Optional - for integrated toolbar
   visibleColumns?: string[];
   onToggleColumn?: (column: string) => void;
@@ -58,6 +64,8 @@ export function JobsFilterToolbar({
   onJobTypeFilterChange,
   timeRangeFilter,
   onTimeRangeFilterChange,
+  viewMode,
+  onViewModeChange,
   visibleColumns,
   onToggleColumn,
   onExport,
@@ -77,10 +85,38 @@ export function JobsFilterToolbar({
 
   const isColumnVisible = (key: string) => visibleColumns?.includes(key) ?? true;
   const showActions = visibleColumns && onToggleColumn && onExport && onSaveView;
+  const showViewToggle = viewMode !== undefined && onViewModeChange !== undefined;
 
   return (
     <>
       <div className="flex items-center gap-3 px-4 py-3 border-b bg-muted/50">
+        {/* View Mode Toggle */}
+        {showViewToggle && (
+          <ToggleGroup 
+            type="single" 
+            value={viewMode} 
+            onValueChange={(value) => value && onViewModeChange(value as JobsViewMode)}
+            className="bg-background border rounded-lg p-0.5"
+          >
+            <ToggleGroupItem 
+              value="summary" 
+              aria-label="Summary view"
+              className="h-8 px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+            >
+              <LayoutGrid className="h-4 w-4 mr-1.5" />
+              Summary
+            </ToggleGroupItem>
+            <ToggleGroupItem 
+              value="list" 
+              aria-label="List view"
+              className="h-8 px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+            >
+              <List className="h-4 w-4 mr-1.5" />
+              List
+            </ToggleGroupItem>
+          </ToggleGroup>
+        )}
+
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input

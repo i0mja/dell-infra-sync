@@ -4,12 +4,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { ActivityStatsBar } from "@/components/activity/ActivityStatsBar";
-import { JobsFilterToolbar } from "@/components/activity/JobsFilterToolbar";
+import { JobsFilterToolbar, JobsViewMode } from "@/components/activity/JobsFilterToolbar";
 import { CommandsFilterToolbar } from "@/components/activity/CommandsFilterToolbar";
 import { CommandsTable } from "@/components/activity/CommandsTable";
 import { CommandDetailsSidebar } from "@/components/activity/CommandDetailsSidebar";
 import { CommandDetailDialog } from "@/components/activity/CommandDetailDialog";
 import { JobsTable, Job } from "@/components/activity/JobsTable";
+import { JobTypeSummaryTable } from "@/components/activity/JobTypeSummaryTable";
+import { JobHistoryDialog } from "@/components/activity/JobHistoryDialog";
 import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
 import { StaleJobWarning } from "@/components/activity/StaleJobWarning";
 import { ExecutorStatusIndicator } from "@/components/activity/ExecutorStatusIndicator";
@@ -22,6 +24,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useActiveJobs } from "@/hooks/useActiveJobs";
 import { useJobExecutor } from "@/contexts/JobExecutorContext";
+import { useJobTypeSummaries } from "@/hooks/useJobTypeSummaries";
 // useJobsWithProgress is used by other components for active job progress tracking
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
@@ -61,6 +64,14 @@ export default function ActivityMonitor() {
   // Job detail dialog state
   const [selectedJobForDialog, setSelectedJobForDialog] = useState<Job | null>(null);
   const [jobDetailDialogOpen, setJobDetailDialogOpen] = useState(false);
+  
+  // Jobs view mode (summary vs list)
+  const [jobsViewMode, setJobsViewMode] = useState<JobsViewMode>("summary");
+  
+  // Job history dialog state
+  const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
+  const [historyJobType, setHistoryJobType] = useState<string>("");
+  const [historyJobTypeLabel, setHistoryJobTypeLabel] = useState<string>("");
   
   // Jobs filters
   const [jobsSearch, setJobsSearch] = useState("");
@@ -641,6 +652,16 @@ export default function ActivityMonitor() {
     return true;
   });
 
+  // Job type summaries for summary view
+  const jobTypeSummaries = useJobTypeSummaries(filteredJobs);
+
+  // Handle opening job history dialog
+  const handleViewJobHistory = (jobType: string, label: string) => {
+    setHistoryJobType(jobType);
+    setHistoryJobTypeLabel(label);
+    setHistoryDialogOpen(true);
+  };
+
   // Get executor status for smart stale job detection
   const { heartbeat, status: executorStatus } = useJobExecutor();
   
@@ -813,6 +834,8 @@ export default function ActivityMonitor() {
               onJobTypeFilterChange={setJobsTypeFilter}
               timeRangeFilter={jobsTimeRange}
               onTimeRangeFilterChange={setJobsTimeRange}
+              viewMode={jobsViewMode}
+              onViewModeChange={setJobsViewMode}
               visibleColumns={jobsColumns}
               onToggleColumn={toggleJobColumn}
               onExport={handleExportJobsCSV}
@@ -882,22 +905,31 @@ export default function ActivityMonitor() {
                 queuedCount={queuedJobCount}
               />
             )}
-            <JobsTable
-              jobs={filteredJobs}
-              onJobClick={handleJobClick}
-              expandedJobId={expandedJobId}
-              visibleColumns={jobsColumns}
-              onToggleColumn={toggleJobColumn}
-              onExport={handleExportJobsCSV}
-              onCancelJob={handleCancelJob}
-              onRetryJob={handleRetryJob}
-              onDeleteJob={handleDeleteJob}
-              onBulkCancel={handleBulkCancel}
-              onBulkDelete={handleBulkDelete}
-              onViewDetails={handleViewJobDetails}
-              onUpdatePriority={handleUpdatePriority}
-              canManage={canManage}
-            />
+            {jobsViewMode === "summary" ? (
+              <JobTypeSummaryTable
+                summaries={jobTypeSummaries}
+                onViewHistory={handleViewJobHistory}
+                onViewLatest={handleViewJobDetails}
+                canManage={canManage}
+              />
+            ) : (
+              <JobsTable
+                jobs={filteredJobs}
+                onJobClick={handleJobClick}
+                expandedJobId={expandedJobId}
+                visibleColumns={jobsColumns}
+                onToggleColumn={toggleJobColumn}
+                onExport={handleExportJobsCSV}
+                onCancelJob={handleCancelJob}
+                onRetryJob={handleRetryJob}
+                onDeleteJob={handleDeleteJob}
+                onBulkCancel={handleBulkCancel}
+                onBulkDelete={handleBulkDelete}
+                onViewDetails={handleViewJobDetails}
+                onUpdatePriority={handleUpdatePriority}
+                canManage={canManage}
+              />
+            )}
           </TabsContent>
 
           <TabsContent value="api-log" className="flex-1 mt-0 overflow-hidden">
@@ -970,6 +1002,16 @@ export default function ActivityMonitor() {
             setSelectedJobForDialog(null);
           }
         }}
+      />
+
+      {/* Job History Dialog */}
+      <JobHistoryDialog
+        open={historyDialogOpen}
+        onOpenChange={setHistoryDialogOpen}
+        jobType={historyJobType}
+        jobTypeLabel={historyJobTypeLabel}
+        jobs={filteredJobs}
+        onViewJob={handleViewJobDetails}
       />
     </div>
   );
