@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo } from "react";
-import { Link } from "react-router-dom";
 import { formatDistanceToNow, differenceInSeconds, isPast } from "date-fns";
 import { 
   Clock, 
@@ -19,6 +18,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { SCHEDULED_BACKGROUND_JOB_TYPES } from "@/lib/job-constants";
 import { cn } from "@/lib/utils";
+import { JobDetailDialog } from "@/components/jobs/JobDetailDialog";
 
 interface BackgroundJob {
   id: string;
@@ -29,6 +29,7 @@ interface BackgroundJob {
   completed_at: string | null;
   schedule_at: string | null;
   details: any;
+  target_scope?: any;
 }
 
 interface BackgroundTaskConfig {
@@ -36,7 +37,6 @@ interface BackgroundTaskConfig {
   label: string;
   icon: React.ElementType;
   description: string;
-  settingsPath?: string;
 }
 
 const BACKGROUND_TASK_REGISTRY: BackgroundTaskConfig[] = [
@@ -45,21 +45,18 @@ const BACKGROUND_TASK_REGISTRY: BackgroundTaskConfig[] = [
     label: 'vCenter Sync',
     icon: Server,
     description: 'Synchronizes VM and host data from vCenter',
-    settingsPath: '/vcenter',
   },
   {
     type: 'scheduled_replication_check',
     label: 'Replication Check',
     icon: Shield,
     description: 'Verifies replication status for protection groups',
-    settingsPath: '/vcenter?tab=replication',
   },
   {
     type: 'rpo_monitoring',
     label: 'RPO Monitoring',
     icon: Activity,
     description: 'Monitors Recovery Point Objectives',
-    settingsPath: '/vcenter?tab=replication',
   },
 ];
 
@@ -68,6 +65,14 @@ export function BackgroundTaskManager() {
   const [isOpen, setIsOpen] = useState(false);
   const [jobs, setJobs] = useState<BackgroundJob[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedJob, setSelectedJob] = useState<BackgroundJob | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+
+  const getMostRecentJob = (taskType: string): BackgroundJob | null => {
+    const status = taskStatuses.get(taskType);
+    if (!status) return null;
+    return status.running || status.pending || status.lastCompleted || status.lastFailed;
+  };
 
   const fetchBackgroundJobs = async () => {
     try {
@@ -238,18 +243,20 @@ export function BackgroundTaskManager() {
                     </p>
                   </div>
                   
-                  {task.settingsPath && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-muted-foreground shrink-0"
-                      asChild
-                    >
-                      <Link to={task.settingsPath}>
-                        <Settings className="h-3 w-3" />
-                      </Link>
-                    </Button>
-                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 text-muted-foreground shrink-0"
+                    onClick={() => {
+                      const job = getMostRecentJob(task.type);
+                      if (job) {
+                        setSelectedJob(job);
+                        setDialogOpen(true);
+                      }
+                    }}
+                  >
+                    <Settings className="h-3 w-3" />
+                  </Button>
                 </div>
               );
             })}
@@ -262,6 +269,12 @@ export function BackgroundTaskManager() {
           </div>
         </ScrollArea>
       </PopoverContent>
+      
+      <JobDetailDialog
+        job={selectedJob ? { ...selectedJob, target_scope: selectedJob.target_scope || null } : null}
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+      />
     </Popover>
   );
 }
