@@ -29,6 +29,7 @@ import { DrReplicationTab } from "@/components/replication/DrReplicationTab";
 import { NetworksTable } from "@/components/vcenter/NetworksTable";
 import { NetworksFilterToolbar } from "@/components/vcenter/NetworksFilterToolbar";
 import { SyncableTabTrigger } from "@/components/vcenter/SyncableTabTrigger";
+import { ServerUpdateWizard } from "@/components/jobs/ServerUpdateWizard";
 
 interface VCenterHost {
   id: string;
@@ -116,6 +117,10 @@ export default function VCenter() {
   const [bulkDeleteHostDialogOpen, setBulkDeleteHostDialogOpen] = useState(false);
   const [hostToDelete, setHostToDelete] = useState<VCenterHost | null>(null);
   const [hostsToDelete, setHostsToDelete] = useState<VCenterHost[]>([]);
+  
+  // Cluster Update Wizard state
+  const [clusterUpdateWizardOpen, setClusterUpdateWizardOpen] = useState(false);
+  const [clusterToUpdate, setClusterToUpdate] = useState<string | null>(null);
   
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -479,6 +484,14 @@ export default function VCenter() {
     setSelectedClusterId(null);
     setSelectedVmId(null);
     setSelectedDatastoreId(datastoreId);
+  };
+
+  // Handle cluster update - opens the ServerUpdateWizard with the cluster pre-selected
+  const handleClusterUpdate = (clusterName?: string) => {
+    if (clusterName) {
+      setClusterToUpdate(clusterName);
+      setClusterUpdateWizardOpen(true);
+    }
   };
 
   const handleHostSync = async (hostId: string) => {
@@ -870,7 +883,7 @@ export default function VCenter() {
                 onHostClick={handleHostClick}
                 onClusterClick={() => {}}
                 onHostSync={(host) => handleHostSync(host.id)}
-                onClusterUpdate={() => {}}
+                onClusterUpdate={handleClusterUpdate}
                 onViewLinkedServer={(host) => handleViewLinkedServer(host.server_id!)}
                 onLinkToServer={(host) => handleLinkToServer(host.id)}
                 onSync={handleSync}
@@ -987,7 +1000,7 @@ export default function VCenter() {
             datastoreVMsLoading={datastoreVMsLoading}
             clusterDatastores={clusterDatastores}
             clusterDatastoresLoading={clusterDatastoresLoading}
-            onClusterUpdate={() => {}}
+            onClusterUpdate={handleClusterUpdate}
             onClose={handleCloseSidebar}
             onHostSync={(host) => handleHostSync(host.id)}
             onViewLinkedServer={(host) => handleViewLinkedServer(host.server_id!)}
@@ -1065,6 +1078,19 @@ export default function VCenter() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Cluster Update Wizard */}
+      <ServerUpdateWizard
+        open={clusterUpdateWizardOpen}
+        onOpenChange={(open) => {
+          setClusterUpdateWizardOpen(open);
+          if (!open) setClusterToUpdate(null);
+        }}
+        preSelectedTarget={clusterToUpdate ? {
+          type: 'cluster',
+          id: clusterToUpdate
+        } : undefined}
+      />
 
     </div>
   );
