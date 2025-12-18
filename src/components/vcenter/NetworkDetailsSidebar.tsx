@@ -21,7 +21,7 @@ export function NetworkDetailsSidebar({
 
   if (!network) {
     return (
-      <div className="w-96 border-l bg-card flex-shrink-0 h-full flex flex-col">
+      <div className="w-[440px] border-l bg-card flex-shrink-0 h-full flex flex-col">
         <div className="flex items-center justify-between p-4 border-b">
           <h2 className="text-lg font-semibold">Network Details</h2>
         </div>
@@ -63,7 +63,7 @@ export function NetworkDetailsSidebar({
   };
 
   return (
-    <div className="w-96 border-l bg-card flex-shrink-0 h-full flex flex-col">
+    <div className="w-[440px] border-l bg-card flex-shrink-0 h-full flex flex-col">
       <div className="flex items-center justify-between p-4 border-b">
         <div className="flex items-center gap-2">
           {getNetworkIcon()}
@@ -147,64 +147,62 @@ export function NetworkDetailsSidebar({
                 No VMs connected to this network
               </div>
             ) : (
-              <div className="space-y-3 max-h-[400px] overflow-y-auto">
+              <div className="space-y-2">
                 {vms.map((networkVm) => (
                   <div
                     key={networkVm.id}
                     className="p-3 rounded-lg border bg-muted/30 space-y-2"
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium text-sm truncate">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-sm truncate flex-1">
                         {networkVm.vm?.name || "Unknown VM"}
                       </span>
                       {getPowerStateBadge(networkVm.vm?.power_state || null)}
                     </div>
                     
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                    <div className="space-y-1.5 text-xs">
                       {networkVm.nic_label && (
-                        <div>
-                          <span className="text-muted-foreground">NIC:</span>{" "}
-                          <span>{networkVm.nic_label}</span>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-muted-foreground">NIC</span>
+                          <span className="text-right">{networkVm.nic_label}</span>
                         </div>
                       )}
                       {networkVm.mac_address && (
-                        <div>
-                          <span className="text-muted-foreground">MAC:</span>{" "}
-                          <span className="font-mono">{networkVm.mac_address}</span>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-muted-foreground">MAC</span>
+                          <span className="font-mono text-right">{networkVm.mac_address}</span>
                         </div>
                       )}
                       {networkVm.adapter_type && (
-                        <div>
-                          <span className="text-muted-foreground">Type:</span>{" "}
-                          <span>{networkVm.adapter_type.replace("Virtual", "")}</span>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-muted-foreground">Type</span>
+                          <span className="text-right">{networkVm.adapter_type.replace("Virtual", "")}</span>
                         </div>
                       )}
                       {networkVm.connected !== null && (
-                        <div>
-                          <span className="text-muted-foreground">Status:</span>{" "}
-                          <Badge variant={networkVm.connected ? "default" : "secondary"} className="text-xs py-0 px-1">
+                        <div className="flex justify-between gap-2 items-center">
+                          <span className="text-muted-foreground">Status</span>
+                          <Badge variant={networkVm.connected ? "default" : "secondary"} className="text-xs py-0 px-1.5">
                             {networkVm.connected ? "Connected" : "Disconnected"}
                           </Badge>
                         </div>
                       )}
+                      {networkVm.ip_addresses && networkVm.ip_addresses.length > 0 && (
+                        <div className="flex justify-between gap-2">
+                          <span className="text-muted-foreground">IPs</span>
+                          <span className="font-mono text-right">
+                            {networkVm.ip_addresses.slice(0, 2).join(", ")}
+                            {networkVm.ip_addresses.length > 2 && ` +${networkVm.ip_addresses.length - 2}`}
+                          </span>
+                        </div>
+                      )}
+                      {networkVm.vm?.cluster_name && (
+                        <div className="flex justify-between gap-2">
+                          <span className="text-muted-foreground">Cluster</span>
+                          <span className="text-right">{networkVm.vm.cluster_name}</span>
+                        </div>
+                      )}
                     </div>
-
-                    {networkVm.ip_addresses && networkVm.ip_addresses.length > 0 && (
-                      <div className="text-xs">
-                        <span className="text-muted-foreground">IPs:</span>{" "}
-                        <span className="font-mono">
-                          {networkVm.ip_addresses.slice(0, 3).join(", ")}
-                          {networkVm.ip_addresses.length > 3 && ` +${networkVm.ip_addresses.length - 3}`}
-                        </span>
-                      </div>
-                    )}
-
-                    {networkVm.vm?.cluster_name && (
-                      <div className="text-xs">
-                        <span className="text-muted-foreground">Cluster:</span>{" "}
-                        <span>{networkVm.vm.cluster_name}</span>
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>
