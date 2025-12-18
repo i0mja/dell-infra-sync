@@ -41,7 +41,14 @@ class DatabaseMixin:
                     # Check if scheduled time has passed
                     if job.get('schedule_at'):
                         try:
-                            scheduled_time = datetime.fromisoformat(job['schedule_at'].replace('Z', '+00:00'))
+                            schedule_str = job['schedule_at']
+                            # Handle ISO format with Z suffix
+                            if schedule_str.endswith('Z'):
+                                schedule_str = schedule_str[:-1] + '+00:00'
+                            scheduled_time = datetime.fromisoformat(schedule_str)
+                            # Ensure timezone-aware comparison
+                            if scheduled_time.tzinfo is None:
+                                scheduled_time = scheduled_time.replace(tzinfo=timezone.utc)
                             if scheduled_time > datetime.now(timezone.utc):
                                 continue
                         except Exception as e:
