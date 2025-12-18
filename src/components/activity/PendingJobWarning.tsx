@@ -88,7 +88,7 @@ export function PendingJobWarning({ job, onCancel }: PendingJobWarningProps) {
             variant="outline" 
             size="sm" 
             className="h-7 text-xs"
-            onClick={() => window.open('/settings/system', '_self')}
+            onClick={() => window.open('/settings?tab=system', '_self')}
           >
             <ExternalLink className="h-3 w-3 mr-1" />
             Check System Settings
