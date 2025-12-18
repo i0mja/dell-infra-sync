@@ -114,6 +114,7 @@ export default function VCenter() {
   const [selectedClusterForUpdate, setSelectedClusterForUpdate] = useState<string | undefined>();
   const [preSelectedClusterForUpdate, setPreSelectedClusterForUpdate] = useState<string | undefined>();
   const [syncing, setSyncing] = useState(false);
+  const [syncingAll, setSyncingAll] = useState(false);
   const [partialSyncing, setPartialSyncing] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [vcenterHost, setVcenterHost] = useState("");
@@ -420,6 +421,65 @@ export default function VCenter() {
     }
   };
 
+  const handleSyncAllVCenters = async () => {
+    try {
+      setSyncingAll(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (!user) {
+        toast({
+          title: "Authentication required",
+          description: "Please log in to sync",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Get all sync-enabled vCenters
+      const enabledVCenters = vcenters.filter(vc => vc.sync_enabled);
+      
+      if (enabledVCenters.length === 0) {
+        toast({
+          title: "No vCenters to sync",
+          description: "Enable sync on at least one vCenter in settings",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Create sync jobs for all enabled vCenters
+      const { error } = await supabase.from("jobs").insert(
+        enabledVCenters.map(vc => ({
+          job_type: "vcenter_sync" as const,
+          status: "pending" as const,
+          created_by: user.id,
+          target_scope: { vcenter_ids: [vc.id] },
+          details: { sync_type: "full_sync", vcenter_name: vc.name },
+        }))
+      );
+
+      if (error) throw error;
+
+      toast({
+        title: `Syncing ${enabledVCenters.length} vCenter${enabledVCenters.length > 1 ? 's' : ''}`,
+        description: "Job Executor will handle the syncs",
+        action: (
+          <Button variant="outline" size="sm" onClick={() => navigate('/maintenance-planner?tab=jobs')}>
+            View Jobs
+          </Button>
+        ),
+      });
+    } catch (error: any) {
+      toast({
+        title: "Sync failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setSyncingAll(false);
+    }
+  };
+
   const handlePartialSync = async (scope: 'vms' | 'hosts' | 'clusters' | 'datastores' | 'networks') => {
     try {
       setPartialSyncing(scope);
@@ -658,6 +718,8 @@ export default function VCenter() {
         onSettings={() => setSettingsOpen(true)}
         onTest={handleTestConnectivity}
         onSync={handleSyncNow}
+        onSyncAll={handleSyncAllVCenters}
+        syncingAll={syncingAll}
         onRefresh={() => {
           fetchHosts();
           refetchVCenterData();

@@ -22,6 +22,8 @@ interface VCenterStatsBarProps {
   onSettings: () => void;
   onTest: () => void;
   onSync: () => void;
+  onSyncAll: () => void;
+  syncingAll: boolean;
   onRefresh: () => void;
   onClusterUpdate: () => void;
   hasActiveClusters: boolean;
@@ -44,6 +46,8 @@ export function VCenterStatsBar({
   onSettings,
   onTest,
   onSync,
+  onSyncAll,
+  syncingAll,
   onRefresh,
   onClusterUpdate,
   hasActiveClusters,
@@ -310,7 +314,7 @@ export function VCenterStatsBar({
             Cluster
           </Button>
 
-          <Button size="sm" className="h-7 text-xs px-2" onClick={onSync} disabled={syncing}>
+          <Button size="sm" className="h-7 text-xs px-2" onClick={onSync} disabled={syncing || syncingAll}>
             {syncing ? (
               <>
                 <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
@@ -320,6 +324,26 @@ export function VCenterStatsBar({
               <>
                 <RefreshCcw className="mr-1 h-3.5 w-3.5" />
                 Sync
+              </>
+            )}
+          </Button>
+
+          <Button 
+            variant="default" 
+            size="sm" 
+            className="h-7 text-xs px-2" 
+            onClick={onSyncAll} 
+            disabled={syncing || syncingAll || vcenters.length === 0}
+          >
+            {syncingAll ? (
+              <>
+                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                Syncing All...
+              </>
+            ) : (
+              <>
+                <RefreshCcw className="mr-1 h-3.5 w-3.5" />
+                Sync All
               </>
             )}
           </Button>
