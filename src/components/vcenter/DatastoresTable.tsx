@@ -165,14 +165,14 @@ export function DatastoresTable({
             <TableHeader className="sticky top-0 bg-muted z-10">
               <TableRow>
                 <TableHead className="w-12"><Checkbox checked={selectedDatastores.size === filteredDatastores.length} onCheckedChange={toggleAllDatastores} /></TableHead>
-                {isColumnVisible("name") && <TableHead className="w-[250px] cursor-pointer" onClick={() => handleSort("name")}><div className="flex items-center">Name {getSortIcon("name")}</div></TableHead>}
-                {isColumnVisible("type") && <TableHead className="w-[100px] cursor-pointer" onClick={() => handleSort("type")}><div className="flex items-center">Type {getSortIcon("type")}</div></TableHead>}
-                {isColumnVisible("capacity") && <TableHead className="w-[120px] cursor-pointer" onClick={() => handleSort("capacity_bytes")}><div className="flex items-center">Capacity {getSortIcon("capacity_bytes")}</div></TableHead>}
-                {isColumnVisible("free") && <TableHead className="w-[120px] cursor-pointer" onClick={() => handleSort("free_bytes")}><div className="flex items-center">Free {getSortIcon("free_bytes")}</div></TableHead>}
-                {isColumnVisible("usage") && <TableHead className="w-[200px] cursor-pointer" onClick={() => handleSort("usage")}><div className="flex items-center">Usage {getSortIcon("usage")}</div></TableHead>}
-                {isColumnVisible("hosts") && <TableHead className="w-[80px] cursor-pointer" onClick={() => handleSort("host_count")}><div className="flex items-center">Hosts {getSortIcon("host_count")}</div></TableHead>}
-                {isColumnVisible("vms") && <TableHead className="w-[80px] cursor-pointer" onClick={() => handleSort("vm_count")}><div className="flex items-center">VMs {getSortIcon("vm_count")}</div></TableHead>}
-                {isColumnVisible("status") && <TableHead className="w-[100px] cursor-pointer" onClick={() => handleSort("accessible")}><div className="flex items-center">Status {getSortIcon("accessible")}</div></TableHead>}
+              {isColVisible("name") && <TableHead className="w-[250px] cursor-pointer" onClick={() => handleSort("name")}><div className="flex items-center">Name {getSortIcon("name")}</div></TableHead>}
+                {isColVisible("type") && <TableHead className="w-[100px] cursor-pointer" onClick={() => handleSort("type")}><div className="flex items-center">Type {getSortIcon("type")}</div></TableHead>}
+                {isColVisible("capacity") && <TableHead className="w-[120px] cursor-pointer" onClick={() => handleSort("capacity_bytes")}><div className="flex items-center">Capacity {getSortIcon("capacity_bytes")}</div></TableHead>}
+                {isColVisible("free") && <TableHead className="w-[120px] cursor-pointer" onClick={() => handleSort("free_bytes")}><div className="flex items-center">Free {getSortIcon("free_bytes")}</div></TableHead>}
+                {isColVisible("usage") && <TableHead className="w-[200px] cursor-pointer" onClick={() => handleSort("usage")}><div className="flex items-center">Usage {getSortIcon("usage")}</div></TableHead>}
+                {isColVisible("hosts") && <TableHead className="w-[80px] cursor-pointer" onClick={() => handleSort("host_count")}><div className="flex items-center">Hosts {getSortIcon("host_count")}</div></TableHead>}
+                {isColVisible("vms") && <TableHead className="w-[80px] cursor-pointer" onClick={() => handleSort("vm_count")}><div className="flex items-center">VMs {getSortIcon("vm_count")}</div></TableHead>}
+                {isColVisible("status") && <TableHead className="w-[100px] cursor-pointer" onClick={() => handleSort("accessible")}><div className="flex items-center">Status {getSortIcon("accessible")}</div></TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -185,14 +185,14 @@ export function DatastoresTable({
                   return (
                     <TableRow key={ds.id} className={`cursor-pointer ${selectedDatastoreId === ds.id ? "bg-accent" : "hover:bg-accent/50"} ${usagePercent >= 90 ? "bg-destructive/10" : usagePercent >= 80 ? "bg-warning/10" : ""}`} onClick={() => onDatastoreClick(ds)}>
                       <TableCell><Checkbox checked={selectedDatastores.has(ds.id)} onCheckedChange={() => { const n = new Set(selectedDatastores); n.has(ds.id) ? n.delete(ds.id) : n.add(ds.id); setSelectedDatastores(n); }} onClick={(e) => e.stopPropagation()} /></TableCell>
-                      {isColumnVisible("name") && <TableCell className="font-medium"><div className="flex items-center gap-2"><HardDrive className="h-4 w-4 text-muted-foreground" />{ds.name}</div></TableCell>}
-                      {isColumnVisible("type") && <TableCell><Badge variant="outline" className="text-xs">{ds.type || "Unknown"}</Badge></TableCell>}
-                      {isColumnVisible("capacity") && <TableCell className="text-sm">{formatBytes(ds.capacity_bytes)}</TableCell>}
-                      {isColumnVisible("free") && <TableCell className="text-sm">{formatBytes(ds.free_bytes)}</TableCell>}
-                      {isColumnVisible("usage") && <TableCell><div className="space-y-1"><div className="flex items-center justify-between text-xs"><span className="font-medium">{usagePercent}% used</span>{isLowSpace && <AlertTriangle className="h-3 w-3 text-warning" />}</div><Progress value={usagePercent} className={`h-2 ${getUsageColor(usagePercent)}`} /></div></TableCell>}
-                      {isColumnVisible("hosts") && <TableCell className="text-sm"><div className="flex items-center gap-1"><Server className="h-3 w-3 text-muted-foreground" />{ds.host_count || 0}</div></TableCell>}
-                      {isColumnVisible("vms") && <TableCell className="text-sm"><div className="flex items-center gap-1"><HardDrive className="h-3 w-3 text-muted-foreground" />{ds.vm_count || 0}</div></TableCell>}
-                      {isColumnVisible("status") && <TableCell>{ds.accessible ? <Badge variant="default" className="bg-success text-success-foreground text-xs">Accessible</Badge> : <Badge variant="destructive" className="text-xs">Inaccessible</Badge>}</TableCell>}
+                      {isColVisible("name") && <TableCell className="font-medium"><div className="flex items-center gap-2"><HardDrive className="h-4 w-4 text-muted-foreground" />{ds.name}</div></TableCell>}
+                      {isColVisible("type") && <TableCell><Badge variant="outline" className="text-xs">{ds.type || "Unknown"}</Badge></TableCell>}
+                      {isColVisible("capacity") && <TableCell className="text-sm">{formatBytes(ds.capacity_bytes)}</TableCell>}
+                      {isColVisible("free") && <TableCell className="text-sm">{formatBytes(ds.free_bytes)}</TableCell>}
+                      {isColVisible("usage") && <TableCell><div className="space-y-1"><div className="flex items-center justify-between text-xs"><span className="font-medium">{usagePercent}% used</span>{isLowSpace && <AlertTriangle className="h-3 w-3 text-warning" />}</div><Progress value={usagePercent} className={`h-2 ${getUsageColor(usagePercent)}`} /></div></TableCell>}
+                      {isColVisible("hosts") && <TableCell className="text-sm"><div className="flex items-center gap-1"><Server className="h-3 w-3 text-muted-foreground" />{ds.host_count || 0}</div></TableCell>}
+                      {isColVisible("vms") && <TableCell className="text-sm"><div className="flex items-center gap-1"><HardDrive className="h-3 w-3 text-muted-foreground" />{ds.vm_count || 0}</div></TableCell>}
+                      {isColVisible("status") && <TableCell>{ds.accessible ? <Badge variant="default" className="bg-success text-success-foreground text-xs">Accessible</Badge> : <Badge variant="destructive" className="text-xs">Inaccessible</Badge>}</TableCell>}
                     </TableRow>
                   );
                 })
