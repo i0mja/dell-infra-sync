@@ -16,6 +16,7 @@ import { ExecutorStatusIndicator } from "@/components/activity/ExecutorStatusInd
 import { ActivityTable } from "@/components/activity/ActivityTable";
 import { ActivityFilterToolbar } from "@/components/activity/ActivityFilterToolbar";
 import { RunningJobsPopover } from "@/components/activity/RunningJobsPopover";
+import { BackgroundTaskManager } from "@/components/activity/BackgroundTaskManager";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMediaQuery } from "@/hooks/use-media-query";
@@ -780,6 +781,8 @@ export default function ActivityMonitor() {
                 }}
                 canManage={canManage}
               />
+
+              <BackgroundTaskManager />
 
             <div className="flex-1" />
 

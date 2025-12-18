@@ -12,15 +12,31 @@ export const INTERNAL_JOB_TYPES = [
   'idm_sync_users',
 ] as const;
 
+// Scheduled background job types - shown in Background Task Manager, not Active Jobs popover
+// These are recurring/scheduled jobs that run automatically
+export const SCHEDULED_BACKGROUND_JOB_TYPES = [
+  'scheduled_replication_check',
+  'rpo_monitoring',
+  'scheduled_vcenter_sync',
+] as const;
+
 // SLA monitoring job types - hidden by default but can be shown via settings
+// This is a subset of SCHEDULED_BACKGROUND_JOB_TYPES for backwards compatibility
 export const SLA_MONITORING_JOB_TYPES = [
   'scheduled_replication_check',
   'rpo_monitoring',
 ] as const;
 
+export type ScheduledBackgroundJobType = typeof SCHEDULED_BACKGROUND_JOB_TYPES[number];
 export type SlaMonitoringJobType = typeof SLA_MONITORING_JOB_TYPES[number];
-
 export type InternalJobType = typeof INTERNAL_JOB_TYPES[number];
+
+/**
+ * Check if a job type is a scheduled background job
+ */
+export function isScheduledBackgroundJob(jobType: string): boolean {
+  return SCHEDULED_BACKGROUND_JOB_TYPES.includes(jobType as ScheduledBackgroundJobType);
+}
 
 /**
  * Check if a job type is an SLA monitoring job
