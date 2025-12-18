@@ -20,6 +20,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useActiveJobs } from "@/hooks/useActiveJobs";
+import { useJobExecutor } from "@/contexts/JobExecutorContext";
 // useJobsWithProgress is used by other components for active job progress tracking
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
@@ -639,19 +640,50 @@ export default function ActivityMonitor() {
     return true;
   });
 
+  // Get executor status for smart stale job detection
+  const { heartbeat, status: executorStatus } = useJobExecutor();
+  
   // Detect stale jobs (pending for over 60 seconds without being picked up)
+  // BUT only if executor appears down AND no jobs are running
   const STALE_THRESHOLD_SECONDS = 60;
-  const staleJobs = useMemo(() => {
+  
+  const { staleJobs, executorBusy, queuedJobCount } = useMemo(() => {
     const now = Date.now();
-    return jobs.filter(job => {
+    
+    // Check if executor is online (heartbeat within last 60 seconds)
+    const executorIsOnline = heartbeat?.last_seen_at && 
+      (now - new Date(heartbeat.last_seen_at).getTime()) < 60000;
+    
+    // Check if any job is currently running (executor is busy)
+    const runningJobs = jobs.filter(j => j.status === 'running');
+    const hasRunningJobs = runningJobs.length > 0;
+    
+    // Find pending jobs that have been waiting
+    const pendingOldJobs = jobs.filter(job => {
       if (job.status !== 'pending' || job.started_at) return false;
       const createdAt = new Date(job.created_at).getTime();
       const ageSeconds = (now - createdAt) / 1000;
       return ageSeconds > STALE_THRESHOLD_SECONDS;
     });
-  }, [jobs]);
+    
+    // If executor is online OR has running jobs, these are queued, not stale
+    if (executorIsOnline || hasRunningJobs) {
+      return { 
+        staleJobs: [], 
+        executorBusy: hasRunningJobs, 
+        queuedJobCount: pendingOldJobs.length 
+      };
+    }
+    
+    // Only flag truly stale jobs when executor appears down
+    return { 
+      staleJobs: pendingOldJobs, 
+      executorBusy: false, 
+      queuedJobCount: 0 
+    };
+  }, [jobs, heartbeat]);
 
-  // Show toast notification when stale jobs appear (debounced)
+  // Show toast notification when stale jobs appear (debounced) - only when truly stale
   useEffect(() => {
     if (staleJobs.length > 0 && !staleWarningDismissed) {
       const now = Date.now();
@@ -819,12 +851,23 @@ export default function ActivityMonitor() {
 
           {/* Tab content */}
           <TabsContent value="operations" className="flex-1 mt-0 overflow-hidden">
-            {/* Stale job warning */}
+            {/* Stale job warning - only show when executor is truly unresponsive */}
             {!staleWarningDismissed && staleJobs.length > 0 && (
               <StaleJobWarning
                 staleJobs={staleJobs}
                 onCancelJobs={handleCancelStaleJobs}
                 onDismiss={() => setStaleWarningDismissed(true)}
+              />
+            )}
+            
+            {/* Executor busy info - shown when jobs are queued but executor is working */}
+            {executorBusy && queuedJobCount > 0 && (
+              <StaleJobWarning
+                staleJobs={[]}
+                onCancelJobs={handleCancelStaleJobs}
+                onDismiss={() => {}}
+                executorBusy
+                queuedCount={queuedJobCount}
               />
             )}
             <JobsTable
