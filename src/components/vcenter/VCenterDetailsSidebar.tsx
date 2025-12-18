@@ -3,9 +3,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { X, RefreshCcw, Link2, ExternalLink, Star, Loader2 } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import { X, RefreshCcw, Link2, ExternalLink, Star, Loader2, HardDrive, CheckCircle2, AlertCircle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { DatastoreVM } from "@/hooks/useDatastoreVMs";
+import { ClusterDatastore } from "@/hooks/useClusterDatastores";
 
 interface VCenterHost {
   id: string;
@@ -33,12 +35,15 @@ interface VCenterDetailsSidebarProps {
   selectedDatastore?: any;
   datastoreVMs?: DatastoreVM[];
   datastoreVMsLoading?: boolean;
+  clusterDatastores?: ClusterDatastore[];
+  clusterDatastoresLoading?: boolean;
   onClusterUpdate: (clusterName?: string) => void;
   onClose: () => void;
   onHostSync?: (host: VCenterHost) => void;
   onViewLinkedServer?: (host: VCenterHost) => void;
   onLinkToServer?: (host: VCenterHost) => void;
   onNavigateToVM?: (vmId: string) => void;
+  onNavigateToDatastore?: (datastoreId: string) => void;
 }
 
 // Helper to format bytes to human-readable
@@ -58,12 +63,15 @@ export function VCenterDetailsSidebar({
   selectedDatastore,
   datastoreVMs,
   datastoreVMsLoading,
+  clusterDatastores,
+  clusterDatastoresLoading,
   onClusterUpdate,
   onClose,
   onHostSync,
   onViewLinkedServer,
   onLinkToServer,
   onNavigateToVM,
+  onNavigateToDatastore,
 }: VCenterDetailsSidebarProps) {
   
   // VM Details View
@@ -220,6 +228,86 @@ export function VCenterDetailsSidebar({
                 <RefreshCcw className="mr-2 h-4 w-4" />
                 Cluster Update
               </Button>
+            </div>
+
+            <Separator />
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-medium text-muted-foreground">
+                  Datastores ({clusterDatastores?.length || 0})
+                </h3>
+                {clusterDatastores && clusterDatastores.length > 0 && onNavigateToDatastore && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-xs px-2"
+                    onClick={() => onNavigateToDatastore(clusterDatastores[0].id)}
+                  >
+                    View All
+                    <ExternalLink className="ml-1 h-3 w-3" />
+                  </Button>
+                )}
+              </div>
+
+              {clusterDatastoresLoading ? (
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => (
+                    <Skeleton key={i} className="h-12 w-full" />
+                  ))}
+                </div>
+              ) : clusterDatastores && clusterDatastores.length > 0 ? (
+                <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
+                  {clusterDatastores.map((ds) => {
+                    const usagePercent = ds.capacity_bytes && ds.free_bytes
+                      ? Math.round(((ds.capacity_bytes - ds.free_bytes) / ds.capacity_bytes) * 100)
+                      : 0;
+                    return (
+                      <button
+                        key={ds.id}
+                        onClick={() => onNavigateToDatastore?.(ds.id)}
+                        className="w-full flex flex-col gap-1 p-2 rounded-md hover:bg-muted/50 transition-colors text-left group"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <HardDrive className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                          <span className="text-sm truncate flex-1">{ds.name}</span>
+                          {ds.is_shared ? (
+                            <span title="Shared by all hosts">
+                              <CheckCircle2 className="h-3.5 w-3.5 text-success flex-shrink-0" />
+                            </span>
+                          ) : (
+                            <span title={`Accessible by ${ds.accessible_host_count}/${ds.total_cluster_hosts} hosts`}>
+                              <AlertCircle className="h-3.5 w-3.5 text-warning flex-shrink-0" />
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 pl-5">
+                          <Badge variant="outline" className="text-[10px] h-4 px-1">
+                            {ds.type || "Unknown"}
+                          </Badge>
+                          <div className="flex-1 flex items-center gap-1">
+                            <Progress value={usagePercent} className={`h-1.5 flex-1 ${usagePercent >= 90 ? "bg-destructive/20" : usagePercent >= 80 ? "bg-warning/20" : ""}`} />
+                            <span className="text-[10px] text-muted-foreground w-8">{usagePercent}%</span>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No datastores accessible by this cluster</p>
+              )}
+
+              {clusterDatastores && clusterDatastores.length > 0 && (
+                <div className="text-[10px] text-muted-foreground mt-2 flex items-center gap-3">
+                  <span className="flex items-center gap-1">
+                    <CheckCircle2 className="h-3 w-3 text-success" /> Shared
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3 text-warning" /> Partial
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </ScrollArea>
