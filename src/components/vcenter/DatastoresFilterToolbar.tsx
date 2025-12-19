@@ -21,6 +21,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Search, Columns3, Download, Save } from "lucide-react";
 import { toast } from "sonner";
+import { DATASTORE_COLUMNS, MAINTENANCE_FILTERS } from "@/lib/vcenter-column-definitions";
 
 interface DatastoresFilterToolbarProps {
   searchTerm: string;
@@ -31,6 +32,9 @@ interface DatastoresFilterToolbarProps {
   onAccessFilterChange: (value: string) => void;
   capacityFilter: string;
   onCapacityFilterChange: (value: string) => void;
+  types?: string[];
+  maintenanceFilter?: string;
+  onMaintenanceFilterChange?: (value: string) => void;
   // Optional toolbar props
   visibleColumns?: string[];
   onToggleColumn?: (column: string) => void;
@@ -48,6 +52,9 @@ export function DatastoresFilterToolbar({
   onAccessFilterChange,
   capacityFilter,
   onCapacityFilterChange,
+  types = [],
+  maintenanceFilter = "all",
+  onMaintenanceFilterChange,
   visibleColumns,
   onToggleColumn,
   onExport,
@@ -72,7 +79,7 @@ export function DatastoresFilterToolbar({
 
   return (
     <>
-      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-muted/30">
+      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-muted/30 flex-wrap">
         <div className="relative flex-1 max-w-[160px]">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
@@ -89,10 +96,20 @@ export function DatastoresFilterToolbar({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Types</SelectItem>
-            <SelectItem value="vmfs">VMFS</SelectItem>
-            <SelectItem value="nfs">NFS</SelectItem>
-            <SelectItem value="vsan">vSAN</SelectItem>
-            <SelectItem value="vvol">vVol</SelectItem>
+            {types.length > 0 ? (
+              types.map((type) => (
+                <SelectItem key={type} value={type}>
+                  {type}
+                </SelectItem>
+              ))
+            ) : (
+              <>
+                <SelectItem value="VMFS">VMFS</SelectItem>
+                <SelectItem value="NFS">NFS</SelectItem>
+                <SelectItem value="vSAN">vSAN</SelectItem>
+                <SelectItem value="vVol">vVol</SelectItem>
+              </>
+            )}
           </SelectContent>
         </Select>
 
@@ -103,7 +120,7 @@ export function DatastoresFilterToolbar({
           <SelectContent>
             <SelectItem value="all">All</SelectItem>
             <SelectItem value="accessible">Accessible</SelectItem>
-            <SelectItem value="not-accessible">Not Accessible</SelectItem>
+            <SelectItem value="inaccessible">Inaccessible</SelectItem>
           </SelectContent>
         </Select>
 
@@ -114,10 +131,25 @@ export function DatastoresFilterToolbar({
           <SelectContent>
             <SelectItem value="all">All</SelectItem>
             <SelectItem value="critical">&gt;90%</SelectItem>
-            <SelectItem value="warning">&gt;75%</SelectItem>
-            <SelectItem value="healthy">&lt;75%</SelectItem>
+            <SelectItem value="warning">&gt;80%</SelectItem>
+            <SelectItem value="healthy">&lt;80%</SelectItem>
           </SelectContent>
         </Select>
+
+        {onMaintenanceFilterChange && (
+          <Select value={maintenanceFilter} onValueChange={onMaintenanceFilterChange}>
+            <SelectTrigger className="w-[110px] h-7 text-xs">
+              <SelectValue placeholder="Maintenance" />
+            </SelectTrigger>
+            <SelectContent>
+              {MAINTENANCE_FILTERS.map((m) => (
+                <SelectItem key={m.value} value={m.value}>
+                  {m.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
 
         <div className="flex-1" />
 
@@ -135,30 +167,15 @@ export function DatastoresFilterToolbar({
             <DropdownMenuContent align="end" className="w-48">
               <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuCheckboxItem checked={isColumnVisible("name")} onCheckedChange={() => onToggleColumn("name")}>
-                Name
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColumnVisible("type")} onCheckedChange={() => onToggleColumn("type")}>
-                Type
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColumnVisible("capacity")} onCheckedChange={() => onToggleColumn("capacity")}>
-                Capacity
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColumnVisible("free")} onCheckedChange={() => onToggleColumn("free")}>
-                Free
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColumnVisible("usage")} onCheckedChange={() => onToggleColumn("usage")}>
-                Usage
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColumnVisible("hosts")} onCheckedChange={() => onToggleColumn("hosts")}>
-                Hosts
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColumnVisible("vms")} onCheckedChange={() => onToggleColumn("vms")}>
-                VMs
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColumnVisible("status")} onCheckedChange={() => onToggleColumn("status")}>
-                Status
-              </DropdownMenuCheckboxItem>
+              {DATASTORE_COLUMNS.map((col) => (
+                <DropdownMenuCheckboxItem
+                  key={col.key}
+                  checked={isColumnVisible(col.key)}
+                  onCheckedChange={() => onToggleColumn(col.key)}
+                >
+                  {col.label}
+                </DropdownMenuCheckboxItem>
+              ))}
             </DropdownMenuContent>
           </DropdownMenu>
         )}

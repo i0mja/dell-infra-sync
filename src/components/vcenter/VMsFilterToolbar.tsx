@@ -20,6 +20,12 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Search, Columns3, Download, Save } from "lucide-react";
+import { 
+  VM_COLUMNS, 
+  VM_TEMPLATE_FILTERS, 
+  VM_SNAPSHOT_FILTERS, 
+  VM_STATUS_FILTERS 
+} from "@/lib/vcenter-column-definitions";
 
 interface VMsFilterToolbarProps {
   searchTerm: string;
@@ -33,6 +39,13 @@ interface VMsFilterToolbarProps {
   osFilter: string;
   onOsFilterChange: (value: string) => void;
   clusters: string[];
+  // New filters
+  templateFilter?: string;
+  onTemplateFilterChange?: (value: string) => void;
+  snapshotFilter?: string;
+  onSnapshotFilterChange?: (value: string) => void;
+  statusFilter?: string;
+  onStatusFilterChange?: (value: string) => void;
   // Optional - for integrated toolbar
   visibleColumns?: string[];
   onToggleColumn?: (column: string) => void;
@@ -40,17 +53,6 @@ interface VMsFilterToolbarProps {
   selectedCount?: number;
   onSaveView?: (name: string) => void;
 }
-
-const COLUMN_OPTIONS = [
-  { key: "name", label: "VM Name" },
-  { key: "power", label: "Power State" },
-  { key: "ip", label: "IP Address" },
-  { key: "resources", label: "CPU / RAM" },
-  { key: "disk", label: "Disk" },
-  { key: "os", label: "Guest OS" },
-  { key: "tools", label: "VMware Tools" },
-  { key: "cluster", label: "Cluster" },
-];
 
 export function VMsFilterToolbar({
   searchTerm,
@@ -64,6 +66,12 @@ export function VMsFilterToolbar({
   osFilter,
   onOsFilterChange,
   clusters,
+  templateFilter = "all",
+  onTemplateFilterChange,
+  snapshotFilter = "all",
+  onSnapshotFilterChange,
+  statusFilter = "all",
+  onStatusFilterChange,
   visibleColumns,
   onToggleColumn,
   onExport,
@@ -86,7 +94,7 @@ export function VMsFilterToolbar({
 
   return (
     <>
-      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-muted/30">
+      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-muted/30 flex-wrap">
         <div className="relative flex-1 max-w-[160px]">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
@@ -116,10 +124,10 @@ export function VMsFilterToolbar({
             <SelectValue placeholder="Power" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All</SelectItem>
-            <SelectItem value="poweredon">On</SelectItem>
-            <SelectItem value="poweredoff">Off</SelectItem>
-            <SelectItem value="suspended">Susp</SelectItem>
+            <SelectItem value="all">All Power</SelectItem>
+            <SelectItem value="poweredon">Powered On</SelectItem>
+            <SelectItem value="poweredoff">Powered Off</SelectItem>
+            <SelectItem value="suspended">Suspended</SelectItem>
           </SelectContent>
         </Select>
 
@@ -128,11 +136,11 @@ export function VMsFilterToolbar({
             <SelectValue placeholder="Tools" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All</SelectItem>
+            <SelectItem value="all">All Tools</SelectItem>
             <SelectItem value="toolsok">OK</SelectItem>
             <SelectItem value="toolsold">Old</SelectItem>
-            <SelectItem value="toolsnotinstalled">None</SelectItem>
-            <SelectItem value="toolsnotrunning">Stopped</SelectItem>
+            <SelectItem value="toolsnotinstalled">Not Installed</SelectItem>
+            <SelectItem value="toolsnotrunning">Not Running</SelectItem>
           </SelectContent>
         </Select>
 
@@ -143,13 +151,58 @@ export function VMsFilterToolbar({
           <SelectContent>
             <SelectItem value="all">All OS</SelectItem>
             <SelectItem value="windows">Windows</SelectItem>
-            <SelectItem value="rhel">RHEL</SelectItem>
+            <SelectItem value="rhel">RHEL/CentOS</SelectItem>
             <SelectItem value="ubuntu">Ubuntu</SelectItem>
             <SelectItem value="debian">Debian</SelectItem>
-            <SelectItem value="linux">Linux</SelectItem>
+            <SelectItem value="linux">Other Linux</SelectItem>
             <SelectItem value="other">Other</SelectItem>
           </SelectContent>
         </Select>
+
+        {onTemplateFilterChange && (
+          <Select value={templateFilter} onValueChange={onTemplateFilterChange}>
+            <SelectTrigger className="w-[100px] h-7 text-xs">
+              <SelectValue placeholder="Type" />
+            </SelectTrigger>
+            <SelectContent>
+              {VM_TEMPLATE_FILTERS.map((f) => (
+                <SelectItem key={f.value} value={f.value}>
+                  {f.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
+        {onSnapshotFilterChange && (
+          <Select value={snapshotFilter} onValueChange={onSnapshotFilterChange}>
+            <SelectTrigger className="w-[110px] h-7 text-xs">
+              <SelectValue placeholder="Snapshots" />
+            </SelectTrigger>
+            <SelectContent>
+              {VM_SNAPSHOT_FILTERS.map((f) => (
+                <SelectItem key={f.value} value={f.value}>
+                  {f.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
+        {onStatusFilterChange && (
+          <Select value={statusFilter} onValueChange={onStatusFilterChange}>
+            <SelectTrigger className="w-[100px] h-7 text-xs">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              {VM_STATUS_FILTERS.map((f) => (
+                <SelectItem key={f.value} value={f.value}>
+                  {f.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
 
         {showActions && (
           <>
@@ -165,10 +218,10 @@ export function VMsFilterToolbar({
                   <Columns3 className="h-3.5 w-3.5" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuContent align="end" className="w-48 max-h-[400px] overflow-y-auto">
                 <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                {COLUMN_OPTIONS.map((col) => (
+                {VM_COLUMNS.map((col) => (
                   <DropdownMenuCheckboxItem
                     key={col.key}
                     checked={isColumnVisible(col.key)}
