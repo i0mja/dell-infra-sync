@@ -244,7 +244,7 @@ export default function MaintenancePlanner() {
     const jobOps: Operation[] = jobs.map(j => {
       const serverIds = j.target_scope?.server_ids || [];
       // Prioritize cluster name from details or target_scope for cluster-based jobs
-      const clusterName = j.details?.cluster_name || j.target_scope?.cluster_name;
+      const clusterName = j.details?.cluster_name || j.details?.workflow_results?.cluster_id || j.target_scope?.cluster_name || j.target_scope?.cluster_id;
       const isClusterJob = j.job_type === 'rolling_cluster_update' || 
                            j.job_type === 'esxi_upgrade' ||
                            j.job_type === 'esxi_then_firmware' ||
