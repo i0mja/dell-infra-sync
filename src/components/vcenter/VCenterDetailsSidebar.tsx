@@ -13,7 +13,7 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import { DatastoreVM } from "@/hooks/useDatastoreVMs";
 import { ClusterDatastore } from "@/hooks/useClusterDatastores";
-
+import { VMDetailsSidebar } from "./VMDetailsSidebar";
 interface VCenterHost {
   id: string;
   name: string;
@@ -49,6 +49,7 @@ interface VCenterDetailsSidebarProps {
   onLinkToServer?: (host: VCenterHost) => void;
   onNavigateToVM?: (vmId: string) => void;
   onNavigateToDatastore?: (datastoreId: string) => void;
+  onNavigateToHost?: (hostId: string) => void;
   onSafetyCheck?: (clusterName: string) => void;
   onNavigateToHosts?: (clusterName: string) => void;
   onNavigateToVMs?: (clusterName: string) => void;
@@ -204,103 +205,21 @@ export function VCenterDetailsSidebar({
   onLinkToServer,
   onNavigateToVM,
   onNavigateToDatastore,
+  onNavigateToHost,
   onSafetyCheck,
   onNavigateToHosts,
   onNavigateToVMs,
 }: VCenterDetailsSidebarProps) {
   
-  // VM Details View
+  // VM Details View - Use dedicated component
   if (selectedVm) {
-    const powerState = selectedVm.power_state;
-    const powerColor = powerState === 'poweredOn' ? 'bg-success' : powerState === 'poweredOff' ? 'bg-destructive' : 'bg-warning';
-    
     return (
-      <div className="w-[440px] border-l bg-card flex-shrink-0 h-full flex flex-col">
-        {/* Status bar */}
-        <div className={`h-1 ${powerColor}`} />
-        
-        <div className="flex items-center justify-between p-4 border-b">
-          <div className="flex items-center gap-2">
-            <MonitorDot className="h-5 w-5 text-muted-foreground" />
-            <h2 className="text-lg font-semibold">VM Details</h2>
-          </div>
-          <Button variant="ghost" size="icon" onClick={onClose}>
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-
-        <ScrollArea className="flex-1">
-          <div className="p-4 space-y-4">
-            {/* Header with name and power state */}
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <h3 className="text-lg font-semibold truncate">{selectedVm.name}</h3>
-                <p className="text-sm text-muted-foreground">{selectedVm.cluster_name || "No Cluster"}</p>
-              </div>
-              <Badge 
-                variant={powerState === 'poweredOn' ? 'default' : 'secondary'}
-                className={powerState === 'poweredOn' ? 'bg-success hover:bg-success' : ''}
-              >
-                {powerState === 'poweredOn' ? 'Running' : powerState === 'poweredOff' ? 'Stopped' : powerState || 'Unknown'}
-              </Badge>
-            </div>
-
-            {/* Quick Stats */}
-            <div className="grid grid-cols-3 gap-2">
-              <QuickStat 
-                label="vCPUs" 
-                value={selectedVm.cpu_count || 0} 
-                icon={Cpu}
-              />
-              <QuickStat 
-                label="Memory" 
-                value={selectedVm.memory_mb ? `${Math.round(selectedVm.memory_mb / 1024)}G` : "0G"} 
-                icon={MemoryStick}
-              />
-              <QuickStat 
-                label="Disk" 
-                value={selectedVm.disk_gb ? `${selectedVm.disk_gb.toFixed(0)}G` : "0G"} 
-                icon={HardDrive}
-              />
-            </div>
-
-            <Separator />
-
-            {/* VM Information */}
-            <div>
-              <h4 className="text-sm font-medium text-muted-foreground mb-3">Details</h4>
-              <div className="space-y-2.5">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-muted-foreground">IP Address</span>
-                  <span className="text-sm font-mono">{selectedVm.ip_address || "N/A"}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-muted-foreground">Guest OS</span>
-                  <span className="text-sm truncate max-w-[200px]">{selectedVm.guest_os || "Unknown"}</span>
-                </div>
-              </div>
-            </div>
-
-            <Separator />
-
-            {/* VMware Tools */}
-            <div>
-              <h4 className="text-sm font-medium text-muted-foreground mb-3">VMware Tools</h4>
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-muted/50">
-                <div className="flex items-center gap-2">
-                  <Settings2 className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm">{selectedVm.tools_status || "Unknown"}</span>
-                </div>
-                {selectedVm.tools_version && (
-                  <Badge variant="outline" className="text-xs">
-                    v{selectedVm.tools_version}
-                  </Badge>
-                )}
-              </div>
-            </div>
-          </div>
-        </ScrollArea>
-      </div>
+      <VMDetailsSidebar
+        vm={selectedVm}
+        onClose={onClose}
+        onNavigateToHost={onNavigateToHost}
+        onNavigateToDatastore={onNavigateToDatastore}
+      />
     );
   }
 
