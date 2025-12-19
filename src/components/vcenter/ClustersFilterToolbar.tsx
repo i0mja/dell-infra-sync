@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Search, Columns3, Download, Save } from "lucide-react";
+import { CLUSTER_COLUMNS, DRS_AUTOMATION_LEVELS } from "@/lib/vcenter-column-definitions";
 
 interface ClustersFilterToolbarProps {
   searchTerm: string;
@@ -30,6 +31,8 @@ interface ClustersFilterToolbarProps {
   onHaFilterChange: (value: string) => void;
   drsFilter: string;
   onDrsFilterChange: (value: string) => void;
+  drsLevelFilter?: string;
+  onDrsLevelFilterChange?: (value: string) => void;
   // Optional - for integrated toolbar
   visibleColumns?: string[];
   onToggleColumn?: (column: string) => void;
@@ -37,19 +40,6 @@ interface ClustersFilterToolbarProps {
   selectedCount?: number;
   onSaveView?: (name: string) => void;
 }
-
-const COLUMN_OPTIONS = [
-  { key: "name", label: "Cluster Name" },
-  { key: "status", label: "Status" },
-  { key: "hosts", label: "Hosts" },
-  { key: "vms", label: "VMs" },
-  { key: "ha", label: "HA" },
-  { key: "drs", label: "DRS" },
-  { key: "cpu", label: "CPU Usage" },
-  { key: "memory", label: "Memory Usage" },
-  { key: "storage", label: "Storage Usage" },
-  { key: "sync", label: "Last Sync" },
-];
 
 export function ClustersFilterToolbar({
   searchTerm,
@@ -60,6 +50,8 @@ export function ClustersFilterToolbar({
   onHaFilterChange,
   drsFilter,
   onDrsFilterChange,
+  drsLevelFilter = "all",
+  onDrsLevelFilterChange,
   visibleColumns,
   onToggleColumn,
   onExport,
@@ -127,6 +119,21 @@ export function ClustersFilterToolbar({
           </SelectContent>
         </Select>
 
+        {onDrsLevelFilterChange && (
+          <Select value={drsLevelFilter} onValueChange={onDrsLevelFilterChange}>
+            <SelectTrigger className="w-[130px] h-7 text-xs">
+              <SelectValue placeholder="DRS Level" />
+            </SelectTrigger>
+            <SelectContent>
+              {DRS_AUTOMATION_LEVELS.map((level) => (
+                <SelectItem key={level.value} value={level.value}>
+                  {level.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
         {showActions && (
           <>
             <div className="flex-1" />
@@ -144,7 +151,7 @@ export function ClustersFilterToolbar({
               <DropdownMenuContent align="end" className="w-48">
                 <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                {COLUMN_OPTIONS.map((col) => (
+                {CLUSTER_COLUMNS.map((col) => (
                   <DropdownMenuCheckboxItem
                     key={col.key}
                     checked={isColumnVisible(col.key)}

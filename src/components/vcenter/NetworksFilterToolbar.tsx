@@ -12,6 +12,12 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Search, Columns3, Download, Layers } from "lucide-react";
+import { 
+  NETWORK_COLUMNS, 
+  NETWORK_TYPE_FILTERS, 
+  ACCESSIBLE_FILTERS, 
+  HAS_VMS_FILTERS 
+} from "@/lib/vcenter-column-definitions";
 
 interface NetworksFilterToolbarProps {
   searchTerm: string;
@@ -26,17 +32,11 @@ interface NetworksFilterToolbarProps {
   selectedCount?: number;
   groupByName?: boolean;
   onGroupByNameChange?: (value: boolean) => void;
+  accessibleFilter?: string;
+  onAccessibleFilterChange?: (value: string) => void;
+  hasVmsFilter?: string;
+  onHasVmsFilterChange?: (value: string) => void;
 }
-
-const allColumns = [
-  { id: "name", label: "Name" },
-  { id: "type", label: "Type" },
-  { id: "vlan", label: "VLAN" },
-  { id: "sites", label: "Sites" },
-  { id: "switch", label: "Switch" },
-  { id: "hosts", label: "Hosts" },
-  { id: "vms", label: "VMs" },
-];
 
 export function NetworksFilterToolbar({
   searchTerm,
@@ -51,9 +51,21 @@ export function NetworksFilterToolbar({
   selectedCount = 0,
   groupByName = false,
   onGroupByNameChange,
+  accessibleFilter = "all",
+  onAccessibleFilterChange,
+  hasVmsFilter = "all",
+  onHasVmsFilterChange,
 }: NetworksFilterToolbarProps) {
+  // Get columns appropriate for current view mode
+  const availableColumns = NETWORK_COLUMNS.filter(col => {
+    // In grouped mode, hide 'switch' column; in flat mode, hide 'sites' column
+    if (groupByName && col.key === 'switch') return false;
+    if (!groupByName && col.key === 'sites') return false;
+    return true;
+  });
+
   return (
-    <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-muted/30">
+    <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-muted/30 flex-wrap">
       {/* Search */}
       <div className="relative flex-1 min-w-[140px] max-w-[160px]">
         <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -71,9 +83,11 @@ export function NetworksFilterToolbar({
           <SelectValue placeholder="Type" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="all">All Types</SelectItem>
-          <SelectItem value="distributed">Distributed</SelectItem>
-          <SelectItem value="standard">Standard</SelectItem>
+          {NETWORK_TYPE_FILTERS.map((t) => (
+            <SelectItem key={t.value} value={t.value}>
+              {t.label}
+            </SelectItem>
+          ))}
         </SelectContent>
       </Select>
 
@@ -88,6 +102,38 @@ export function NetworksFilterToolbar({
           <SelectItem value="untagged">Untagged</SelectItem>
         </SelectContent>
       </Select>
+
+      {/* Accessible Filter */}
+      {onAccessibleFilterChange && (
+        <Select value={accessibleFilter} onValueChange={onAccessibleFilterChange}>
+          <SelectTrigger className="w-[100px] h-7 text-xs">
+            <SelectValue placeholder="Access" />
+          </SelectTrigger>
+          <SelectContent>
+            {ACCESSIBLE_FILTERS.map((f) => (
+              <SelectItem key={f.value} value={f.value}>
+                {f.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+
+      {/* Has VMs Filter */}
+      {onHasVmsFilterChange && (
+        <Select value={hasVmsFilter} onValueChange={onHasVmsFilterChange}>
+          <SelectTrigger className="w-[90px] h-7 text-xs">
+            <SelectValue placeholder="VMs" />
+          </SelectTrigger>
+          <SelectContent>
+            {HAS_VMS_FILTERS.map((f) => (
+              <SelectItem key={f.value} value={f.value}>
+                {f.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
 
       {/* Group by Name Toggle */}
       {onGroupByNameChange && (
@@ -123,14 +169,14 @@ export function NetworksFilterToolbar({
               <Columns3 className="h-3.5 w-3.5" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
+          <DropdownMenuContent align="end" className="w-48">
             <DropdownMenuLabel>Toggle columns</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            {allColumns.map((col) => (
+            {availableColumns.map((col) => (
               <DropdownMenuCheckboxItem
-                key={col.id}
-                checked={visibleColumns.includes(col.id)}
-                onCheckedChange={() => onToggleColumn(col.id)}
+                key={col.key}
+                checked={visibleColumns.includes(col.key)}
+                onCheckedChange={() => onToggleColumn(col.key)}
               >
                 {col.label}
               </DropdownMenuCheckboxItem>

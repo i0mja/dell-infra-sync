@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Search, Columns3, Download, Save } from "lucide-react";
+import { HOST_COLUMNS, ESXI_VERSION_FILTERS, MAINTENANCE_FILTERS } from "@/lib/vcenter-column-definitions";
 
 interface HostFilterToolbarProps {
   searchTerm: string;
@@ -31,6 +32,10 @@ interface HostFilterToolbarProps {
   linkFilter: string;
   onLinkFilterChange: (value: string) => void;
   clusters: string[];
+  esxiVersionFilter?: string;
+  onEsxiVersionFilterChange?: (value: string) => void;
+  maintenanceFilter?: string;
+  onMaintenanceFilterChange?: (value: string) => void;
   // Optional - for integrated toolbar
   visibleColumns?: string[];
   onToggleColumn?: (column: string) => void;
@@ -38,16 +43,6 @@ interface HostFilterToolbarProps {
   selectedCount?: number;
   onSaveView?: (name: string) => void;
 }
-
-const COLUMN_OPTIONS = [
-  { key: "name", label: "Hostname" },
-  { key: "status", label: "Status" },
-  { key: "esxi", label: "ESXi Version" },
-  { key: "serial", label: "Serial Number" },
-  { key: "linked", label: "Linked" },
-  { key: "vcenter", label: "vCenter" },
-  { key: "sync", label: "Last Sync" },
-];
 
 export function HostFilterToolbar({
   searchTerm,
@@ -59,6 +54,10 @@ export function HostFilterToolbar({
   linkFilter,
   onLinkFilterChange,
   clusters,
+  esxiVersionFilter = "all",
+  onEsxiVersionFilterChange,
+  maintenanceFilter = "all",
+  onMaintenanceFilterChange,
   visibleColumns,
   onToggleColumn,
   onExport,
@@ -81,7 +80,7 @@ export function HostFilterToolbar({
 
   return (
     <>
-      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-muted/50">
+      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-muted/50 flex-wrap">
         <div className="flex-1 relative max-w-[180px]">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
@@ -129,6 +128,36 @@ export function HostFilterToolbar({
           </SelectContent>
         </Select>
 
+        {onEsxiVersionFilterChange && (
+          <Select value={esxiVersionFilter} onValueChange={onEsxiVersionFilterChange}>
+            <SelectTrigger className="w-[100px] h-7 text-xs">
+              <SelectValue placeholder="ESXi" />
+            </SelectTrigger>
+            <SelectContent>
+              {ESXI_VERSION_FILTERS.map((v) => (
+                <SelectItem key={v.value} value={v.value}>
+                  {v.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
+        {onMaintenanceFilterChange && (
+          <Select value={maintenanceFilter} onValueChange={onMaintenanceFilterChange}>
+            <SelectTrigger className="w-[110px] h-7 text-xs">
+              <SelectValue placeholder="Maintenance" />
+            </SelectTrigger>
+            <SelectContent>
+              {MAINTENANCE_FILTERS.map((m) => (
+                <SelectItem key={m.value} value={m.value}>
+                  {m.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
         {showActions && (
           <>
             <div className="flex-1" />
@@ -146,7 +175,7 @@ export function HostFilterToolbar({
               <DropdownMenuContent align="end" className="w-48">
                 <DropdownMenuLabel>Toggle Columns</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                {COLUMN_OPTIONS.map((col) => (
+                {HOST_COLUMNS.map((col) => (
                   <DropdownMenuCheckboxItem
                     key={col.key}
                     checked={isColumnVisible(col.key)}
