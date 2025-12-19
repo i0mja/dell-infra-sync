@@ -1101,7 +1101,7 @@ def _get_folder_path(parent_folder) -> str:
     return '/'.join(path_parts) if path_parts else ''
 
 
-
+def _vm_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
     """
     Transform VM to JSON-serializable dict with cluster resolution.
     
