@@ -22,6 +22,8 @@ import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { useSavedViews } from "@/hooks/useSavedViews";
 import { useDatastoreVMs } from "@/hooks/useDatastoreVMs";
 import { useClusterDatastores } from "@/hooks/useClusterDatastores";
+import { useVMVLANMapping } from "@/hooks/useVMVLANMapping";
+import { useVLANOptions } from "@/hooks/useVLANOptions";
 import { Button } from "@/components/ui/button";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
@@ -66,6 +68,7 @@ export default function VCenter() {
   const [vmsPowerFilter, setVmsPowerFilter] = useState("all");
   const [vmsToolsFilter, setVmsToolsFilter] = useState("all");
   const [vmsOsFilter, setVmsOsFilter] = useState("all");
+  const [vmsVlanFilter, setVmsVlanFilter] = useState("all");
   
   // Clusters filters
   const [clustersSearch, setClustersSearch] = useState("");
@@ -143,6 +146,10 @@ export default function VCenter() {
     selectedClusterForHook?.cluster_name
   );
   
+  // VM VLAN mapping for VLAN filter
+  const { data: vmVlanMapping } = useVMVLANMapping();
+  const { data: vlanOptions } = useVLANOptions();
+
   // Networks filters
   const [networksSearch, setNetworksSearch] = useState("");
   const [networksTypeFilter, setNetworksTypeFilter] = useState("all");
@@ -835,6 +842,9 @@ export default function VCenter() {
               onToolsFilterChange={setVmsToolsFilter}
               osFilter={vmsOsFilter}
               onOsFilterChange={setVmsOsFilter}
+              vlanFilter={vmsVlanFilter}
+              onVlanFilterChange={setVmsVlanFilter}
+              vlanOptions={vlanOptions || []}
               visibleColumns={vmsColumnVisibility.visibleColumns}
               onToggleColumn={vmsColumnVisibility.toggleColumn}
               onExport={() => {
@@ -855,7 +865,7 @@ export default function VCenter() {
               }}
               selectedCount={vmsSelectedCount}
               onSaveView={(name) => {
-                vmsSavedViews.saveView(name, { cluster: vmsClusterFilter, power: vmsPowerFilter, tools: vmsToolsFilter, os: vmsOsFilter }, undefined, undefined, vmsColumnVisibility.visibleColumns);
+                vmsSavedViews.saveView(name, { cluster: vmsClusterFilter, power: vmsPowerFilter, tools: vmsToolsFilter, os: vmsOsFilter, vlan: vmsVlanFilter }, undefined, undefined, vmsColumnVisibility.visibleColumns);
                 toast({ title: "View saved", description: `"${name}" saved successfully` });
               }}
             />
@@ -980,6 +990,8 @@ export default function VCenter() {
                 powerFilter={vmsPowerFilter}
                 toolsFilter={vmsToolsFilter}
                 osFilter={vmsOsFilter}
+                vlanFilter={vmsVlanFilter}
+                vmVlanMapping={vmVlanMapping}
                 visibleColumns={vmsColumnVisibility.visibleColumns}
               />
             </div>

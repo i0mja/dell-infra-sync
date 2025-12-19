@@ -46,6 +46,10 @@ interface VMsFilterToolbarProps {
   onSnapshotFilterChange?: (value: string) => void;
   statusFilter?: string;
   onStatusFilterChange?: (value: string) => void;
+  // VLAN filter
+  vlanFilter?: string;
+  onVlanFilterChange?: (value: string) => void;
+  vlanOptions?: { value: string; label: string }[];
   // Optional - for integrated toolbar
   visibleColumns?: string[];
   onToggleColumn?: (column: string) => void;
@@ -72,6 +76,9 @@ export function VMsFilterToolbar({
   onSnapshotFilterChange,
   statusFilter = "all",
   onStatusFilterChange,
+  vlanFilter = "all",
+  onVlanFilterChange,
+  vlanOptions = [],
   visibleColumns,
   onToggleColumn,
   onExport,
@@ -198,6 +205,22 @@ export function VMsFilterToolbar({
               {VM_STATUS_FILTERS.map((f) => (
                 <SelectItem key={f.value} value={f.value}>
                   {f.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
+        {onVlanFilterChange && vlanOptions.length > 0 && (
+          <Select value={vlanFilter} onValueChange={onVlanFilterChange}>
+            <SelectTrigger className="w-[130px] h-7 text-xs">
+              <SelectValue placeholder="VLAN" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All VLANs</SelectItem>
+              {vlanOptions.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
                 </SelectItem>
               ))}
             </SelectContent>
