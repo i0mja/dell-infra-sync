@@ -9,12 +9,15 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { 
   X, HardDrive, Server, MonitorDot, Cpu, MemoryStick,
   Network, Settings2, FileText, ChevronDown, ChevronRight,
-  Clock, Star, Wifi, WifiOff, ExternalLink
+  Clock, Star, Wifi, WifiOff, ExternalLink, Camera, Tags,
+  Folder, Layers, Box
 } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow, format } from "date-fns";
 import { useVMHost } from "@/hooks/useVMHost";
 import { useVMDatastores } from "@/hooks/useVMDatastores";
 import { useVMNetworks } from "@/hooks/useVMNetworks";
+import { useVMSnapshots, VMSnapshot } from "@/hooks/useVMSnapshots";
+import { useVMCustomAttributes } from "@/hooks/useVMCustomAttributes";
 import { useState } from "react";
 
 interface VMDetailsSidebarProps {
@@ -22,6 +25,10 @@ interface VMDetailsSidebarProps {
   onClose: () => void;
   onNavigateToHost?: (hostId: string) => void;
   onNavigateToDatastore?: (datastoreId: string) => void;
+}
+
+interface SnapshotNode extends VMSnapshot {
+  children: SnapshotNode[];
 }
 
 function formatBytes(bytes: number | null): string {
@@ -37,6 +44,82 @@ function getUsageColor(percent: number): string {
   if (percent >= 80) return 'bg-warning';
   if (percent >= 70) return 'bg-amber-500';
   return 'bg-success';
+}
+
+function buildSnapshotTree(snapshots: VMSnapshot[]): SnapshotNode[] {
+  const snapshotMap = new Map<string, SnapshotNode>();
+  
+  // Create nodes with empty children array
+  snapshots.forEach(snap => {
+    snapshotMap.set(snap.snapshot_id, { ...snap, children: [] });
+  });
+  
+  const roots: SnapshotNode[] = [];
+  
+  // Build tree structure
+  snapshots.forEach(snap => {
+    const node = snapshotMap.get(snap.snapshot_id)!;
+    if (snap.parent_snapshot_id && snapshotMap.has(snap.parent_snapshot_id)) {
+      snapshotMap.get(snap.parent_snapshot_id)!.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  });
+  
+  return roots;
+}
+
+function SnapshotItem({ 
+  snapshot, 
+  depth = 0 
+}: { 
+  snapshot: SnapshotNode; 
+  depth?: number;
+}) {
+  const hasChildren = snapshot.children.length > 0;
+  const indent = depth * 16;
+  
+  return (
+    <div>
+      <div 
+        className="flex items-start gap-2 py-1.5 px-2 rounded hover:bg-muted/50"
+        style={{ marginLeft: indent }}
+      >
+        <Camera className="h-4 w-4 text-muted-foreground flex-shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium truncate">{snapshot.name}</span>
+            {snapshot.is_current && (
+              <Badge variant="default" className="text-[10px] h-4 px-1.5 bg-primary">
+                Current
+              </Badge>
+            )}
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            {snapshot.created_at && (
+              <span>{format(new Date(snapshot.created_at), 'MMM d, yyyy HH:mm')}</span>
+            )}
+            {snapshot.size_bytes > 0 && (
+              <>
+                <span>•</span>
+                <span>{formatBytes(snapshot.size_bytes)}</span>
+              </>
+            )}
+          </div>
+          {snapshot.description && (
+            <p className="text-xs text-muted-foreground mt-0.5 truncate">{snapshot.description}</p>
+          )}
+        </div>
+      </div>
+      {hasChildren && (
+        <div className="border-l border-border/50 ml-4" style={{ marginLeft: indent + 8 }}>
+          {snapshot.children.map(child => (
+            <SnapshotItem key={child.id} snapshot={child} depth={0} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function QuickStat({ 
@@ -107,6 +190,8 @@ export function VMDetailsSidebar({
   const [openSections, setOpenSections] = useState({
     storage: true,
     networking: true,
+    snapshots: true,
+    customAttributes: false,
     notes: false,
     metadata: false,
   });
@@ -114,6 +199,8 @@ export function VMDetailsSidebar({
   const { data: host, isLoading: hostLoading } = useVMHost(vm?.host_id);
   const { data: datastores, isLoading: datastoresLoading } = useVMDatastores(vm?.id);
   const { data: networks, isLoading: networksLoading } = useVMNetworks(vm?.id);
+  const { data: snapshots, isLoading: snapshotsLoading } = useVMSnapshots(vm?.id);
+  const { data: customAttributes, isLoading: attributesLoading } = useVMCustomAttributes(vm?.id);
 
   const toggleSection = (section: keyof typeof openSections) => {
     setOpenSections(prev => ({ ...prev, [section]: !prev[section] }));
@@ -121,6 +208,9 @@ export function VMDetailsSidebar({
 
   const powerState = vm.power_state;
   const powerColor = powerState === 'poweredOn' ? 'bg-success' : powerState === 'poweredOff' ? 'bg-destructive' : 'bg-warning';
+  
+  // Build snapshot tree
+  const snapshotTree = snapshots ? buildSnapshotTree(snapshots) : [];
 
   return (
     <div className="w-[440px] border-l bg-card flex-shrink-0 h-full flex flex-col">
@@ -238,6 +328,37 @@ export function VMDetailsSidebar({
                   {vm.overall_status || 'Unknown'}
                 </Badge>
               </div>
+              {vm.resource_pool && (
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-1.5">
+                    <Box className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="text-sm text-muted-foreground">Resource Pool</span>
+                  </div>
+                  <span className="text-sm truncate max-w-[180px]">{vm.resource_pool}</span>
+                </div>
+              )}
+              {vm.hardware_version && (
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-1.5">
+                    <Layers className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="text-sm text-muted-foreground">Hardware Version</span>
+                  </div>
+                  <Badge variant="outline" className="text-xs">
+                    {vm.hardware_version}
+                  </Badge>
+                </div>
+              )}
+              {vm.folder_path && (
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-1.5">
+                    <Folder className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="text-sm text-muted-foreground">Folder</span>
+                  </div>
+                  <span className="text-sm truncate max-w-[180px] text-right" title={vm.folder_path}>
+                    {vm.folder_path}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -398,6 +519,74 @@ export function VMDetailsSidebar({
             </CollapsibleContent>
           </Collapsible>
 
+          <Separator />
+
+          {/* Snapshots Section */}
+          <Collapsible open={openSections.snapshots}>
+            <SectionHeader 
+              title="Snapshots" 
+              icon={Camera} 
+              isOpen={openSections.snapshots}
+              onToggle={() => toggleSection('snapshots')}
+              count={snapshots?.length || vm.snapshot_count || 0}
+            />
+            <CollapsibleContent className="mt-2">
+              {snapshotsLoading ? (
+                <Skeleton className="h-16 w-full" />
+              ) : snapshotTree.length > 0 ? (
+                <Card className="bg-muted/30 border-0">
+                  <CardContent className="p-2">
+                    {snapshotTree.map(snapshot => (
+                      <SnapshotItem key={snapshot.id} snapshot={snapshot} />
+                    ))}
+                  </CardContent>
+                </Card>
+              ) : (
+                <p className="text-sm text-muted-foreground py-2">No snapshots found</p>
+              )}
+            </CollapsibleContent>
+          </Collapsible>
+
+          <Separator />
+
+          {/* Custom Attributes Section */}
+          <Collapsible open={openSections.customAttributes}>
+            <SectionHeader 
+              title="Custom Attributes" 
+              icon={Tags} 
+              isOpen={openSections.customAttributes}
+              onToggle={() => toggleSection('customAttributes')}
+              count={customAttributes?.length}
+            />
+            <CollapsibleContent className="mt-2">
+              {attributesLoading ? (
+                <Skeleton className="h-16 w-full" />
+              ) : customAttributes && customAttributes.length > 0 ? (
+                <Card className="bg-muted/30 border-0">
+                  <CardContent className="p-3 space-y-2">
+                    {customAttributes
+                      .sort((a, b) => a.attribute_key.localeCompare(b.attribute_key))
+                      .map((attr) => (
+                        <div key={attr.id} className="flex justify-between items-start gap-2">
+                          <span className="text-sm text-muted-foreground flex-shrink-0">
+                            {attr.attribute_key}
+                          </span>
+                          <span 
+                            className="text-sm text-right truncate max-w-[200px]" 
+                            title={attr.attribute_value || ''}
+                          >
+                            {attr.attribute_value || '—'}
+                          </span>
+                        </div>
+                      ))}
+                  </CardContent>
+                </Card>
+              ) : (
+                <p className="text-sm text-muted-foreground py-2">No custom attributes found</p>
+              )}
+            </CollapsibleContent>
+          </Collapsible>
+
           {/* Notes Section */}
           {vm.notes && (
             <>
@@ -435,6 +624,30 @@ export function VMDetailsSidebar({
                   <span className="text-muted-foreground">vCenter ID</span>
                   <span className="font-mono text-xs truncate max-w-[180px]">{vm.vcenter_id || "N/A"}</span>
                 </div>
+                {vm.hardware_version && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Hardware Version</span>
+                    <span className="text-xs">{vm.hardware_version}</span>
+                  </div>
+                )}
+                {vm.folder_path && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Folder Path</span>
+                    <span className="text-xs truncate max-w-[180px]" title={vm.folder_path}>{vm.folder_path}</span>
+                  </div>
+                )}
+                {(vm.snapshot_count > 0 || (snapshots && snapshots.length > 0)) && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Snapshot Count</span>
+                    <span className="text-xs">{snapshots?.length || vm.snapshot_count}</span>
+                  </div>
+                )}
+                {vm.resource_pool && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Resource Pool</span>
+                    <span className="text-xs truncate max-w-[180px]">{vm.resource_pool}</span>
+                  </div>
+                )}
                 <div className="flex justify-between items-center">
                   <span className="text-muted-foreground">Last Synced</span>
                   <span className="text-xs">
