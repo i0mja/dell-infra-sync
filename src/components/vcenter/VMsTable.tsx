@@ -37,6 +37,8 @@ interface VMsTableProps {
   powerFilter: string;
   toolsFilter: string;
   osFilter: string;
+  vlanFilter?: string;
+  vmVlanMapping?: Map<string, number[]>;
   onExport?: () => void;
   visibleColumns?: string[];
   onToggleColumn?: (column: string) => void;
@@ -52,6 +54,8 @@ export function VMsTable({
   powerFilter,
   toolsFilter,
   osFilter,
+  vlanFilter = "all",
+  vmVlanMapping,
   onExport,
   visibleColumns: parentVisibleColumns,
   onToggleColumn,
@@ -106,7 +110,15 @@ export function VMsTable({
       }
     })();
 
-    return matchesSearch && matchesCluster && matchesPower && matchesTools && matchesOs;
+    // VLAN filter - check if VM is connected to a network with the selected VLAN
+    const matchesVlan = vlanFilter === "all" || (() => {
+      if (!vmVlanMapping) return true;
+      const vmVlans = vmVlanMapping.get(vm.id);
+      if (!vmVlans) return false;
+      return vmVlans.includes(parseInt(vlanFilter, 10));
+    })();
+
+    return matchesSearch && matchesCluster && matchesPower && matchesTools && matchesOs && matchesVlan;
   });
 
   // Apply sorting
