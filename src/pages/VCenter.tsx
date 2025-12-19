@@ -486,6 +486,15 @@ export default function VCenter() {
     setSelectedDatastoreId(datastoreId);
   };
 
+  // Navigate to Hosts tab and select a specific host
+  const handleNavigateToHost = (hostId: string) => {
+    setActiveTab("hosts");
+    setSelectedClusterId(null);
+    setSelectedVmId(null);
+    setSelectedDatastoreId(null);
+    setSelectedHostId(hostId);
+  };
+
   // Handle cluster update - opens the ServerUpdateWizard with the cluster pre-selected
   const handleClusterUpdate = (clusterName?: string) => {
     if (clusterName) {
@@ -1066,6 +1075,7 @@ export default function VCenter() {
             onLinkToServer={(host) => handleLinkToServer(host.id)}
             onNavigateToVM={handleNavigateToVM}
             onNavigateToDatastore={handleNavigateToDatastore}
+            onNavigateToHost={handleNavigateToHost}
             onSafetyCheck={handleSafetyCheck}
             onNavigateToHosts={handleNavigateToHosts}
             onNavigateToVMs={handleNavigateToVMs}
