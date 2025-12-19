@@ -4209,13 +4209,114 @@ export type Database = {
         }
         Relationships: []
       }
+      vcenter_vm_custom_attributes: {
+        Row: {
+          attribute_key: string
+          attribute_value: string | null
+          id: string
+          last_sync: string | null
+          source_vcenter_id: string | null
+          vm_id: string
+        }
+        Insert: {
+          attribute_key: string
+          attribute_value?: string | null
+          id?: string
+          last_sync?: string | null
+          source_vcenter_id?: string | null
+          vm_id: string
+        }
+        Update: {
+          attribute_key?: string
+          attribute_value?: string | null
+          id?: string
+          last_sync?: string | null
+          source_vcenter_id?: string | null
+          vm_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vcenter_vm_custom_attributes_source_vcenter_id_fkey"
+            columns: ["source_vcenter_id"]
+            isOneToOne: false
+            referencedRelation: "vcenters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vcenter_vm_custom_attributes_vm_id_fkey"
+            columns: ["vm_id"]
+            isOneToOne: false
+            referencedRelation: "vcenter_vms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vcenter_vm_snapshots: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          id: string
+          is_current: boolean | null
+          last_sync: string | null
+          name: string
+          parent_snapshot_id: string | null
+          size_bytes: number | null
+          snapshot_id: string
+          source_vcenter_id: string | null
+          vm_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          is_current?: boolean | null
+          last_sync?: string | null
+          name: string
+          parent_snapshot_id?: string | null
+          size_bytes?: number | null
+          snapshot_id: string
+          source_vcenter_id?: string | null
+          vm_id: string
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          is_current?: boolean | null
+          last_sync?: string | null
+          name?: string
+          parent_snapshot_id?: string | null
+          size_bytes?: number | null
+          snapshot_id?: string
+          source_vcenter_id?: string | null
+          vm_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vcenter_vm_snapshots_source_vcenter_id_fkey"
+            columns: ["source_vcenter_id"]
+            isOneToOne: false
+            referencedRelation: "vcenters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vcenter_vm_snapshots_vm_id_fkey"
+            columns: ["vm_id"]
+            isOneToOne: false
+            referencedRelation: "vcenter_vms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vcenter_vms: {
         Row: {
           cluster_name: string | null
           cpu_count: number | null
           created_at: string | null
           disk_gb: number | null
+          folder_path: string | null
           guest_os: string | null
+          hardware_version: string | null
           host_id: string | null
           id: string
           ip_address: string | null
@@ -4226,6 +4327,8 @@ export type Database = {
           notes: string | null
           overall_status: string | null
           power_state: string | null
+          resource_pool: string | null
+          snapshot_count: number | null
           source_vcenter_id: string | null
           tools_status: string | null
           tools_version: string | null
@@ -4237,7 +4340,9 @@ export type Database = {
           cpu_count?: number | null
           created_at?: string | null
           disk_gb?: number | null
+          folder_path?: string | null
           guest_os?: string | null
+          hardware_version?: string | null
           host_id?: string | null
           id?: string
           ip_address?: string | null
@@ -4248,6 +4353,8 @@ export type Database = {
           notes?: string | null
           overall_status?: string | null
           power_state?: string | null
+          resource_pool?: string | null
+          snapshot_count?: number | null
           source_vcenter_id?: string | null
           tools_status?: string | null
           tools_version?: string | null
@@ -4259,7 +4366,9 @@ export type Database = {
           cpu_count?: number | null
           created_at?: string | null
           disk_gb?: number | null
+          folder_path?: string | null
           guest_os?: string | null
+          hardware_version?: string | null
           host_id?: string | null
           id?: string
           ip_address?: string | null
@@ -4270,6 +4379,8 @@ export type Database = {
           notes?: string | null
           overall_status?: string | null
           power_state?: string | null
+          resource_pool?: string | null
+          snapshot_count?: number | null
           source_vcenter_id?: string | null
           tools_status?: string | null
           tools_version?: string | null

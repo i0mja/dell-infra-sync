@@ -57,6 +57,8 @@ class VCenterDbUpsertMixin:
             "datastore_vms": {"synced": 0, "total": 0},
             "networks": {"synced": 0, "total": 0},
             "network_vms": {"synced": 0, "total": 0},
+            "vm_snapshots": {"synced": 0, "total": 0},
+            "vm_custom_attributes": {"synced": 0, "total": 0},
             "errors": []
         }
         
@@ -142,19 +144,39 @@ class VCenterDbUpsertMixin:
         # 7. Upsert Datastore-VM relationships (phase 6) - for decommission safety
         self.log(f"{prefix}Upserting datastore-VM relationships...")
         if progress_callback:
-            progress_callback(92, f"{prefix}Syncing datastore-VM relationships...", 6)
+            progress_callback(90, f"{prefix}Syncing datastore-VM relationships...", 6)
         
         datastore_vm_result = self._upsert_datastore_vms_batch(
             inventory["vms"], source_vcenter_id, job_id
         )
         results["datastore_vms"] = datastore_vm_result
         
-        # 7. Update network VM counts from relationships
+        # 8. Upsert VM snapshots (phase 7)
+        self.log(f"{prefix}Upserting VM snapshots...")
+        if progress_callback:
+            progress_callback(94, f"{prefix}Syncing VM snapshots...", 7)
+        
+        snapshots_result = self._upsert_vm_snapshots_batch(
+            inventory["vms"], source_vcenter_id, job_id
+        )
+        results["vm_snapshots"] = snapshots_result
+        
+        # 9. Upsert VM custom attributes (phase 8)
+        self.log(f"{prefix}Upserting VM custom attributes...")
+        if progress_callback:
+            progress_callback(97, f"{prefix}Syncing VM custom attributes...", 8)
+        
+        custom_attrs_result = self._upsert_vm_custom_attributes_batch(
+            inventory["vms"], source_vcenter_id, job_id
+        )
+        results["vm_custom_attributes"] = custom_attrs_result
+        
+        # 10. Update network VM counts from relationships
         self._update_network_vm_counts(source_vcenter_id)
         
         # Phase 6 (alarms) is handled separately in vcenter_handlers.py
         if progress_callback:
-            progress_callback(100, f"{prefix}Inventory sync complete", 5)
+            progress_callback(100, f"{prefix}Inventory sync complete", 9)
         
         duration_ms = int((time.time() - start_time) * 1000)
         self.log(f"{prefix}Inventory upsert completed in {duration_ms}ms")
@@ -891,6 +913,11 @@ class VCenterDbUpsertMixin:
                     # Phase 7: Tools info
                     'tools_status': v.get('tools_status', ''),
                     'tools_version': v.get('tools_version', ''),
+                    # Phase 9: New fields
+                    'resource_pool': v.get('resource_pool', ''),
+                    'hardware_version': v.get('hardware_version', ''),
+                    'folder_path': v.get('folder_path', ''),
+                    'snapshot_count': v.get('snapshot_count', 0),
                     'last_sync': utc_now_iso()
                 })
             
@@ -1338,3 +1365,192 @@ class VCenterDbUpsertMixin:
         except Exception as e:
             self.log(f"  Warning: Datastore change detection failed: {e}", "WARN")
             return {"disappeared": [], "critical": [], "reappeared": []}
+    
+    def _upsert_vm_snapshots_batch(
+        self,
+        vms: List[Dict],
+        source_vcenter_id: str,
+        job_id: str = None
+    ) -> Dict[str, int]:
+        """Batch upsert VM snapshots from all VMs."""
+        if not vms:
+            return {"synced": 0, "total": 0}
+        
+        headers = {
+            'apikey': SERVICE_ROLE_KEY,
+            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            'Content-Type': 'application/json',
+            'Prefer': 'resolution=merge-duplicates,return=minimal'
+        }
+        
+        # Fetch VM lookup (vcenter_id -> db id mapping)
+        vms_response = requests.get(
+            f"{DSM_URL}/rest/v1/vcenter_vms?source_vcenter_id=eq.{source_vcenter_id}&select=id,vcenter_id",
+            headers={
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+            },
+            verify=VERIFY_SSL
+        )
+        vm_lookup = {}
+        if vms_response.status_code == 200:
+            from job_executor.utils import _safe_json_parse
+            vms_list = _safe_json_parse(vms_response) or []
+            vm_lookup = {v['vcenter_id']: v['id'] for v in vms_list if v.get('vcenter_id')}
+        
+        # Collect all snapshots from all VMs
+        all_snapshots = []
+        for vm in vms:
+            vm_vcenter_id = vm.get('id', '')
+            vm_db_id = vm_lookup.get(vm_vcenter_id)
+            if not vm_db_id:
+                continue
+            
+            for snap in vm.get('snapshots', []):
+                all_snapshots.append({
+                    'vm_id': vm_db_id,
+                    'snapshot_id': snap.get('snapshot_id', ''),
+                    'name': snap.get('name', ''),
+                    'description': snap.get('description', ''),
+                    'created_at': snap.get('created_at'),
+                    'size_bytes': snap.get('size_bytes', 0),
+                    'is_current': snap.get('is_current', False),
+                    'parent_snapshot_id': snap.get('parent_snapshot_id'),
+                    'source_vcenter_id': source_vcenter_id,
+                    'last_sync': utc_now_iso()
+                })
+        
+        if not all_snapshots:
+            return {"synced": 0, "total": 0}
+        
+        # Delete existing snapshots for this vCenter (full refresh)
+        try:
+            requests.delete(
+                f"{DSM_URL}/rest/v1/vcenter_vm_snapshots?source_vcenter_id=eq.{source_vcenter_id}",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+        except Exception as e:
+            self.log(f"  Warning: Could not delete old snapshots: {e}", "WARN")
+        
+        # Insert new snapshots in batches
+        synced = 0
+        batch_size = 100
+        
+        for i in range(0, len(all_snapshots), batch_size):
+            batch = all_snapshots[i:i+batch_size]
+            try:
+                response = requests.post(
+                    f"{DSM_URL}/rest/v1/vcenter_vm_snapshots",
+                    headers=headers,
+                    json=batch,
+                    verify=VERIFY_SSL,
+                    timeout=30
+                )
+                
+                if response.status_code in [200, 201, 204]:
+                    synced += len(batch)
+                else:
+                    self.log(f"  Snapshot batch insert failed: HTTP {response.status_code}", "WARN")
+                    
+            except Exception as e:
+                self.log(f"  Snapshot batch insert error: {e}", "ERROR")
+        
+        self.log(f"  ✓ Synced {synced} VM snapshots")
+        return {"synced": synced, "total": len(all_snapshots)}
+    
+    def _upsert_vm_custom_attributes_batch(
+        self,
+        vms: List[Dict],
+        source_vcenter_id: str,
+        job_id: str = None
+    ) -> Dict[str, int]:
+        """Batch upsert VM custom attributes from all VMs."""
+        if not vms:
+            return {"synced": 0, "total": 0}
+        
+        headers = {
+            'apikey': SERVICE_ROLE_KEY,
+            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            'Content-Type': 'application/json',
+            'Prefer': 'resolution=merge-duplicates,return=minimal'
+        }
+        
+        # Fetch VM lookup (vcenter_id -> db id mapping)
+        vms_response = requests.get(
+            f"{DSM_URL}/rest/v1/vcenter_vms?source_vcenter_id=eq.{source_vcenter_id}&select=id,vcenter_id",
+            headers={
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+            },
+            verify=VERIFY_SSL
+        )
+        vm_lookup = {}
+        if vms_response.status_code == 200:
+            from job_executor.utils import _safe_json_parse
+            vms_list = _safe_json_parse(vms_response) or []
+            vm_lookup = {v['vcenter_id']: v['id'] for v in vms_list if v.get('vcenter_id')}
+        
+        # Collect all custom attributes from all VMs
+        all_attrs = []
+        for vm in vms:
+            vm_vcenter_id = vm.get('id', '')
+            vm_db_id = vm_lookup.get(vm_vcenter_id)
+            if not vm_db_id:
+                continue
+            
+            for attr in vm.get('custom_attributes', []):
+                all_attrs.append({
+                    'vm_id': vm_db_id,
+                    'attribute_key': attr.get('attribute_key', ''),
+                    'attribute_value': attr.get('attribute_value', ''),
+                    'source_vcenter_id': source_vcenter_id,
+                    'last_sync': utc_now_iso()
+                })
+        
+        if not all_attrs:
+            return {"synced": 0, "total": 0}
+        
+        # Delete existing custom attributes for this vCenter (full refresh)
+        try:
+            requests.delete(
+                f"{DSM_URL}/rest/v1/vcenter_vm_custom_attributes?source_vcenter_id=eq.{source_vcenter_id}",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+        except Exception as e:
+            self.log(f"  Warning: Could not delete old custom attributes: {e}", "WARN")
+        
+        # Insert new attributes in batches
+        synced = 0
+        batch_size = 100
+        
+        for i in range(0, len(all_attrs), batch_size):
+            batch = all_attrs[i:i+batch_size]
+            try:
+                response = requests.post(
+                    f"{DSM_URL}/rest/v1/vcenter_vm_custom_attributes",
+                    headers=headers,
+                    json=batch,
+                    verify=VERIFY_SSL,
+                    timeout=30
+                )
+                
+                if response.status_code in [200, 201, 204]:
+                    synced += len(batch)
+                else:
+                    self.log(f"  Custom attrs batch insert failed: HTTP {response.status_code}", "WARN")
+                    
+            except Exception as e:
+                self.log(f"  Custom attrs batch insert error: {e}", "ERROR")
+        
+        self.log(f"  ✓ Synced {synced} VM custom attributes")
+        return {"synced": synced, "total": len(all_attrs)}
