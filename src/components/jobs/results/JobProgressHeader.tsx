@@ -62,15 +62,17 @@ export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
     const scope = job.target_scope;
     const details = job.details;
 
-    // vCenter sync - show more detail
+    // vCenter sync - show more detail (prefer current_vcenter_name for running multi-vCenter jobs)
     if (job.job_type === 'vcenter_sync') {
-      const vcenterName = details?.vcenter_name || details?.vcenter_host;
+      const vcenterName = details?.current_vcenter_name || details?.vcenter_name || details?.vcenter_host;
       if (vcenterName) {
+        // Only show IP if we have both current_vcenter_name and vcenter_host (i.e., currently syncing)
+        const showIp = details?.vcenter_host && details?.current_vcenter_name;
         return (
           <div className="flex items-center gap-2 text-sm">
             <Database className="h-4 w-4 text-muted-foreground" />
             <span className="font-medium">{vcenterName}</span>
-            {details.vcenter_host && details.vcenter_name && (
+            {showIp && (
               <span className="text-muted-foreground">({details.vcenter_host})</span>
             )}
           </div>

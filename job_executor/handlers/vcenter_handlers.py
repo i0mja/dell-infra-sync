@@ -184,12 +184,13 @@ class VCenterHandlers(BaseHandler):
         
         self._log_console(f"Syncing vCenter {vcenter_index + 1}/{total_vcenters}: {vcenter_name} ({vcenter_host})", "INFO", job_details)
         
-        # Update job with current vCenter info
+        # Update job with current vCenter info (keep vcenter_name in sync for UI display)
         job_details.update({
             "current_step": f"Connecting to {vcenter_name}",
             "total_vcenters": total_vcenters,
             "current_vcenter_index": vcenter_index,
             "current_vcenter_name": vcenter_name,
+            "vcenter_name": vcenter_name,  # Keep updated for completed job display
             "vcenter_host": vcenter_host
         })
         self.update_job_status(
