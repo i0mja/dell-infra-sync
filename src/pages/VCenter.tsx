@@ -254,11 +254,12 @@ export default function VCenter() {
     };
   }, [selectedVCenterId]);
 
-  // Handle URL params for tab, cluster selection, and settings dialog
+  // Handle URL params for tab, cluster selection, entity selection, and settings dialog
   useEffect(() => {
     const tabParam = searchParams.get('tab');
     const clusterParam = searchParams.get('cluster');
     const settingsParam = searchParams.get('settings');
+    const selectedParam = searchParams.get('selected');
     
     // Set active tab from URL param
     if (tabParam && ['hosts', 'vms', 'clusters', 'datastores', 'networks', 'esxi-profiles', 'replication'].includes(tabParam)) {
@@ -268,26 +269,47 @@ export default function VCenter() {
     // Auto-open settings dialog from URL param
     if (settingsParam === 'true') {
       setSettingsOpen(true);
-      // Clear the settings param after opening
       searchParams.delete('settings');
       setSearchParams(searchParams, { replace: true });
     }
     
     // Auto-select cluster by name or ID
     if (clusterParam && clusters.length > 0) {
-      // Try to find by exact name match first, then by ID
       const cluster = clusters.find(c => 
         c.cluster_name === clusterParam || c.id === clusterParam
       );
       
       if (cluster) {
         setSelectedClusterId(cluster.id);
-        // Clear the cluster param after selecting (keep tab param)
         searchParams.delete('cluster');
         setSearchParams(searchParams, { replace: true });
       }
     }
-  }, [searchParams, clusters]);
+    
+    // Handle entity selection from global search navigation
+    if (selectedParam) {
+      const currentTab = tabParam || activeTab;
+      switch (currentTab) {
+        case 'vms':
+          setSelectedVmId(selectedParam);
+          break;
+        case 'hosts':
+          setSelectedHostId(selectedParam);
+          break;
+        case 'clusters':
+          setSelectedClusterId(selectedParam);
+          break;
+        case 'datastores':
+          setSelectedDatastoreId(selectedParam);
+          break;
+        case 'networks':
+          setSelectedNetworkId(selectedParam);
+          break;
+      }
+      searchParams.delete('selected');
+      setSearchParams(searchParams, { replace: true });
+    }
+  }, [searchParams, clusters, activeTab]);
 
   const filteredHosts = hosts.filter((host) => {
     const matchesSearch =

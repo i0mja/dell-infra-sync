@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { ActivityStatsBar } from "@/components/activity/ActivityStatsBar";
 import { JobsFilterToolbar, JobsViewMode } from "@/components/activity/JobsFilterToolbar";
 import { CommandsFilterToolbar } from "@/components/activity/CommandsFilterToolbar";
@@ -106,6 +106,7 @@ export default function ActivityMonitor() {
   const { userRole } = useAuth();
   const canManage = userRole === 'admin' || userRole === 'operator';
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   
   // Stale job detection state
   const [staleWarningDismissed, setStaleWarningDismissed] = useState(false);
@@ -361,6 +362,28 @@ export default function ActivityMonitor() {
       channel.unsubscribe();
     };
   }, []);
+
+  // Handle URL params for job selection from global search
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    const jobParam = searchParams.get('job');
+    
+    // Set active tab from URL param
+    if (tabParam && ['operations', 'commands', 'activity'].includes(tabParam)) {
+      setActiveTab(tabParam);
+    }
+    
+    // Open job detail dialog from URL param
+    if (jobParam && jobs.length > 0) {
+      const job = jobs.find(j => j.id === jobParam);
+      if (job) {
+        setSelectedJobForDialog(job);
+        setJobDetailDialogOpen(true);
+        searchParams.delete('job');
+        setSearchParams(searchParams, { replace: true });
+      }
+    }
+  }, [searchParams, jobs]);
 
   // Job management handlers
   const handleCancelJob = async (jobId: string) => {
