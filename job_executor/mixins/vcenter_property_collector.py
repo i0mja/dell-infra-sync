@@ -24,12 +24,13 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 def _get_vm_properties() -> List[str]:
-    """VM properties - Required set from spec + Phase 7 additions + Phase 8 network NICs."""
+    """VM properties - Required set from spec + Phase 7 additions + Phase 8 network NICs + Phase 9 snapshots/attrs."""
     return [
         "name",
         "config.uuid",
         "config.template",                    # Phase 7: Is VM a template?
         "config.hardware.device",             # Phase 8: NICs for network relationships
+        "config.version",                     # Phase 9: Hardware version (vmx-XX)
         "runtime.powerState",
         "summary.config.vmPathName",
         "summary.config.numCpu",              # Phase 7: CPU count
@@ -42,6 +43,11 @@ def _get_vm_properties() -> List[str]:
         "guest.toolsStatus",                  # Phase 7: VMware Tools status
         "guest.toolsVersionStatus2",          # Phase 7: VMware Tools version status
         "storage.perDatastoreUsage",          # Phase 7: Disk usage by datastore
+        "resourcePool",                       # Phase 9: Resource pool reference
+        "parent",                             # Phase 9: Folder reference (for folder path)
+        "snapshot",                           # Phase 9: Snapshot tree
+        "availableField",                     # Phase 9: Custom attribute definitions
+        "customValue",                        # Phase 9: Custom attribute values
     ]
 
 
@@ -1018,7 +1024,84 @@ def _safe_cpu_info(cpu_info) -> Dict[str, Any]:
         return {}
 
 
-def _vm_to_dict(obj, props: Dict[str, Any], lookups: Dict[str, Any]) -> Dict[str, Any]:
+def _process_snapshot_tree(snapshot_list, parent_id: str = None) -> List[Dict[str, Any]]:
+    """
+    Recursively flatten vCenter snapshot tree into a list.
+    
+    Args:
+        snapshot_list: List of vim.vm.SnapshotTree objects
+        parent_id: Parent snapshot MoRef ID
+        
+    Returns:
+        List of snapshot dicts with parent references
+    """
+    snapshots = []
+    if not snapshot_list:
+        return snapshots
+    
+    try:
+        for snap in snapshot_list:
+            snap_moref = str(snap.snapshot._moId) if hasattr(snap.snapshot, '_moId') else str(snap.id)
+            created_at = None
+            if hasattr(snap, 'createTime') and snap.createTime:
+                try:
+                    created_at = snap.createTime.isoformat()
+                except Exception:
+                    pass
+            
+            snapshots.append({
+                'snapshot_id': snap_moref,
+                'name': getattr(snap, 'name', '') or '',
+                'description': getattr(snap, 'description', '') or '',
+                'created_at': created_at,
+                'parent_snapshot_id': parent_id,
+            })
+            
+            # Recurse into children
+            if hasattr(snap, 'childSnapshotList') and snap.childSnapshotList:
+                snapshots.extend(_process_snapshot_tree(snap.childSnapshotList, snap_moref))
+    except Exception as e:
+        logger.warning(f"Error processing snapshot tree: {e}")
+    
+    return snapshots
+
+
+def _get_folder_path(parent_folder) -> str:
+    """
+    Build folder path by traversing parent folders.
+    
+    Args:
+        parent_folder: vim.Folder object (parent of VM)
+        
+    Returns:
+        Folder path string like "Datacenter/vm/Production/AppServers"
+    """
+    path_parts = []
+    current = parent_folder
+    max_depth = 20  # Safety limit
+    depth = 0
+    
+    try:
+        while current and depth < max_depth:
+            if hasattr(current, 'name'):
+                name = str(current.name)
+                # Skip root folder (usually named "Datacenters" or similar)
+                if name and name != 'Datacenters':
+                    path_parts.insert(0, name)
+            
+            # Move to parent
+            if hasattr(current, 'parent') and current.parent:
+                current = current.parent
+            else:
+                break
+            depth += 1
+    except Exception as e:
+        logger.warning(f"Error building folder path: {e}")
+    
+    return '/'.join(path_parts) if path_parts else ''
+
+
+
     """
     Transform VM to JSON-serializable dict with cluster resolution.
     
@@ -1197,6 +1280,66 @@ def _vm_to_dict(obj, props: Dict[str, Any], lookups: Dict[str, Any]) -> Dict[str
         except Exception as e:
             logger.warning(f"Error extracting NICs for VM {props.get('name', '')}: {e}")
     
+    # Phase 9: Extract resource pool name
+    resource_pool = ""
+    rp_ref = props.get("resourcePool")
+    if rp_ref and hasattr(rp_ref, 'name'):
+        try:
+            resource_pool = str(rp_ref.name)
+        except Exception:
+            pass
+    
+    # Phase 9: Extract hardware version (e.g., "vmx-19")
+    hardware_version = props.get("config.version", "") or ""
+    
+    # Phase 9: Extract folder path by traversing parent chain
+    folder_path = ""
+    parent_folder = props.get("parent")
+    if parent_folder:
+        folder_path = _get_folder_path(parent_folder)
+    
+    # Phase 9: Extract snapshots from snapshot tree
+    snapshots = []
+    current_snapshot_moref = None
+    snapshot_info = props.get("snapshot")
+    if snapshot_info:
+        try:
+            if hasattr(snapshot_info, 'currentSnapshot') and snapshot_info.currentSnapshot:
+                current_snapshot_moref = str(snapshot_info.currentSnapshot._moId)
+            if hasattr(snapshot_info, 'rootSnapshotList') and snapshot_info.rootSnapshotList:
+                snapshots = _process_snapshot_tree(snapshot_info.rootSnapshotList)
+                # Mark current snapshot
+                for snap in snapshots:
+                    snap['is_current'] = (snap['snapshot_id'] == current_snapshot_moref)
+        except Exception as e:
+            logger.warning(f"Error extracting snapshots for VM {props.get('name', '')}: {e}")
+    
+    # Phase 9: Extract custom attributes
+    custom_attributes = []
+    available_fields = props.get("availableField", [])
+    custom_values = props.get("customValue", [])
+    if available_fields and custom_values:
+        try:
+            # Build field key -> name map
+            field_map = {}
+            for field in available_fields:
+                key = getattr(field, 'key', None)
+                name = getattr(field, 'name', None)
+                if key is not None and name:
+                    field_map[key] = str(name)
+            
+            # Extract custom values
+            for cv in custom_values:
+                key = getattr(cv, 'key', None)
+                value = getattr(cv, 'value', None)
+                if key in field_map:
+                    custom_attributes.append({
+                        'attribute_key': field_map[key],
+                        'attribute_value': str(value) if value is not None else ''
+                    })
+        except Exception as e:
+            logger.warning(f"Error extracting custom attributes for VM {props.get('name', '')}: {e}")
+    
     return {
         # Core identifiers
         "id": moref,                                    # MoRef as string
@@ -1234,6 +1377,14 @@ def _vm_to_dict(obj, props: Dict[str, Any], lookups: Dict[str, Any]) -> Dict[str
         
         # Phase 9: Datastore usage (for vcenter_datastore_vms table)
         "datastore_usage": datastore_usage,
+        
+        # Phase 9: New fields
+        "resource_pool": resource_pool,
+        "hardware_version": hardware_version,
+        "folder_path": folder_path,
+        "snapshots": snapshots,
+        "snapshot_count": len(snapshots),
+        "custom_attributes": custom_attributes,
     }
 
 
