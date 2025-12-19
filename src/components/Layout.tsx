@@ -18,6 +18,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useSearchParams } from "react-router-dom";
 import { NotificationCenter } from "@/components/notifications/NotificationCenter";
+import { SearchTrigger } from "@/components/search/SearchTrigger";
 import { getSettingsNavigation } from "@/config/settings-tabs";
 import { useJobExecutorInit } from "@/hooks/useJobExecutorInit";
 import { GlobalSyncIndicator } from "@/components/GlobalSyncIndicator";
@@ -170,7 +171,10 @@ const Layout = () => {
               <Server className="h-5 w-5 text-primary mr-2" />
               <span className="text-sm font-semibold">Server Manager</span>
             </div>
-            <NotificationCenter />
+            <div className="flex items-center gap-1">
+              <SearchTrigger compact />
+              <NotificationCenter />
+            </div>
           </div>
           <ScrollArea className="flex-1">
             <nav className="space-y-0.5 p-3">
@@ -230,7 +234,10 @@ const Layout = () => {
               <span className="text-lg font-semibold">Server Manager</span>
             </div>
           </div>
-          <NotificationCenter />
+          <div className="flex items-center gap-2">
+            <SearchTrigger compact />
+            <NotificationCenter />
+          </div>
         </header>
 
         {/* Main Content */}
