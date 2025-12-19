@@ -9,8 +9,10 @@ import { NotificationProvider } from "@/contexts/NotificationContext";
 import { MinimizedJobsProvider } from "@/contexts/MinimizedJobsContext";
 import { ServerOperationsProvider } from "@/contexts/ServerOperationsContext";
 import { JobExecutorProvider } from "@/contexts/JobExecutorContext";
+import { GlobalSearchProvider } from "@/contexts/GlobalSearchContext";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { GlobalMinimizedJobs } from "@/components/jobs/GlobalMinimizedJobs";
+import { GlobalSearchDialog } from "@/components/search/GlobalSearchDialog";
 import Layout from "@/components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Auth from "./pages/Auth";
@@ -37,8 +39,10 @@ const App = () => (
                 <MinimizedJobsProvider>
                   <NotificationProvider>
                     <ServerOperationsProvider>
-                      <GlobalMinimizedJobs />
-                      <Routes>
+                      <GlobalSearchProvider>
+                        <GlobalMinimizedJobs />
+                        <GlobalSearchDialog />
+                        <Routes>
                       <Route path="/auth" element={<Auth />} />
                       <Route path="/" element={<Layout />}>
                         <Route index element={<Dashboard />} />
@@ -52,6 +56,7 @@ const App = () => (
                       </Route>
                       <Route path="*" element={<NotFound />} />
                       </Routes>
+                      </GlobalSearchProvider>
                     </ServerOperationsProvider>
                   </NotificationProvider>
                 </MinimizedJobsProvider>
