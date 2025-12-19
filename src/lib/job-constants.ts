@@ -10,6 +10,7 @@ export const INTERNAL_JOB_TYPES = [
   'idm_search_ad_groups',
   'idm_search_ad_users',
   'idm_sync_users',
+  'scheduled_vcenter_sync',
 ] as const;
 
 // Scheduled background job types - shown in Background Task Manager, not Active Jobs popover
