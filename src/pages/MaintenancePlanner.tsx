@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useMaintenanceData } from "@/hooks/useMaintenanceData";
 import { useSafetyStatus } from "@/hooks/useSafetyStatus";
@@ -87,6 +88,7 @@ export default function MaintenancePlanner() {
   const [jobs, setJobs] = useState<Job[]>([]);
   // Toast is now from sonner import
   const { userRole } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const canManage = userRole === 'admin' || userRole === 'operator';
 
@@ -152,6 +154,32 @@ export default function MaintenancePlanner() {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  // Handle URL params for window/job selection from global search
+  useEffect(() => {
+    const idParam = searchParams.get('id');
+    
+    if (idParam) {
+      // Check if it's a maintenance window
+      const window = windows.find(w => w.id === idParam);
+      if (window) {
+        setSelectedWindow(window);
+        setWindowDetailDialogOpen(true);
+        searchParams.delete('id');
+        setSearchParams(searchParams, { replace: true });
+        return;
+      }
+      
+      // Check if it's a job
+      const job = jobs.find(j => j.id === idParam);
+      if (job) {
+        setSelectedJob(job);
+        setJobDetailDialogOpen(true);
+        searchParams.delete('id');
+        setSearchParams(searchParams, { replace: true });
+      }
+    }
+  }, [searchParams, windows, jobs]);
 
   // Calculate stats
   const safeDays = Array.from(dailyStatus.values()).filter(d => d.allTargetsSafe).length;

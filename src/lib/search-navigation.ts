@@ -3,7 +3,7 @@ import { SearchResult, SearchCategory } from "@/types/global-search";
 
 // Map categories to their navigation paths
 const CATEGORY_ROUTES: Record<SearchCategory, (id: string) => string> = {
-  servers: (id) => `/servers?selected=${id}`,
+  servers: (id) => `/servers?server=${id}`,
   vms: (id) => `/vcenter?tab=vms&selected=${id}`,
   hosts: (id) => `/vcenter?tab=hosts&selected=${id}`,
   clusters: (id) => `/vcenter?tab=clusters&selected=${id}`,
@@ -11,7 +11,7 @@ const CATEGORY_ROUTES: Record<SearchCategory, (id: string) => string> = {
   networks: (id) => `/vcenter?tab=networks&selected=${id}`,
   protection_groups: (id) => `/vcenter?tab=replication&group=${id}`,
   replication_targets: (id) => `/vcenter?tab=replication&target=${id}`,
-  jobs: (id) => `/activity?job=${id}`,
+  jobs: (id) => `/activity?tab=operations&job=${id}`,
   maintenance: (id) => `/maintenance-planner?id=${id}`,
   settings: () => '/settings',
   credentials: () => '/settings?tab=security&section=credentials',
