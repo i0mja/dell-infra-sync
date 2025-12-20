@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Any, Tuple
 import time
 from .adapter import DellRedfishAdapter
 from .helpers import DellRedfishHelpers
-from .errors import DellRedfishError
+from .errors import DellRedfishError, get_firmware_friendly_message, is_firmware_up_to_date_response
 
 
 class DellOperations:
@@ -2585,13 +2585,29 @@ class DellOperations:
                                     server_id=server_id
                                 )
                                 
-                                # Check for error indicating no updates available
+                                # Check for error indicating no updates available (SUP029 or similar)
                                 error_info = repo_list_response.get('error', {})
                                 error_msg = ''
+                                message_id = ''
                                 if isinstance(error_info, dict):
                                     ext_info = error_info.get('@Message.ExtendedInfo', [])
                                     if ext_info and isinstance(ext_info, list):
-                                        error_msg = ext_info[0].get('Message', '') if ext_info else ''
+                                        first_error = ext_info[0] if ext_info else {}
+                                        error_msg = first_error.get('Message', '')
+                                        message_id = first_error.get('MessageId', '')
+                                
+                                # Check if this is SUP029 (server up-to-date) - not an error!
+                                if is_firmware_up_to_date_response(repo_list_response):
+                                    friendly = get_firmware_friendly_message(message_id, error_msg)
+                                    return {
+                                        'success': True,
+                                        'available_updates': [],
+                                        'update_count': 0,
+                                        'message': friendly['message'] if friendly else 'Server is already up-to-date',
+                                        'info_code': 'UP_TO_DATE',
+                                        'friendly_title': friendly['title'] if friendly else 'Server Up-to-Date',
+                                        'severity': 'success'
+                                    }
                                 
                                 # Dell returns error message if no updates: "Firmware versions on server match catalog"
                                 if 'match catalog' in error_msg.lower() or 'not present' in error_msg.lower():
@@ -2599,7 +2615,23 @@ class DellOperations:
                                         'success': True,
                                         'available_updates': [],
                                         'update_count': 0,
-                                        'message': 'Server firmware is up to date - no updates available in catalog'
+                                        'message': 'Server firmware is up to date - no updates available in catalog',
+                                        'info_code': 'UP_TO_DATE',
+                                        'friendly_title': 'Server Up-to-Date',
+                                        'severity': 'success'
+                                    }
+                                
+                                # Check for unsupported model (SUP030)
+                                if 'unsupported' in error_msg.lower() or 'SUP030' in message_id:
+                                    friendly = get_firmware_friendly_message('SUP030', error_msg)
+                                    return {
+                                        'success': False,
+                                        'available_updates': [],
+                                        'update_count': 0,
+                                        'message': friendly['message'] if friendly else error_msg,
+                                        'info_code': 'UNSUPPORTED_MODEL',
+                                        'friendly_title': friendly['title'] if friendly else 'Unsupported Model',
+                                        'severity': 'warning'
                                     }
                                 
                                 # Parse the PackageList from successful response

@@ -313,7 +313,51 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
     });
   };
 
+  // Get friendly message for firmware-related entries
+  const getFirmwareFriendlyMessage = (errorMessage: string | null | undefined): { message: string; severity: 'error' | 'warning' | 'success' | 'info' } | null => {
+    if (!errorMessage) return null;
+    
+    const msg = errorMessage.toLowerCase();
+    
+    // SUP029 - Server is up-to-date (success, not error)
+    if (msg.includes('sup029') || msg.includes('same version installed') || msg.includes('firmware versions on server match')) {
+      return {
+        message: 'Server is already up-to-date - no firmware updates needed',
+        severity: 'success'
+      };
+    }
+    
+    // Unsupported firmware packages (warning)
+    if (msg.includes('unsupported firmware packages') || msg.includes('sup030')) {
+      return {
+        message: 'Catalog does not contain compatible firmware for this server model',
+        severity: 'warning'
+      };
+    }
+    
+    // No applicable updates (success)
+    if (msg.includes('no applicable updates') || msg.includes('up to date')) {
+      return {
+        message: 'Server firmware is current - no updates available',
+        severity: 'success'
+      };
+    }
+    
+    return null;
+  };
+
   const getStatusSymbol = (entry: ConsoleEntry): string => {
+    // Check for friendly firmware message first
+    const friendly = getFirmwareFriendlyMessage(entry.details?.error_message);
+    if (friendly) {
+      switch (friendly.severity) {
+        case 'success': return '✓';
+        case 'warning': return '⚠';
+        case 'info': return 'ℹ';
+        default: return '✗';
+      }
+    }
+    
     if (entry.type === 'task') {
       switch (entry.status) {
         case 'completed': return '✓';
@@ -327,6 +371,17 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
   };
 
   const getStatusColor = (entry: ConsoleEntry): string => {
+    // Check for friendly firmware message first
+    const friendly = getFirmwareFriendlyMessage(entry.details?.error_message);
+    if (friendly) {
+      switch (friendly.severity) {
+        case 'success': return 'text-green-400';
+        case 'warning': return 'text-yellow-400';
+        case 'info': return 'text-blue-400';
+        default: return 'text-red-400';
+      }
+    }
+    
     if (entry.type === 'task') {
       switch (entry.status) {
         case 'completed': return 'text-green-400';
@@ -525,11 +580,27 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
                       </span>
                     )}
                   </span>
-                  {entry.details?.error_message && (
-                    <div className="text-red-400 mt-0.5 text-xs pl-6">
-                      Error: {entry.details.error_message}
-                    </div>
-                  )}
+                  {entry.details?.error_message && (() => {
+                    const friendly = getFirmwareFriendlyMessage(entry.details.error_message);
+                    if (friendly) {
+                      return (
+                        <div className={cn(
+                          "mt-0.5 text-xs pl-6",
+                          friendly.severity === 'success' && 'text-green-400',
+                          friendly.severity === 'warning' && 'text-yellow-400',
+                          friendly.severity === 'info' && 'text-blue-400',
+                          friendly.severity === 'error' && 'text-red-400'
+                        )}>
+                          {friendly.severity === 'success' ? '✓' : friendly.severity === 'warning' ? '⚠' : 'ℹ'} {friendly.message}
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="text-red-400 mt-0.5 text-xs pl-6">
+                        Error: {entry.details.error_message}
+                      </div>
+                    );
+                  })()}
                 </div>
               ))}
               

@@ -121,6 +121,44 @@ class DellErrorCodes:
         "retry": True,
         "wait_seconds": 60,
     }
+    
+    # Catalog/Firmware update status codes (not errors - informational)
+    SUP029 = {
+        "code": "SUP029",
+        "message": "Server is already up-to-date or catalog doesn't contain applicable updates for this server model.",
+        "retry": False,
+        "severity": "info",
+        "is_success": True,  # This is not an error condition
+    }
+    
+    SUP030 = {
+        "code": "SUP030",
+        "message": "Catalog does not contain firmware packages compatible with this server model.",
+        "retry": False,
+        "severity": "warning",
+        "is_success": False,
+    }
+    
+    SUP031 = {
+        "code": "SUP031",
+        "message": "Unable to parse catalog file. Verify catalog URL and format.",
+        "retry": False,
+        "severity": "error",
+    }
+    
+    # Repository update errors
+    REP001 = {
+        "code": "REP001",
+        "message": "Repository share is not accessible. Check network path and credentials.",
+        "retry": True,
+        "wait_seconds": 30,
+    }
+    
+    REP002 = {
+        "code": "REP002",
+        "message": "Catalog file not found at specified location.",
+        "retry": False,
+    }
 
 
 def map_dell_error(error_response: dict) -> dict:
@@ -221,3 +259,104 @@ def get_user_friendly_message(error_code: str) -> str:
                 return error_info.get("message", "Unknown error")
     
     return f"Dell iDRAC error: {error_code}"
+
+
+# Firmware-specific friendly message mapping for UI display
+FIRMWARE_STATUS_MESSAGES = {
+    'SUP029': {
+        'title': 'Server Up-to-Date',
+        'message': 'No updates available - the server firmware matches the catalog or no compatible packages found.',
+        'icon': 'check-circle',
+        'severity': 'success',
+        'is_error': False,
+    },
+    'SUP030': {
+        'title': 'Unsupported Server Model',
+        'message': 'The catalog does not contain firmware packages compatible with this server model.',
+        'icon': 'alert-triangle',
+        'severity': 'warning',
+        'is_error': False,
+    },
+    'SUP031': {
+        'title': 'Invalid Catalog',
+        'message': 'Unable to parse the catalog file. Verify the catalog URL and format are correct.',
+        'icon': 'x-circle',
+        'severity': 'error',
+        'is_error': True,
+    },
+    'REP001': {
+        'title': 'Repository Unreachable',
+        'message': 'Cannot access the firmware repository. Check network path and credentials.',
+        'icon': 'wifi-off',
+        'severity': 'error',
+        'is_error': True,
+    },
+}
+
+
+def get_firmware_friendly_message(message_id: str, raw_message: str = "") -> Optional[dict]:
+    """
+    Get user-friendly firmware status/error message for UI display.
+    
+    Args:
+        message_id: Dell message ID (e.g., "IDRAC.2.8.SUP029")
+        raw_message: Raw error message for pattern matching
+        
+    Returns:
+        dict with title, message, icon, severity, is_error or None if not matched
+    """
+    # Check for known message codes
+    for code, info in FIRMWARE_STATUS_MESSAGES.items():
+        if code in message_id:
+            return info
+    
+    # Pattern matching for messages without standard codes
+    raw_lower = raw_message.lower()
+    
+    if 'same version installed' in raw_lower or 'firmware versions on server match' in raw_lower:
+        return FIRMWARE_STATUS_MESSAGES['SUP029']
+    
+    if 'unsupported firmware packages' in raw_lower or 'unsupported' in raw_lower and 'model' in raw_lower:
+        return FIRMWARE_STATUS_MESSAGES['SUP030']
+    
+    if 'unable to parse' in raw_lower or 'invalid catalog' in raw_lower:
+        return FIRMWARE_STATUS_MESSAGES['SUP031']
+    
+    if 'share' in raw_lower and ('not accessible' in raw_lower or 'unreachable' in raw_lower):
+        return FIRMWARE_STATUS_MESSAGES['REP001']
+    
+    return None
+
+
+def is_firmware_up_to_date_response(error_response: dict) -> bool:
+    """
+    Check if an error response indicates the server is up-to-date (not a real error).
+    
+    Args:
+        error_response: Error response from Dell iDRAC
+        
+    Returns:
+        True if the response indicates server is up-to-date
+    """
+    if not isinstance(error_response, dict):
+        return False
+    
+    error_info = error_response.get('error', {})
+    ext_info = error_info.get('@Message.ExtendedInfo', [])
+    
+    if ext_info and isinstance(ext_info, list):
+        for msg_info in ext_info:
+            message_id = msg_info.get('MessageId', '')
+            message = msg_info.get('Message', '')
+            
+            # SUP029 indicates no updates available
+            if 'SUP029' in message_id:
+                return True
+            
+            # Also check message content
+            if 'same version installed' in message.lower():
+                return True
+            if 'firmware versions on server match' in message.lower():
+                return True
+    
+    return False
