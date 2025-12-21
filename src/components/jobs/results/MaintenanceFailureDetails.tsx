@@ -19,14 +19,14 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-interface BlockingVM {
+export interface BlockingVM {
   name: string;
   reason: string;
   drs_fault?: string;
   power_off_eligible?: boolean;
 }
 
-interface FailedHost {
+export interface FailedHost {
   host_name: string;
   error_type: string;
   stalled_duration?: number;
@@ -72,7 +72,8 @@ const getReasonLabel = (reason: string): string => {
     'passthrough': 'Passthrough Device',
     'affinity': 'CPU/Memory Affinity',
     'vcsa': 'vCenter Server',
-    'connected_media': 'Connected Media'
+    'connected_media': 'Connected Media',
+    'critical_infra': 'Critical Infrastructure'
   };
   return labels[reason] || reason.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 };
@@ -87,7 +88,8 @@ const getReasonGuidance = (reason: string): string => {
     'passthrough': 'This VM has PCI or USB passthrough devices that prevent live migration.',
     'affinity': 'This VM has CPU or memory affinity rules that restrict placement.',
     'vcsa': 'This is the vCenter Server Appliance - it cannot migrate itself.',
-    'connected_media': 'This VM has connected CD/DVD media from a client device.'
+    'connected_media': 'This VM has connected CD/DVD media from a client device.',
+    'critical_infra': 'This is a critical infrastructure VM. Validate safe migration or plan a controlled shutdown.'
   };
   return guidance[reason] || 'This VM cannot be migrated automatically.';
 };

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +22,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { IdracJobQueuePanel } from "./IdracJobQueuePanel";
 import { WorkflowStepDetails } from "./results/WorkflowStepDetails";
+import { MaintenanceFailureDetails, FailedHost, BlockingVM } from "./results/MaintenanceFailureDetails";
 import { launchConsole } from "@/lib/job-executor-api";
 import { toast } from "sonner";
 
@@ -368,6 +369,103 @@ export const WorkflowExecutionViewer = ({
     return descriptions[workflowType] || 'This job contains multiple workflow steps that execute in sequence.';
   };
 
+  const normalizeVmReason = (reason?: string) => {
+    if (!reason) return 'drs_no_destination';
+    const normalized = reason.toLowerCase();
+    if (normalized.includes('local storage')) return 'local_storage';
+    if (normalized.includes('passthrough')) return 'passthrough';
+    if (normalized.includes('affinity')) return 'affinity';
+    if (normalized.includes('vcenter') || normalized.includes('vcsa')) return 'vcsa';
+    if (normalized.includes('connected media')) return 'connected_media';
+    if (normalized.includes('critical')) return 'critical_infra';
+    if (normalized.includes('drs')) return 'drs_no_destination';
+    return reason;
+  };
+
+  const buildBlockingVmsFromMaintenance = (maintenanceBlockers: any): BlockingVM[] => {
+    if (!maintenanceBlockers?.blockers) return [];
+    return maintenanceBlockers.blockers.map((blocker: any) => ({
+      name: blocker.vm_name || 'Unknown VM',
+      reason: normalizeVmReason(blocker.reason || blocker.details),
+      drs_fault: blocker.details,
+      power_off_eligible: blocker.auto_fixable
+    }));
+  };
+
+  const buildBlockingVmsFromEvacuation = (evacuationBlockers: any): BlockingVM[] => {
+    const vms = evacuationBlockers?.vms_remaining;
+    if (!Array.isArray(vms)) return [];
+    return vms.map((vm: any) => {
+      if (typeof vm === 'string') {
+        return {
+          name: vm,
+          reason: 'drs_no_destination'
+        };
+      }
+      const rawReason = vm?.reason || vm?.power_state || 'DRS could not find suitable destination';
+      return {
+        name: vm?.name || 'Unknown VM',
+        reason: normalizeVmReason(rawReason),
+        drs_fault: typeof rawReason === 'string' ? rawReason : undefined
+      };
+    });
+  };
+
+  const failedHosts = useMemo(() => {
+    const failedHostMap = new Map<string, FailedHost>();
+    const hostResults = effectiveJobDetails?.workflow_results?.host_results ?? [];
+
+    hostResults
+      .filter((host: any) => host?.status === 'failed')
+      .forEach((host: any) => {
+        const maintenanceBlockers = host?.maintenance_blockers;
+        const evacuationBlockers = host?.evacuation_blockers;
+        const blockingVms = [
+          ...buildBlockingVmsFromMaintenance(maintenanceBlockers),
+          ...buildBlockingVmsFromEvacuation(evacuationBlockers)
+        ];
+
+        failedHostMap.set(host.host_name, {
+          host_name: host.host_name || 'Unknown Host',
+          error_type: evacuationBlockers ? 'vm_evacuation_failed' : maintenanceBlockers ? 'maintenance_blocked' : 'unknown',
+          stalled_duration: host.stalled_duration || host.stall_duration_seconds,
+          blocking_vms: blockingVms.length > 0 ? blockingVms : undefined,
+          error_message: host.error || host.error_message
+        });
+      });
+
+    steps
+      .filter((step) => step.step_status === 'failed')
+      .forEach((step) => {
+        const nameParts = step.step_name.split(':');
+        if (nameParts.length < 2) return;
+        const hostName = nameParts.slice(1).join(':').trim();
+        if (!hostName) return;
+
+        const existing = failedHostMap.get(hostName);
+        if (existing) {
+          if (!existing.error_message && step.step_error) {
+            existing.error_message = step.step_error;
+          }
+          if ((!existing.blocking_vms || existing.blocking_vms.length === 0) && step.step_details?.evacuation_blockers) {
+            existing.blocking_vms = buildBlockingVmsFromEvacuation(step.step_details.evacuation_blockers);
+          }
+          failedHostMap.set(hostName, existing);
+        } else {
+          failedHostMap.set(hostName, {
+            host_name: hostName,
+            error_type: step.step_details?.evacuation_blockers ? 'vm_evacuation_failed' : 'unknown',
+            blocking_vms: step.step_details?.evacuation_blockers
+              ? buildBlockingVmsFromEvacuation(step.step_details.evacuation_blockers)
+              : undefined,
+            error_message: step.step_error
+          });
+        }
+      });
+
+    return Array.from(failedHostMap.values());
+  }, [effectiveJobDetails, steps]);
+
   return (
     <Card>
       {!hideHeader && (
@@ -526,58 +624,11 @@ export const WorkflowExecutionViewer = ({
           />
         </div>
 
-        {/* Host-Specific Errors from workflow_results - show these when available */}
-        {overallStatus === 'failed' && effectiveJobDetails?.workflow_results?.host_results?.some((h: any) => h.status === 'failed') && (
+        {/* Host-Specific Errors from workflow results or steps */}
+        {overallStatus === 'failed' && failedHosts.length > 0 && (
           <>
             <Separator />
-            <Card className="border-destructive/50">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-destructive">Failed Hosts</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {effectiveJobDetails.workflow_results.host_results
-                  .filter((h: any) => h.status === 'failed')
-                  .map((host: any, idx: number) => (
-                    <div key={idx} className="p-3 rounded bg-destructive/10 border border-destructive/20 space-y-2">
-                      <div className="font-medium text-sm">{host.host_name}</div>
-                      {host.error && (
-                        <div className="text-xs font-mono text-destructive">
-                          {host.error}
-                        </div>
-                      )}
-                      {/* Show VMs that blocked evacuation */}
-                      {host.evacuation_blockers && (
-                        <div className="mt-2 pt-2 border-t border-destructive/20">
-                          <div className="text-xs font-medium text-destructive mb-1">
-                            VMs blocking evacuation ({host.evacuation_blockers.vms_remaining?.length || 0}):
-                          </div>
-                          <div className="space-y-1">
-                            {host.evacuation_blockers.vms_remaining?.slice(0, 10).map((vm: any, vmIdx: number) => (
-                              <div key={vmIdx} className="text-xs font-mono ml-2 flex items-center gap-2">
-                                <span className="text-destructive">•</span>
-                                <span>{typeof vm === 'string' ? vm : vm.name}</span>
-                                {typeof vm === 'object' && vm.reason && (
-                                  <span className="text-muted-foreground">({vm.reason})</span>
-                                )}
-                              </div>
-                            ))}
-                            {host.evacuation_blockers.vms_remaining?.length > 10 && (
-                              <div className="text-xs text-muted-foreground ml-2">
-                                ...and {host.evacuation_blockers.vms_remaining.length - 10} more
-                              </div>
-                            )}
-                          </div>
-                          {host.evacuation_blockers.reason && (
-                            <div className="text-xs text-muted-foreground mt-2">
-                              {host.evacuation_blockers.reason}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-              </CardContent>
-            </Card>
+            <MaintenanceFailureDetails failedHosts={failedHosts} jobId={jobId} />
           </>
         )}
 
@@ -613,8 +664,7 @@ export const WorkflowExecutionViewer = ({
         )}
 
         {/* Job-Level Error - only show if NO host-specific errors (avoid duplication) */}
-        {overallStatus === 'failed' && effectiveJobDetails?.error && 
-         !effectiveJobDetails?.workflow_results?.host_results?.some((h: any) => h.status === 'failed') && (
+        {overallStatus === 'failed' && effectiveJobDetails?.error && failedHosts.length === 0 && (
           <>
             <Separator />
             <Alert variant="destructive">
