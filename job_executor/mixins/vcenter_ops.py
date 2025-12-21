@@ -1786,6 +1786,41 @@ class VCenterMixin:
                     'vms_evacuated': 0,
                     'time_taken_seconds': 0
                 }
+
+            blocker_analysis = self.analyze_maintenance_blockers(
+                host_id,
+                source_vcenter_id=source_vcenter_id
+            )
+            if blocker_analysis.get('can_enter_maintenance') is False:
+                blockers = blocker_analysis.get('blockers', [])
+                critical_blockers = [
+                    blocker for blocker in blockers
+                    if blocker.get('severity') == 'critical'
+                ]
+                blocker_summary = (
+                    f"{len(critical_blockers)} critical blocker(s) detected"
+                    if critical_blockers
+                    else f"{len(blockers)} blocker(s) detected"
+                )
+                error_msg = f"Maintenance mode blocked: {blocker_summary}"
+                self.log(f"  ✗ {error_msg}", "ERROR")
+                for blocker in blockers[:5]:
+                    self.log(f"    - {blocker.get('vm_name')}: {blocker.get('reason')}", "ERROR")
+                if len(blockers) > 5:
+                    self.log(f"    ... and {len(blockers) - 5} more", "ERROR")
+                self.log_vcenter_activity(
+                    operation="enter_maintenance_mode",
+                    endpoint=host_name,
+                    success=False,
+                    response_time_ms=int((time.time() - start_time) * 1000),
+                    error=error_msg,
+                    details={'maintenance_blockers': blocker_analysis}
+                )
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'maintenance_blockers': blocker_analysis
+                }
             
             # Count running VMs before maintenance
             vms_before = len([vm for vm in host_obj.vm if vm.runtime.powerState == 'poweredOn'])
