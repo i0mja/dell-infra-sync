@@ -1734,8 +1734,12 @@ class ClusterHandler(BaseHandler):
                             
                             if not maintenance_result.get('success'):
                                 # Store evacuation blockers if available (VMs that prevented maintenance mode)
+                                if maintenance_result.get('maintenance_blockers'):
+                                    host_result['maintenance_blockers'] = maintenance_result['maintenance_blockers']
                                 if maintenance_result.get('evacuation_blockers'):
                                     host_result['evacuation_blockers'] = maintenance_result['evacuation_blockers']
+                                if maintenance_result.get('stall_duration_seconds'):
+                                    host_result['stalled_duration'] = maintenance_result['stall_duration_seconds']
                                 raise Exception(f"Failed to enter maintenance mode: {maintenance_result.get('error')}")
                             
                             vms_evacuated = maintenance_result.get('vms_evacuated', 0)

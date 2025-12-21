@@ -167,6 +167,8 @@ export const ClusterUpdateWizard = ({
   const [maxParallel, setMaxParallel] = useState(1);
   const [verifyAfterEach, setVerifyAfterEach] = useState(true);
   const [continueOnFailure, setContinueOnFailure] = useState(false);
+  const [autoPowerOffBlockingVms, setAutoPowerOffBlockingVms] = useState(false);
+  const [powerOffStrategy, setPowerOffStrategy] = useState<'non_migratable' | 'all_blocking'>('non_migratable');
   
   // Step 4: Timing
   const [executionMode, setExecutionMode] = useState<'immediate' | 'scheduled' | 'recurring'>('immediate');
@@ -660,7 +662,9 @@ export const ClusterUpdateWizard = ({
           min_healthy_hosts: minHealthyHosts,
           max_parallel: maxParallel,
           verify_after_each: verifyAfterEach,
-          continue_on_failure: continueOnFailure
+          continue_on_failure: continueOnFailure,
+          auto_power_off_enabled: autoPowerOffBlockingVms,
+          power_off_strategy: autoPowerOffBlockingVms ? powerOffStrategy : undefined
         };
 
         // Add firmware updates if applicable
@@ -725,6 +729,8 @@ export const ClusterUpdateWizard = ({
           max_parallel: maxParallel,
           verify_after_each: verifyAfterEach,
           continue_on_failure: continueOnFailure,
+          auto_power_off_enabled: autoPowerOffBlockingVms,
+          power_off_strategy: autoPowerOffBlockingVms ? powerOffStrategy : undefined,
         };
 
         // Add firmware settings if applicable
@@ -1270,6 +1276,42 @@ export const ClusterUpdateWizard = ({
               <Label htmlFor="verify">Verify each host after update</Label>
             </div>
 
+            <div className="space-y-3 rounded-md border p-4">
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="autoPowerOff"
+                  checked={autoPowerOffBlockingVms}
+                  onCheckedChange={(checked) => setAutoPowerOffBlockingVms(checked as boolean)}
+                />
+                <Label htmlFor="autoPowerOff">Automatically power off VMs that block maintenance mode</Label>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Use this when DRS cannot evacuate certain VMs and maintenance mode stalls.
+              </p>
+
+              {autoPowerOffBlockingVms && (
+                <div className="space-y-2">
+                  <Label htmlFor="powerOffStrategy">Power-Off Strategy</Label>
+                  <Select
+                    value={powerOffStrategy}
+                    onValueChange={(value: 'non_migratable' | 'all_blocking') => setPowerOffStrategy(value)}
+                  >
+                    <SelectTrigger id="powerOffStrategy">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="non_migratable">
+                        Power off non-migratable VMs only (recommended)
+                      </SelectItem>
+                      <SelectItem value="all_blocking">
+                        Power off all blocking VMs
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+
             <Alert variant="destructive">
               <AlertTriangle className="h-4 w-4" />
               <AlertTitle>Advanced Option</AlertTitle>
@@ -1595,6 +1637,16 @@ export const ClusterUpdateWizard = ({
                   <span>Verify After Each:</span>
                   <span>{verifyAfterEach ? 'Yes' : 'No'}</span>
                 </div>
+                <div className="flex justify-between">
+                  <span>Auto Power-Off Blocking VMs:</span>
+                  <span>{autoPowerOffBlockingVms ? 'Yes' : 'No'}</span>
+                </div>
+                {autoPowerOffBlockingVms && (
+                  <div className="flex justify-between">
+                    <span>Power-Off Strategy:</span>
+                    <span>{powerOffStrategy === 'all_blocking' ? 'All Blocking VMs' : 'Non-migratable VMs'}</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span>Estimated Time:</span>
                   <Badge>{estimatedTime()} minutes</Badge>
