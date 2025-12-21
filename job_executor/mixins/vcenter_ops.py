@@ -238,18 +238,46 @@ class VCenterMixin:
                         vm_has_blocker = True
                         result['can_enter_maintenance'] = False
                     
-                    # Check 4: Passthrough devices (USB, PCI)
+                    # Check 4: Passthrough devices (USB, PCI, vGPU)
                     has_passthrough = False
+                    passthrough_type = None
                     try:
                         for device in vm.config.hardware.device:
-                            if isinstance(device, (vim.vm.device.VirtualPCIPassthrough, vim.vm.device.VirtualUSBController)):
-                                # Check for USB passthrough
-                                if isinstance(device, vim.vm.device.VirtualUSBController):
-                                    if hasattr(device, 'autoConnectDevices') and device.autoConnectDevices:
-                                        has_passthrough = True
-                                        break
-                                else:
+                            # PCI Passthrough
+                            if isinstance(device, vim.vm.device.VirtualPCIPassthrough):
+                                has_passthrough = True
+                                passthrough_type = 'PCI passthrough'
+                                break
+                            # USB Controller with auto-connect
+                            if isinstance(device, vim.vm.device.VirtualUSBController):
+                                if hasattr(device, 'autoConnectDevices') and device.autoConnectDevices:
                                     has_passthrough = True
+                                    passthrough_type = 'USB passthrough (auto-connect)'
+                                    break
+                            # USB xHCI Controller (USB 3.0)
+                            if hasattr(vim.vm.device, 'VirtualUSBXHCIController'):
+                                if isinstance(device, vim.vm.device.VirtualUSBXHCIController):
+                                    has_passthrough = True
+                                    passthrough_type = 'USB 3.0 xHCI passthrough'
+                                    break
+                            # Specific USB device passthrough
+                            if hasattr(vim.vm.device, 'VirtualUSB'):
+                                if isinstance(device, vim.vm.device.VirtualUSB):
+                                    if hasattr(device, 'backing') and device.backing:
+                                        has_passthrough = True
+                                        passthrough_type = 'USB device passthrough'
+                                        break
+                            # vGPU (NVIDIA GRID)
+                            if hasattr(device, 'backing') and device.backing:
+                                backing_type = str(type(device.backing)).lower()
+                                if 'vgpu' in backing_type or 'nvidia' in backing_type:
+                                    has_passthrough = True
+                                    passthrough_type = 'vGPU (NVIDIA GRID)'
+                                    break
+                                # Check for shared passthrough vGPU
+                                if hasattr(device.backing, 'vgpu'):
+                                    has_passthrough = True
+                                    passthrough_type = 'vGPU'
                                     break
                     except:
                         pass
@@ -258,10 +286,32 @@ class VCenterMixin:
                         result['blockers'].append({
                             'vm_name': vm_name,
                             'vm_id': str(vm._moId),
-                            'reason': 'passthrough',
+                            'reason': 'passthrough' if 'vGPU' not in (passthrough_type or '') else 'vgpu',
                             'severity': 'critical',
-                            'details': 'VM has passthrough devices (USB/PCI) - cannot vMotion',
-                            'remediation': 'Remove passthrough devices or power off this VM',
+                            'details': f'VM has {passthrough_type or "passthrough devices"} - cannot vMotion',
+                            'remediation': 'Remove passthrough devices or power off this VM before maintenance',
+                            'auto_fixable': False
+                        })
+                        vm_has_blocker = True
+                        result['can_enter_maintenance'] = False
+                    
+                    # Check 5: Fault Tolerance
+                    has_ft = False
+                    try:
+                        ft_state = str(vm.runtime.faultToleranceState) if vm.runtime else 'notConfigured'
+                        if ft_state != 'notConfigured':
+                            has_ft = True
+                    except:
+                        pass
+                    
+                    if has_ft:
+                        result['blockers'].append({
+                            'vm_name': vm_name,
+                            'vm_id': str(vm._moId),
+                            'reason': 'fault_tolerance',
+                            'severity': 'critical',
+                            'details': 'VM has Fault Tolerance enabled - cannot vMotion without disabling FT',
+                            'remediation': 'Disable Fault Tolerance before maintenance or power off VM',
                             'auto_fixable': False
                         })
                         vm_has_blocker = True

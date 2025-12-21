@@ -1484,6 +1484,75 @@ export type Database = {
           },
         ]
       }
+      maintenance_blocker_resolutions: {
+        Row: {
+          blocker_reason: string
+          created_at: string | null
+          executed_at: string | null
+          execution_result: string | null
+          host_id: string
+          host_name: string
+          id: string
+          maintenance_window_id: string | null
+          powered_on_at: string | null
+          resolution_details: Json | null
+          resolution_type: string
+          resolved_at: string | null
+          resolved_by: string | null
+          vm_id: string
+          vm_name: string
+        }
+        Insert: {
+          blocker_reason: string
+          created_at?: string | null
+          executed_at?: string | null
+          execution_result?: string | null
+          host_id: string
+          host_name: string
+          id?: string
+          maintenance_window_id?: string | null
+          powered_on_at?: string | null
+          resolution_details?: Json | null
+          resolution_type: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+          vm_id: string
+          vm_name: string
+        }
+        Update: {
+          blocker_reason?: string
+          created_at?: string | null
+          executed_at?: string | null
+          execution_result?: string | null
+          host_id?: string
+          host_name?: string
+          id?: string
+          maintenance_window_id?: string | null
+          powered_on_at?: string | null
+          resolution_details?: Json | null
+          resolution_type?: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+          vm_id?: string
+          vm_name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "maintenance_blocker_resolutions_maintenance_window_id_fkey"
+            columns: ["maintenance_window_id"]
+            isOneToOne: false
+            referencedRelation: "maintenance_windows"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "maintenance_blocker_resolutions_resolved_by_fkey"
+            columns: ["resolved_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       maintenance_windows: {
         Row: {
           approved_at: string | null
