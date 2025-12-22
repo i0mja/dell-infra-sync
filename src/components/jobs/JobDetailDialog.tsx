@@ -351,6 +351,15 @@ export const JobDetailDialog = ({
             </div>
           </DialogHeader>
           <ParentWindowBanner />
+          {job.status !== 'running' && shouldShowMaintenanceAlert && (
+            <MaintenanceBlockerAlert
+              blockerDetails={job.details?.blocker_details || workflowBlockerDetails}
+              remediationSummary={job.details?.remediation_summary}
+              maintenanceBlockers={job.details?.maintenance_blockers}
+              onResolveBlockers={() => setShowBlockerWizard(true)}
+              className="mb-4"
+            />
+          )}
           <WorkflowExecutionViewer jobId={job.id} workflowType={job.job_type} jobStatus={job.status} jobDetails={job.details} hideHeader={true} />
         </DialogContent> : <DialogContent className="max-w-4xl max-h-[90vh]">
           <DialogHeader>
