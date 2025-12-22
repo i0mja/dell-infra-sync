@@ -476,26 +476,24 @@ export const WorkflowExecutionViewer = ({
     const hostResults = effectiveJobDetails?.workflow_results?.host_results ?? [];
     hostResults.forEach((host: any, index: number) => {
       const maintenanceBlockers = host?.maintenance_blockers;
-      const blockerDetails = host?.blocker_details;
-      const blockingEntries = maintenanceBlockers?.blockers || blockerDetails;
-      if (!blockingEntries?.length) return;
+      if (!maintenanceBlockers?.blockers?.length) return;
       const hostId =
-        maintenanceBlockers?.host_id ||
+        maintenanceBlockers.host_id ||
         host?.host_id ||
         host?.server_id ||
         host?.host_name ||
         `host-${index}`;
       blockers[hostId] = {
         host_id: hostId,
-        host_name: maintenanceBlockers?.host_name || host?.host_name || 'Unknown Host',
-        can_enter_maintenance: maintenanceBlockers?.can_enter_maintenance ?? false,
-        blockers: blockingEntries ?? [],
-        warnings: maintenanceBlockers?.warnings ?? [],
-        total_powered_on_vms: maintenanceBlockers?.total_powered_on_vms ?? 0,
-        migratable_vms: maintenanceBlockers?.migratable_vms ?? 0,
+        host_name: maintenanceBlockers.host_name || host?.host_name || 'Unknown Host',
+        can_enter_maintenance: maintenanceBlockers.can_enter_maintenance ?? false,
+        blockers: maintenanceBlockers.blockers ?? [],
+        warnings: maintenanceBlockers.warnings ?? [],
+        total_powered_on_vms: maintenanceBlockers.total_powered_on_vms ?? 0,
+        migratable_vms: maintenanceBlockers.migratable_vms ?? 0,
         blocked_vms:
-          maintenanceBlockers?.blocked_vms ?? blockingEntries?.length ?? 0,
-        estimated_evacuation_time: maintenanceBlockers?.estimated_evacuation_time ?? 0
+          maintenanceBlockers.blocked_vms ?? maintenanceBlockers.blockers?.length ?? 0,
+        estimated_evacuation_time: maintenanceBlockers.estimated_evacuation_time ?? 0
       };
     });
 
@@ -503,11 +501,9 @@ export const WorkflowExecutionViewer = ({
       .filter((step) => step.step_status === 'failed')
       .forEach((step, index) => {
         const maintenanceBlockers = step.step_details?.maintenance_blockers;
-        const blockerDetails = step.step_details?.blocker_details;
-        const blockingEntries = maintenanceBlockers?.blockers || blockerDetails;
-        if (!blockingEntries?.length) return;
+        if (!maintenanceBlockers?.blockers?.length) return;
         const hostId =
-          maintenanceBlockers?.host_id ||
+          maintenanceBlockers.host_id ||
           step.step_details?.host_id ||
           step.host_id ||
           step.server_id ||
@@ -516,15 +512,15 @@ export const WorkflowExecutionViewer = ({
         const inferredHostName = step.step_name?.split(':').slice(1).join(':').trim();
         blockers[hostId] = {
           host_id: hostId,
-          host_name: maintenanceBlockers?.host_name || inferredHostName || 'Unknown Host',
-          can_enter_maintenance: maintenanceBlockers?.can_enter_maintenance ?? false,
-          blockers: blockingEntries ?? [],
-          warnings: maintenanceBlockers?.warnings ?? [],
-          total_powered_on_vms: maintenanceBlockers?.total_powered_on_vms ?? 0,
-          migratable_vms: maintenanceBlockers?.migratable_vms ?? 0,
+          host_name: maintenanceBlockers.host_name || inferredHostName || 'Unknown Host',
+          can_enter_maintenance: maintenanceBlockers.can_enter_maintenance ?? false,
+          blockers: maintenanceBlockers.blockers ?? [],
+          warnings: maintenanceBlockers.warnings ?? [],
+          total_powered_on_vms: maintenanceBlockers.total_powered_on_vms ?? 0,
+          migratable_vms: maintenanceBlockers.migratable_vms ?? 0,
           blocked_vms:
-            maintenanceBlockers?.blocked_vms ?? blockingEntries?.length ?? 0,
-          estimated_evacuation_time: maintenanceBlockers?.estimated_evacuation_time ?? 0
+            maintenanceBlockers.blocked_vms ?? maintenanceBlockers.blockers?.length ?? 0,
+          estimated_evacuation_time: maintenanceBlockers.estimated_evacuation_time ?? 0
         };
       });
 
@@ -539,24 +535,6 @@ export const WorkflowExecutionViewer = ({
       }))
     );
   }, [workflowBlockers]);
-
-  const progress = calculateProgress();
-  const overallStatus = getOverallStatus();
-
-  if (loading && steps.length === 0) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Loading workflow execution...</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-8 w-8 animate-spin" />
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
 
   return (
     <Card>
