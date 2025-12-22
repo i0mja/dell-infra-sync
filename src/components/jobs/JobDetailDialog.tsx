@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +17,7 @@ import { BlockerResolutionWizard } from "@/components/maintenance/BlockerResolut
 import { toast } from "sonner";
 import { getScheduledJobConfig } from "@/lib/scheduled-jobs";
 import { ScheduledJobContextPanel } from "./ScheduledJobContextPanel";
+import { HostBlockerAnalysis } from "@/lib/host-priority-calculator";
 interface Job {
   id: string;
   job_type: string;
@@ -54,6 +55,86 @@ export const JobDetailDialog = ({
   const {
     minimizeJob
   } = useMinimizedJobs();
+
+  const workflowBlockers = useMemo(() => {
+    const hostResults = job?.details?.workflow_results?.host_results ?? [];
+    const blockers: Record<string, HostBlockerAnalysis> = {};
+
+    hostResults.forEach((host: any, index: number) => {
+      const maintenanceBlockers = host?.maintenance_blockers;
+      if (!maintenanceBlockers?.blockers?.length) return;
+
+      const hostId =
+        maintenanceBlockers.host_id ||
+        host?.host_id ||
+        host?.server_id ||
+        host?.host_name ||
+        `host-${index}`;
+      const hostName = maintenanceBlockers.host_name || host?.host_name || 'Unknown Host';
+
+      blockers[hostId] = {
+        host_id: hostId,
+        host_name: hostName,
+        can_enter_maintenance: maintenanceBlockers.can_enter_maintenance ?? false,
+        blockers: maintenanceBlockers.blockers ?? [],
+        warnings: maintenanceBlockers.warnings ?? [],
+        total_powered_on_vms: maintenanceBlockers.total_powered_on_vms ?? 0,
+        migratable_vms: maintenanceBlockers.migratable_vms ?? 0,
+        blocked_vms:
+          maintenanceBlockers.blocked_vms ?? maintenanceBlockers.blockers?.length ?? 0,
+        estimated_evacuation_time: maintenanceBlockers.estimated_evacuation_time ?? 0
+      };
+    });
+
+    return blockers;
+  }, [job?.details?.workflow_results?.host_results]);
+
+  const workflowBlockerDetails = useMemo(() => {
+    return Object.values(workflowBlockers).flatMap((analysis) =>
+      analysis.blockers.map((blocker) => ({
+        ...blocker,
+        vm_name: `${blocker.vm_name} (${analysis.host_name})`
+      }))
+    );
+  }, [workflowBlockers]);
+
+  const resolvedHostBlockers = useMemo(() => {
+    if (Object.keys(workflowBlockers).length > 0) {
+      return workflowBlockers;
+    }
+
+    if (!job?.details?.maintenance_blockers) {
+      return null;
+    }
+
+    const maintenanceBlockers = job.details.maintenance_blockers;
+    return {
+      [maintenanceBlockers.host_id || 'unknown']: {
+        host_id: maintenanceBlockers.host_id || 'unknown',
+        host_name: maintenanceBlockers.host_name || 'Unknown Host',
+        can_enter_maintenance: false,
+        blockers: (job.details.blocker_details || maintenanceBlockers.blockers || []).map((blocker: any) => ({
+          vm_id: blocker.vm_id || blocker.vmId,
+          vm_name: blocker.vm_name || blocker.vmName,
+          reason: blocker.reason,
+          severity: blocker.severity,
+          details: blocker.details,
+          remediation: blocker.remediation,
+          auto_fixable: blocker.auto_fixable || blocker.autoFixable || false
+        })),
+        warnings: [],
+        total_powered_on_vms: 0,
+        migratable_vms: 0,
+        blocked_vms: (job.details.blocker_details || maintenanceBlockers.blockers || []).length,
+        estimated_evacuation_time: 0
+      }
+    };
+  }, [job?.details?.blocker_details, job?.details?.maintenance_blockers, workflowBlockers]);
+
+  const shouldShowMaintenanceAlert =
+    (job?.details?.blocker_details && job.details.blocker_details.length > 0) ||
+    job?.details?.maintenance_blockers?.blockers ||
+    workflowBlockerDetails.length > 0;
 
   // Check if this is a workflow job type (safe even when job is null)
   const workflowJobTypes = ['prepare_host_for_update', 'verify_host_after_update', 'rolling_cluster_update'];
@@ -270,6 +351,15 @@ export const JobDetailDialog = ({
             </div>
           </DialogHeader>
           <ParentWindowBanner />
+          {job.status !== 'running' && shouldShowMaintenanceAlert && (
+            <MaintenanceBlockerAlert
+              blockerDetails={job.details?.blocker_details || workflowBlockerDetails}
+              remediationSummary={job.details?.remediation_summary}
+              maintenanceBlockers={job.details?.maintenance_blockers}
+              onResolveBlockers={() => setShowBlockerWizard(true)}
+              className="mb-4"
+            />
+          )}
           <WorkflowExecutionViewer jobId={job.id} workflowType={job.job_type} jobStatus={job.status} jobDetails={job.details} hideHeader={true} />
         </DialogContent> : <DialogContent className="max-w-4xl max-h-[90vh]">
           <DialogHeader>
@@ -345,12 +435,9 @@ export const JobDetailDialog = ({
                 </Card>}
 
             {/* Maintenance Blocker Alert with Remediation Details */}
-            {job.status === 'failed' && (
-              job.details?.blocker_details || 
-              job.details?.maintenance_blockers?.blockers
-            ) && (
+            {job.status !== 'running' && shouldShowMaintenanceAlert && (
               <MaintenanceBlockerAlert
-                blockerDetails={job.details?.blocker_details}
+                blockerDetails={job.details?.blocker_details || workflowBlockerDetails}
                 remediationSummary={job.details?.remediation_summary}
                 maintenanceBlockers={job.details?.maintenance_blockers}
                 onResolveBlockers={() => setShowBlockerWizard(true)}
@@ -454,31 +541,11 @@ export const JobDetailDialog = ({
         </DialogContent>}
       
       {/* Blocker Resolution Wizard */}
-      {job && showBlockerWizard && job.details?.maintenance_blockers && (
+      {job && showBlockerWizard && resolvedHostBlockers && (
         <BlockerResolutionWizard
           open={showBlockerWizard}
           onOpenChange={setShowBlockerWizard}
-          hostBlockers={{
-            [job.details.maintenance_blockers.host_id || 'unknown']: {
-              host_id: job.details.maintenance_blockers.host_id || 'unknown',
-              host_name: job.details.maintenance_blockers.host_name || 'Unknown Host',
-              can_enter_maintenance: false,
-              blockers: (job.details.blocker_details || job.details.maintenance_blockers.blockers || []).map((b: any) => ({
-                vm_id: b.vm_id || b.vmId,
-                vm_name: b.vm_name || b.vmName,
-                reason: b.reason,
-                severity: b.severity,
-                details: b.details,
-                remediation: b.remediation,
-                auto_fixable: b.auto_fixable || b.autoFixable || false
-              })),
-              warnings: [],
-              total_powered_on_vms: 0,
-              migratable_vms: 0,
-              blocked_vms: (job.details.blocker_details || job.details.maintenance_blockers.blockers || []).length,
-              estimated_evacuation_time: 0
-            }
-          }}
+          hostBlockers={resolvedHostBlockers}
           onComplete={(resolutions, hostOrder) => {
             console.log('Blocker resolutions:', resolutions, 'Host order:', hostOrder);
             setShowBlockerWizard(false);
