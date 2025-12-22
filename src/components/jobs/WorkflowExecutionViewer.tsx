@@ -363,24 +363,6 @@ export const WorkflowExecutionViewer = ({
     return `${minutes}m ${seconds % 60}s`;
   };
 
-  if (loading && steps.length === 0) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Loading workflow execution...</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-8 w-8 animate-spin" />
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const progress = calculateProgress();
-  const overallStatus = getOverallStatus();
-
   const getWorkflowDescription = () => {
     const descriptions: Record<string, string> = {
       rolling_cluster_update: 'This job updates an entire cluster host-by-host. It includes firmware updates, ESXi upgrades, configuration backups, and maintenance mode handling.',
