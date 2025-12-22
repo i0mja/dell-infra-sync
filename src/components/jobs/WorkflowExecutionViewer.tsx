@@ -341,6 +341,11 @@ export const WorkflowExecutionViewer = ({
     return 'pending';
   };
 
+  const overallStatus = useMemo(
+    () => getOverallStatus(),
+    [effectiveJobStatus, steps]
+  );
+
   // Helper to get effective step status - treats running/pending as cancelled if job is cancelled
   const getEffectiveStepStatus = (stepStatus: string) => {
     if (effectiveJobStatus === 'paused' && ['running', 'pending'].includes(stepStatus)) {
