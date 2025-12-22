@@ -320,6 +320,14 @@ export const WorkflowExecutionViewer = ({
     return (completed / steps.length) * 100;
   };
 
+  const progressValue = useMemo(() => {
+    const value = calculateProgress();
+    if (!Number.isFinite(value) || Number.isNaN(value)) {
+      return 0;
+    }
+    return Math.min(100, Math.max(0, value));
+  }, [effectiveJobDetails, steps]);
+
   const getOverallStatus = () => {
     // If job has a terminal status (from props or internal state), use it
     if (effectiveJobStatus && ['failed', 'completed', 'cancelled'].includes(effectiveJobStatus)) {
