@@ -12,6 +12,8 @@ import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
 import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
 import { DiscoveryScanResults, VCenterSyncResults, CredentialTestResults, ScpResults, MultiServerResults, GenericResults, JobTimingCard, EsxiUpgradeResults, EsxiPreflightResults, JobProgressHeader, JobTasksTimeline, JobConsoleLog, StorageVMotionResults, ZfsDeploymentResults, ValidationPreflightResults, ZfsHealthCheckResults, ReplicationSyncResults, FailoverPreflightResults, SshKeyExchangeResults, SLAMonitoringResults } from "./results";
 import { PendingJobWarning } from "@/components/activity/PendingJobWarning";
+import { MaintenanceBlockerAlert } from "@/components/maintenance/MaintenanceBlockerAlert";
+import { BlockerResolutionWizard } from "@/components/maintenance/BlockerResolutionWizard";
 import { toast } from "sonner";
 import { getScheduledJobConfig } from "@/lib/scheduled-jobs";
 import { ScheduledJobContextPanel } from "./ScheduledJobContextPanel";
@@ -48,6 +50,7 @@ export const JobDetailDialog = ({
   const [subJobs, setSubJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [parentWindow, setParentWindow] = useState<ParentWindow | null>(null);
+  const [showBlockerWizard, setShowBlockerWizard] = useState(false);
   const {
     minimizeJob
   } = useMinimizedJobs();
@@ -341,11 +344,24 @@ export const JobDetailDialog = ({
                   </CardContent>
                 </Card>}
 
+            {/* Maintenance Blocker Alert with Remediation Details */}
+            {job.status === 'failed' && (
+              job.details?.blocker_details || 
+              job.details?.maintenance_blockers?.blockers
+            ) && (
+              <MaintenanceBlockerAlert
+                blockerDetails={job.details?.blocker_details}
+                remediationSummary={job.details?.remediation_summary}
+                maintenanceBlockers={job.details?.maintenance_blockers}
+                onResolveBlockers={() => setShowBlockerWizard(true)}
+              />
+            )}
+
             {/* Error Alert for Failed Jobs - including nested vcenter_results errors */}
             {job.status === 'failed' && (
               job.details?.error || 
               job.details?.vcenter_results?.some((r: any) => r?.error)
-            ) && <Alert variant="destructive">
+            ) && !job.details?.blocker_details && <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Job Failed</AlertTitle>
                 <AlertDescription className="mt-2">
@@ -436,5 +452,39 @@ export const JobDetailDialog = ({
 
           </Tabs>
         </DialogContent>}
+      
+      {/* Blocker Resolution Wizard */}
+      {job && showBlockerWizard && job.details?.maintenance_blockers && (
+        <BlockerResolutionWizard
+          open={showBlockerWizard}
+          onOpenChange={setShowBlockerWizard}
+          hostBlockers={{
+            [job.details.maintenance_blockers.host_id || 'unknown']: {
+              host_id: job.details.maintenance_blockers.host_id || 'unknown',
+              host_name: job.details.maintenance_blockers.host_name || 'Unknown Host',
+              can_enter_maintenance: false,
+              blockers: (job.details.blocker_details || job.details.maintenance_blockers.blockers || []).map((b: any) => ({
+                vm_id: b.vm_id || b.vmId,
+                vm_name: b.vm_name || b.vmName,
+                reason: b.reason,
+                severity: b.severity,
+                details: b.details,
+                remediation: b.remediation,
+                auto_fixable: b.auto_fixable || b.autoFixable || false
+              })),
+              warnings: [],
+              total_powered_on_vms: 0,
+              migratable_vms: 0,
+              blocked_vms: (job.details.blocker_details || job.details.maintenance_blockers.blockers || []).length,
+              estimated_evacuation_time: 0
+            }
+          }}
+          onComplete={(resolutions, hostOrder) => {
+            console.log('Blocker resolutions:', resolutions, 'Host order:', hostOrder);
+            setShowBlockerWizard(false);
+            toast.success('Blocker resolutions saved. Retry the job when ready.');
+          }}
+        />
+      )}
     </Dialog>;
 };

@@ -405,6 +405,57 @@ class VCenterMixin:
             self.log(f"  Traceback: {traceback.format_exc()}", "DEBUG")
             return result
     
+    def _build_remediation_summary(self, blockers: List[Dict]) -> Dict:
+        """Build a summary of recommended actions for blocker resolution."""
+        summary = {
+            'vms_to_power_off': [],
+            'vms_to_migrate_manually': [],
+            'vms_acknowledged': [],
+            'total_critical': 0,
+            'total_warnings': 0,
+            'can_proceed_with_power_off': True
+        }
+        
+        for blocker in blockers:
+            reason = blocker.get('reason', '')
+            vm_name = blocker.get('vm_name', 'Unknown')
+            severity = blocker.get('severity', 'warning')
+            
+            if severity == 'critical':
+                summary['total_critical'] += 1
+            else:
+                summary['total_warnings'] += 1
+            
+            if reason in ['passthrough', 'local_storage', 'fault_tolerance', 'vgpu']:
+                summary['vms_to_power_off'].append({
+                    'vm': vm_name,
+                    'reason': blocker.get('details', reason),
+                    'action': 'Power off before maintenance',
+                    'blocker_type': reason
+                })
+            elif reason == 'vcsa':
+                summary['vms_to_migrate_manually'].append({
+                    'vm': vm_name,
+                    'action': 'Migrate VCSA to another host first, or update this host last',
+                    'blocker_type': reason
+                })
+                summary['can_proceed_with_power_off'] = False  # VCSA can't just be powered off
+            elif reason == 'critical_infra':
+                summary['vms_to_migrate_manually'].append({
+                    'vm': vm_name,
+                    'action': 'Verify safe to migrate or manually migrate first',
+                    'blocker_type': reason
+                })
+            elif reason in ['connected_media', 'affinity']:
+                summary['vms_acknowledged'].append({
+                    'vm': vm_name,
+                    'action': blocker.get('remediation', 'Acknowledge and proceed'),
+                    'blocker_type': reason,
+                    'auto_fixable': blocker.get('auto_fixable', False)
+                })
+        
+        return summary
+
     def _check_drs_evacuation_feasibility(self, host_obj, content, host_name: str) -> List[Dict]:
         """
         Check if DRS can evacuate all VMs from a host by analyzing:
@@ -1804,22 +1855,42 @@ class VCenterMixin:
                 )
                 error_msg = f"Maintenance mode blocked: {blocker_summary}"
                 self.log(f"  ✗ {error_msg}", "ERROR")
-                for blocker in blockers[:5]:
-                    self.log(f"    - {blocker.get('vm_name')}: {blocker.get('reason')}", "ERROR")
-                if len(blockers) > 5:
-                    self.log(f"    ... and {len(blockers) - 5} more", "ERROR")
+                
+                # Build detailed blocker list with remediation
+                blocker_details = []
+                for blocker in blockers:
+                    self.log(f"    - {blocker.get('vm_name')}: {blocker.get('reason')} - {blocker.get('details')}", "ERROR")
+                    blocker_details.append({
+                        'vm_name': blocker.get('vm_name'),
+                        'vm_id': blocker.get('vm_id'),
+                        'reason': blocker.get('reason'),
+                        'severity': blocker.get('severity'),
+                        'details': blocker.get('details'),
+                        'remediation': blocker.get('remediation'),
+                        'auto_fixable': blocker.get('auto_fixable', False)
+                    })
+                
+                # Build remediation summary
+                remediation_summary = self._build_remediation_summary(blockers)
+                
                 self.log_vcenter_activity(
                     operation="enter_maintenance_mode",
                     endpoint=host_name,
                     success=False,
                     response_time_ms=int((time.time() - start_time) * 1000),
                     error=error_msg,
-                    details={'maintenance_blockers': blocker_analysis}
+                    details={
+                        'maintenance_blockers': blocker_analysis,
+                        'blocker_details': blocker_details,
+                        'remediation_summary': remediation_summary
+                    }
                 )
                 return {
                     'success': False,
                     'error': error_msg,
-                    'maintenance_blockers': blocker_analysis
+                    'maintenance_blockers': blocker_analysis,
+                    'blocker_details': blocker_details,
+                    'remediation_summary': remediation_summary
                 }
             
             # Count running VMs before maintenance

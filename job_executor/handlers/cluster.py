@@ -102,7 +102,8 @@ class ClusterHandler(BaseHandler):
         check_maintenance_blockers: bool = True,
         check_available_updates: bool = False,
         firmware_source: str = 'manual_repository',
-        dell_catalog_url: str = None
+        dell_catalog_url: str = None,
+        cache_hours: int = 24
     ) -> Dict[str, Dict]:
         """
         Phase 0: Test iDRAC connectivity, analyze maintenance blockers, and optionally
@@ -112,12 +113,16 @@ class ClusterHandler(BaseHandler):
         determine if updates are needed. This allows early exit if no hosts need updates,
         avoiding unnecessary HA disable and SCP backups.
         
+        Blocker analysis results are cached in job.details.blocker_analysis_cache for
+        cache_hours (default 24) to avoid redundant vCenter queries.
+        
         Returns dict mapping server_id -> {credentials, session_validated, server, 
             maintenance_blockers, available_updates, needs_update}
         Raises exception if ANY host fails pre-flight.
         """
         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
         from job_executor.utils import _safe_json_parse
+        from datetime import timedelta
         import requests
         
         self.log("=" * 80)
@@ -133,6 +138,21 @@ class ClusterHandler(BaseHandler):
         critical_blockers_found = False
         total_hosts_needing_updates = 0
         total_available_updates = 0
+        
+        # Check for cached blocker analysis
+        cached_analysis = job.get('details', {}).get('blocker_analysis_cache', {})
+        cache_valid_until = cached_analysis.get('valid_until')
+        cache_is_valid = False
+        
+        if cache_valid_until:
+            try:
+                cache_expiry = datetime.fromisoformat(cache_valid_until.replace('Z', '+00:00'))
+                if cache_expiry > datetime.now(timezone.utc):
+                    cache_is_valid = True
+                    cache_age_hours = (cache_expiry - datetime.now(timezone.utc)).total_seconds() / 3600
+                    self.log(f"  ✓ Using cached blocker analysis (valid for {cache_age_hours:.1f} more hours)")
+            except Exception as cache_err:
+                self.log(f"  Cache timestamp parse error: {cache_err}", "DEBUG")
         
         for idx, host in enumerate(eligible_hosts, 1):
             # Check for cancellation (no graceful cancel during pre-flight)
@@ -191,11 +211,18 @@ class ClusterHandler(BaseHandler):
                 
                 # Analyze maintenance blockers if this host has vCenter link
                 if check_maintenance_blockers and host.get('id'):  # host['id'] is vcenter_host_id
-                    self.log(f"    Analyzing maintenance blockers...")
-                    blocker_analysis = self.executor.analyze_maintenance_blockers(
-                        host_id=host['id'],
-                        source_vcenter_id=host.get('source_vcenter_id')
-                    )
+                    # Check cache first
+                    cached_host_blockers = cached_analysis.get('hosts', {}).get(host['server_id']) if cache_is_valid else None
+                    
+                    if cached_host_blockers:
+                        self.log(f"    Using cached blocker analysis")
+                        blocker_analysis = cached_host_blockers
+                    else:
+                        self.log(f"    Analyzing maintenance blockers...")
+                        blocker_analysis = self.executor.analyze_maintenance_blockers(
+                            host_id=host['id'],
+                            source_vcenter_id=host.get('source_vcenter_id')
+                        )
                     
                     if blocker_analysis:
                         all_maintenance_blockers[host['server_id']] = blocker_analysis
@@ -277,6 +304,16 @@ class ClusterHandler(BaseHandler):
         job_details = job.get('details', {})
         job_details['maintenance_blockers'] = all_maintenance_blockers
         job_details['critical_blockers_found'] = critical_blockers_found
+        
+        # Cache blocker analysis for future use (24 hours by default)
+        if all_maintenance_blockers and not cache_is_valid:
+            from datetime import timedelta
+            job_details['blocker_analysis_cache'] = {
+                'checked_at': utc_now_iso(),
+                'valid_until': (datetime.now(timezone.utc) + timedelta(hours=cache_hours)).isoformat(),
+                'hosts': all_maintenance_blockers
+            }
+            self.log(f"  ✓ Blocker analysis cached for {cache_hours} hours")
         
         if check_available_updates and firmware_source == 'dell_online_catalog':
             job_details['preflight_update_check'] = {
