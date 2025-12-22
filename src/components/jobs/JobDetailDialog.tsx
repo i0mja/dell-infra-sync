@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { getScheduledJobConfig } from "@/lib/scheduled-jobs";
 import { ScheduledJobContextPanel } from "./ScheduledJobContextPanel";
 import { HostBlockerAnalysis } from "@/lib/host-priority-calculator";
+import { buildMaintenanceBlockerResolutions } from "@/lib/maintenance-blocker-resolutions";
 interface Job {
   id: string;
   job_type: string;
@@ -547,9 +548,33 @@ export const JobDetailDialog = ({
           onOpenChange={setShowBlockerWizard}
           hostBlockers={resolvedHostBlockers}
           onComplete={(resolutions, hostOrder) => {
-            console.log('Blocker resolutions:', resolutions, 'Host order:', hostOrder);
-            setShowBlockerWizard(false);
-            toast.success('Blocker resolutions saved. Retry the job when ready.');
+            const saveResolutions = async () => {
+              const resolutionPayload = buildMaintenanceBlockerResolutions(resolutions, resolvedHostBlockers);
+              const nextDetails = {
+                ...(job.details || {}),
+                maintenance_blocker_resolutions: resolutionPayload,
+                host_update_order: hostOrder
+              };
+
+              const { error } = await supabase
+                .from('jobs')
+                .update({ details: nextDetails })
+                .eq('id', job.id);
+
+              if (error) {
+                throw error;
+              }
+            };
+
+            saveResolutions()
+              .then(() => {
+                setShowBlockerWizard(false);
+                toast.success('Blocker resolutions saved. Retry the job when ready.');
+              })
+              .catch((error) => {
+                console.error('Failed to save blocker resolutions:', error);
+                toast.error('Failed to save blocker resolutions');
+              });
           }}
         />
       )}

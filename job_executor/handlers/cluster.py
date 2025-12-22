@@ -1,6 +1,6 @@
 """Cluster safety and workflow handlers"""
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 import time
 import requests
@@ -93,6 +93,46 @@ class ClusterHandler(BaseHandler):
             self.log(f"      Could not check vCenter status: {e}", "DEBUG")
         
         return None
+
+    def _extract_manual_power_off_vms(self, details: Dict, host: Dict, vcenter_host_id: Optional[str]) -> List[str]:
+        resolutions = details.get('maintenance_blocker_resolutions', {}) if details else {}
+        host_keys = [
+            str(host.get('server_id')) if host.get('server_id') else None,
+            str(vcenter_host_id) if vcenter_host_id else None,
+            host.get('name')
+        ]
+        host_resolution = None
+        for key in filter(None, host_keys):
+            if key in resolutions:
+                host_resolution = resolutions[key]
+                break
+        if not host_resolution:
+            return []
+        entries = host_resolution.get('vms_to_power_off', []) if isinstance(host_resolution, dict) else []
+        vm_names = []
+        for entry in entries:
+            if isinstance(entry, dict):
+                vm_name = entry.get('vm_name') or entry.get('vm') or entry.get('name')
+                if vm_name:
+                    vm_names.append(vm_name)
+            elif entry:
+                vm_names.append(str(entry))
+        return list({name for name in vm_names if name})
+
+    def _select_power_off_candidates(self, blockers: List[Dict[str, Any]], strategy: str) -> List[str]:
+        non_migratable_reasons = {'passthrough', 'local_storage', 'vgpu', 'fault_tolerance'}
+        vm_names = []
+        for blocker in blockers:
+            vm_name = blocker.get('vm_name')
+            if not vm_name:
+                continue
+            reason = blocker.get('reason')
+            if reason == 'vcsa':
+                continue
+            if strategy == 'non_migratable' and reason not in non_migratable_reasons:
+                continue
+            vm_names.append(vm_name)
+        return list({name for name in vm_names if name})
     
     def _execute_batch_preflight_checks(
         self, 
@@ -1776,10 +1816,74 @@ class ClusterHandler(BaseHandler):
                                 'current_step': f'Entering maintenance mode: {host["name"]}'
                             })
                             maintenance_timeout = details.get('maintenance_timeout', 1800)
+                            manual_power_off_vms = self._extract_manual_power_off_vms(details, host, vcenter_host_id)
+                            manual_power_off_result = None
+                            if manual_power_off_vms:
+                                self.log(f"  -> Powering off {len(manual_power_off_vms)} selected VM(s) before maintenance mode")
+                                manual_power_off_result = self.executor.power_off_vms_for_maintenance(
+                                    vcenter_host_id,
+                                    manual_power_off_vms,
+                                    graceful=True
+                                )
+                                if not manual_power_off_result.get('success'):
+                                    maintenance_result = {
+                                        'success': False,
+                                        'error': 'Failed to power off selected VMs before maintenance mode',
+                                        'power_off_result': manual_power_off_result
+                                    }
+                                    self._log_workflow_step(
+                                        job['id'], 'rolling_cluster_update',
+                                        step_number=current_step_number,
+                                        step_name=current_step_name,
+                                        status='failed',
+                                        server_id=host['server_id'],
+                                        host_id=vcenter_host_id,
+                                        step_details=maintenance_result,
+                                        step_error=maintenance_result.get('error'),
+                                        step_completed_at=utc_now_iso()
+                                    )
+                                    current_step_in_progress = False
+                                    raise Exception(maintenance_result.get('error'))
                             maintenance_result = self.executor.enter_vcenter_maintenance_mode(
                                 vcenter_host_id, 
                                 timeout=maintenance_timeout
                             )
+
+                            if manual_power_off_result:
+                                maintenance_result['power_off_result'] = manual_power_off_result
+
+                            if (
+                                not maintenance_result.get('success')
+                                and maintenance_result.get('maintenance_blockers')
+                                and details.get('auto_power_off_enabled')
+                            ):
+                                strategy = details.get('power_off_strategy', 'non_migratable')
+                                blockers = maintenance_result.get('maintenance_blockers', {}).get('blockers', [])
+                                auto_power_off_candidates = self._select_power_off_candidates(blockers, strategy)
+                                if auto_power_off_candidates:
+                                    self.log(
+                                        f"  -> Auto power-off enabled ({strategy}). "
+                                        f"Powering off {len(auto_power_off_candidates)} blocking VM(s) and retrying..."
+                                    )
+                                    auto_power_off_result = self.executor.power_off_vms_for_maintenance(
+                                        vcenter_host_id,
+                                        auto_power_off_candidates,
+                                        graceful=True
+                                    )
+                                    maintenance_result['power_off_result'] = auto_power_off_result
+                                    if auto_power_off_result.get('success'):
+                                        maintenance_result = self.executor.enter_vcenter_maintenance_mode(
+                                            vcenter_host_id,
+                                            timeout=maintenance_timeout
+                                        )
+                                        maintenance_result['power_off_result'] = auto_power_off_result
+                                else:
+                                    maintenance_result['power_off_result'] = {
+                                        'success': False,
+                                        'error': 'No eligible VMs found to power off for maintenance mode',
+                                        'vms_powered_off': [],
+                                        'vms_failed': []
+                                    }
                             
                             if not maintenance_result.get('success'):
                                 # Store evacuation blockers if available (VMs that prevented maintenance mode)

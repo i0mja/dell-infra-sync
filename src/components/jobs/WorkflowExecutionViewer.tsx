@@ -27,6 +27,7 @@ import { MaintenanceFailureDetails, FailedHost, BlockingVM } from "./results/Mai
 import { MaintenanceBlockerAlert } from "@/components/maintenance/MaintenanceBlockerAlert";
 import { BlockerResolutionWizard } from "@/components/maintenance/BlockerResolutionWizard";
 import { HostBlockerAnalysis } from "@/lib/host-priority-calculator";
+import { buildMaintenanceBlockerResolutions } from "@/lib/maintenance-blocker-resolutions";
 import { launchConsole } from "@/lib/job-executor-api";
 import { toast } from "sonner";
 
@@ -794,9 +795,33 @@ export const WorkflowExecutionViewer = ({
             onOpenChange={setShowBlockerWizard}
             hostBlockers={workflowBlockers}
             onComplete={(resolutions, hostOrder) => {
-              console.log('Blocker resolutions:', resolutions, 'Host order:', hostOrder);
-              setShowBlockerWizard(false);
-              toast.success('Blocker resolutions saved. Retry the job when ready.');
+              const saveResolutions = async () => {
+                const resolutionPayload = buildMaintenanceBlockerResolutions(resolutions, workflowBlockers);
+                const nextDetails = {
+                  ...(effectiveJobDetails || {}),
+                  maintenance_blocker_resolutions: resolutionPayload,
+                  host_update_order: hostOrder
+                };
+
+                const { error } = await supabase
+                  .from('jobs')
+                  .update({ details: nextDetails })
+                  .eq('id', jobId);
+
+                if (error) {
+                  throw error;
+                }
+              };
+
+              saveResolutions()
+                .then(() => {
+                  setShowBlockerWizard(false);
+                  toast.success('Blocker resolutions saved. Retry the job when ready.');
+                })
+                .catch((error) => {
+                  console.error('Failed to save blocker resolutions:', error);
+                  toast.error('Failed to save blocker resolutions');
+                });
             }}
           />
         )}
