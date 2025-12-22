@@ -693,7 +693,7 @@ export const WorkflowExecutionViewer = ({
           </div>
           
           <Progress 
-            value={progress} 
+            value={progressValue} 
             className={`h-2 ${overallStatus === 'cancelled' ? '[&>div]:bg-orange-500' : ''}`} 
           />
         </div>
