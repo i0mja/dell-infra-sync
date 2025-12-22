@@ -77,7 +77,7 @@ export function BlockerResolutionWizard({
   maintenanceWindowId,
   onComplete
 }: BlockerResolutionWizardProps) {
-  const [currentStep, setCurrentStep] = useState(0);
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [resolutions, setResolutions] = useState<HostResolutions>({});
   const [hostOrder, setHostOrder] = useState<string[]>([]);
   const [priorities, setPriorities] = useState<HostPriorityScore[]>([]);
@@ -105,6 +105,7 @@ export function BlockerResolutionWizard({
       // Simulate scanning
       setScanning(true);
       setTimeout(() => setScanning(false), 1500);
+      setCurrentStepIndex(0);
     }
   }, [open, hostBlockers]);
 
@@ -211,14 +212,14 @@ export function BlockerResolutionWizard({
   };
 
   const handleNext = () => {
-    if (currentStep < WIZARD_STEPS.length - 1) {
-      setCurrentStep(currentStep + 1);
+    if (currentStepIndex < activeSteps.length - 1) {
+      setCurrentStepIndex(currentStepIndex + 1);
     }
   };
 
   const handleBack = () => {
-    if (currentStep > 0) {
-      setCurrentStep(currentStep - 1);
+    if (currentStepIndex > 0) {
+      setCurrentStepIndex(currentStepIndex - 1);
     }
   };
 
@@ -250,11 +251,16 @@ export function BlockerResolutionWizard({
   };
 
   const activeSteps = getActiveSteps();
-  const activeStepIndex = activeSteps.findIndex(s => s.id === WIZARD_STEPS[currentStep].id);
-  const progressPercent = ((activeStepIndex + 1) / activeSteps.length) * 100;
+  const progressPercent = ((currentStepIndex + 1) / activeSteps.length) * 100;
+
+  useEffect(() => {
+    if (currentStepIndex >= activeSteps.length) {
+      setCurrentStepIndex(Math.max(activeSteps.length - 1, 0));
+    }
+  }, [activeSteps.length, currentStepIndex]);
 
   const renderStepContent = () => {
-    const step = WIZARD_STEPS[currentStep];
+    const step = activeSteps[currentStepIndex];
 
     switch (step.id) {
       case 'scan':
@@ -342,6 +348,12 @@ export function BlockerResolutionWizard({
 
       case 'passthrough':
         const allPassthrough = [...passthroughBlockers, ...vgpuBlockers];
+        const selectedPowerOff = allPassthrough.reduce((total, { hostId, blocker }) => {
+          if (resolutions[hostId]?.vms_to_power_off.includes(blocker.vm_id)) {
+            return total + 1;
+          }
+          return total;
+        }, 0);
         return (
           <div className="space-y-4">
             <Alert className="border-yellow-500">
@@ -380,7 +392,7 @@ export function BlockerResolutionWizard({
             <div className="flex items-center gap-2 p-3 bg-muted rounded-lg">
               <Power className="h-5 w-5 text-yellow-500" />
               <span className="text-sm">
-                {resolutions[Object.keys(resolutions)[0]]?.vms_to_power_off.length || 0} VMs selected for power-off
+                {selectedPowerOff} VMs selected for power-off
               </span>
             </div>
           </div>
@@ -718,11 +730,11 @@ export function BlockerResolutionWizard({
       <DialogContent className="max-w-2xl max-h-[90vh]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            {WIZARD_STEPS[currentStep].icon}
-            Step {activeStepIndex + 1} of {activeSteps.length}: {WIZARD_STEPS[currentStep].title}
+            {activeSteps[currentStepIndex]?.icon}
+            Step {currentStepIndex + 1} of {activeSteps.length}: {activeSteps[currentStepIndex]?.title}
           </DialogTitle>
           <DialogDescription>
-            {WIZARD_STEPS[currentStep].description}
+            {activeSteps[currentStepIndex]?.description}
           </DialogDescription>
         </DialogHeader>
 
@@ -736,7 +748,7 @@ export function BlockerResolutionWizard({
           <Button
             variant="outline"
             onClick={handleBack}
-            disabled={currentStep === 0}
+            disabled={currentStepIndex === 0}
           >
             <ChevronLeft className="h-4 w-4 mr-1" />
             Back
@@ -746,13 +758,13 @@ export function BlockerResolutionWizard({
             <Button variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            {currentStep === WIZARD_STEPS.length - 1 ? (
+            {currentStepIndex === activeSteps.length - 1 ? (
               <Button onClick={handleComplete}>
                 <Check className="h-4 w-4 mr-1" />
                 Confirm & Proceed
               </Button>
             ) : (
-              <Button onClick={handleNext} disabled={scanning && currentStep === 0}>
+              <Button onClick={handleNext} disabled={scanning && currentStepIndex === 0}>
                 Next
                 <ChevronRight className="h-4 w-4 ml-1" />
               </Button>
