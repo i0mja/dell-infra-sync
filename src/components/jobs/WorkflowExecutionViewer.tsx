@@ -24,6 +24,9 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { IdracJobQueuePanel } from "./IdracJobQueuePanel";
 import { WorkflowStepDetails } from "./results/WorkflowStepDetails";
 import { MaintenanceFailureDetails, FailedHost, BlockingVM } from "./results/MaintenanceFailureDetails";
+import { MaintenanceBlockerAlert } from "@/components/maintenance/MaintenanceBlockerAlert";
+import { BlockerResolutionWizard } from "@/components/maintenance/BlockerResolutionWizard";
+import { HostBlockerAnalysis } from "@/lib/host-priority-calculator";
 import { launchConsole } from "@/lib/job-executor-api";
 import { toast } from "sonner";
 
@@ -67,6 +70,7 @@ export const WorkflowExecutionViewer = ({
   const [loading, setLoading] = useState(true);
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
   const [currentOperation, setCurrentOperation] = useState<any>(null);
+  const [showBlockerWizard, setShowBlockerWizard] = useState(false);
   
   // Internal state to track job status/details independently
   const [internalJobStatus, setInternalJobStatus] = useState<string | null>(null);
@@ -484,6 +488,76 @@ export const WorkflowExecutionViewer = ({
     return Array.from(failedHostMap.values());
   }, [effectiveJobDetails, steps]);
 
+  const workflowBlockers = useMemo(() => {
+    const blockers: Record<string, HostBlockerAnalysis> = {};
+
+    const hostResults = effectiveJobDetails?.workflow_results?.host_results ?? [];
+    hostResults.forEach((host: any, index: number) => {
+      const maintenanceBlockers = host?.maintenance_blockers;
+      const blockerDetails = host?.blocker_details;
+      const blockingEntries = maintenanceBlockers?.blockers || blockerDetails;
+      if (!blockingEntries?.length) return;
+      const hostId =
+        maintenanceBlockers?.host_id ||
+        host?.host_id ||
+        host?.server_id ||
+        host?.host_name ||
+        `host-${index}`;
+      blockers[hostId] = {
+        host_id: hostId,
+        host_name: maintenanceBlockers?.host_name || host?.host_name || 'Unknown Host',
+        can_enter_maintenance: maintenanceBlockers?.can_enter_maintenance ?? false,
+        blockers: blockingEntries ?? [],
+        warnings: maintenanceBlockers?.warnings ?? [],
+        total_powered_on_vms: maintenanceBlockers?.total_powered_on_vms ?? 0,
+        migratable_vms: maintenanceBlockers?.migratable_vms ?? 0,
+        blocked_vms:
+          maintenanceBlockers?.blocked_vms ?? blockingEntries?.length ?? 0,
+        estimated_evacuation_time: maintenanceBlockers?.estimated_evacuation_time ?? 0
+      };
+    });
+
+    steps
+      .filter((step) => step.step_status === 'failed')
+      .forEach((step, index) => {
+        const maintenanceBlockers = step.step_details?.maintenance_blockers;
+        const blockerDetails = step.step_details?.blocker_details;
+        const blockingEntries = maintenanceBlockers?.blockers || blockerDetails;
+        if (!blockingEntries?.length) return;
+        const hostId =
+          maintenanceBlockers?.host_id ||
+          step.step_details?.host_id ||
+          step.host_id ||
+          step.server_id ||
+          `step-host-${index}`;
+        if (blockers[hostId]) return;
+        const inferredHostName = step.step_name?.split(':').slice(1).join(':').trim();
+        blockers[hostId] = {
+          host_id: hostId,
+          host_name: maintenanceBlockers?.host_name || inferredHostName || 'Unknown Host',
+          can_enter_maintenance: maintenanceBlockers?.can_enter_maintenance ?? false,
+          blockers: blockingEntries ?? [],
+          warnings: maintenanceBlockers?.warnings ?? [],
+          total_powered_on_vms: maintenanceBlockers?.total_powered_on_vms ?? 0,
+          migratable_vms: maintenanceBlockers?.migratable_vms ?? 0,
+          blocked_vms:
+            maintenanceBlockers?.blocked_vms ?? blockingEntries?.length ?? 0,
+          estimated_evacuation_time: maintenanceBlockers?.estimated_evacuation_time ?? 0
+        };
+      });
+
+    return blockers;
+  }, [effectiveJobDetails, steps]);
+
+  const workflowBlockerDetails = useMemo(() => {
+    return Object.values(workflowBlockers).flatMap((analysis) =>
+      analysis.blockers.map((blocker) => ({
+        ...blocker,
+        vm_name: `${blocker.vm_name} (${analysis.host_name})`
+      }))
+    );
+  }, [workflowBlockers]);
+
   return (
     <Card>
       {!hideHeader && (
@@ -650,6 +724,13 @@ export const WorkflowExecutionViewer = ({
         {failedHosts.length > 0 && (
           <>
             <Separator />
+            {workflowBlockerDetails.length > 0 && (
+              <MaintenanceBlockerAlert
+                blockerDetails={workflowBlockerDetails}
+                onResolveBlockers={() => setShowBlockerWizard(true)}
+                className="mb-4"
+              />
+            )}
             <MaintenanceFailureDetails failedHosts={failedHosts} jobId={jobId} />
           </>
         )}
@@ -714,6 +795,19 @@ export const WorkflowExecutionViewer = ({
               </AlertDescription>
             </Alert>
           </>
+        )}
+
+        {showBlockerWizard && Object.keys(workflowBlockers).length > 0 && (
+          <BlockerResolutionWizard
+            open={showBlockerWizard}
+            onOpenChange={setShowBlockerWizard}
+            hostBlockers={workflowBlockers}
+            onComplete={(resolutions, hostOrder) => {
+              console.log('Blocker resolutions:', resolutions, 'Host order:', hostOrder);
+              setShowBlockerWizard(false);
+              toast.success('Blocker resolutions saved. Retry the job when ready.');
+            }}
+          />
         )}
 
         {/* Cancellation Report */}
