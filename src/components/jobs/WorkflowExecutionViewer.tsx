@@ -11,6 +11,7 @@ import {
   Clock, 
   Loader2, 
   MinusCircle,
+  PauseCircle,
   ChevronDown,
   ChevronRight,
   RefreshCw,
@@ -253,6 +254,8 @@ export const WorkflowExecutionViewer = ({
         return <XCircle className="h-5 w-5 text-destructive" />;
       case 'skipped':
         return <MinusCircle className="h-5 w-5 text-yellow-500" />;
+      case 'paused':
+        return <PauseCircle className="h-5 w-5 text-orange-500" />;
       case 'cancelled':
         return <XCircle className="h-5 w-5 text-orange-500" />;
       default:
@@ -261,6 +264,14 @@ export const WorkflowExecutionViewer = ({
   };
 
   const getStatusBadge = (status: string) => {
+    if (status === 'paused') {
+      return (
+        <Badge className="bg-orange-500/10 text-orange-600 border-orange-500/30 hover:bg-orange-500/20">
+          paused
+        </Badge>
+      );
+    }
+
     // Cancelled gets custom orange styling
     if (status === 'cancelled') {
       return (
@@ -310,6 +321,7 @@ export const WorkflowExecutionViewer = ({
     if (effectiveJobStatus && ['failed', 'completed', 'cancelled'].includes(effectiveJobStatus)) {
       return effectiveJobStatus;
     }
+    if (effectiveJobStatus === 'paused') return 'paused';
     if (steps.length === 0) return effectiveJobStatus || 'pending';
     if (steps.some(s => s.step_status === 'failed')) return 'failed';
     if (steps.some(s => s.step_status === 'running')) return 'running';
@@ -319,6 +331,9 @@ export const WorkflowExecutionViewer = ({
 
   // Helper to get effective step status - treats running/pending as cancelled if job is cancelled
   const getEffectiveStepStatus = (stepStatus: string) => {
+    if (effectiveJobStatus === 'paused' && ['running', 'pending'].includes(stepStatus)) {
+      return 'paused';
+    }
     if (effectiveJobStatus === 'cancelled' && ['running', 'pending'].includes(stepStatus)) {
       return 'cancelled';
     }
@@ -329,6 +344,9 @@ export const WorkflowExecutionViewer = ({
     if (!start) return '-';
     // If step was running when job was cancelled, show "Cancelled" instead of "Running..."
     if (!end) {
+      if (effectiveJobStatus === 'paused' && stepStatus === 'running') {
+        return 'Paused';
+      }
       if (effectiveJobStatus === 'cancelled' && stepStatus === 'running') {
         return 'Cancelled';
       }
@@ -502,14 +520,18 @@ export const WorkflowExecutionViewer = ({
       )}
       <CardContent className="space-y-4">
         {/* Current Operation - Real-time Progress */}
-        {currentOperation && overallStatus === 'running' && (
+        {currentOperation && (overallStatus === 'running' || overallStatus === 'paused') && (
           <>
             <Card className="bg-primary/5 border-primary/20">
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm flex items-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                    Current Operation
+                    {overallStatus === 'paused' ? (
+                      <PauseCircle className="h-4 w-4 text-orange-500" />
+                    ) : (
+                      <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                    )}
+                    {overallStatus === 'paused' ? 'Paused for Intervention' : 'Current Operation'}
                   </CardTitle>
                   
                   {/* Console Launch Button */}
@@ -625,7 +647,7 @@ export const WorkflowExecutionViewer = ({
         </div>
 
         {/* Host-Specific Errors from workflow results or steps */}
-        {overallStatus === 'failed' && failedHosts.length > 0 && (
+        {failedHosts.length > 0 && (
           <>
             <Separator />
             <MaintenanceFailureDetails failedHosts={failedHosts} jobId={jobId} />
@@ -673,6 +695,21 @@ export const WorkflowExecutionViewer = ({
                 <div className="font-semibold mb-1">Job Failed</div>
                 <div className="font-mono text-xs whitespace-pre-wrap">
                   {effectiveJobDetails.error}
+                </div>
+              </AlertDescription>
+            </Alert>
+          </>
+        )}
+
+        {overallStatus === 'paused' && (
+          <>
+            <Separator />
+            <Alert className="border-orange-500/50 bg-orange-500/10">
+              <PauseCircle className="h-4 w-4 text-orange-500" />
+              <AlertDescription className="mt-2">
+                <div className="font-semibold mb-1 text-orange-600">Workflow Paused</div>
+                <div className="text-xs text-muted-foreground">
+                  {effectiveJobDetails?.pause_reason || 'Operator intervention required before continuing.'}
                 </div>
               </AlertDescription>
             </Alert>
