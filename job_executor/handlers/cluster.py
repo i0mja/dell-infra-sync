@@ -1578,6 +1578,9 @@ class ClusterHandler(BaseHandler):
                     'backup_completed': backup_results.get(host['server_id'], {}).get('success', False),
                     'no_updates_needed': False
                 }
+                current_step_number = None
+                current_step_name = None
+                current_step_in_progress = False
                 
                 # Track current host for logging
                 cleanup_state['current_host_name'] = host['name']
@@ -1641,10 +1644,13 @@ class ClusterHandler(BaseHandler):
                         
                         # STEP 0: Check for available updates BEFORE entering maintenance mode
                         if firmware_source == 'dell_online_catalog':
+                            current_step_number = base_step
+                            current_step_name = f"Check for updates: {host['name']}"
+                            current_step_in_progress = True
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
-                                step_number=base_step,
-                                step_name=f"Check for updates: {host['name']}",
+                                step_number=current_step_number,
+                                step_name=current_step_name,
                                 status='running',
                                 server_id=host['server_id'],
                                 step_started_at=utc_now_iso()
@@ -1694,13 +1700,14 @@ class ClusterHandler(BaseHandler):
                                     
                                     self._log_workflow_step(
                                         job['id'], 'rolling_cluster_update',
-                                        step_number=base_step,
-                                        step_name=f"Check for updates: {host['name']}",
+                                        step_number=current_step_number,
+                                        step_name=current_step_name,
                                         status='completed',
                                         server_id=host['server_id'],
                                         step_details={'no_updates_needed': True, 'message': 'Server already up to date'},
                                         step_completed_at=utc_now_iso()
                                     )
+                                    current_step_in_progress = False
                                     
                                     # Mark host as skipped and move to next
                                     host_result['status'] = 'skipped'
@@ -1721,13 +1728,14 @@ class ClusterHandler(BaseHandler):
                                 
                                 self._log_workflow_step(
                                     job['id'], 'rolling_cluster_update',
-                                    step_number=base_step,
-                                    step_name=f"Check for updates: {host['name']}",
+                                    step_number=current_step_number,
+                                    step_name=current_step_name,
                                     status='completed',
                                     server_id=host['server_id'],
                                     step_details={'available_updates': len(available_updates), 'updates': available_updates[:5]},
                                     step_completed_at=utc_now_iso()
                                 )
+                                current_step_in_progress = False
                                 host_result['steps'].append('check_updates')
                                 
                             except Exception as check_error:
@@ -1736,23 +1744,27 @@ class ClusterHandler(BaseHandler):
                                 # Continue with the update - the actual update will also check
                                 self._log_workflow_step(
                                     job['id'], 'rolling_cluster_update',
-                                    step_number=base_step,
-                                    step_name=f"Check for updates: {host['name']}",
+                                    step_number=current_step_number,
+                                    step_name=current_step_name,
                                     status='completed',
                                     server_id=host['server_id'],
                                     step_details={'warning': str(check_error), 'continuing': True},
                                     step_completed_at=utc_now_iso()
                                 )
+                                current_step_in_progress = False
                         else:
                             # For non-catalog sources, skip the pre-check
                             self.log(f"  [0/6] Update pre-check skipped (using {firmware_source})")
                         
                         # STEP 1: Enter maintenance mode (if vCenter linked)
                         if vcenter_host_id:
+                            current_step_number = base_step + 1
+                            current_step_name = f"Enter maintenance mode: {host['name']}"
+                            current_step_in_progress = True
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
-                                step_number=base_step + 1,
-                                step_name=f"Enter maintenance mode: {host['name']}",
+                                step_number=current_step_number,
+                                step_name=current_step_name,
                                 status='running',
                                 server_id=host['server_id'],
                                 host_id=vcenter_host_id,
@@ -1777,6 +1789,18 @@ class ClusterHandler(BaseHandler):
                                     host_result['evacuation_blockers'] = maintenance_result['evacuation_blockers']
                                 if maintenance_result.get('stall_duration_seconds'):
                                     host_result['stalled_duration'] = maintenance_result['stall_duration_seconds']
+                                self._log_workflow_step(
+                                    job['id'], 'rolling_cluster_update',
+                                    step_number=current_step_number,
+                                    step_name=current_step_name,
+                                    status='failed',
+                                    server_id=host['server_id'],
+                                    host_id=vcenter_host_id,
+                                    step_details=maintenance_result,
+                                    step_error=maintenance_result.get('error'),
+                                    step_completed_at=utc_now_iso()
+                                )
+                                current_step_in_progress = False
                                 raise Exception(f"Failed to enter maintenance mode: {maintenance_result.get('error')}")
                             
                             vms_evacuated = maintenance_result.get('vms_evacuated', 0)
@@ -1785,23 +1809,27 @@ class ClusterHandler(BaseHandler):
                             
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
-                                step_number=base_step + 1,
-                                step_name=f"Enter maintenance mode: {host['name']}",
+                                step_number=current_step_number,
+                                step_name=current_step_name,
                                 status='completed',
                                 server_id=host['server_id'],
                                 host_id=vcenter_host_id,
                                 step_details=maintenance_result,
                                 step_completed_at=utc_now_iso()
                             )
+                            current_step_in_progress = False
                             host_result['steps'].append('enter_maintenance')
                         else:
                             self.log(f"  [1/6] Maintenance mode skipped (no vCenter link)")
                         
                         # STEP 2: Apply firmware updates
+                        current_step_number = base_step + 2
+                        current_step_name = f"Apply firmware updates: {host['name']}"
+                        current_step_in_progress = True
                         self._log_workflow_step(
                             job['id'], 'rolling_cluster_update',
-                            step_number=base_step + 2,
-                            step_name=f"Apply firmware updates: {host['name']}",
+                            step_number=current_step_number,
+                            step_name=current_step_name,
                             status='running',
                             server_id=host['server_id'],
                             step_started_at=utc_now_iso()
@@ -2188,21 +2216,25 @@ class ClusterHandler(BaseHandler):
                         host_result['no_updates_needed'] = update_result.get('no_updates_needed', False)
                         self._log_workflow_step(
                             job['id'], 'rolling_cluster_update',
-                            step_number=base_step + 2,
-                            step_name=f"Apply firmware updates: {host['name']}",
+                            step_number=current_step_number,
+                            step_name=current_step_name,
                             status='completed',
                             server_id=host['server_id'],
                             step_details=update_result,
                             step_completed_at=utc_now_iso()
                         )
+                        current_step_in_progress = False
                         host_result['steps'].append('firmware_update')
                         
                         # STEP 3: Reboot and wait for system to come online (only if reboot required)
                         if reboot_required:
+                            current_step_number = base_step + 3
+                            current_step_name = f"Reboot and wait: {host['name']}"
+                            current_step_in_progress = True
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
-                                step_number=base_step + 3,
-                                step_name=f"Reboot and wait: {host['name']}",
+                                step_number=current_step_number,
+                                step_name=current_step_name,
                                 status='running',
                                 server_id=host['server_id'],
                                 step_started_at=utc_now_iso()
@@ -2448,24 +2480,29 @@ class ClusterHandler(BaseHandler):
                                 step_started_at=utc_now_iso(),
                                 step_completed_at=utc_now_iso()
                             )
+                            current_step_in_progress = False
                         
                         if reboot_required:
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
-                                step_number=base_step + 3,
-                                step_name=f"Reboot and wait: {host['name']}",
+                                step_number=current_step_number,
+                                step_name=current_step_name,
                                 status='completed',
                                 server_id=host['server_id'],
                                 step_completed_at=utc_now_iso()
                             )
+                            current_step_in_progress = False
                             host_result['steps'].append('reboot')
                         
                         # STEP 4: Verify firmware update (only if updates were applied)
                         if reboot_required:
+                            current_step_number = base_step + 4
+                            current_step_name = f"Verify update: {host['name']}"
+                            current_step_in_progress = True
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
-                                step_number=base_step + 4,
-                                step_name=f"Verify update: {host['name']}",
+                                step_number=current_step_number,
+                                step_name=current_step_name,
                                 status='running',
                                 server_id=host['server_id'],
                                 step_started_at=utc_now_iso()
@@ -2502,13 +2539,14 @@ class ClusterHandler(BaseHandler):
                             
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
-                                step_number=base_step + 4,
-                                step_name=f"Verify update: {host['name']}",
+                                step_number=current_step_number,
+                                step_name=current_step_name,
                                 status='completed',
                                 server_id=host['server_id'],
                                 step_details={'verified': True},
                                 step_completed_at=utc_now_iso()
                             )
+                            current_step_in_progress = False
                             host_result['steps'].append('verify')
                         else:
                             # Skip verification for no-updates case
@@ -2523,13 +2561,17 @@ class ClusterHandler(BaseHandler):
                                 step_started_at=utc_now_iso(),
                                 step_completed_at=utc_now_iso()
                             )
+                            current_step_in_progress = False
                         
                         # STEP 5: Exit maintenance mode (if applicable)
                         if vcenter_host_id:
+                            current_step_number = base_step + 5
+                            current_step_name = f"Exit maintenance mode: {host['name']}"
+                            current_step_in_progress = True
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
-                                step_number=base_step + 5,
-                                step_name=f"Exit maintenance mode: {host['name']}",
+                                step_number=current_step_number,
+                                step_name=current_step_name,
                                 status='running',
                                 server_id=host['server_id'],
                                 host_id=vcenter_host_id,
@@ -2565,8 +2607,8 @@ class ClusterHandler(BaseHandler):
                             
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
-                                step_number=base_step + 5,
-                                step_name=f"Exit maintenance mode: {host['name']}",
+                                step_number=current_step_number,
+                                step_name=current_step_name,
                                 status='completed' if exit_result.get('success') else 'failed',
                                 server_id=host['server_id'],
                                 host_id=vcenter_host_id,
@@ -2574,6 +2616,7 @@ class ClusterHandler(BaseHandler):
                                 step_error=exit_result.get('error') if not exit_result.get('success') else None,
                                 step_completed_at=utc_now_iso()
                             )
+                            current_step_in_progress = False
                             host_result['steps'].append('exit_maintenance')
                         else:
                             self.log(f"  [5/6] Exit maintenance skipped (no vCenter link)")
@@ -2636,15 +2679,19 @@ class ClusterHandler(BaseHandler):
                     self.log(f"  ✗ Host {host['name']} update failed: {e}", "ERROR")
                     
                     # Log failed workflow step with actual error message
-                    self._log_workflow_step(
-                        job['id'], 'rolling_cluster_update',
-                        step_number=base_step + 2,
-                        step_name=f"Apply firmware updates: {host['name']}",
-                        status='failed',
-                        server_id=host['server_id'],
-                        step_error=str(e),
-                        step_completed_at=utc_now_iso()
-                    )
+                    failed_step_number = current_step_number or base_step + 2
+                    failed_step_name = current_step_name or f"Apply firmware updates: {host['name']}"
+                    if current_step_in_progress:
+                        self._log_workflow_step(
+                            job['id'], 'rolling_cluster_update',
+                            step_number=failed_step_number,
+                            step_name=failed_step_name,
+                            status='failed',
+                            server_id=host['server_id'],
+                            step_error=str(e),
+                            step_completed_at=utc_now_iso()
+                        )
+                    current_step_in_progress = False
                     
                     # Clear current server and firmware tracking
                     cleanup_state['current_server'] = None
@@ -2654,6 +2701,21 @@ class ClusterHandler(BaseHandler):
                     if not continue_on_failure:
                         workflow_results['host_results'].append(host_result)
                         raise
+                    
+                    workflow_results['host_results'].append(host_result)
+                    workflow_results['paused_for_intervention'] = True
+                    pause_reason = f"Host {host['name']} failed at step: {failed_step_name}"
+                    self.update_job_status(job['id'], 'paused', details={
+                        'pause_reason': pause_reason,
+                        'paused_at': utc_now_iso(),
+                        'intervention_required': True,
+                        'intervention_host': host['name'],
+                        'intervention_step': failed_step_name,
+                        'intervention_error': str(e),
+                        'workflow_results': workflow_results
+                    })
+                    self.log(f"⏸️ Pausing workflow for operator intervention: {pause_reason}", "WARN")
+                    return
                 
                 workflow_results['host_results'].append(host_result)
             
