@@ -39,6 +39,7 @@ export interface MaintenanceBlocker {
 export interface HostBlockerAnalysis {
   host_id: string;
   host_name: string;
+  server_id?: string;
   can_enter_maintenance: boolean;
   blockers: MaintenanceBlocker[];
   warnings: string[];

@@ -29,6 +29,16 @@ interface ApiCommand {
   operation_type: string;
 }
 
+interface BlockerDetail {
+  vm_name: string;
+  vm_id?: string;
+  reason: string;
+  severity?: string;
+  remediation?: string;
+  details?: string;
+  auto_fixable?: boolean;
+}
+
 interface ConsoleEntry {
   id: string;
   timestamp: string;
@@ -40,6 +50,12 @@ interface ConsoleEntry {
     response_time_ms?: number;
     command_type?: string;
     error_message?: string;
+    blocker_details?: BlockerDetail[];
+    remediation_summary?: {
+      vms_to_power_off?: Array<{ vm: string; reason: string; action: string }>;
+      vms_to_migrate_manually?: Array<{ vm: string; action: string }>;
+    };
+    human_readable_error?: string;
   };
 }
 
@@ -346,6 +362,67 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
     return null;
   };
 
+  // Get human-readable blocker reason label
+  const getBlockerReasonLabel = (reason: string): string => {
+    const labels: Record<string, string> = {
+      'passthrough': 'PCI Passthrough (cannot migrate)',
+      'local_storage': 'Local Storage (cannot migrate)',
+      'vgpu': 'vGPU (cannot migrate)',
+      'fault_tolerance': 'Fault Tolerance (cannot migrate)',
+      'vcsa': 'vCenter Appliance (migrate last)',
+      'affinity': 'VM Affinity Rule',
+      'anti_affinity': 'Anti-Affinity Rule',
+      'critical': 'Critical Infrastructure'
+    };
+    return labels[reason] || reason;
+  };
+
+  // Get severity color for blockers
+  const getBlockerSeverityColor = (severity?: string): string => {
+    switch (severity) {
+      case 'critical': return 'text-red-400';
+      case 'warning': return 'text-yellow-400';
+      case 'info': return 'text-blue-400';
+      default: return 'text-orange-400';
+    }
+  };
+
+  // Render maintenance blocker details
+  const renderBlockerDetails = (entry: ConsoleEntry): JSX.Element | null => {
+    const blockers = entry.details?.blocker_details;
+    if (!blockers || blockers.length === 0) return null;
+
+    return (
+      <div className="mt-2 ml-6 p-2 bg-destructive/10 border border-destructive/20 rounded text-xs space-y-1">
+        <div className="font-medium text-destructive">
+          Maintenance Blockers ({blockers.length} VM{blockers.length > 1 ? 's' : ''}):
+        </div>
+        {blockers.slice(0, 5).map((blocker, idx) => (
+          <div key={idx} className="flex flex-col gap-0.5 pl-2 border-l-2 border-destructive/30">
+            <div className="flex items-center gap-2">
+              <span className={cn("font-mono", getBlockerSeverityColor(blocker.severity))}>
+                {blocker.vm_name}
+              </span>
+              <span className="text-muted-foreground">
+                ({getBlockerReasonLabel(blocker.reason)})
+              </span>
+            </div>
+            {blocker.remediation && (
+              <div className="text-muted-foreground pl-2">
+                → {blocker.remediation}
+              </div>
+            )}
+          </div>
+        ))}
+        {blockers.length > 5 && (
+          <div className="text-muted-foreground pl-2">
+            ... and {blockers.length - 5} more
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const getStatusSymbol = (entry: ConsoleEntry): string => {
     // Check for friendly firmware message first
     const friendly = getFirmwareFriendlyMessage(entry.details?.error_message);
@@ -580,6 +657,10 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
                       </span>
                     )}
                   </span>
+                  {/* Render blocker details if present */}
+                  {entry.details?.blocker_details && renderBlockerDetails(entry)}
+                  
+                  {/* Render error messages */}
                   {entry.details?.error_message && (() => {
                     const friendly = getFirmwareFriendlyMessage(entry.details.error_message);
                     if (friendly) {
