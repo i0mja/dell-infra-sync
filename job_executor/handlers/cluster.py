@@ -95,29 +95,71 @@ class ClusterHandler(BaseHandler):
         return None
 
     def _extract_manual_power_off_vms(self, details: Dict, host: Dict, vcenter_host_id: Optional[str]) -> List[str]:
+        """
+        Extract VMs that were marked for power-off in the blocker resolution wizard.
+        Tries multiple keys to find the resolution: server_id, vcenter_host_id, host_name.
+        """
         resolutions = details.get('maintenance_blocker_resolutions', {}) if details else {}
+        
+        if not resolutions:
+            self.log(f"    [Resolution] No blocker resolutions found in job details", "DEBUG")
+            return []
+        
+        # Build list of possible keys to look up (in priority order)
         host_keys = [
             str(host.get('server_id')) if host.get('server_id') else None,
             str(vcenter_host_id) if vcenter_host_id else None,
-            host.get('name')
+            host.get('name'),
+            host.get('host_name')
         ]
+        
+        self.log(f"    [Resolution] Available resolution keys: {list(resolutions.keys())}", "DEBUG")
+        self.log(f"    [Resolution] Looking for host with keys: {[k for k in host_keys if k]}", "DEBUG")
+        
         host_resolution = None
+        matched_key = None
         for key in filter(None, host_keys):
             if key in resolutions:
                 host_resolution = resolutions[key]
+                matched_key = key
                 break
+        
         if not host_resolution:
+            self.log(f"    [Resolution] No resolution found for host {host.get('name')}", "DEBUG")
             return []
+        
+        self.log(f"    [Resolution] Found resolution for host via key '{matched_key}'", "DEBUG")
+        
+        # Check if host should be skipped entirely
+        if host_resolution.get('skip_host'):
+            self.log(f"    [Resolution] Host marked as SKIP - skipping all operations")
+            return []
+        
         entries = host_resolution.get('vms_to_power_off', []) if isinstance(host_resolution, dict) else []
+        
+        if not entries:
+            self.log(f"    [Resolution] No VMs marked for power-off", "DEBUG")
+            return []
+        
         vm_names = []
         for entry in entries:
             if isinstance(entry, dict):
+                # Try multiple possible keys for VM name
                 vm_name = entry.get('vm_name') or entry.get('vm') or entry.get('name')
                 if vm_name:
                     vm_names.append(vm_name)
+                    reason = entry.get('reason', 'unspecified')
+                    self.log(f"    [Resolution] VM to power off: {vm_name} (reason: {reason})")
             elif entry:
+                # Plain string entry (legacy format)
                 vm_names.append(str(entry))
-        return list({name for name in vm_names if name})
+                self.log(f"    [Resolution] VM to power off: {entry}")
+        
+        unique_names = list({name for name in vm_names if name})
+        if unique_names:
+            self.log(f"    ✓ Found {len(unique_names)} VM(s) to power off from resolution wizard")
+        
+        return unique_names
 
     def _select_power_off_candidates(self, blockers: List[Dict[str, Any]], strategy: str) -> List[str]:
         non_migratable_reasons = {'passthrough', 'local_storage', 'vgpu', 'fault_tolerance'}
@@ -265,6 +307,8 @@ class ClusterHandler(BaseHandler):
                         )
                     
                     if blocker_analysis:
+                        # Inject server_id into blocker analysis for reliable resolution lookup
+                        blocker_analysis['server_id'] = host['server_id']
                         all_maintenance_blockers[host['server_id']] = blocker_analysis
                         host_creds['maintenance_blockers'] = blocker_analysis
                         
@@ -1683,6 +1727,7 @@ class ClusterHandler(BaseHandler):
                         firmware_source = details.get('firmware_source', 'manual_repository')
                         
                         # STEP 0: Check for available updates BEFORE entering maintenance mode
+                        # OPTIMIZATION: Use cached results from pre-flight if available
                         if firmware_source == 'dell_online_catalog':
                             current_step_number = base_step
                             current_step_name = f"Check for updates: {host['name']}"
@@ -1696,31 +1741,22 @@ class ClusterHandler(BaseHandler):
                                 step_started_at=utc_now_iso()
                             )
                             
-                            self.log(f"  [0/6] Checking for available updates...")
-                            self.update_job_details_field(job['id'], {
-                                'current_step': f'Checking for available updates: {host["name"]}'
-                            })
+                            # Check if we already have update info from pre-flight
+                            cached_updates = creds.get('available_updates')
+                            preflight_checked = creds.get('needs_update') is not None
                             
-                            dell_catalog_url = details.get('dell_catalog_url', 'https://downloads.dell.com/catalog/Catalog.xml')
-                            
-                            try:
-                                check_result = dell_ops.check_available_catalog_updates(
-                                    ip=server['ip_address'],
-                                    username=username,
-                                    password=password,
-                                    catalog_url=dell_catalog_url,
-                                    server_id=host['server_id'],
-                                    job_id=job['id'],
-                                    user_id=job['created_by']
-                                )
+                            if preflight_checked and cached_updates is not None:
+                                # Use cached results from pre-flight
+                                self.log(f"  [0/6] Using pre-flight update check results...")
+                                self.update_job_details_field(job['id'], {
+                                    'current_step': f'Using cached update check: {host["name"]}'
+                                })
                                 
-                                available_updates = check_result.get('available_updates', [])
-                                
-                                if not available_updates:
-                                    self.log(f"    ✓ Server is already up to date - no updates available")
+                                if not cached_updates:
+                                    # Pre-flight said no updates needed
+                                    self.log(f"    ✓ Pre-flight confirmed: no updates available")
                                     
-                                    # Check if host was already in maintenance mode (from previous failed job)
-                                    # and exit it before skipping
+                                    # Check if host was already in maintenance mode
                                     if vcenter_host_id:
                                         try:
                                             host_status = self.executor._get_vcenter_host_status(vcenter_host_id)
@@ -1744,27 +1780,25 @@ class ClusterHandler(BaseHandler):
                                         step_name=current_step_name,
                                         status='completed',
                                         server_id=host['server_id'],
-                                        step_details={'no_updates_needed': True, 'message': 'Server already up to date'},
+                                        step_details={'no_updates_needed': True, 'message': 'Pre-flight confirmed: already up to date', 'from_cache': True},
                                         step_completed_at=utc_now_iso()
                                     )
                                     current_step_in_progress = False
                                     
-                                    # Mark host as skipped and move to next
                                     host_result['status'] = 'skipped'
                                     host_result['no_updates_needed'] = True
-                                    host_result['message'] = 'Server already up to date'
-                                    host_result['steps'].append('check_updates_skipped')
+                                    host_result['message'] = 'Pre-flight confirmed: already up to date'
+                                    host_result['steps'].append('check_updates_cached_skip')
                                     workflow_results['host_results'].append(host_result)
                                     workflow_results['hosts_skipped'] = workflow_results.get('hosts_skipped', 0) + 1
                                     
-                                    # Cleanup session before skipping
                                     self.executor.delete_idrac_session(
                                         session, server['ip_address'], host['server_id'], job['id']
                                     )
-                                    continue  # Move to next host
+                                    continue
                                 
-                                self.log(f"    ✓ Found {len(available_updates)} update(s) available")
-                                host_result['available_updates'] = len(available_updates)
+                                self.log(f"    ✓ Pre-flight found {len(cached_updates)} update(s) available")
+                                host_result['available_updates'] = len(cached_updates)
                                 
                                 self._log_workflow_step(
                                     job['id'], 'rolling_cluster_update',
@@ -1772,26 +1806,104 @@ class ClusterHandler(BaseHandler):
                                     step_name=current_step_name,
                                     status='completed',
                                     server_id=host['server_id'],
-                                    step_details={'available_updates': len(available_updates), 'updates': available_updates[:5]},
+                                    step_details={'available_updates': len(cached_updates), 'from_cache': True},
                                     step_completed_at=utc_now_iso()
                                 )
                                 current_step_in_progress = False
-                                host_result['steps'].append('check_updates')
+                                host_result['steps'].append('check_updates_cached')
+                            else:
+                                # No cached results - run fresh update check
+                                self.log(f"  [0/6] Checking for available updates...")
+                                self.update_job_details_field(job['id'], {
+                                    'current_step': f'Checking for available updates: {host["name"]}'
+                                })
                                 
-                            except Exception as check_error:
-                                self.log(f"    ⚠️ Could not pre-check updates: {check_error}", "WARN")
-                                self.log(f"    ℹ️ Continuing with update attempt...")
-                                # Continue with the update - the actual update will also check
-                                self._log_workflow_step(
-                                    job['id'], 'rolling_cluster_update',
-                                    step_number=current_step_number,
-                                    step_name=current_step_name,
-                                    status='completed',
-                                    server_id=host['server_id'],
-                                    step_details={'warning': str(check_error), 'continuing': True},
-                                    step_completed_at=utc_now_iso()
-                                )
-                                current_step_in_progress = False
+                                dell_catalog_url = details.get('dell_catalog_url', 'https://downloads.dell.com/catalog/Catalog.xml')
+                                
+                                try:
+                                    check_result = dell_ops.check_available_catalog_updates(
+                                        ip=server['ip_address'],
+                                        username=username,
+                                        password=password,
+                                        catalog_url=dell_catalog_url,
+                                        server_id=host['server_id'],
+                                        job_id=job['id'],
+                                        user_id=job['created_by']
+                                    )
+                                    
+                                    available_updates = check_result.get('available_updates', [])
+                                    
+                                    if not available_updates:
+                                        self.log(f"    ✓ Server is already up to date - no updates available")
+                                        
+                                        if vcenter_host_id:
+                                            try:
+                                                host_status = self.executor._get_vcenter_host_status(vcenter_host_id)
+                                                if host_status and host_status.get('in_maintenance', False):
+                                                    self.log(f"    ⚠ Host is in maintenance mode (likely from previous job) - exiting...")
+                                                    exit_result = self.executor.exit_vcenter_maintenance_mode(vcenter_host_id)
+                                                    if exit_result.get('success'):
+                                                        self.log(f"    ✓ Maintenance mode exited successfully")
+                                                    else:
+                                                        self.log(f"    ⚠ Warning: Failed to exit maintenance: {exit_result.get('error')}", "WARN")
+                                                else:
+                                                    self.log(f"    ℹ️ Skipping host (no maintenance mode needed)")
+                                            except Exception as mm_check_error:
+                                                self.log(f"    ⚠ Could not check/exit maintenance mode: {mm_check_error}", "WARN")
+                                        else:
+                                            self.log(f"    ℹ️ Skipping host (no vCenter link)")
+                                        
+                                        self._log_workflow_step(
+                                            job['id'], 'rolling_cluster_update',
+                                            step_number=current_step_number,
+                                            step_name=current_step_name,
+                                            status='completed',
+                                            server_id=host['server_id'],
+                                            step_details={'no_updates_needed': True, 'message': 'Server already up to date'},
+                                            step_completed_at=utc_now_iso()
+                                        )
+                                        current_step_in_progress = False
+                                        
+                                        host_result['status'] = 'skipped'
+                                        host_result['no_updates_needed'] = True
+                                        host_result['message'] = 'Server already up to date'
+                                        host_result['steps'].append('check_updates_skipped')
+                                        workflow_results['host_results'].append(host_result)
+                                        workflow_results['hosts_skipped'] = workflow_results.get('hosts_skipped', 0) + 1
+                                        
+                                        self.executor.delete_idrac_session(
+                                            session, server['ip_address'], host['server_id'], job['id']
+                                        )
+                                        continue
+                                    
+                                    self.log(f"    ✓ Found {len(available_updates)} update(s) available")
+                                    host_result['available_updates'] = len(available_updates)
+                                    
+                                    self._log_workflow_step(
+                                        job['id'], 'rolling_cluster_update',
+                                        step_number=current_step_number,
+                                        step_name=current_step_name,
+                                        status='completed',
+                                        server_id=host['server_id'],
+                                        step_details={'available_updates': len(available_updates), 'updates': available_updates[:5]},
+                                        step_completed_at=utc_now_iso()
+                                    )
+                                    current_step_in_progress = False
+                                    host_result['steps'].append('check_updates')
+                                    
+                                except Exception as check_error:
+                                    self.log(f"    ⚠️ Could not pre-check updates: {check_error}", "WARN")
+                                    self.log(f"    ℹ️ Continuing with update attempt...")
+                                    self._log_workflow_step(
+                                        job['id'], 'rolling_cluster_update',
+                                        step_number=current_step_number,
+                                        step_name=current_step_name,
+                                        status='completed',
+                                        server_id=host['server_id'],
+                                        step_details={'warning': str(check_error), 'continuing': True},
+                                        step_completed_at=utc_now_iso()
+                                    )
+                                    current_step_in_progress = False
                         else:
                             # For non-catalog sources, skip the pre-check
                             self.log(f"  [0/6] Update pre-check skipped (using {firmware_source})")
@@ -1893,6 +2005,28 @@ class ClusterHandler(BaseHandler):
                                     host_result['evacuation_blockers'] = maintenance_result['evacuation_blockers']
                                 if maintenance_result.get('stall_duration_seconds'):
                                     host_result['stalled_duration'] = maintenance_result['stall_duration_seconds']
+                                
+                                # Include detailed blocker info for human-readable display
+                                if maintenance_result.get('blocker_details'):
+                                    host_result['blocker_details'] = maintenance_result['blocker_details']
+                                if maintenance_result.get('remediation_summary'):
+                                    host_result['remediation_summary'] = maintenance_result['remediation_summary']
+                                
+                                # Build human-readable error message
+                                blocker_details = maintenance_result.get('blocker_details', [])
+                                if blocker_details:
+                                    error_lines = [f"Maintenance blocked by {len(blocker_details)} VM(s):"]
+                                    for b in blocker_details[:5]:
+                                        vm_name = b.get('vm_name', 'Unknown VM')
+                                        reason = b.get('reason', 'unknown')
+                                        remediation = b.get('remediation', 'No remediation available')
+                                        error_lines.append(f"  • {vm_name} ({reason}): {remediation}")
+                                    if len(blocker_details) > 5:
+                                        error_lines.append(f"  ... and {len(blocker_details) - 5} more")
+                                    detailed_error = "\n".join(error_lines)
+                                else:
+                                    detailed_error = maintenance_result.get('error', 'Maintenance mode failed')
+                                
                                 self._log_workflow_step(
                                     job['id'], 'rolling_cluster_update',
                                     step_number=current_step_number,
@@ -1900,12 +2034,15 @@ class ClusterHandler(BaseHandler):
                                     status='failed',
                                     server_id=host['server_id'],
                                     host_id=vcenter_host_id,
-                                    step_details=maintenance_result,
-                                    step_error=maintenance_result.get('error'),
+                                    step_details={
+                                        **maintenance_result,
+                                        'human_readable_error': detailed_error
+                                    },
+                                    step_error=detailed_error,
                                     step_completed_at=utc_now_iso()
                                 )
                                 current_step_in_progress = False
-                                raise Exception(f"Failed to enter maintenance mode: {maintenance_result.get('error')}")
+                                raise Exception(detailed_error)
                             
                             vms_evacuated = maintenance_result.get('vms_evacuated', 0)
                             cleanup_state['hosts_in_maintenance'].append(vcenter_host_id)
