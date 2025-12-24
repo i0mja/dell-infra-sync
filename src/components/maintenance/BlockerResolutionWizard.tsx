@@ -33,13 +33,14 @@ import {
   MaintenanceBlocker,
   HostBlockerAnalysis 
 } from "@/lib/host-priority-calculator";
+import { buildMaintenanceBlockerResolutions, HostResolutionPayload } from "@/lib/maintenance-blocker-resolutions";
 
 interface BlockerResolutionWizardProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   hostBlockers: Record<string, HostBlockerAnalysis>;
   maintenanceWindowId?: string;
-  onComplete: (resolutions: HostResolutions, hostOrder: string[]) => void;
+  onComplete: (resolutions: Record<string, HostResolutionPayload>, hostOrder: string[]) => void;
 }
 
 interface HostResolutions {
@@ -224,7 +225,9 @@ export function BlockerResolutionWizard({
   };
 
   const handleComplete = () => {
-    onComplete(resolutions, hostOrder);
+    // Build resolutions with multiple keys for reliable executor lookup
+    const executorResolutions = buildMaintenanceBlockerResolutions(resolutions, hostBlockers);
+    onComplete(executorResolutions, hostOrder);
     onOpenChange(false);
   };
 

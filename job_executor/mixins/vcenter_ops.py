@@ -746,6 +746,174 @@ class VCenterMixin:
         
         return result
     
+    def power_on_vms_after_maintenance(self, host_id: str, vm_names: List[str], 
+                                        timeout: int = 300,
+                                        source_vcenter_id: str = None) -> Dict:
+        """
+        Power on VMs that were powered off for maintenance mode.
+        This is the mirror function to power_off_vms_for_maintenance.
+        
+        Args:
+            host_id: The vcenter_host database ID
+            vm_names: List of VM names to power on
+            timeout: Timeout for waiting for VM tools to come online
+            source_vcenter_id: Optional vCenter ID
+            
+        Returns:
+            {
+                'success': bool,
+                'vms_powered_on': [str],
+                'vms_failed': [{'name': str, 'error': str}],
+                'vms_already_on': [str],
+                'total_time_seconds': int
+            }
+        """
+        result = {
+            'success': True,
+            'vms_powered_on': [],
+            'vms_failed': [],
+            'vms_already_on': [],
+            'total_time_seconds': 0
+        }
+        
+        if not vm_names:
+            self.log(f"    No VMs to power on")
+            return result
+        
+        start_time = time.time()
+        
+        try:
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            from job_executor.utils import _safe_json_parse
+            
+            # Fetch host details
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{host_id}&select=*",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL
+            )
+            
+            if response.status_code != 200:
+                result['success'] = False
+                result['error'] = f"Failed to fetch host details: HTTP {response.status_code}"
+                return result
+            
+            hosts = _safe_json_parse(response) or []
+            if not hosts:
+                result['success'] = False
+                result['error'] = "Host not found in database"
+                return result
+            
+            host_info = hosts[0]
+            vcenter_id = source_vcenter_id or host_info.get('source_vcenter_id')
+            vcenter_settings = self.get_vcenter_settings(vcenter_id) if vcenter_id else None
+            
+            vc = self.connect_vcenter(settings=vcenter_settings)
+            if not vc:
+                result['success'] = False
+                result['error'] = "Cannot connect to vCenter"
+                return result
+            
+            content = vc.RetrieveContent()
+            
+            # Find the host
+            host_container = content.viewManager.CreateContainerView(
+                content.rootFolder, [vim.HostSystem], True
+            )
+            
+            target_host = None
+            for host_obj in host_container.view:
+                if str(host_obj._moId) == host_info.get('vcenter_id'):
+                    target_host = host_obj
+                    break
+            
+            host_container.Destroy()
+            
+            if not target_host:
+                result['success'] = False
+                result['error'] = f"Host {host_info.get('name')} not found in vCenter"
+                return result
+            
+            self.log(f"    Powering on {len(vm_names)} VM(s) after maintenance...")
+            
+            # Find and power on the specified VMs
+            vms_found = set()
+            for vm in target_host.vm:
+                if vm.name not in vm_names:
+                    continue
+                    
+                vms_found.add(vm.name)
+                    
+                try:
+                    current_state = str(vm.runtime.powerState) if vm.runtime else 'unknown'
+                    
+                    if current_state == 'poweredOn':
+                        result['vms_already_on'].append(vm.name)
+                        self.log(f"      ✓ {vm.name} already powered on")
+                        continue
+                    
+                    self.log(f"      Powering on: {vm.name}")
+                    
+                    # Power on the VM
+                    task = vm.PowerOn()
+                    
+                    # Wait for task to complete
+                    power_on_start = time.time()
+                    while task.info.state == vim.TaskInfo.State.running:
+                        if time.time() - power_on_start > 60:  # 1 minute timeout for power on task
+                            break
+                        time.sleep(2)
+                    
+                    if task.info.state == vim.TaskInfo.State.success:
+                        result['vms_powered_on'].append(vm.name)
+                        self.log(f"      ✓ {vm.name} powered on successfully")
+                        
+                        # Optionally wait for VMware Tools to come online
+                        if timeout > 0:
+                            tools_start = time.time()
+                            while time.time() - tools_start < min(timeout, 120):  # Max 2 min per VM
+                                try:
+                                    if vm.guest and vm.guest.toolsStatus in ['toolsOk', 'toolsOld']:
+                                        self.log(f"      ✓ {vm.name} VMware Tools online")
+                                        break
+                                except:
+                                    pass
+                                time.sleep(5)
+                    else:
+                        error_msg = str(task.info.error) if task.info.error else 'Power on task failed'
+                        result['vms_failed'].append({'name': vm.name, 'error': error_msg})
+                        self.log(f"      ✗ {vm.name} power on failed: {error_msg}", "WARN")
+                        
+                except Exception as vm_err:
+                    result['vms_failed'].append({'name': vm.name, 'error': str(vm_err)})
+                    self.log(f"      ✗ {vm.name} error: {vm_err}", "WARN")
+            
+            # Check for VMs that weren't found on the host
+            for vm_name in vm_names:
+                if vm_name not in vms_found:
+                    # VM might have migrated to another host - try to find it cluster-wide
+                    self.log(f"      ⚠ {vm_name} not found on host (may have migrated)", "DEBUG")
+            
+            result['total_time_seconds'] = int(time.time() - start_time)
+            
+            # Set success based on whether any VMs failed
+            if result['vms_failed']:
+                result['success'] = len(result['vms_failed']) < len(vm_names)
+            
+            powered_on_count = len(result['vms_powered_on'])
+            already_on_count = len(result['vms_already_on'])
+            failed_count = len(result['vms_failed'])
+            
+            if powered_on_count > 0 or already_on_count > 0:
+                self.log(f"    ✓ Power on complete: {powered_on_count} started, {already_on_count} already on, {failed_count} failed")
+            
+        except Exception as e:
+            self.log(f"  Power on VMs error: {e}", "WARN")
+            result['success'] = False
+            result['error'] = str(e)
+        
+        return result
+    
     def detect_vcsa_on_hosts(self, host_ids: List[str], cluster_name: str = None) -> Dict:
         """
         Detect which host(s) in a list contain the vCenter Server Appliance (VCSA).
