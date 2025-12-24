@@ -1364,7 +1364,8 @@ class ClusterHandler(BaseHandler):
                 'ha_disabled': False,
                 'ha_cluster_name': None,
                 'ha_source_vcenter_id': None,
-                'ha_original_state': None
+                'ha_original_state': None,
+                'vms_to_power_on': {}  # Track VMs powered off per host for later power-on
             }
             
             # Get cluster name from first eligible host (needed for HA management later)
@@ -1956,6 +1957,19 @@ class ClusterHandler(BaseHandler):
                                     )
                                     current_step_in_progress = False
                                     raise Exception(maintenance_result.get('error'))
+                                
+                                # Track VMs that were powered off for later power-on
+                                vms_powered_off = manual_power_off_result.get('vms_powered_off', [])
+                                if vms_powered_off:
+                                    cleanup_state['vms_to_power_on'][host['server_id']] = {
+                                        'vcenter_host_id': vcenter_host_id,
+                                        'vm_names': vms_powered_off,
+                                        'powered_off_at': utc_now_iso(),
+                                        'host_name': host['name']
+                                    }
+                                    host_result['vms_powered_off_for_maintenance'] = vms_powered_off
+                                    self.log(f"    ✓ Tracking {len(vms_powered_off)} VM(s) for power-on after maintenance")
+                                    
                             maintenance_result = self.executor.enter_vcenter_maintenance_mode(
                                 vcenter_host_id, 
                                 timeout=maintenance_timeout
@@ -1984,6 +1998,20 @@ class ClusterHandler(BaseHandler):
                                     )
                                     maintenance_result['power_off_result'] = auto_power_off_result
                                     if auto_power_off_result.get('success'):
+                                        # Track VMs powered off by auto-power-off for later power-on
+                                        auto_vms_powered_off = auto_power_off_result.get('vms_powered_off', [])
+                                        if auto_vms_powered_off:
+                                            existing_vms = cleanup_state.get('vms_to_power_on', {}).get(host['server_id'], {}).get('vm_names', [])
+                                            all_vms = list(set(existing_vms + auto_vms_powered_off))
+                                            cleanup_state['vms_to_power_on'][host['server_id']] = {
+                                                'vcenter_host_id': vcenter_host_id,
+                                                'vm_names': all_vms,
+                                                'powered_off_at': utc_now_iso(),
+                                                'host_name': host['name']
+                                            }
+                                            host_result['vms_powered_off_for_maintenance'] = all_vms
+                                            self.log(f"    ✓ Tracking {len(auto_vms_powered_off)} auto-powered-off VM(s) for power-on after maintenance")
+                                        
                                         maintenance_result = self.executor.enter_vcenter_maintenance_mode(
                                             vcenter_host_id,
                                             timeout=maintenance_timeout
@@ -2819,7 +2847,7 @@ class ClusterHandler(BaseHandler):
                                 step_started_at=utc_now_iso()
                             )
                             
-                            self.log(f"  [5/6] Waiting for vCenter to see host as connected...")
+                            self.log(f"  [5/7] Waiting for vCenter to see host as connected...")
                             self.update_job_details_field(job['id'], {
                                 'current_step': f'Waiting for vCenter reconnection: {host["name"]}'
                             })
@@ -2832,7 +2860,7 @@ class ClusterHandler(BaseHandler):
                             else:
                                 self.log(f"    ⚠ Warning: Host not showing connected in vCenter yet", "WARN")
                             
-                            self.log(f"  [5/6] Exiting maintenance mode...")
+                            self.log(f"  [5/7] Exiting maintenance mode...")
                             self.update_job_details_field(job['id'], {
                                 'current_step': f'Exiting maintenance mode: {host["name"]}'
                             })
@@ -2860,7 +2888,65 @@ class ClusterHandler(BaseHandler):
                             current_step_in_progress = False
                             host_result['steps'].append('exit_maintenance')
                         else:
-                            self.log(f"  [5/6] Exit maintenance skipped (no vCenter link)")
+                            self.log(f"  [5/7] Exit maintenance skipped (no vCenter link)")
+                        
+                        # STEP 6: Power on VMs that were powered off for maintenance
+                        vms_to_power_on = cleanup_state.get('vms_to_power_on', {}).get(host['server_id'])
+                        if vms_to_power_on and vcenter_host_id:
+                            current_step_number = base_step + 6
+                            current_step_name = f"Power on VMs: {host['name']}"
+                            current_step_in_progress = True
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=current_step_number,
+                                step_name=current_step_name,
+                                status='running',
+                                server_id=host['server_id'],
+                                host_id=vcenter_host_id,
+                                step_started_at=utc_now_iso()
+                            )
+                            
+                            vm_names_to_power_on = vms_to_power_on.get('vm_names', [])
+                            self.log(f"  [6/7] Powering on {len(vm_names_to_power_on)} VM(s) that were shut down for maintenance...")
+                            self.update_job_details_field(job['id'], {
+                                'current_step': f'Powering on VMs: {host["name"]}'
+                            })
+                            
+                            power_on_result = self.executor.power_on_vms_after_maintenance(
+                                vcenter_host_id,
+                                vm_names_to_power_on,
+                                timeout=300  # 5 minute timeout for VMware Tools
+                            )
+                            
+                            if power_on_result.get('success'):
+                                powered_on = power_on_result.get('vms_powered_on', [])
+                                already_on = power_on_result.get('vms_already_on', [])
+                                self.log(f"    ✓ VMs restored: {len(powered_on)} powered on, {len(already_on)} already on")
+                                host_result['vms_powered_on'] = powered_on
+                                host_result['vms_already_on'] = already_on
+                                
+                                # Clear from cleanup tracking since we successfully powered them on
+                                if host['server_id'] in cleanup_state.get('vms_to_power_on', {}):
+                                    del cleanup_state['vms_to_power_on'][host['server_id']]
+                            else:
+                                failed_vms = power_on_result.get('vms_failed', [])
+                                self.log(f"    ⚠ Some VMs failed to power on: {[v.get('name') for v in failed_vms]}", "WARN")
+                                host_result['vms_power_on_failed'] = failed_vms
+                            
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=current_step_number,
+                                step_name=current_step_name,
+                                status='completed' if power_on_result.get('success') else 'warning',
+                                server_id=host['server_id'],
+                                host_id=vcenter_host_id,
+                                step_details=power_on_result,
+                                step_completed_at=utc_now_iso()
+                            )
+                            current_step_in_progress = False
+                            host_result['steps'].append('power_on_vms')
+                        elif vms_to_power_on:
+                            self.log(f"  [6/7] VM power-on skipped (no vCenter link)")
                         
                         # Clear current server and firmware tracking
                         cleanup_state['current_server'] = None

@@ -547,9 +547,9 @@ export const JobDetailDialog = ({
           open={showBlockerWizard}
           onOpenChange={setShowBlockerWizard}
           hostBlockers={resolvedHostBlockers}
-          onComplete={(resolutions, hostOrder) => {
+          onComplete={(resolutionPayload, hostOrder) => {
             const saveResolutions = async () => {
-              const resolutionPayload = buildMaintenanceBlockerResolutions(resolutions, resolvedHostBlockers);
+              // resolutionPayload is already transformed by the wizard with multiple keys
               const nextDetails = {
                 ...(job.details || {}),
                 maintenance_blocker_resolutions: resolutionPayload,

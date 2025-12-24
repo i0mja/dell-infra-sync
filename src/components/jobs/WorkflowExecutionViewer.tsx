@@ -794,9 +794,9 @@ export const WorkflowExecutionViewer = ({
             open={showBlockerWizard}
             onOpenChange={setShowBlockerWizard}
             hostBlockers={workflowBlockers}
-            onComplete={(resolutions, hostOrder) => {
+            onComplete={(resolutionPayload, hostOrder) => {
               const saveResolutions = async () => {
-                const resolutionPayload = buildMaintenanceBlockerResolutions(resolutions, workflowBlockers);
+                // resolutionPayload is already transformed by the wizard with multiple keys
                 const nextDetails = {
                   ...(effectiveJobDetails || {}),
                   maintenance_blocker_resolutions: resolutionPayload,
