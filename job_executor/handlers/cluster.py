@@ -1278,6 +1278,17 @@ class ClusterHandler(BaseHandler):
             'total_time_seconds': 0
         }
         workflow_start = time.time()
+        cleanup_state = {
+            'hosts_in_maintenance': [],
+            'current_server': None,
+            'ha_disabled': False,
+            'ha_cluster_name': None,
+            'ha_source_vcenter_id': None,
+            'ha_original_state': None,
+            'vms_to_power_on': {},
+            'firmware_in_progress': False,
+            'current_host_name': None
+        }
         
         try:
             self.log(f"Starting rolling_cluster_update workflow: {job['id']}")
@@ -1386,6 +1397,29 @@ class ClusterHandler(BaseHandler):
                 raise Exception("No eligible hosts/servers found for update. Check target_scope or cluster_id.")
             
             self.log(f"  [OK] Found {len(eligible_hosts)} eligible hosts/servers")
+
+            # Determine cluster name early for HA management and progress estimation
+            cluster_name = None
+            source_vcenter_id = None
+            for host in eligible_hosts:
+                server = self.get_server_by_id(host['server_id'])
+                if server and server.get('vcenter_host_id'):
+                    try:
+                        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+                        response = requests.get(
+                            f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{server['vcenter_host_id']}&select=cluster,source_vcenter_id",
+                            headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                            verify=VERIFY_SSL,
+                            timeout=5
+                        )
+                        if response.status_code == 200:
+                            hosts_data = _safe_json_parse(response)
+                            if hosts_data and hosts_data[0].get('cluster'):
+                                cluster_name = hosts_data[0]['cluster']
+                                source_vcenter_id = hosts_data[0].get('source_vcenter_id')
+                                break
+                    except Exception as e:
+                        self.log(f"  Warning: Could not determine cluster name: {e}", "WARN")
             
             # Calculate expected total workflow steps for accurate UI progress
             # Base steps: pre-flight (0), SCP backups if enabled (1), sequential updates container (2)
@@ -1568,41 +1602,6 @@ class ClusterHandler(BaseHandler):
                 step_started_at=utc_now_iso(),
                 step_completed_at=utc_now_iso()
             )
-            
-            # Initialize cleanup state tracking
-            cleanup_state = {
-                'hosts_in_maintenance': [],
-                'current_server': None,
-                'ha_disabled': False,
-                'ha_cluster_name': None,
-                'ha_source_vcenter_id': None,
-                'ha_original_state': None,
-                'vms_to_power_on': {}  # Track VMs powered off per host for later power-on
-            }
-            
-            # Get cluster name from first eligible host (needed for HA management later)
-            cluster_name = None
-            source_vcenter_id = None
-            
-            for host in eligible_hosts:
-                server = self.get_server_by_id(host['server_id'])
-                if server and server.get('vcenter_host_id'):
-                    try:
-                        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
-                        response = requests.get(
-                            f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{server['vcenter_host_id']}&select=cluster,source_vcenter_id",
-                            headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
-                            verify=VERIFY_SSL,
-                            timeout=5
-                        )
-                        if response.status_code == 200:
-                            hosts_data = _safe_json_parse(response)
-                            if hosts_data and hosts_data[0].get('cluster'):
-                                cluster_name = hosts_data[0]['cluster']
-                                source_vcenter_id = hosts_data[0].get('source_vcenter_id')
-                                break
-                    except Exception as e:
-                        self.log(f"  Warning: Could not determine cluster name: {e}", "WARN")
             
             # =================================================================
             # PHASE 0: PRE-FLIGHT CHECKS WITH UPDATE AVAILABILITY CHECK
