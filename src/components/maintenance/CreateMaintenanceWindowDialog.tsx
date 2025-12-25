@@ -75,7 +75,10 @@ export function CreateMaintenanceWindowDialog({
     // Auto power-off options
     auto_power_off_enabled: false,
     power_off_strategy: "non_migratable" as "specified_only" | "non_migratable" | "all_blocking",
-    power_off_vm_list: [] as string[]
+    power_off_vm_list: [] as string[],
+    // VM name patterns for auto power-off (e.g., Z-VRA*, Zerto*)
+    auto_power_off_patterns: [] as string[],
+    auto_power_off_patterns_input: ""
   });
 
   const hasClusterSelection = formData.cluster_ids.length > 0;
@@ -236,6 +239,10 @@ export function CreateMaintenanceWindowDialog({
         details.power_off_strategy = formData.power_off_strategy;
         if (formData.power_off_vm_list.length > 0) {
           details.power_off_vm_list = formData.power_off_vm_list;
+        }
+        // Add auto power-off patterns (e.g., Z-VRA*, Zerto*)
+        if (formData.auto_power_off_patterns.length > 0) {
+          details.auto_power_off_patterns = formData.auto_power_off_patterns;
         }
       }
 
@@ -504,11 +511,34 @@ export function CreateMaintenanceWindowDialog({
                       </Select>
                     </div>
                     
+                    {/* VM Name Patterns for Auto Power-Off */}
+                    <div className="space-y-2">
+                      <Label htmlFor="auto_power_off_patterns">VM Name Patterns (Auto Power-Off)</Label>
+                      <Input
+                        id="auto_power_off_patterns"
+                        placeholder="Z-VRA*, Zerto*, *-appliance"
+                        value={formData.auto_power_off_patterns_input}
+                        onChange={(e) => {
+                          const input = e.target.value;
+                          const patterns = input.split(',').map(s => s.trim()).filter(Boolean);
+                          setFormData({
+                            ...formData,
+                            auto_power_off_patterns_input: input,
+                            auto_power_off_patterns: patterns
+                          });
+                        }}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        VMs matching these patterns will be automatically powered off before maintenance.
+                        Use <code className="bg-muted px-1 rounded">*</code> as wildcard. Common patterns: <code className="bg-muted px-1 rounded">Z-VRA*</code>, <code className="bg-muted px-1 rounded">Z-VRAH*</code>, <code className="bg-muted px-1 rounded">*Zerto*</code>
+                      </p>
+                    </div>
+                    
                     <Alert className="border-orange-500/50 bg-orange-500/5">
                       <AlertTriangle className="h-4 w-4 text-orange-500" />
                       <AlertDescription className="text-xs">
-                        VMs will be gracefully shut down before host enters maintenance mode.
-                        Ensure workloads can tolerate temporary shutdown.
+                        VMs will be gracefully shut down before host enters maintenance mode and powered back on after.
+                        Pattern-matched VMs (like Zerto appliances) will be handled automatically even for scheduled jobs.
                       </AlertDescription>
                     </Alert>
                   </div>
